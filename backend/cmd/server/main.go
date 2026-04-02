@@ -18,11 +18,13 @@ import (
 	"github.com/daniil/floq/internal/ai/providers"
 	"github.com/daniil/floq/internal/auth"
 	"github.com/daniil/floq/internal/config"
+	"github.com/daniil/floq/internal/inbox"
 	"github.com/daniil/floq/internal/leads"
 	"github.com/daniil/floq/internal/parser"
 	"github.com/daniil/floq/internal/prospects"
 	"github.com/daniil/floq/internal/sequences"
 	"github.com/daniil/floq/internal/verify"
+	"github.com/google/uuid"
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -123,9 +125,17 @@ func main() {
 	defer stop()
 
 	if cfg.TelegramBotToken != "" {
-		// For inbox bot, we need an owner user ID. Use a fixed UUID or env var.
-		// For now, start bot only if token is set.
-		log.Println("telegram bot token configured but owner_id not set, skipping inbox bot")
+		ownerID, err := uuid.Parse(cfg.OwnerUserID)
+		if err != nil {
+			log.Printf("invalid OWNER_USER_ID: %v, skipping telegram bot", err)
+		} else {
+			tgBot, err := inbox.NewTelegramBot(cfg.TelegramBotToken, pool, leadsRepo, aiClient, ownerID)
+			if err != nil {
+				log.Printf("telegram bot init failed: %v", err)
+			} else {
+				go tgBot.Start(ctx)
+			}
+		}
 	}
 
 	// 8. Server
