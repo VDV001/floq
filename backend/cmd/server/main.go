@@ -59,7 +59,7 @@ func main() {
 	// 4. Use cases
 	leadsUC := leads.NewUseCase(leadsRepo, aiClient)
 	prospectsUC := prospects.NewUseCase(prospectsRepo)
-	sequencesUC := sequences.NewUseCase(sequencesRepo, aiClient, prospectsRepo)
+	sequencesUC := sequences.NewUseCase(sequencesRepo, aiClient, prospectsRepo, leadsRepo)
 
 	// 5. Auth
 	authHandler := auth.NewHandler(pool, cfg.JWTSecret)

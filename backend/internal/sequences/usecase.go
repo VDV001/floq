@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/daniil/floq/internal/ai"
+	"github.com/daniil/floq/internal/leads"
 	"github.com/daniil/floq/internal/prospects"
 	"github.com/google/uuid"
 )
@@ -20,10 +21,11 @@ type UseCase struct {
 	repo         *Repository
 	aiClient     *ai.AIClient
 	prospectRepo *prospects.Repository
+	leadsRepo    *leads.Repository
 }
 
-func NewUseCase(repo *Repository, aiClient *ai.AIClient, prospectRepo *prospects.Repository) *UseCase {
-	return &UseCase{repo: repo, aiClient: aiClient, prospectRepo: prospectRepo}
+func NewUseCase(repo *Repository, aiClient *ai.AIClient, prospectRepo *prospects.Repository, leadsRepo *leads.Repository) *UseCase {
+	return &UseCase{repo: repo, aiClient: aiClient, prospectRepo: prospectRepo, leadsRepo: leadsRepo}
 }
 
 func (uc *UseCase) ListSequences(ctx context.Context, userID uuid.UUID) ([]Sequence, error) {
@@ -76,6 +78,17 @@ func (uc *UseCase) Launch(ctx context.Context, sequenceID uuid.UUID, prospectIDs
 		}
 		if prospect == nil {
 			return fmt.Errorf("launch: prospect %s not found", pid)
+		}
+
+		// Deduplication checks
+		if prospect.Status == "converted" || prospect.Status == "opted_out" {
+			continue // skip — already in inbox or opted out
+		}
+		if prospect.Status == "in_sequence" {
+			continue // skip — already in a sequence
+		}
+		if prospect.VerifyStatus == "invalid" {
+			continue // skip — verified as invalid email
 		}
 
 		var cumulativeDelay int
@@ -142,4 +155,39 @@ func (uc *UseCase) GetQueue(ctx context.Context, userID uuid.UUID) ([]OutboundMe
 
 func (uc *UseCase) GetStats(ctx context.Context, userID uuid.UUID) (*Stats, error) {
 	return uc.repo.GetStats(ctx, userID)
+}
+
+func (uc *UseCase) ConvertToLead(ctx context.Context, prospectID uuid.UUID) error {
+	prospect, err := uc.prospectRepo.GetProspect(ctx, prospectID)
+	if err != nil {
+		return fmt.Errorf("convert: get prospect: %w", err)
+	}
+	if prospect == nil {
+		return fmt.Errorf("convert: prospect not found")
+	}
+
+	// Create a lead from the prospect data
+	leadID := uuid.New()
+	now := time.Now().UTC()
+	lead := &leads.Lead{
+		ID:           leadID,
+		UserID:       prospect.UserID,
+		Channel:      "email",
+		ContactName:  prospect.Name,
+		Company:      prospect.Company,
+		FirstMessage: "Ответ на outbound секвенцию",
+		Status:       "new",
+		CreatedAt:    now,
+		UpdatedAt:    now,
+	}
+	if err := uc.leadsRepo.CreateLead(ctx, lead); err != nil {
+		return fmt.Errorf("convert: create lead: %w", err)
+	}
+
+	// Update prospect as converted
+	if err := uc.prospectRepo.ConvertToLead(ctx, prospectID, leadID); err != nil {
+		return fmt.Errorf("convert: update prospect: %w", err)
+	}
+
+	return nil
 }
