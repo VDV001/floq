@@ -25,6 +25,13 @@ services:
       timeout: 5s
       retries: 10
 
+  ollama:
+    image: ollama/ollama:latest
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+
   backend:
     build:
       context: ./backend
@@ -37,11 +44,15 @@ services:
       DATABASE_URL: postgres://floq:floq@postgres:5432/floq?sslmode=disable
       REDIS_URL: redis://redis:6379
       MIGRATIONS_PATH: "file:///migrations"
+      OLLAMA_BASE_URL: http://ollama:11434
     depends_on:
       postgres:
         condition: service_healthy
       redis:
         condition: service_healthy
+      ollama:
+        condition: service_started
 
 volumes:
   postgres_data:
+  ollama_data:
