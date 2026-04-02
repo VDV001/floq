@@ -170,7 +170,7 @@ func (h *Handler) generateTokenPair(userID uuid.UUID) (string, string, error) {
 		"user_id": userID.String(),
 		"type":    "access",
 		"iat":     now.Unix(),
-		"exp":     now.Add(15 * time.Minute).Unix(),
+		"exp":     now.Add(24 * time.Hour).Unix(),
 	}
 	accessToken := jwt.NewWithClaims(jwt.SigningMethodHS256, accessClaims)
 	accessStr, err := accessToken.SignedString(h.jwtSecret)
