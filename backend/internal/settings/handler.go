@@ -2,12 +2,14 @@ package settings
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -120,7 +122,7 @@ func (h *Handler) getSettings() http.HandlerFunc {
 			&s.AIProvider, &s.AIModel, &s.AIAPIKey,
 			&s.NotifyTelegram, &s.NotifyEmailDigest,
 		)
-		if err != nil && err.Error() != "no rows in result set" {
+		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 			writeError(w, http.StatusInternalServerError, "failed to load settings")
 			return
 		}
