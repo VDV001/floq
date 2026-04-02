@@ -183,8 +183,13 @@ func (h *Handler) updateSettings() http.HandlerFunc {
 
 		if _, ok := raw["telegram_bot_token"]; ok {
 			cols = append(cols, col{"telegram_bot_token", input.TelegramBotToken})
-		}
-		if _, ok := raw["telegram_bot_active"]; ok {
+			// Auto-activate if token is valid (validation passed above)
+			if input.TelegramBotToken != "" {
+				cols = append(cols, col{"telegram_bot_active", true})
+			} else {
+				cols = append(cols, col{"telegram_bot_active", false})
+			}
+		} else if _, ok := raw["telegram_bot_active"]; ok {
 			cols = append(cols, col{"telegram_bot_active", input.TelegramBotActive})
 		}
 		if _, ok := raw["imap_host"]; ok {
