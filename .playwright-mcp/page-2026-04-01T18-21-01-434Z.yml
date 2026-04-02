@@ -1,0 +1,230 @@
+- generic [active] [ref=e1]:
+  - generic [ref=e2]:
+    - complementary [ref=e3]:
+      - generic [ref=e4]:
+        - generic [ref=e5]:
+          - img [ref=e7]
+          - generic [ref=e9]: Flo
+        - paragraph [ref=e10]: ИИ-ассистент продаж
+      - navigation [ref=e11]:
+        - link "Входящие" [ref=e12] [cursor=pointer]:
+          - /url: /inbox
+          - img [ref=e13]
+          - text: Входящие
+        - link "Лиды" [ref=e16] [cursor=pointer]:
+          - /url: /alerts
+          - img [ref=e17]
+          - text: Лиды
+        - link "Воронка" [ref=e22] [cursor=pointer]:
+          - /url: /pipeline
+          - img [ref=e23]
+          - text: Воронка
+        - link "Автоматизации" [ref=e27] [cursor=pointer]:
+          - /url: /automations
+          - img [ref=e28]
+          - text: Автоматизации
+        - link "Настройки" [ref=e30] [cursor=pointer]:
+          - /url: /settings
+          - img [ref=e31]
+          - text: Настройки
+      - generic [ref=e34]:
+        - heading "Этапы воронки" [level=3] [ref=e35]
+        - generic [ref=e36]:
+          - generic [ref=e37]:
+            - generic [ref=e40]: Новые лиды
+            - generic [ref=e41]: "12"
+          - generic [ref=e42]:
+            - generic [ref=e45]: Квалифицированные
+            - generic [ref=e46]: "24"
+          - generic [ref=e47]:
+            - generic [ref=e50]: В диалоге
+            - generic [ref=e51]: "8"
+          - generic [ref=e52]:
+            - generic [ref=e55]: Напоминание
+            - generic [ref=e56]: "3"
+          - generic [ref=e57]:
+            - generic [ref=e60]: Закрытые
+            - generic [ref=e61]: "156"
+      - generic [ref=e62]:
+        - heading "Каналы" [level=3] [ref=e63]
+        - generic [ref=e64]:
+          - generic [ref=e65] [cursor=pointer]:
+            - img [ref=e66]
+            - generic [ref=e68]: Telegram
+          - generic [ref=e69] [cursor=pointer]:
+            - img [ref=e70]
+            - generic [ref=e73]: Email
+      - generic [ref=e75]:
+        - generic [ref=e76]:
+          - img [ref=e77]
+          - generic [ref=e80]: ИИ-сводка
+        - paragraph [ref=e81]: 3 новых целевых лида от Skyline Logistics. Упомянули «доступный бюджет» на Q3.
+      - generic [ref=e84]:
+        - paragraph [ref=e85]: PRO-ТАРИФ
+        - paragraph [ref=e86]: Масштабируйте продажи с ИИ и безлимитным скорингом лидов.
+        - button "Перейти на Pro" [ref=e87]
+      - generic [ref=e88]:
+        - button "Поддержка" [ref=e89]:
+          - img [ref=e90]
+          - text: Поддержка
+        - button "Выйти" [ref=e93]:
+          - img [ref=e94]
+          - text: Выйти
+    - main [ref=e97]:
+      - generic [ref=e98]:
+        - generic [ref=e99]:
+          - generic [ref=e100]:
+            - generic [ref=e101]:
+              - img [ref=e102]
+              - textbox "Поиск лидов, компаний, сообщений..." [ref=e105]
+            - navigation [ref=e106]:
+              - link "Входящие" [ref=e107] [cursor=pointer]:
+                - /url: /inbox
+                - text: Входящие
+              - link "Воронка" [ref=e109] [cursor=pointer]:
+                - /url: /pipeline
+              - link "Аналитика" [ref=e110] [cursor=pointer]:
+                - /url: /analytics
+          - generic [ref=e111]:
+            - button [ref=e112]:
+              - img [ref=e113]
+            - button [ref=e116]:
+              - img [ref=e117]
+            - button "Новый лид" [ref=e120]:
+              - img [ref=e121]
+              - text: Новый лид
+            - generic [ref=e122]: DK
+        - generic [ref=e123]:
+          - generic [ref=e124]:
+            - heading "Лента лидов" [level=1] [ref=e125]
+            - paragraph [ref=e126]: Показано 12 активных лидов для Новые лиды
+          - generic [ref=e127]:
+            - button "Все" [ref=e128]
+            - button "Непрочитанные" [ref=e129]
+            - button "Приоритетные" [ref=e130]
+          - generic [ref=e131]:
+            - link "Avenue Design по email · Анна Петрова Ищем CRM для команды из 40 человек. Нужна интеграция с Telegram... 2 мин Новый" [ref=e132] [cursor=pointer]:
+              - /url: /inbox/lead-001
+              - img [ref=e134]
+              - generic [ref=e137]:
+                - heading "Avenue Design" [level=3] [ref=e139]
+                - paragraph [ref=e140]: по email · Анна Петрова
+                - paragraph [ref=e141]: Ищем CRM для команды из 40 человек. Нужна интеграция с Telegram...
+              - generic [ref=e142]:
+                - generic [ref=e143]: 2 мин
+                - generic [ref=e144]: Новый
+            - link "Skyline Logistics через Telegram · Дмитрий Волков Только что утвердили бюджет на автоматизацию продаж. Можно созвониться завтра? 5 мин Новый" [ref=e145] [cursor=pointer]:
+              - /url: /inbox/lead-002
+              - img [ref=e147]
+              - generic [ref=e150]:
+                - heading "Skyline Logistics" [level=3] [ref=e152]
+                - paragraph [ref=e153]: через Telegram · Дмитрий Волков
+                - paragraph [ref=e154]: Только что утвердили бюджет на автоматизацию продаж. Можно созвониться завтра?
+              - generic [ref=e155]:
+                - generic [ref=e156]: 5 мин
+                - generic [ref=e157]: Новый
+            - link "ТехноСтар по email · Мария Соколова Возвращаюсь к нашему разговору на прошлой неделе по поводу тарифа Enterprise... 14 мин Квалифицирован" [ref=e158] [cursor=pointer]:
+              - /url: /inbox/lead-003
+              - img [ref=e160]
+              - generic [ref=e163]:
+                - heading "ТехноСтар" [level=3] [ref=e165]
+                - paragraph [ref=e166]: по email · Мария Соколова
+                - paragraph [ref=e167]: Возвращаюсь к нашему разговору на прошлой неделе по поводу тарифа Enterprise...
+              - generic [ref=e168]:
+                - generic [ref=e169]: 14 мин
+                - generic [ref=e170]: Квалифицирован
+            - link "Оптима Консалтинг через Telegram · Игорь Чернов Можете прислать сравнительную таблицу тарифов Pro и Enterprise? 22 мин Нужен фоллоуап" [ref=e171] [cursor=pointer]:
+              - /url: /inbox/lead-004
+              - img [ref=e173]
+              - generic [ref=e176]:
+                - heading "Оптима Консалтинг" [level=3] [ref=e178]
+                - paragraph [ref=e179]: через Telegram · Игорь Чернов
+                - paragraph [ref=e180]: Можете прислать сравнительную таблицу тарифов Pro и Enterprise?
+              - generic [ref=e181]:
+                - generic [ref=e182]: 22 мин
+                - generic [ref=e183]: Нужен фоллоуап
+            - link "Орион Групп по email · Елена Кузнецова Нам нужно решение с интеграцией в существующий Salesforce. Это возможно? 35 мин Новый" [ref=e184] [cursor=pointer]:
+              - /url: /inbox/lead-005
+              - img [ref=e186]
+              - generic [ref=e189]:
+                - heading "Орион Групп" [level=3] [ref=e191]
+                - paragraph [ref=e192]: по email · Елена Кузнецова
+                - paragraph [ref=e193]: Нам нужно решение с интеграцией в существующий Salesforce. Это возможно?
+              - generic [ref=e194]:
+                - generic [ref=e195]: 35 мин
+                - generic [ref=e196]: Новый
+            - link "Атлас Диджитал через Telegram · Роберт Ким Заинтересовали функции автоматизации. Можем созвониться на этой неделе? 1 ч Квалифицирован" [ref=e197] [cursor=pointer]:
+              - /url: /inbox/lead-006
+              - img [ref=e199]
+              - generic [ref=e202]:
+                - heading "Атлас Диджитал" [level=3] [ref=e204]
+                - paragraph [ref=e205]: через Telegram · Роберт Ким
+                - paragraph [ref=e206]: Заинтересовали функции автоматизации. Можем созвониться на этой неделе?
+              - generic [ref=e207]:
+                - generic [ref=e208]: 1 ч
+                - generic [ref=e209]: Квалифицирован
+            - link "Вершина Групп по email · Светлана Миронова Команда изучила предложение. Есть несколько вопросов по срокам внедрения... 1 ч Нужен фоллоуап" [ref=e210] [cursor=pointer]:
+              - /url: /inbox/lead-007
+              - img [ref=e212]
+              - generic [ref=e215]:
+                - heading "Вершина Групп" [level=3] [ref=e217]
+                - paragraph [ref=e218]: по email · Светлана Миронова
+                - paragraph [ref=e219]: Команда изучила предложение. Есть несколько вопросов по срокам внедрения...
+              - generic [ref=e220]:
+                - generic [ref=e221]: 1 ч
+                - generic [ref=e222]: Нужен фоллоуап
+            - link "Квантум Системс через Telegram · Алексей Новак Бюджет утвердили! Давайте запускаем пилот на 50 пользователей. 2 ч Новый" [ref=e223] [cursor=pointer]:
+              - /url: /inbox/lead-008
+              - img [ref=e225]
+              - generic [ref=e228]:
+                - heading "Квантум Системс" [level=3] [ref=e230]
+                - paragraph [ref=e231]: через Telegram · Алексей Новак
+                - paragraph [ref=e232]: Бюджет утвердили! Давайте запускаем пилот на 50 пользователей.
+              - generic [ref=e233]:
+                - generic [ref=e234]: 2 ч
+                - generic [ref=e235]: Новый
+            - link "Саммит Корпорейшн по email · Прия Шарма Сейчас сравниваем трёх вендоров. Какие сроки по кастомным интеграциям? 2 ч Квалифицирован" [ref=e236] [cursor=pointer]:
+              - /url: /inbox/lead-009
+              - img [ref=e238]
+              - generic [ref=e241]:
+                - heading "Саммит Корпорейшн" [level=3] [ref=e243]
+                - paragraph [ref=e244]: по email · Прия Шарма
+                - paragraph [ref=e245]: Сейчас сравниваем трёх вендоров. Какие сроки по кастомным интеграциям?
+              - generic [ref=e246]:
+                - generic [ref=e247]: 2 ч
+                - generic [ref=e248]: Квалифицирован
+            - link "Каскад Партнёры по email · Том Андерсон Спасибо за фоллоуап. Подключим нашего CTO к следующей встрече. 3 ч Новый" [ref=e249] [cursor=pointer]:
+              - /url: /inbox/lead-010
+              - img [ref=e251]
+              - generic [ref=e254]:
+                - heading "Каскад Партнёры" [level=3] [ref=e256]
+                - paragraph [ref=e257]: по email · Том Андерсон
+                - paragraph [ref=e258]: Спасибо за фоллоуап. Подключим нашего CTO к следующей встрече.
+              - generic [ref=e259]:
+                - generic [ref=e260]: 3 ч
+                - generic [ref=e261]: Новый
+            - link "Меридиан Корп через Telegram · Ольга Иванова Можете показать кейс для компаний из логистической отрасли? 4 ч Нужен фоллоуап" [ref=e262] [cursor=pointer]:
+              - /url: /inbox/lead-011
+              - img [ref=e264]
+              - generic [ref=e267]:
+                - heading "Меридиан Корп" [level=3] [ref=e269]
+                - paragraph [ref=e270]: через Telegram · Ольга Иванова
+                - paragraph [ref=e271]: Можете показать кейс для компаний из логистической отрасли?
+              - generic [ref=e272]:
+                - generic [ref=e273]: 4 ч
+                - generic [ref=e274]: Нужен фоллоуап
+            - link "Зенит Лабс по email · Давид Парк Видели ваш стенд на TechCrunch Disrupt. Впечатлены демо с ИИ. 5 ч Новый" [ref=e275] [cursor=pointer]:
+              - /url: /inbox/lead-012
+              - img [ref=e277]
+              - generic [ref=e280]:
+                - heading "Зенит Лабс" [level=3] [ref=e282]
+                - paragraph [ref=e283]: по email · Давид Парк
+                - paragraph [ref=e284]: Видели ваш стенд на TechCrunch Disrupt. Впечатлены демо с ИИ.
+              - generic [ref=e285]:
+                - generic [ref=e286]: 5 ч
+                - generic [ref=e287]: Новый
+    - button [ref=e288]:
+      - img [ref=e289]
+  - button "Open Next.js Dev Tools" [ref=e297] [cursor=pointer]:
+    - img [ref=e298]
+  - alert [ref=e301]

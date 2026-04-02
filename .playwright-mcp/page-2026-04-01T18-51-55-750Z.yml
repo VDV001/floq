@@ -1,0 +1,206 @@
+- generic [active] [ref=e1]:
+  - generic [ref=e2]:
+    - complementary [ref=e3]:
+      - generic [ref=e4]:
+        - generic [ref=e5]:
+          - img [ref=e7]
+          - generic [ref=e9]: Flo
+        - paragraph [ref=e10]: ИИ-ассистент продаж
+      - navigation [ref=e11]:
+        - link "Входящие" [ref=e12] [cursor=pointer]:
+          - /url: /inbox
+          - img [ref=e13]
+          - text: Входящие
+        - link "Лиды" [ref=e16] [cursor=pointer]:
+          - /url: /alerts
+          - img [ref=e17]
+          - text: Лиды
+        - link "Воронка" [ref=e22] [cursor=pointer]:
+          - /url: /pipeline
+          - img [ref=e23]
+          - text: Воронка
+        - link "Проспекты" [ref=e27] [cursor=pointer]:
+          - /url: /prospects
+          - img [ref=e28]
+          - text: Проспекты
+        - link "Секвенции" [ref=e31] [cursor=pointer]:
+          - /url: /sequences
+          - img [ref=e32]
+          - text: Секвенции
+        - link "Исходящие" [ref=e36] [cursor=pointer]:
+          - /url: /outbound
+          - img [ref=e37]
+          - text: Исходящие
+        - link "Автоматизации" [ref=e40] [cursor=pointer]:
+          - /url: /automations
+          - img [ref=e41]
+          - text: Автоматизации
+        - link "Настройки" [ref=e43] [cursor=pointer]:
+          - /url: /settings
+          - img [ref=e44]
+          - text: Настройки
+      - generic [ref=e47]:
+        - heading "Этапы воронки" [level=3] [ref=e48]
+        - generic [ref=e49]:
+          - generic [ref=e50]:
+            - generic [ref=e53]: Новые лиды
+            - generic [ref=e54]: "12"
+          - generic [ref=e55]:
+            - generic [ref=e58]: Квалифицированные
+            - generic [ref=e59]: "24"
+          - generic [ref=e60]:
+            - generic [ref=e63]: В диалоге
+            - generic [ref=e64]: "8"
+          - generic [ref=e65]:
+            - generic [ref=e68]: Напоминание
+            - generic [ref=e69]: "3"
+          - generic [ref=e70]:
+            - generic [ref=e73]: Закрытые
+            - generic [ref=e74]: "156"
+      - generic [ref=e75]:
+        - heading "Каналы" [level=3] [ref=e76]
+        - generic [ref=e77]:
+          - generic [ref=e78] [cursor=pointer]:
+            - img [ref=e79]
+            - generic [ref=e81]: Telegram
+          - generic [ref=e82] [cursor=pointer]:
+            - img [ref=e83]
+            - generic [ref=e86]: Email
+      - generic [ref=e88]:
+        - generic [ref=e89]:
+          - img [ref=e90]
+          - generic [ref=e93]: ИИ-сводка
+        - paragraph [ref=e94]: 3 новых целевых лида от Skyline Logistics. Упомянули «доступный бюджет» на Q3.
+      - generic [ref=e96]:
+        - paragraph [ref=e97]: PRO-ТАРИФ
+        - paragraph [ref=e98]: Масштабируйте продажи с ИИ и безлимитным скорингом лидов.
+        - button "Перейти на Pro" [ref=e99]
+      - generic [ref=e100]:
+        - button "Поддержка" [ref=e101]:
+          - img [ref=e102]
+          - text: Поддержка
+        - button "Выйти" [ref=e105]:
+          - img [ref=e106]
+          - text: Выйти
+    - main [ref=e109]:
+      - generic [ref=e110]:
+        - generic [ref=e111]:
+          - generic [ref=e112]:
+            - img [ref=e113]
+            - textbox "Поиск секвенций или проспектов..." [ref=e116]
+          - generic [ref=e117]:
+            - generic [ref=e118]: Антон Фёдоров, Sales Lead
+            - generic [ref=e119]: АФ
+        - generic [ref=e120]:
+          - generic [ref=e121]:
+            - heading "Секвенции" [level=1] [ref=e122]
+            - paragraph [ref=e123]: Автоматизированные цепочки писем для холодного outreach B2B
+          - button "Новая секвенция" [ref=e124]:
+            - img
+            - text: Новая секвенция
+        - generic [ref=e125]:
+          - generic [ref=e126]:
+            - generic [ref=e128]:
+              - generic [ref=e129]:
+                - heading "Новый клиент — B2B агентство" [level=3] [ref=e130]
+                - generic [ref=e131]: АКТИВНА
+              - generic [ref=e132]:
+                - generic [ref=e133]: 3 шага
+                - generic [ref=e135]: 48 проспектов
+                - generic [ref=e137]: 12% ответы
+              - generic [ref=e138]:
+                - generic [ref=e139]:
+                  - switch [checked] [ref=e140]
+                  - checkbox [checked] [ref=e141]
+                - button "Редактировать" [ref=e142]
+            - generic [ref=e144]:
+              - generic [ref=e145]:
+                - 'heading "Upsell: Текущие клиенты" [level=3] [ref=e146]'
+                - generic [ref=e147]: 6 АВТО
+              - generic [ref=e148]:
+                - generic [ref=e149]: 6 шага
+                - generic [ref=e151]: 112 проспектов
+                - generic [ref=e153]: 8% ответы
+              - button "Редактировать" [ref=e155]
+            - generic [ref=e157]:
+              - generic [ref=e158]:
+                - img [ref=e159]
+                - generic [ref=e162]: AI Insight
+              - paragraph [ref=e163]: Похоже, шаг 2 в вашей секвенции «B2B агентства» имеет низкий Open Rate. Попробуйте персонализировать тему письма на основе индустрии лида.
+              - button "Исправить сейчас" [ref=e164]
+          - generic [ref=e167]:
+            - heading "Шаги секвенции" [level=2] [ref=e168]
+            - generic [ref=e169]:
+              - generic [ref=e170]:
+                - generic [ref=e172]:
+                  - generic [ref=e173]: Шаг 1
+                  - generic [ref=e174]: —
+                  - generic [ref=e175]: Отправка сразу
+                - paragraph [ref=e176]: День 0 — Первое касание
+                - paragraph [ref=e178]: Привет, [Имя]! Обратил внимание на ваши успехи в [индустрия]. Мы помогаем компаниям вроде вашей автоматизировать outreach и увеличивать конверсию в ответы. Можем обсудить?
+                - generic [ref=e179]:
+                  - button "Сгенерировать промпт" [ref=e180]:
+                    - img
+                    - text: Сгенерировать промпт
+                  - button "Просмотр" [ref=e181]:
+                    - img
+                    - text: Просмотр
+              - generic [ref=e182]:
+                - generic [ref=e185]: Шаг 2
+                - paragraph [ref=e186]: День 3 — Деловой фоллоуап
+                - paragraph [ref=e188]: Хотел убедиться, что моё предыдущее письмо не потерялось. Знаю, как загружен ваш график — буквально 2 минуты на короткий звонок могут сэкономить вам часы.
+                - button "Сгенерировать промпт" [ref=e190]:
+                  - img
+                  - text: Сгенерировать промпт
+              - generic [ref=e191]:
+                - generic [ref=e194]: Шаг 3
+                - paragraph [ref=e195]: День 8 — Обмен ценностью
+                - paragraph [ref=e197]: Подготовил для вас мини-кейс, как компании из [индустрия] увеличили ответы на 35% с помощью персонализированных секвенций. Интересно?
+                - button "Сгенерировать промпт" [ref=e199]:
+                  - img
+                  - text: Сгенерировать промпт
+            - button "Добавить шаг" [ref=e201]:
+              - img
+              - text: Добавить шаг
+          - generic [ref=e202]:
+            - generic [ref=e204]:
+              - generic [ref=e205]:
+                - heading "Проспекты" [level=3] [ref=e206]
+                - button "Все" [ref=e207]
+              - generic [ref=e208]:
+                - generic [ref=e209]:
+                  - generic [ref=e211]: АС
+                  - generic [ref=e212]:
+                    - paragraph [ref=e213]: Антон Смирнов
+                    - paragraph [ref=e214]: VP Sales @ FintechFlow
+                  - img [ref=e215]
+                - generic [ref=e218]:
+                  - generic [ref=e220]: ИП
+                  - generic [ref=e221]:
+                    - paragraph [ref=e222]: Иван Петров
+                    - paragraph [ref=e223]: Marketing @ TechFirm
+                  - img [ref=e224]
+                - generic [ref=e227]:
+                  - generic [ref=e229]: ЕК
+                  - generic [ref=e230]:
+                    - paragraph [ref=e231]: Елена Кузнецова
+                    - paragraph [ref=e232]: HR Director @ GlobalS
+                  - img [ref=e233]
+                - generic [ref=e236]:
+                  - generic [ref=e238]: МВ
+                  - generic [ref=e239]:
+                    - paragraph [ref=e240]: Мария Волкова
+                    - paragraph [ref=e241]: CEO @ DataPulse
+                  - img [ref=e242]
+              - paragraph [ref=e245]: Участники охвата (48)
+            - generic [ref=e247]:
+              - heading "Эффективность" [level=3] [ref=e248]
+              - generic [ref=e249]:
+                - generic [ref=e250]: 24.5%
+                - img [ref=e251]
+              - paragraph [ref=e254]: Средний показатель открытий за текущую секвенцию
+    - button [ref=e255]:
+      - img [ref=e256]
+  - button "Open Next.js Dev Tools" [ref=e264] [cursor=pointer]:
+    - img [ref=e265]
+  - alert [ref=e268]

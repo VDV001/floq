@@ -1,0 +1,3 @@
+DROP TABLE IF EXISTS leads;
+DROP TYPE IF EXISTS lead_status;
+DROP TYPE IF EXISTS lead_channel;

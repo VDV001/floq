@@ -1,0 +1,202 @@
+- generic [active] [ref=e1]:
+  - generic [ref=e2]:
+    - complementary [ref=e3]:
+      - generic [ref=e4]:
+        - generic [ref=e5]:
+          - img [ref=e7]
+          - generic [ref=e9]: Flo
+        - paragraph [ref=e10]: ИИ-ассистент продаж
+      - navigation [ref=e11]:
+        - link "Входящие" [ref=e12] [cursor=pointer]:
+          - /url: /inbox
+          - img [ref=e13]
+          - text: Входящие
+        - link "Лиды" [ref=e16] [cursor=pointer]:
+          - /url: /alerts
+          - img [ref=e17]
+          - text: Лиды
+        - link "Воронка" [ref=e22] [cursor=pointer]:
+          - /url: /pipeline
+          - img [ref=e23]
+          - text: Воронка
+        - link "Проспекты" [ref=e27] [cursor=pointer]:
+          - /url: /prospects
+          - img [ref=e28]
+          - text: Проспекты
+        - link "Секвенции" [ref=e31] [cursor=pointer]:
+          - /url: /sequences
+          - img [ref=e32]
+          - text: Секвенции
+        - link "Исходящие" [ref=e36] [cursor=pointer]:
+          - /url: /outbound
+          - img [ref=e37]
+          - text: Исходящие
+        - link "Автоматизации" [ref=e40] [cursor=pointer]:
+          - /url: /automations
+          - img [ref=e41]
+          - text: Автоматизации
+        - link "Настройки" [ref=e43] [cursor=pointer]:
+          - /url: /settings
+          - img [ref=e44]
+          - text: Настройки
+      - generic [ref=e47]:
+        - heading "Этапы воронки" [level=3] [ref=e48]
+        - generic [ref=e49]:
+          - generic [ref=e50]:
+            - generic [ref=e53]: Новые лиды
+            - generic [ref=e54]: "12"
+          - generic [ref=e55]:
+            - generic [ref=e58]: Квалифицированные
+            - generic [ref=e59]: "24"
+          - generic [ref=e60]:
+            - generic [ref=e63]: В диалоге
+            - generic [ref=e64]: "8"
+          - generic [ref=e65]:
+            - generic [ref=e68]: Напоминание
+            - generic [ref=e69]: "3"
+          - generic [ref=e70]:
+            - generic [ref=e73]: Закрытые
+            - generic [ref=e74]: "156"
+      - generic [ref=e75]:
+        - heading "Каналы" [level=3] [ref=e76]
+        - generic [ref=e77]:
+          - generic [ref=e78] [cursor=pointer]:
+            - img [ref=e79]
+            - generic [ref=e81]: Telegram
+          - generic [ref=e82] [cursor=pointer]:
+            - img [ref=e83]
+            - generic [ref=e86]: Email
+      - generic [ref=e88]:
+        - generic [ref=e89]:
+          - img [ref=e90]
+          - generic [ref=e93]: ИИ-сводка
+        - paragraph [ref=e94]: 3 новых целевых лида от Skyline Logistics. Упомянули «доступный бюджет» на Q3.
+      - generic [ref=e96]:
+        - paragraph [ref=e97]: PRO-ТАРИФ
+        - paragraph [ref=e98]: Масштабируйте продажи с ИИ и безлимитным скорингом лидов.
+        - button "Перейти на Pro" [ref=e99]
+      - generic [ref=e100]:
+        - button "Поддержка" [ref=e101]:
+          - img [ref=e102]
+          - text: Поддержка
+        - button "Выйти" [ref=e105]:
+          - img [ref=e106]
+          - text: Выйти
+    - main [ref=e109]:
+      - generic [ref=e110]:
+        - generic [ref=e112]:
+          - img [ref=e113]
+          - textbox "Поиск проспектов..." [ref=e116]
+        - generic [ref=e117]:
+          - generic [ref=e118]:
+            - generic [ref=e119]:
+              - heading "Проспекты" [level=1] [ref=e120]
+              - paragraph [ref=e121]: 124 контакта для холодного outreach
+            - generic [ref=e122]:
+              - button "Импорт CSV" [ref=e123]:
+                - img
+                - text: Импорт CSV
+              - button "Добавить контакт" [ref=e124]:
+                - img
+                - text: Добавить контакт
+          - generic [ref=e125]:
+            - generic [ref=e126]:
+              - table [ref=e128]:
+                - rowgroup [ref=e129]:
+                  - row "Имя Компания / Должность Email Статус" [ref=e130]:
+                    - columnheader "Имя" [ref=e131]
+                    - columnheader "Компания / Должность" [ref=e132]
+                    - columnheader "Email" [ref=e133]
+                    - columnheader "Статус" [ref=e134]
+                - rowgroup [ref=e135]:
+                  - row "АФ Антон Фёдоров TechSolutions Head of Sales a.morozov@techsol.ru Новый" [ref=e136]:
+                    - cell "АФ Антон Фёдоров" [ref=e137]:
+                      - generic [ref=e138]:
+                        - generic [ref=e139]: АФ
+                        - generic [ref=e140]: Антон Фёдоров
+                    - cell "TechSolutions Head of Sales" [ref=e141]:
+                      - generic [ref=e142]: TechSolutions
+                      - generic [ref=e143]: Head of Sales
+                    - cell "a.morozov@techsol.ru" [ref=e144]
+                    - cell "Новый" [ref=e145]:
+                      - generic [ref=e146]: Новый
+                  - row "ЕК Елена Кузнецова Global Retail Marketing Director e.kuz@globalair.com В секвенции" [ref=e147]:
+                    - cell "ЕК Елена Кузнецова" [ref=e148]:
+                      - generic [ref=e149]:
+                        - generic [ref=e150]: ЕК
+                        - generic [ref=e151]: Елена Кузнецова
+                    - cell "Global Retail Marketing Director" [ref=e152]:
+                      - generic [ref=e153]: Global Retail
+                      - generic [ref=e154]: Marketing Director
+                    - cell "e.kuz@globalair.com" [ref=e155]
+                    - cell "В секвенции" [ref=e156]:
+                      - generic [ref=e157]: В секвенции
+                  - row "ДВ Дмитрий Волков FinStream CTO d.volkov@finstream.io Ответил" [ref=e158]:
+                    - cell "ДВ Дмитрий Волков" [ref=e159]:
+                      - generic [ref=e160]:
+                        - generic [ref=e161]: ДВ
+                        - generic [ref=e162]: Дмитрий Волков
+                    - cell "FinStream CTO" [ref=e163]:
+                      - generic [ref=e164]: FinStream
+                      - generic [ref=e165]: CTO
+                    - cell "d.volkov@finstream.io" [ref=e166]
+                    - cell "Ответил" [ref=e167]:
+                      - generic [ref=e168]: Ответил
+                  - row "ДФ Дарья Фролова EcoLife Founder m.sokol@ecolife.ru Конвертирован" [ref=e169]:
+                    - cell "ДФ Дарья Фролова" [ref=e170]:
+                      - generic [ref=e171]:
+                        - generic [ref=e172]: ДФ
+                        - generic [ref=e173]: Дарья Фролова
+                    - cell "EcoLife Founder" [ref=e174]:
+                      - generic [ref=e175]: EcoLife
+                      - generic [ref=e176]: Founder
+                    - cell "m.sokol@ecolife.ru" [ref=e177]
+                    - cell "Конвертирован" [ref=e178]:
+                      - generic [ref=e179]: Конвертирован
+                  - row "ИП Иван Петров RetailPro Procurement Lead i.petrov@retailpro.com Отписался" [ref=e180]:
+                    - cell "ИП Иван Петров" [ref=e181]:
+                      - generic [ref=e182]:
+                        - generic [ref=e183]: ИП
+                        - generic [ref=e184]: Иван Петров
+                    - cell "RetailPro Procurement Lead" [ref=e185]:
+                      - generic [ref=e186]: RetailPro
+                      - generic [ref=e187]: Procurement Lead
+                    - cell "i.petrov@retailpro.com" [ref=e188]
+                    - cell "Отписался" [ref=e189]:
+                      - generic [ref=e190]: Отписался
+              - generic [ref=e191]:
+                - paragraph [ref=e192]: Showing 5 of 124 prospects
+                - generic [ref=e193]:
+                  - button [ref=e194]:
+                    - img
+                  - button "1" [ref=e195]
+                  - button "2" [ref=e196]
+                  - button [ref=e197]:
+                    - img
+            - generic [ref=e198]:
+              - generic [ref=e199]:
+                - generic [ref=e201]: Новый контакт
+                - generic [ref=e202]:
+                  - generic [ref=e203]:
+                    - generic [ref=e204]: Имя
+                    - textbox "Введите имя" [ref=e205]
+                  - generic [ref=e206]:
+                    - generic [ref=e207]: Компания
+                    - textbox "Название компании" [ref=e208]
+                  - generic [ref=e209]:
+                    - generic [ref=e210]: Должность
+                    - textbox "Должность" [ref=e211]
+                  - generic [ref=e212]:
+                    - generic [ref=e213]: Email
+                    - textbox "email@example.com" [ref=e214]
+                  - button "Добавить" [ref=e215]
+              - generic [ref=e216]:
+                - generic [ref=e217]:
+                  - img [ref=e218]
+                  - generic [ref=e221]: ИИ-рекомендация
+                - paragraph [ref=e222]: Мы нашли 15 новых компаний в сфере FinTech, соответствующих вашему идеальному профилю клиента. Хотите добавить их в список?
+    - button [ref=e223]:
+      - img [ref=e224]
+  - button "Open Next.js Dev Tools" [ref=e232] [cursor=pointer]:
+    - img [ref=e233]
+  - alert [ref=e236]
