@@ -60,10 +60,15 @@ func (h *Handler) listProspects() http.HandlerFunc {
 func (h *Handler) createProspect() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var body struct {
-			Name    string `json:"name"`
-			Company string `json:"company"`
-			Title   string `json:"title"`
-			Email   string `json:"email"`
+			Name             string `json:"name"`
+			Company          string `json:"company"`
+			Title            string `json:"title"`
+			Email            string `json:"email"`
+			Phone            string `json:"phone"`
+			TelegramUsername string `json:"telegram_username"`
+			Industry         string `json:"industry"`
+			CompanySize      string `json:"company_size"`
+			Context          string `json:"context"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			writeError(w, http.StatusBadRequest, "invalid request body")
@@ -76,16 +81,23 @@ func (h *Handler) createProspect() http.HandlerFunc {
 
 		now := time.Now().UTC()
 		p := &Prospect{
-			ID:        uuid.New(),
-			UserID:    getUserID(r),
-			Name:      body.Name,
-			Company:   body.Company,
-			Title:     body.Title,
-			Email:     body.Email,
-			Source:    "manual",
-			Status:    "new",
-			CreatedAt: now,
-			UpdatedAt: now,
+			ID:               uuid.New(),
+			UserID:           getUserID(r),
+			Name:             body.Name,
+			Company:          body.Company,
+			Title:            body.Title,
+			Email:            body.Email,
+			Phone:            body.Phone,
+			TelegramUsername: body.TelegramUsername,
+			Industry:         body.Industry,
+			CompanySize:      body.CompanySize,
+			Context:          body.Context,
+			Source:           "manual",
+			Status:           "new",
+			VerifyStatus:     "not_checked",
+			VerifyDetails:    "{}",
+			CreatedAt:        now,
+			UpdatedAt:        now,
 		}
 
 		if err := h.uc.CreateProspect(r.Context(), p); err != nil {

@@ -47,6 +47,19 @@ func (uc *UseCase) ImportCSV(ctx context.Context, userID uuid.UUID, csvData []by
 		return 0, fmt.Errorf("invalid csv header: expected name,company,title,email")
 	}
 
+	// Build column index map for optional columns
+	colIndex := make(map[string]int, len(header))
+	for i, name := range header {
+		colIndex[name] = i
+	}
+
+	getCol := func(record []string, name string) string {
+		if idx, ok := colIndex[name]; ok && idx < len(record) {
+			return record[idx]
+		}
+		return ""
+	}
+
 	now := time.Now().UTC()
 	var prospects []Prospect
 	for {
@@ -59,16 +72,23 @@ func (uc *UseCase) ImportCSV(ctx context.Context, userID uuid.UUID, csvData []by
 		}
 
 		prospects = append(prospects, Prospect{
-			ID:        uuid.New(),
-			UserID:    userID,
-			Name:      record[0],
-			Company:   record[1],
-			Title:     record[2],
-			Email:     record[3],
-			Source:    "csv",
-			Status:    "new",
-			CreatedAt: now,
-			UpdatedAt: now,
+			ID:               uuid.New(),
+			UserID:           userID,
+			Name:             record[0],
+			Company:          record[1],
+			Title:            record[2],
+			Email:            record[3],
+			Phone:            getCol(record, "phone"),
+			TelegramUsername: getCol(record, "telegram_username"),
+			Industry:         getCol(record, "industry"),
+			CompanySize:      getCol(record, "company_size"),
+			Context:          getCol(record, "context"),
+			Source:           "csv",
+			Status:           "new",
+			VerifyStatus:     "not_checked",
+			VerifyDetails:    "{}",
+			CreatedAt:        now,
+			UpdatedAt:        now,
 		})
 	}
 
