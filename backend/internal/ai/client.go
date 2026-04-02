@@ -7,6 +7,30 @@ import (
 	"strings"
 )
 
+// extractJSON strips markdown code fences (```json ... ```) that some models wrap around JSON.
+func extractJSON(s string) string {
+	s = strings.TrimSpace(s)
+	// Strip ```json ... ``` or ``` ... ```
+	if strings.HasPrefix(s, "```") {
+		// Remove opening fence line
+		if idx := strings.Index(s, "\n"); idx != -1 {
+			s = s[idx+1:]
+		}
+		// Remove closing fence
+		if idx := strings.LastIndex(s, "```"); idx != -1 {
+			s = s[:idx]
+		}
+		s = strings.TrimSpace(s)
+	}
+	// Also try to extract first { ... } if there's extra text
+	start := strings.Index(s, "{")
+	end := strings.LastIndex(s, "}")
+	if start != -1 && end != -1 && end > start {
+		s = s[start : end+1]
+	}
+	return s
+}
+
 type QualificationResult struct {
 	IdentifiedNeed    string `json:"identified_need"`
 	EstimatedBudget   string `json:"estimated_budget"`
@@ -48,8 +72,9 @@ func (c *AIClient) Qualify(ctx context.Context, contactName, channel, firstMessa
 	}
 
 	var result QualificationResult
-	if err := json.Unmarshal([]byte(resp), &result); err != nil {
-		return nil, fmt.Errorf("ai qualify parse response: %w", err)
+	cleaned := extractJSON(resp)
+	if err := json.Unmarshal([]byte(cleaned), &result); err != nil {
+		return nil, fmt.Errorf("ai qualify parse response: %w (raw: %s)", err, resp[:min(len(resp), 200)])
 	}
 	return &result, nil
 }
