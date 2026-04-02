@@ -23,6 +23,7 @@ import (
 	"github.com/daniil/floq/internal/parser"
 	"github.com/daniil/floq/internal/prospects"
 	"github.com/daniil/floq/internal/sequences"
+	"github.com/daniil/floq/internal/settings"
 	"github.com/daniil/floq/internal/verify"
 	"github.com/google/uuid"
 	"github.com/go-chi/chi/v5"
@@ -118,6 +119,7 @@ func main() {
 		sequences.RegisterRoutes(r, sequencesUC)
 		verify.RegisterRoutes(r, prospectsRepo, nil) // TG bot passed as nil for now
 		parser.RegisterRoutes(r)
+		settings.RegisterRoutes(r, pool)
 	})
 
 	// 7. Optional: Telegram inbox bot
