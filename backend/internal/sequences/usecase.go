@@ -83,9 +83,19 @@ func (uc *UseCase) Launch(ctx context.Context, sequenceID uuid.UUID, prospectIDs
 		for _, step := range steps {
 			cumulativeDelay += step.DelayDays
 
-			body, err := uc.aiClient.GenerateColdMessage(ctx, prospect.Name, prospect.Title, prospect.Company, step.PromptHint, previousBody)
-			if err != nil {
-				return fmt.Errorf("launch: generate message for prospect %s step %d: %w", pid, step.StepOrder, err)
+			var body string
+			var genErr error
+
+			switch step.Channel {
+			case "telegram":
+				body, genErr = uc.aiClient.GenerateTelegramMessage(ctx, prospect.Name, prospect.Title, prospect.Company, prospect.Context, step.PromptHint, previousBody)
+			case "phone_call":
+				body, genErr = uc.aiClient.GenerateCallBrief(ctx, prospect.Name, prospect.Title, prospect.Company, prospect.Context, step.PromptHint, previousBody)
+			default: // "email" or empty
+				body, genErr = uc.aiClient.GenerateColdMessage(ctx, prospect.Name, prospect.Title, prospect.Company, prospect.Context, step.PromptHint, previousBody)
+			}
+			if genErr != nil {
+				return fmt.Errorf("launch: generate message for prospect %s step %d: %w", pid, step.StepOrder, genErr)
 			}
 
 			msg := &OutboundMessage{
@@ -93,6 +103,7 @@ func (uc *UseCase) Launch(ctx context.Context, sequenceID uuid.UUID, prospectIDs
 				ProspectID:  pid,
 				SequenceID:  sequenceID,
 				StepOrder:   step.StepOrder,
+				Channel:     step.Channel,
 				Body:        body,
 				Status:      "draft",
 				ScheduledAt: now.AddDate(0, 0, cumulativeDelay),

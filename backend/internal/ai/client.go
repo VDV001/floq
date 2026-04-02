@@ -100,7 +100,7 @@ func (c *AIClient) GenerateFollowup(ctx context.Context, contactName, company, d
 	return resp, nil
 }
 
-func (c *AIClient) GenerateColdMessage(ctx context.Context, name, title, company, stepHint, previousMessage string) (string, error) {
+func (c *AIClient) GenerateColdMessage(ctx context.Context, name, title, company, prospectContext, stepHint, previousMessage string) (string, error) {
 	previousContext := ""
 	if previousMessage != "" {
 		previousContext = "Предыдущее отправленное сообщение: \"" + previousMessage + "\""
@@ -110,6 +110,7 @@ func (c *AIClient) GenerateColdMessage(ctx context.Context, name, title, company
 		"{{name}}", name,
 		"{{title}}", title,
 		"{{company}}", company,
+		"{{prospect_context}}", prospectContext,
 		"{{step_hint}}", stepHint,
 		"{{previous_context}}", previousContext,
 	)
@@ -124,6 +125,62 @@ func (c *AIClient) GenerateColdMessage(ctx context.Context, name, title, company
 	})
 	if err != nil {
 		return "", fmt.Errorf("ai cold message: %w", err)
+	}
+	return resp, nil
+}
+
+func (c *AIClient) GenerateTelegramMessage(ctx context.Context, name, title, company, prospectContext, stepHint, previousMessage string) (string, error) {
+	previousContext := ""
+	if previousMessage != "" {
+		previousContext = "Предыдущее сообщение: \"" + previousMessage + "\""
+	}
+
+	r := strings.NewReplacer(
+		"{{name}}", name,
+		"{{title}}", title,
+		"{{company}}", company,
+		"{{prospect_context}}", prospectContext,
+		"{{step_hint}}", stepHint,
+		"{{previous_context}}", previousContext,
+	)
+
+	resp, err := c.provider.Complete(ctx, CompletionRequest{
+		Messages: []Message{
+			{Role: "system", Content: TelegramOutreachSystem},
+			{Role: "user", Content: r.Replace(TelegramOutreachUser)},
+		},
+		MaxTokens: 512,
+	})
+	if err != nil {
+		return "", fmt.Errorf("ai telegram message: %w", err)
+	}
+	return resp, nil
+}
+
+func (c *AIClient) GenerateCallBrief(ctx context.Context, name, title, company, prospectContext, stepHint, previousMessage string) (string, error) {
+	previousContext := ""
+	if previousMessage != "" {
+		previousContext = "Предыдущее сообщение: \"" + previousMessage + "\""
+	}
+
+	r := strings.NewReplacer(
+		"{{name}}", name,
+		"{{title}}", title,
+		"{{company}}", company,
+		"{{prospect_context}}", prospectContext,
+		"{{step_hint}}", stepHint,
+		"{{previous_context}}", previousContext,
+	)
+
+	resp, err := c.provider.Complete(ctx, CompletionRequest{
+		Messages: []Message{
+			{Role: "system", Content: PhoneCallBriefSystem},
+			{Role: "user", Content: r.Replace(PhoneCallBriefUser)},
+		},
+		MaxTokens: 1024,
+	})
+	if err != nil {
+		return "", fmt.Errorf("ai call brief: %w", err)
 	}
 	return resp, nil
 }

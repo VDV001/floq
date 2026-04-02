@@ -177,11 +177,17 @@ func addStep(uc *UseCase) http.HandlerFunc {
 		var body struct {
 			StepOrder  int    `json:"step_order"`
 			DelayDays  int    `json:"delay_days"`
+			Channel    string `json:"channel"`
 			PromptHint string `json:"prompt_hint"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			writeError(w, http.StatusBadRequest, "invalid request body")
 			return
+		}
+
+		channel := body.Channel
+		if channel == "" {
+			channel = "email"
 		}
 
 		step := &SequenceStep{
@@ -190,6 +196,7 @@ func addStep(uc *UseCase) http.HandlerFunc {
 			StepOrder:  body.StepOrder,
 			DelayDays:  body.DelayDays,
 			PromptHint: body.PromptHint,
+			Channel:    channel,
 			CreatedAt:  time.Now().UTC(),
 		}
 		if err := uc.CreateStep(r.Context(), step); err != nil {

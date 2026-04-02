@@ -24,6 +24,7 @@ type SequenceStep struct {
 	StepOrder  int       `json:"step_order"`
 	DelayDays  int       `json:"delay_days"`
 	PromptHint string    `json:"prompt_hint"`
+	Channel    string    `json:"channel"`
 	CreatedAt  time.Time `json:"created_at"`
 }
 
@@ -32,6 +33,7 @@ type OutboundMessage struct {
 	ProspectID  uuid.UUID  `json:"prospect_id"`
 	SequenceID  uuid.UUID  `json:"sequence_id"`
 	StepOrder   int        `json:"step_order"`
+	Channel     string     `json:"channel"`
 	Body        string     `json:"body"`
 	Status      string     `json:"status"`
 	ScheduledAt time.Time  `json:"scheduled_at"`
@@ -124,7 +126,7 @@ func (r *Repository) ToggleActive(ctx context.Context, id uuid.UUID, active bool
 
 func (r *Repository) ListSteps(ctx context.Context, sequenceID uuid.UUID) ([]SequenceStep, error) {
 	rows, err := r.pool.Query(ctx,
-		`SELECT id, sequence_id, step_order, delay_days, prompt_hint, created_at
+		`SELECT id, sequence_id, step_order, delay_days, prompt_hint, channel, created_at
 		 FROM sequence_steps WHERE sequence_id = $1 ORDER BY step_order`, sequenceID)
 	if err != nil {
 		return nil, fmt.Errorf("list steps: %w", err)
@@ -134,7 +136,7 @@ func (r *Repository) ListSteps(ctx context.Context, sequenceID uuid.UUID) ([]Seq
 	var steps []SequenceStep
 	for rows.Next() {
 		var st SequenceStep
-		if err := rows.Scan(&st.ID, &st.SequenceID, &st.StepOrder, &st.DelayDays, &st.PromptHint, &st.CreatedAt); err != nil {
+		if err := rows.Scan(&st.ID, &st.SequenceID, &st.StepOrder, &st.DelayDays, &st.PromptHint, &st.Channel, &st.CreatedAt); err != nil {
 			return nil, fmt.Errorf("scan step: %w", err)
 		}
 		steps = append(steps, st)
@@ -144,9 +146,9 @@ func (r *Repository) ListSteps(ctx context.Context, sequenceID uuid.UUID) ([]Seq
 
 func (r *Repository) CreateStep(ctx context.Context, step *SequenceStep) error {
 	_, err := r.pool.Exec(ctx,
-		`INSERT INTO sequence_steps (id, sequence_id, step_order, delay_days, prompt_hint, created_at)
-		 VALUES ($1, $2, $3, $4, $5, $6)`,
-		step.ID, step.SequenceID, step.StepOrder, step.DelayDays, step.PromptHint, step.CreatedAt)
+		`INSERT INTO sequence_steps (id, sequence_id, step_order, delay_days, prompt_hint, channel, created_at)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+		step.ID, step.SequenceID, step.StepOrder, step.DelayDays, step.PromptHint, step.Channel, step.CreatedAt)
 	if err != nil {
 		return fmt.Errorf("create step: %w", err)
 	}
@@ -155,9 +157,9 @@ func (r *Repository) CreateStep(ctx context.Context, step *SequenceStep) error {
 
 func (r *Repository) CreateOutboundMessage(ctx context.Context, msg *OutboundMessage) error {
 	_, err := r.pool.Exec(ctx,
-		`INSERT INTO outbound_messages (id, prospect_id, sequence_id, step_order, body, status, scheduled_at, sent_at, created_at)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
-		msg.ID, msg.ProspectID, msg.SequenceID, msg.StepOrder, msg.Body, msg.Status, msg.ScheduledAt, msg.SentAt, msg.CreatedAt)
+		`INSERT INTO outbound_messages (id, prospect_id, sequence_id, step_order, channel, body, status, scheduled_at, sent_at, created_at)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+		msg.ID, msg.ProspectID, msg.SequenceID, msg.StepOrder, msg.Channel, msg.Body, msg.Status, msg.ScheduledAt, msg.SentAt, msg.CreatedAt)
 	if err != nil {
 		return fmt.Errorf("create outbound message: %w", err)
 	}
@@ -166,7 +168,7 @@ func (r *Repository) CreateOutboundMessage(ctx context.Context, msg *OutboundMes
 
 func (r *Repository) ListOutboundQueue(ctx context.Context, userID uuid.UUID) ([]OutboundMessage, error) {
 	rows, err := r.pool.Query(ctx,
-		`SELECT om.id, om.prospect_id, om.sequence_id, om.step_order, om.body, om.status, om.scheduled_at, om.sent_at, om.created_at
+		`SELECT om.id, om.prospect_id, om.sequence_id, om.step_order, om.channel, om.body, om.status, om.scheduled_at, om.sent_at, om.created_at
 		 FROM outbound_messages om
 		 JOIN prospects p ON p.id = om.prospect_id
 		 WHERE p.user_id = $1 AND om.status = 'draft'
@@ -179,7 +181,7 @@ func (r *Repository) ListOutboundQueue(ctx context.Context, userID uuid.UUID) ([
 	var msgs []OutboundMessage
 	for rows.Next() {
 		var m OutboundMessage
-		if err := rows.Scan(&m.ID, &m.ProspectID, &m.SequenceID, &m.StepOrder, &m.Body, &m.Status, &m.ScheduledAt, &m.SentAt, &m.CreatedAt); err != nil {
+		if err := rows.Scan(&m.ID, &m.ProspectID, &m.SequenceID, &m.StepOrder, &m.Channel, &m.Body, &m.Status, &m.ScheduledAt, &m.SentAt, &m.CreatedAt); err != nil {
 			return nil, fmt.Errorf("scan outbound message: %w", err)
 		}
 		msgs = append(msgs, m)
@@ -209,7 +211,7 @@ func (r *Repository) UpdateOutboundBody(ctx context.Context, id uuid.UUID, body 
 
 func (r *Repository) GetPendingSends(ctx context.Context) ([]OutboundMessage, error) {
 	rows, err := r.pool.Query(ctx,
-		`SELECT id, prospect_id, sequence_id, step_order, body, status, scheduled_at, sent_at, created_at
+		`SELECT id, prospect_id, sequence_id, step_order, channel, body, status, scheduled_at, sent_at, created_at
 		 FROM outbound_messages
 		 WHERE status = 'approved' AND scheduled_at <= NOW()`)
 	if err != nil {
@@ -220,7 +222,7 @@ func (r *Repository) GetPendingSends(ctx context.Context) ([]OutboundMessage, er
 	var msgs []OutboundMessage
 	for rows.Next() {
 		var m OutboundMessage
-		if err := rows.Scan(&m.ID, &m.ProspectID, &m.SequenceID, &m.StepOrder, &m.Body, &m.Status, &m.ScheduledAt, &m.SentAt, &m.CreatedAt); err != nil {
+		if err := rows.Scan(&m.ID, &m.ProspectID, &m.SequenceID, &m.StepOrder, &m.Channel, &m.Body, &m.Status, &m.ScheduledAt, &m.SentAt, &m.CreatedAt); err != nil {
 			return nil, fmt.Errorf("scan pending send: %w", err)
 		}
 		msgs = append(msgs, m)
