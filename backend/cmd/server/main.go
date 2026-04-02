@@ -6,8 +6,13 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
+
+	"github.com/golang-migrate/migrate/v4"
+	_ "github.com/golang-migrate/migrate/v4/database/pgx/v5"
+	_ "github.com/golang-migrate/migrate/v4/source/file"
 
 	"github.com/daniil/floq/internal/ai"
 	"github.com/daniil/floq/internal/ai/providers"
@@ -36,6 +41,29 @@ func main() {
 		log.Fatalf("connect to db: %v", err)
 	}
 	defer pool.Close()
+
+	// 1b. Run migrations
+	migrationsPath := os.Getenv("MIGRATIONS_PATH")
+	if migrationsPath == "" {
+		migrationsPath = "file://migrations"
+	}
+	// golang-migrate pgx/v5 driver uses "pgx5://" scheme
+	migrateDBURL := strings.Replace(cfg.DatabaseURL, "postgres://", "pgx5://", 1)
+	for attempt := 1; attempt <= 5; attempt++ {
+		m, err := migrate.New(migrationsPath, migrateDBURL)
+		if err != nil {
+			log.Printf("migrations init (attempt %d/5): %v", attempt, err)
+			time.Sleep(2 * time.Second)
+			continue
+		}
+		if err := m.Up(); err != nil && err != migrate.ErrNoChange {
+			m.Close()
+			log.Fatalf("migrations: %v", err)
+		}
+		log.Println("migrations applied")
+		m.Close()
+		break
+	}
 
 	// 2. AI provider
 	var aiProvider ai.Provider

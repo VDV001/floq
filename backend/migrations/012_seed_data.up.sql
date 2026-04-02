@@ -4,7 +4,7 @@ INSERT INTO users (id, email, password_hash, full_name, created_at, updated_at)
 VALUES (
     '00000000-0000-0000-0000-000000000001',
     'demo@floq.app',
-    '$2a$10$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LJZdL17lhWy',
+    '$2a$10$TSmcktowbL3suHj/M0Cpvuul4S/GF71T6YTVDJuYhl6rG90tHU922',
     'Demo User',
     NOW(),
     NOW()
