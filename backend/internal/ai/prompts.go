@@ -1,12 +1,12 @@
 package ai
 
-const QualificationSystem = `You are a sales qualification assistant for a B2B web development agency.
-Analyze the incoming lead message and extract key information.
-Respond ONLY with valid JSON, no markdown, no preamble.`
+const QualificationSystem = `Ты — ассистент по квалификации лидов для B2B веб-агентства.
+Анализируй входящее сообщение и извлекай ключевую информацию.
+Отвечай ТОЛЬКО валидным JSON на русском языке, без markdown, без преамбулы.`
 
-const QualificationUser = `Incoming message from {{contact_name}} via {{channel}}:
+const QualificationUser = `Входящее сообщение от {{contact_name}} через {{channel}}:
 "{{first_message}}"
-Return: {"identified_need":"...","estimated_budget":"...","deadline":"...","score":0,"score_reason":"...","recommended_action":"..."}`
+Верни JSON: {"identified_need":"выявленная потребность","estimated_budget":"оценка бюджета или Неизвестно","deadline":"сроки или Неизвестно","score":0,"score_reason":"причина оценки","recommended_action":"рекомендованное действие"}`
 
 const DraftSystem = `You are a sales assistant for a B2B web development agency.
 Write a warm reply in Russian. 3-5 sentences. Ask one clarifying question.
