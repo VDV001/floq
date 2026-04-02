@@ -22,8 +22,56 @@ func NewHandler(pool *pgxpool.Pool, jwtSecret string) *Handler {
 }
 
 func RegisterRoutes(r chi.Router, h *Handler) {
+	r.Post("/api/auth/register", h.Register)
 	r.Post("/api/auth/login", h.Login)
 	r.Post("/api/auth/refresh", h.Refresh)
+}
+
+type registerRequest struct {
+	Email    string `json:"email"`
+	Password string `json:"password"`
+	FullName string `json:"full_name"`
+}
+
+func (h *Handler) Register(w http.ResponseWriter, r *http.Request) {
+	var req registerRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if req.Email == "" || req.Password == "" || req.FullName == "" {
+		writeError(w, http.StatusBadRequest, "email, password and full_name are required")
+		return
+	}
+	if len(req.Password) < 6 {
+		writeError(w, http.StatusBadRequest, "password must be at least 6 characters")
+		return
+	}
+
+	hash, err := bcrypt.GenerateFromPassword([]byte(req.Password), 10)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to hash password")
+		return
+	}
+
+	userID := uuid.New()
+	now := time.Now().UTC()
+	_, err = h.pool.Exec(r.Context(),
+		`INSERT INTO users (id, email, password_hash, full_name, created_at, updated_at)
+		 VALUES ($1, $2, $3, $4, $5, $6)`,
+		userID, req.Email, string(hash), req.FullName, now, now)
+	if err != nil {
+		writeError(w, http.StatusConflict, "user with this email already exists")
+		return
+	}
+
+	token, refreshToken, err := h.generateTokenPair(userID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to generate tokens")
+		return
+	}
+
+	writeJSON(w, http.StatusCreated, tokenResponse{Token: token, RefreshToken: refreshToken})
 }
 
 type loginRequest struct {
