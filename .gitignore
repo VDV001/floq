@@ -27,5 +27,8 @@ frontend/.next/
 .DS_Store
 Thumbs.db
 
+# Docs (local plans, pitches)
+docs/
+
 # Docker
 docker-compose.override.yml
