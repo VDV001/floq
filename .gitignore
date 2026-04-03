@@ -1,13 +1,21 @@
 # Env
 .env
 
-# Go
+# Go binary
+backend/server
 backend/tmp/
 backend/vendor/
 
 # Node
 frontend/node_modules/
 frontend/.next/
+
+# Playwright MCP logs/snapshots
+.playwright-mcp/
+
+# Screenshots from testing
+*.png
+*.jpg
 
 # IDE
 .idea/
@@ -17,3 +25,7 @@ frontend/.next/
 
 # OS
 .DS_Store
+Thumbs.db
+
+# Docker
+docker-compose.override.yml
