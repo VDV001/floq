@@ -123,6 +123,11 @@ func (t *TelegramBot) handleMessage(ctx context.Context, msg *tgbotapi.Message) 
 		log.Printf("telegram inbox: new lead created for chat %d (%s)", chatID, contactName)
 	} else {
 		lead = existing
+		// Update first_message if current one is trivial (/start, привет, etc.)
+		if len(lead.FirstMessage) < 20 && len(text) > 20 {
+			t.repo.UpdateFirstMessage(ctx, lead.ID, text)
+			lead.FirstMessage = text
+		}
 	}
 
 	// Create inbound message.

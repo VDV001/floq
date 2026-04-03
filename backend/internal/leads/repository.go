@@ -106,6 +106,16 @@ func (r *Repository) CreateLead(ctx context.Context, lead *Lead) error {
 	return nil
 }
 
+func (r *Repository) UpdateFirstMessage(ctx context.Context, id uuid.UUID, message string) error {
+	_, err := r.pool.Exec(ctx,
+		`UPDATE leads SET first_message = $1, updated_at = $2 WHERE id = $3`,
+		message, time.Now().UTC(), id)
+	if err != nil {
+		return fmt.Errorf("update first message: %w", err)
+	}
+	return nil
+}
+
 func (r *Repository) UpdateLeadStatus(ctx context.Context, id uuid.UUID, status string) error {
 	_, err := r.pool.Exec(ctx,
 		`UPDATE leads SET status = $1, updated_at = $2 WHERE id = $3`,

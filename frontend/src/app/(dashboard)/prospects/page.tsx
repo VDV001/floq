@@ -209,14 +209,37 @@ export default function ProspectsPage() {
               <ShieldCheck className="size-5" />
               Проверить базу
             </button>
-            <button className="flex items-center gap-2 rounded-lg border border-[#c3c6d7]/30 bg-[#c3c6d7]/10 px-5 py-2.5 font-semibold text-[#0d1c2e] transition-all hover:bg-[#c3c6d7]/20">
+            <label className="flex cursor-pointer items-center gap-2 rounded-lg border border-[#c3c6d7]/30 bg-[#c3c6d7]/10 px-5 py-2.5 font-semibold text-[#0d1c2e] transition-all hover:bg-[#c3c6d7]/20">
               <Upload className="size-5" />
               Импорт CSV
-            </button>
-            <button className="flex items-center gap-2 rounded-lg bg-gradient-to-br from-[#004ac6] to-[#2563eb] px-5 py-2.5 font-semibold text-white shadow-lg shadow-[#004ac6]/20 transition-all hover:scale-[0.98]">
-              <UserPlus className="size-5" />
-              Добавить контакт
-            </button>
+              <input
+                type="file"
+                accept=".csv"
+                className="hidden"
+                onChange={async (e) => {
+                  const file = e.target.files?.[0];
+                  if (!file) return;
+                  const formData = new FormData();
+                  formData.append("file", file);
+                  try {
+                    const token = localStorage.getItem("token");
+                    const res = await fetch("http://localhost:8080/api/prospects/import", {
+                      method: "POST",
+                      headers: { Authorization: `Bearer ${token}` },
+                      body: formData,
+                    });
+                    if (res.ok) {
+                      const data = await res.json();
+                      alert(`Импортировано ${data.imported} проспектов`);
+                      await fetchProspects();
+                    } else {
+                      alert("Ошибка импорта CSV");
+                    }
+                  } catch { alert("Ошибка импорта"); }
+                  e.target.value = "";
+                }}
+              />
+            </label>
           </div>
         </div>
 
@@ -357,7 +380,7 @@ export default function ProspectsPage() {
           {/* Right sidebar (3 cols) */}
           <div className="col-span-12 space-y-6 lg:col-span-3">
             {/* New contact form */}
-            <div className="rounded-xl border border-[#c3c6d7]/10 bg-white p-6 shadow-sm">
+            <div id="add-form" className="rounded-xl border border-[#c3c6d7]/10 bg-white p-6 shadow-sm">
               <h3 className="mb-6 text-xl font-bold text-[#0d1c2e]">
                 Новый контакт
               </h3>
