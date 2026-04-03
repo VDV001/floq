@@ -91,6 +91,7 @@ const VERIFY_STYLES: Record<
 
 export default function ProspectsPage() {
   const [prospects, setProspects] = useState<UIProspect[]>([]);
+  const [searchQuery, setSearchQuery] = useState("");
   const [loading, setLoading] = useState(false);
   const [formName, setFormName] = useState("");
   const [formCompany, setFormCompany] = useState("");
@@ -145,6 +146,18 @@ export default function ProspectsPage() {
     }
   };
 
+  const filteredProspects = searchQuery
+    ? prospects.filter((p) => {
+        const q = searchQuery.toLowerCase();
+        return (
+          p.name.toLowerCase().includes(q) ||
+          p.company.toLowerCase().includes(q) ||
+          p.email.toLowerCase().includes(q) ||
+          p.position.toLowerCase().includes(q)
+        );
+      })
+    : prospects;
+
   const handleScrape = async () => {
     setScrapeLoading(true);
     setScrapeError("");
@@ -169,6 +182,8 @@ export default function ProspectsPage() {
           <input
             type="text"
             placeholder="Поиск проспектов..."
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
             className="w-full rounded-full border-none bg-[#eff4ff] py-2 pl-10 pr-4 text-sm placeholder-slate-400 outline-none transition-all focus:ring-2 focus:ring-[#004ac6]/20"
           />
         </div>
@@ -183,7 +198,7 @@ export default function ProspectsPage() {
               Проспекты
             </h2>
             <p className="font-medium text-[#434655]">
-              {prospects.length} контактов для холодного аутрича
+              {prospects.length} контактов{searchQuery ? `, найдено ${filteredProspects.length}` : ""}
             </p>
           </div>
           <div className="flex items-center gap-3">
@@ -252,9 +267,9 @@ export default function ProspectsPage() {
                       </td>
                     </tr>
                   )}
-                  {prospects.map((p) => (
+                  {filteredProspects.map((p, idx) => (
                     <tr
-                      key={p.email}
+                      key={`${p.email || idx}-${idx}`}
                       className="transition-colors hover:bg-[#eff4ff]/30"
                     >
                       <td className="px-6 py-4">
@@ -320,7 +335,7 @@ export default function ProspectsPage() {
             {/* Pagination */}
             <div className="flex items-center justify-between border-t border-[#c3c6d7]/10 bg-[#eff4ff]/30 px-6 py-4">
               <p className="text-xs font-medium text-[#434655]">
-                Показано {prospects.length} проспектов
+                Показано {filteredProspects.length} из {prospects.length} проспектов
               </p>
               <div className="flex gap-2">
                 <button className="flex size-8 items-center justify-center rounded border border-[#c3c6d7]/30 bg-white text-slate-400 shadow-sm transition-all hover:text-[#004ac6]">
