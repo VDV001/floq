@@ -3,6 +3,7 @@ package inbox
 import (
 	"context"
 	"log"
+	"strings"
 	"time"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
@@ -12,6 +13,26 @@ import (
 	"github.com/daniil/floq/internal/ai"
 	"github.com/daniil/floq/internal/leads"
 )
+
+// detectCallAgreement checks if the message indicates the person agrees to a call/meeting.
+func detectCallAgreement(text string) bool {
+	lower := strings.ToLower(text)
+	markers := []string{
+		"давайте созвон", "давай созвон", "готов созвон", "согласен на созвон",
+		"можно созвон", "давайте звонок", "давай звонок", "готов к звонку",
+		"давайте встреч", "давай встреч", "согласен на встреч", "готов встретить",
+		"можем созвон", "можем встретить", "давайте обсудим", "готов обсудить",
+		"да, давайте", "да давайте", "конечно, давайте", "с удовольствием",
+		"когда удобно", "выберу время", "забронир", "запишусь",
+		"да, можно", "да можно", "ок, давай", "ок давай",
+	}
+	for _, m := range markers {
+		if strings.Contains(lower, m) {
+			return true
+		}
+	}
+	return false
+}
 
 // TelegramBot listens for incoming Telegram messages and creates leads.
 type TelegramBot struct {
@@ -115,6 +136,26 @@ func (t *TelegramBot) handleMessage(ctx context.Context, msg *tgbotapi.Message) 
 	if err := t.repo.CreateMessage(ctx, message); err != nil {
 		log.Printf("telegram inbox: error creating message: %v", err)
 		return
+	}
+
+	// Auto-reply with booking link if lead agrees to a call
+	if detectCallAgreement(text) {
+		bookingMsg := "Отлично! Вот ссылка для выбора удобного времени для звонка: https://calendar.app.google/CQciFBayHqi6CstB7\n\nВыберите слот и я получу уведомление. До связи!"
+		tgReply := tgbotapi.NewMessage(chatID, bookingMsg)
+		if _, err := t.bot.Send(tgReply); err != nil {
+			log.Printf("telegram inbox: error sending booking link: %v", err)
+		} else {
+			// Save as outbound message
+			outMsg := &leads.Message{
+				ID:        uuid.New(),
+				LeadID:    lead.ID,
+				Direction: "outbound",
+				Body:      bookingMsg,
+				SentAt:    time.Now().UTC(),
+			}
+			t.repo.CreateMessage(ctx, outMsg)
+			log.Printf("telegram inbox: sent booking link to chat %d", chatID)
+		}
 	}
 
 	// Trigger async qualification on every inbound message (re-qualifies with latest context).
