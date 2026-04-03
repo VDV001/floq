@@ -31,6 +31,11 @@ func NewTelegramBot(token string, pool *pgxpool.Pool, repo *leads.Repository, ai
 	return &TelegramBot{bot: bot, pool: pool, repo: repo, aiClient: aiClient, ownerID: ownerID}, nil
 }
 
+// Bot returns the underlying BotAPI for sharing with other modules.
+func (t *TelegramBot) Bot() *tgbotapi.BotAPI {
+	return t.bot
+}
+
 // Start begins listening for Telegram updates and processing them.
 // It blocks until ctx is cancelled.
 func (t *TelegramBot) Start(ctx context.Context) {

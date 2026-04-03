@@ -8,15 +8,22 @@ import (
 
 	"github.com/daniil/floq/internal/ai"
 	"github.com/google/uuid"
+	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
 
 type UseCase struct {
 	repo *Repository
 	ai   *ai.AIClient
+	bot  *tgbotapi.BotAPI // can be nil
 }
 
 func NewUseCase(repo *Repository, aiClient *ai.AIClient) *UseCase {
 	return &UseCase{repo: repo, ai: aiClient}
+}
+
+// SetBot sets the Telegram bot for sending outbound messages.
+func (uc *UseCase) SetBot(bot *tgbotapi.BotAPI) {
+	uc.bot = bot
 }
 
 func (uc *UseCase) ListLeads(ctx context.Context, userID uuid.UUID) ([]Lead, error) {
@@ -36,6 +43,21 @@ func (uc *UseCase) GetMessages(ctx context.Context, leadID uuid.UUID) ([]Message
 }
 
 func (uc *UseCase) SendMessage(ctx context.Context, leadID uuid.UUID, body string) (*Message, error) {
+	// Get lead to find the channel and chat ID
+	lead, err := uc.repo.GetLead(ctx, leadID)
+	if err != nil {
+		return nil, fmt.Errorf("get lead: %w", err)
+	}
+
+	// Send via Telegram if applicable
+	if lead.Channel == "telegram" && lead.TelegramChatID != nil && uc.bot != nil {
+		tgMsg := tgbotapi.NewMessage(*lead.TelegramChatID, body)
+		if _, err := uc.bot.Send(tgMsg); err != nil {
+			return nil, fmt.Errorf("send telegram message: %w", err)
+		}
+	}
+
+	// Save to DB
 	msg := &Message{
 		ID:        uuid.New(),
 		LeadID:    leadID,

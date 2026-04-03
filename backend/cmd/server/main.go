@@ -136,6 +136,8 @@ func main() {
 				log.Printf("telegram bot init failed: %v", err)
 			} else {
 				go tgBot.Start(ctx)
+				// Share bot with leads usecase for outbound messages
+				leadsUC.SetBot(tgBot.Bot())
 			}
 		}
 	}
