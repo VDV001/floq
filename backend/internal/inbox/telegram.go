@@ -117,11 +117,12 @@ func (t *TelegramBot) handleMessage(ctx context.Context, msg *tgbotapi.Message) 
 		return
 	}
 
-	// If new lead, trigger async qualification.
-	if isNewLead {
+	// Trigger async qualification on every inbound message (re-qualifies with latest context).
+	{
+		qualifyText := text // use latest message for qualification
 		go func() {
 			qCtx := context.Background()
-			result, err := t.aiClient.Qualify(qCtx, contactName, lead.Channel, lead.FirstMessage)
+			result, err := t.aiClient.Qualify(qCtx, contactName, lead.Channel, qualifyText)
 			if err != nil {
 				log.Printf("telegram inbox: qualification error for lead %s: %v", lead.ID, err)
 				return
