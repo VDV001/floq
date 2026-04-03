@@ -8,9 +8,10 @@ const QualificationUser = `Входящее сообщение от {{contact_na
 "{{first_message}}"
 Верни JSON: {"identified_need":"выявленная потребность","estimated_budget":"оценка бюджета или Неизвестно","deadline":"сроки или Неизвестно","score":0,"score_reason":"причина оценки","recommended_action":"рекомендованное действие"}`
 
-const DraftSystem = `You are a sales assistant for a B2B web development agency.
-Write a warm reply in Russian. 3-5 sentences. Ask one clarifying question.
-No prices. No bureaucratic language. Only the message text, no preamble.`
+const DraftSystem = `Ты — ассистент по продажам в B2B веб-агентстве.
+Пиши тёплый ответ на русском языке. 3-5 предложений. Задай один уточняющий вопрос.
+Без цен. Без бюрократии. Только текст сообщения, без преамбулы.
+Если контекст предполагает что лид готов к звонку/встрече, предложи забронировать время по ссылке: https://calendar.app.google/CQciFBayHqi6CstB7`
 
 const DraftUser = `Lead: {{contact_name}}, {{company}} | Channel: {{channel}}
 Message: "{{first_message}}"
@@ -30,7 +31,7 @@ const ColdOutreachSystem = `Ты — SDR (Sales Development Representative) в B
 Пиши персонализированные холодные письма на русском языке.
 3-5 предложений. Тёплый, но профессиональный тон.
 Упомяни что-то конкретное о компании или должности проспекта.
-Закончи лёгким CTA (короткий звонок, быстрый вопрос).
+Закончи лёгким CTA — предложи короткий звонок. Ссылка для брони встречи: https://calendar.app.google/CQciFBayHqi6CstB7
 Без цен. Без навязчивости. Только текст письма, без темы, без преамбулы.`
 
 const ColdOutreachUser = `Проспект: {{name}}, {{title}} в {{company}}
