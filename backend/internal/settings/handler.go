@@ -1,11 +1,15 @@
 package settings
 
 import (
+	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
+	"strings"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
@@ -49,6 +53,7 @@ func RegisterRoutes(r chi.Router, pool *pgxpool.Pool) {
 	h := &Handler{pool: pool}
 	r.Get("/api/settings", h.getSettings())
 	r.Put("/api/settings", h.updateSettings())
+	r.Post("/api/settings/test-imap", h.testIMAP())
 }
 
 func getUserID(r *http.Request) uuid.UUID {
@@ -319,4 +324,99 @@ func validateTelegramToken(token string) error {
 		return fmt.Errorf("Telegram API returned ok=false")
 	}
 	return nil
+}
+
+func (h *Handler) testIMAP() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		userID := getUserID(r)
+		if userID == uuid.Nil {
+			writeError(w, http.StatusUnauthorized, "unauthorized")
+			return
+		}
+
+		var body struct {
+			Host      string `json:"host"`
+			Port      string `json:"port"`
+			User      string `json:"user"`
+			Password  string `json:"password"`
+			UseStored bool   `json:"use_stored"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid JSON")
+			return
+		}
+
+		// If use_stored, read password from DB
+		if body.UseStored || body.Password == "" {
+			ctx := r.Context()
+			var storedPwd string
+			err := h.pool.QueryRow(ctx,
+				`SELECT imap_password FROM user_settings WHERE user_id = $1`, userID,
+			).Scan(&storedPwd)
+			if err == nil && storedPwd != "" {
+				body.Password = storedPwd
+			}
+		}
+
+		if body.Host == "" || body.Port == "" || body.User == "" || body.Password == "" {
+			writeJSON(w, http.StatusOK, map[string]any{"success": false, "error": "Заполните все поля IMAP"})
+			return
+		}
+
+		// Try TLS connection to IMAP server
+		addr := net.JoinHostPort(body.Host, body.Port)
+		conn, err := tls.DialWithDialer(
+			&net.Dialer{Timeout: 10 * time.Second},
+			"tcp", addr,
+			&tls.Config{ServerName: body.Host},
+		)
+		if err != nil {
+			writeJSON(w, http.StatusOK, map[string]any{"success": false, "error": fmt.Sprintf("Не удалось подключиться: %v", err)})
+			return
+		}
+		defer conn.Close()
+
+		// Read server greeting
+		buf := make([]byte, 1024)
+		_ = conn.SetReadDeadline(time.Now().Add(5 * time.Second))
+		n, err := conn.Read(buf)
+		if err != nil {
+			writeJSON(w, http.StatusOK, map[string]any{"success": false, "error": "Сервер не отвечает"})
+			return
+		}
+		greeting := string(buf[:n])
+
+		// Send LOGIN command with quoted strings
+		loginCmd := fmt.Sprintf("A1 LOGIN \"%s\" \"%s\"\r\n", body.User, body.Password)
+		_, err = conn.Write([]byte(loginCmd))
+		if err != nil {
+			writeJSON(w, http.StatusOK, map[string]any{"success": false, "error": "Ошибка отправки команды"})
+			return
+		}
+
+		// Read response (may be multiple lines)
+		var response string
+		for i := 0; i < 5; i++ {
+			_ = conn.SetReadDeadline(time.Now().Add(10 * time.Second))
+			n, err = conn.Read(buf)
+			if err != nil {
+				break
+			}
+			response += string(buf[:n])
+			if strings.Contains(response, "A1 OK") || strings.Contains(response, "A1 NO") || strings.Contains(response, "A1 BAD") {
+				break
+			}
+		}
+
+		// Send LOGOUT
+		_, _ = conn.Write([]byte("A2 LOGOUT\r\n"))
+
+		_ = greeting // used for connection check
+
+		if strings.Contains(response, "A1 OK") {
+			writeJSON(w, http.StatusOK, map[string]any{"success": true, "message": "Подключение успешно!"})
+		} else {
+			writeJSON(w, http.StatusOK, map[string]any{"success": false, "error": "Неверный логин или пароль"})
+		}
+	}
 }

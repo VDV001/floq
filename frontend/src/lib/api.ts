@@ -170,6 +170,11 @@ export const api = {
       method: "PUT",
       body: JSON.stringify(data),
     }),
+  testIMAP: (host: string, port: string, user: string, password: string, useStored?: boolean) =>
+    apiFetch<{ success: boolean; message?: string; error?: string }>("/api/settings/test-imap", {
+      method: "POST",
+      body: JSON.stringify({ host, port, user, password, use_stored: useStored || false }),
+    }),
 };
 
 // Types

@@ -9,18 +9,26 @@ import (
 
 	"github.com/daniil/floq/internal/prospects"
 	"github.com/daniil/floq/internal/sequences"
+	"github.com/daniil/floq/internal/settings"
+	"github.com/google/uuid"
 )
 
 type Sender struct {
-	resendClient *resend.Client
+	store        *settings.Store
+	ownerID      uuid.UUID
+	fallbackKey  string
 	fromAddress  string
 	seqRepo      *sequences.Repository
 	prospectRepo *prospects.Repository
 }
 
-func NewSender(apiKey, fromAddress string, seqRepo *sequences.Repository, prospectRepo *prospects.Repository) *Sender {
+// NewSender creates a sender that reads the Resend API key from user_settings (DB),
+// falling back to the provided fallbackKey (from .env) if the DB value is empty.
+func NewSender(store *settings.Store, ownerID uuid.UUID, fallbackKey, fromAddress string, seqRepo *sequences.Repository, prospectRepo *prospects.Repository) *Sender {
 	return &Sender{
-		resendClient: resend.NewClient(apiKey),
+		store:        store,
+		ownerID:      ownerID,
+		fallbackKey:  fallbackKey,
 		fromAddress:  fromAddress,
 		seqRepo:      seqRepo,
 		prospectRepo: prospectRepo,
@@ -29,10 +37,21 @@ func NewSender(apiKey, fromAddress string, seqRepo *sequences.Repository, prospe
 
 // SendPending finds all approved email messages ready to send and sends them via Resend.
 func (s *Sender) SendPending(ctx context.Context) error {
+	// Resolve Resend API key: DB first, then .env fallback
+	apiKey := s.fallbackKey
+	if cfg, err := s.store.GetConfig(ctx, s.ownerID); err == nil && cfg.ResendAPIKey != "" {
+		apiKey = cfg.ResendAPIKey
+	}
+	if apiKey == "" {
+		return nil // no API key configured — skip silently
+	}
+
 	msgs, err := s.seqRepo.GetPendingSends(ctx)
 	if err != nil {
 		return fmt.Errorf("get pending sends: %w", err)
 	}
+
+	client := resend.NewClient(apiKey)
 
 	for _, msg := range msgs {
 		if msg.Channel != "email" {
@@ -55,7 +74,7 @@ func (s *Sender) SendPending(ctx context.Context) error {
 			Html:    "<html><body>" + msg.Body + "</body></html>",
 		}
 
-		_, err = s.resendClient.Emails.Send(params)
+		_, err = client.Emails.Send(params)
 		if err != nil {
 			log.Printf("[outbound] failed to send email to %s (msg %s): %v", prospect.Email, msg.ID, err)
 			continue

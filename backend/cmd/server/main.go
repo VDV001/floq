@@ -69,18 +69,16 @@ func main() {
 		break
 	}
 
-	// 2. AI provider
-	var aiProvider ai.Provider
-	switch cfg.AIProvider {
-	case "claude":
-		aiProvider = providers.NewClaudeProvider(cfg.AnthropicAPIKey)
-	case "openai":
-		aiProvider = providers.NewOpenAIProvider(cfg.OpenAIAPIKey, cfg.OpenAIModel)
-	case "ollama":
-		aiProvider = providers.NewOllamaProvider(cfg.OllamaBaseURL, cfg.OllamaModel)
-	default:
-		log.Fatalf("unknown AI_PROVIDER: %s", cfg.AIProvider)
+	// 2. Settings store (reads user_settings from DB, used by services)
+	settingsStore := settings.NewStore(pool)
+
+	ownerID, err := uuid.Parse(cfg.OwnerUserID)
+	if err != nil {
+		log.Fatalf("invalid OWNER_USER_ID: %v", err)
 	}
+
+	// 2b. AI provider (dynamic: reads provider/model/key from DB, falls back to .env)
+	aiProvider := providers.NewDynamicProvider(settingsStore, ownerID, cfg)
 	aiClient := ai.NewAIClient(aiProvider)
 
 	// 3. Repositories
@@ -127,39 +125,38 @@ func main() {
 	defer stop()
 
 	// 7. Outbound email sender (cron every 30 seconds)
-	if cfg.ResendAPIKey != "" {
-		emailSender := outbound.NewSender(cfg.ResendAPIKey, cfg.SMTPFrom, sequencesRepo, prospectsRepo)
-		go func() {
-			ticker := time.NewTicker(30 * time.Second)
-			defer ticker.Stop()
-			for {
-				select {
-				case <-ticker.C:
-					if err := emailSender.SendPending(context.Background()); err != nil {
-						log.Printf("outbound sender: %v", err)
-					}
-				case <-ctx.Done():
-					return
+	// Always starts — reads Resend API key from DB each tick (falls back to .env)
+	emailSender := outbound.NewSender(settingsStore, ownerID, cfg.ResendAPIKey, cfg.SMTPFrom, sequencesRepo, prospectsRepo)
+	go func() {
+		ticker := time.NewTicker(30 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				if err := emailSender.SendPending(context.Background()); err != nil {
+					log.Printf("outbound sender: %v", err)
 				}
+			case <-ctx.Done():
+				return
 			}
-		}()
-		log.Println("outbound email sender started (every 30s)")
-	}
+		}
+	}()
+	log.Println("outbound email sender started (every 30s)")
 
 	// 8. Optional: Telegram inbox bot
-	if cfg.TelegramBotToken != "" {
-		ownerID, err := uuid.Parse(cfg.OwnerUserID)
+	// Read token from DB first, fall back to .env
+	tgToken := cfg.TelegramBotToken
+	if dbCfg, err := settingsStore.GetConfig(context.Background(), ownerID); err == nil && dbCfg.TelegramBotToken != "" {
+		tgToken = dbCfg.TelegramBotToken
+	}
+	if tgToken != "" {
+		tgBot, err := inbox.NewTelegramBot(tgToken, pool, leadsRepo, aiClient, ownerID)
 		if err != nil {
-			log.Printf("invalid OWNER_USER_ID: %v, skipping telegram bot", err)
+			log.Printf("telegram bot init failed: %v", err)
 		} else {
-			tgBot, err := inbox.NewTelegramBot(cfg.TelegramBotToken, pool, leadsRepo, aiClient, ownerID)
-			if err != nil {
-				log.Printf("telegram bot init failed: %v", err)
-			} else {
-				go tgBot.Start(ctx)
-				// Share bot with leads usecase for outbound messages
-				leadsUC.SetBot(tgBot.Bot())
-			}
+			go tgBot.Start(ctx)
+			// Share bot with leads usecase for outbound messages
+			leadsUC.SetBot(tgBot.Bot())
 		}
 	}
 

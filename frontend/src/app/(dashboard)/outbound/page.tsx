@@ -81,6 +81,10 @@ export default function OutboundPage() {
   const [autopilot, setAutopilot] = useState(false);
   const [messages, setMessages] = useState<UIMessage[]>([]);
   const [loading, setLoading] = useState(true);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editText, setEditText] = useState("");
+  const [search, setSearch] = useState("");
+  const [stats, setStats] = useState({ draft: 0, approved: 0, sent: 0 });
 
   useEffect(() => {
     setLoading(true);
@@ -91,12 +95,18 @@ export default function OutboundPage() {
       })
       .catch(() => {})
       .finally(() => setLoading(false));
+    api.getOutboundStats().then(setStats).catch(() => {});
   }, []);
+
+  const refreshStats = () => {
+    api.getOutboundStats().then(setStats).catch(() => {});
+  };
 
   const handleApprove = async (id: string) => {
     try {
       await api.approveMessage(id);
       setMessages((prev) => prev.filter((m) => m.id !== id));
+      refreshStats();
     } catch {
       // silently ignore for now
     }
@@ -106,10 +116,41 @@ export default function OutboundPage() {
     try {
       await api.rejectMessage(id);
       setMessages((prev) => prev.filter((m) => m.id !== id));
+      refreshStats();
     } catch {
       // silently ignore for now
     }
   };
+
+  const handleEdit = (msg: UIMessage) => {
+    setEditingId(msg.id);
+    setEditText(msg.body);
+  };
+
+  const handleSaveEdit = async (id: string) => {
+    try {
+      await api.editMessage(id, editText);
+      setMessages((prev) =>
+        prev.map((m) => (m.id === id ? { ...m, body: editText } : m))
+      );
+      setEditingId(null);
+    } catch {
+      // silently ignore for now
+    }
+  };
+
+  const handleCancelEdit = () => {
+    setEditingId(null);
+    setEditText("");
+  };
+
+  const filtered = search.trim()
+    ? messages.filter(
+        (m) =>
+          m.name.toLowerCase().includes(search.toLowerCase()) ||
+          m.body.toLowerCase().includes(search.toLowerCase())
+      )
+    : messages;
 
   return (
     <div className="min-h-full">
@@ -120,6 +161,8 @@ export default function OutboundPage() {
           <input
             type="text"
             placeholder="Поиск по очереди..."
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
             className="w-full rounded-full border-none bg-[#eff4ff] py-2 pl-10 pr-4 text-sm placeholder-slate-400 outline-none transition-all focus:ring-2 focus:ring-[#004ac6]/20"
           />
         </div>
@@ -135,7 +178,7 @@ export default function OutboundPage() {
             </h2>
             <div className="flex items-center gap-3">
               <span className="rounded-full bg-[#dbe1ff] px-3 py-1 text-xs font-bold text-[#003ea8]">
-                {messages.length} сообщений ожидают
+                {filtered.length} сообщений ожидают
               </span>
               <p className="text-sm font-medium text-[#434655]">
                 Контроль качества AI-сообщений перед отправкой
@@ -147,23 +190,23 @@ export default function OutboundPage() {
           <div className="flex flex-wrap items-center gap-8 rounded-2xl border border-[#c3c6d7]/10 bg-white p-6 shadow-sm">
             <div className="flex flex-col">
               <span className="mb-1 text-[10px] font-bold uppercase tracking-widest text-[#737686]">
-                Отправлено сегодня
+                Отправлено
               </span>
-              <span className="text-2xl font-black text-[#0d1c2e]">12</span>
+              <span className="text-2xl font-black text-[#0d1c2e]">{stats.sent}</span>
             </div>
             <div className="h-10 w-px bg-[#c3c6d7]/20" />
             <div className="flex flex-col">
               <span className="mb-1 text-[10px] font-bold uppercase tracking-widest text-[#737686]">
-                Ответов
+                Подтверждено
               </span>
-              <span className="text-2xl font-black text-[#0d1c2e]">3</span>
+              <span className="text-2xl font-black text-[#0d1c2e]">{stats.approved}</span>
             </div>
             <div className="h-10 w-px bg-[#c3c6d7]/20" />
             <div className="flex flex-col">
               <span className="mb-1 text-[10px] font-bold uppercase tracking-widest text-[#737686]">
-                Конверсия
+                В очереди
               </span>
-              <span className="text-2xl font-black text-[#004ac6]">25%</span>
+              <span className="text-2xl font-black text-[#004ac6]">{stats.draft}</span>
             </div>
           </div>
         </div>
@@ -191,7 +234,7 @@ export default function OutboundPage() {
 
         {/* Queue list */}
         <div className="space-y-4">
-          {!loading && messages.length === 0 && (
+          {!loading && filtered.length === 0 && (
             <div className="flex flex-col items-center justify-center rounded-2xl bg-white py-16 text-center">
               <Send className="mb-4 size-10 text-[#c3c6d7]" />
               <p className="text-lg font-semibold text-[#434655]">
@@ -202,7 +245,7 @@ export default function OutboundPage() {
               </p>
             </div>
           )}
-          {messages.map((msg) => (
+          {filtered.map((msg) => (
             <div
               key={msg.id}
               className="flex flex-col items-start gap-6 rounded-2xl border border-transparent bg-white p-6 transition-all duration-300 hover:border-[#004ac6]/10 hover:shadow-xl hover:shadow-blue-900/5 lg:flex-row lg:items-center"
@@ -232,9 +275,34 @@ export default function OutboundPage() {
                     Sequence: {msg.sequence}
                   </span>
                 </div>
-                <p className="line-clamp-2 text-sm italic leading-relaxed text-[#434655]">
-                  &ldquo;{msg.body}&rdquo;
-                </p>
+                {editingId === msg.id ? (
+                  <div className="flex flex-col gap-2">
+                    <textarea
+                      value={editText}
+                      onChange={(e) => setEditText(e.target.value)}
+                      rows={4}
+                      className="w-full rounded-xl border border-[#c3c6d7] bg-white p-3 text-sm leading-relaxed text-[#434655] outline-none focus:border-[#004ac6] focus:ring-2 focus:ring-[#004ac6]/20"
+                    />
+                    <div className="flex gap-2">
+                      <button
+                        onClick={() => handleSaveEdit(msg.id)}
+                        className="rounded-lg bg-[#004ac6] px-3 py-1.5 text-xs font-bold text-white hover:opacity-90"
+                      >
+                        Сохранить
+                      </button>
+                      <button
+                        onClick={handleCancelEdit}
+                        className="rounded-lg border border-[#c3c6d7] px-3 py-1.5 text-xs font-bold text-[#434655] hover:bg-[#eff4ff]"
+                      >
+                        Отмена
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <p className="line-clamp-2 text-sm italic leading-relaxed text-[#434655]">
+                    &ldquo;{msg.body}&rdquo;
+                  </p>
+                )}
                 <div className="mt-2 flex items-center gap-2 text-[11px] font-bold uppercase text-[#004ac6]/60">
                   <Clock className="size-3.5" />
                   Запланировано: {msg.scheduledAt}
@@ -250,7 +318,10 @@ export default function OutboundPage() {
                   <Send className="size-3.5" />
                   Подтвердить
                 </button>
-                <button className="flex size-10 items-center justify-center rounded-xl border border-[#c3c6d7] text-[#434655] transition-colors hover:bg-[#eff4ff]">
+                <button
+                  onClick={() => handleEdit(msg)}
+                  className="flex size-10 items-center justify-center rounded-xl border border-[#c3c6d7] text-[#434655] transition-colors hover:bg-[#eff4ff]"
+                >
                   <Pencil className="size-[18px]" />
                 </button>
                 <button

@@ -39,6 +39,8 @@ export default function SettingsPage() {
   const [aiApiKey, setAiApiKey] = useState("");
   const [notifyTg, setNotifyTg] = useState(true);
   const [notifyEmail, setNotifyEmail] = useState(false);
+  const [imapTesting, setImapTesting] = useState(false);
+  const [imapTestResult, setImapTestResult] = useState<{ success: boolean; message?: string; error?: string } | null>(null);
 
   useEffect(() => {
     api
@@ -93,6 +95,28 @@ export default function SettingsPage() {
       alert("Ошибка сохранения настроек");
     } finally {
       setSaving(false);
+    }
+  };
+
+  const handleTestIMAP = async () => {
+    setImapTesting(true);
+    setImapTestResult(null);
+    try {
+      const host = imapHost || settings?.imap_host || "";
+      const port = imapPort || settings?.imap_port || "993";
+      const user = imapUser || settings?.imap_user || "";
+      const password = imapPassword && !imapPassword.startsWith("...") ? imapPassword : "";
+      if (!host || !user) {
+        setImapTestResult({ success: false, error: "Заполните хост и пользователя IMAP" });
+        return;
+      }
+      // If password is masked/empty, send use_stored=true so backend reads from DB
+      const res = await api.testIMAP(host, port, user, password || "", !password);
+      setImapTestResult(res);
+    } catch {
+      setImapTestResult({ success: false, error: "Ошибка запроса" });
+    } finally {
+      setImapTesting(false);
     }
   };
 
@@ -304,10 +328,19 @@ export default function SettingsPage() {
                       />
                     </div>
                   </div>
-                  <button className="mt-6 flex w-full items-center justify-center gap-2 rounded-lg bg-[#eff4ff] py-3 text-sm font-bold text-[#0d1c2e] transition-colors hover:bg-[#dce9ff]">
-                    <Shield className="size-[18px]" />
-                    Тест соединения
+                  <button
+                    onClick={handleTestIMAP}
+                    disabled={imapTesting}
+                    className="mt-6 flex w-full items-center justify-center gap-2 rounded-lg bg-[#eff4ff] py-3 text-sm font-bold text-[#0d1c2e] transition-colors hover:bg-[#dce9ff] disabled:opacity-50"
+                  >
+                    {imapTesting ? <Loader2 className="size-[18px] animate-spin" /> : <Shield className="size-[18px]" />}
+                    {imapTesting ? "Проверяем..." : "Тест соединения"}
                   </button>
+                  {imapTestResult && (
+                    <p className={`mt-2 text-center text-sm font-medium ${imapTestResult.success ? "text-green-600" : "text-red-500"}`}>
+                      {imapTestResult.success ? imapTestResult.message : imapTestResult.error}
+                    </p>
+                  )}
                 </div>
 
                 <hr className="border-[#c3c6d7]/10" />
