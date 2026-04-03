@@ -20,6 +20,7 @@ import (
 	"github.com/daniil/floq/internal/config"
 	"github.com/daniil/floq/internal/inbox"
 	"github.com/daniil/floq/internal/leads"
+	"github.com/daniil/floq/internal/outbound"
 	"github.com/daniil/floq/internal/parser"
 	"github.com/daniil/floq/internal/prospects"
 	"github.com/daniil/floq/internal/sequences"
@@ -122,10 +123,30 @@ func main() {
 		settings.RegisterRoutes(r, pool)
 	})
 
-	// 7. Optional: Telegram inbox bot
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
+	// 7. Outbound email sender (cron every 30 seconds)
+	if cfg.ResendAPIKey != "" {
+		emailSender := outbound.NewSender(cfg.ResendAPIKey, cfg.SMTPFrom, sequencesRepo, prospectsRepo)
+		go func() {
+			ticker := time.NewTicker(30 * time.Second)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-ticker.C:
+					if err := emailSender.SendPending(context.Background()); err != nil {
+						log.Printf("outbound sender: %v", err)
+					}
+				case <-ctx.Done():
+					return
+				}
+			}
+		}()
+		log.Println("outbound email sender started (every 30s)")
+	}
+
+	// 8. Optional: Telegram inbox bot
 	if cfg.TelegramBotToken != "" {
 		ownerID, err := uuid.Parse(cfg.OwnerUserID)
 		if err != nil {
