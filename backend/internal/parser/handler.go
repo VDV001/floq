@@ -8,10 +8,14 @@ import (
 	"github.com/go-chi/chi/v5"
 )
 
-type Handler struct{}
+type Handler struct {
+	twoGIS *TwoGISClient
+}
 
-func RegisterRoutes(r chi.Router) {
-	h := &Handler{}
+func RegisterRoutes(r chi.Router, twoGISAPIKey string) {
+	h := &Handler{
+		twoGIS: NewTwoGISClient(twoGISAPIKey),
+	}
 	r.Post("/api/parser/website", h.scrapeWebsite())
 	r.Post("/api/parser/twogis", h.searchTwoGIS())
 }
@@ -63,7 +67,7 @@ func (h *Handler) searchTwoGIS() http.HandlerFunc {
 			body.City = "Москва"
 		}
 
-		results, err := Search2GIS(r.Context(), body.Query, body.City)
+		results, err := h.twoGIS.Search(r.Context(), body.Query, body.City)
 		if err != nil {
 			httputil.WriteError(w, http.StatusInternalServerError, err.Error())
 			return

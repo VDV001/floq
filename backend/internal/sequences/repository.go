@@ -220,6 +220,18 @@ func (r *Repository) MarkBounced(ctx context.Context, id uuid.UUID) error {
 	return nil
 }
 
+// MarkRepliedByProspect sets replied_at on all sent outbound messages for a prospect.
+// This is an extra method on the concrete type, not part of the domain interface.
+func (r *Repository) MarkRepliedByProspect(ctx context.Context, prospectID uuid.UUID) error {
+	_, err := r.pool.Exec(ctx,
+		`UPDATE outbound_messages SET replied_at = COALESCE(replied_at, NOW()) WHERE prospect_id = $1 AND status = 'sent'`,
+		prospectID)
+	if err != nil {
+		return fmt.Errorf("mark replied by prospect: %w", err)
+	}
+	return nil
+}
+
 func (r *Repository) GetStats(ctx context.Context, userID uuid.UUID) (*domain.Stats, error) {
 	var stats domain.Stats
 	err := r.pool.QueryRow(ctx,

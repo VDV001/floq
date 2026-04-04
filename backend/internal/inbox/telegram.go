@@ -3,7 +3,6 @@ package inbox
 import (
 	"context"
 	"log"
-	"strings"
 	"time"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
@@ -14,26 +13,6 @@ import (
 	"github.com/daniil/floq/internal/leads"
 	"github.com/daniil/floq/internal/leads/domain"
 )
-
-// detectCallAgreement checks if the message indicates the person agrees to a call/meeting.
-func detectCallAgreement(text string) bool {
-	lower := strings.ToLower(text)
-	markers := []string{
-		"давайте созвон", "давай созвон", "готов созвон", "согласен на созвон",
-		"можно созвон", "давайте звонок", "давай звонок", "готов к звонку",
-		"давайте встреч", "давай встреч", "согласен на встреч", "готов встретить",
-		"можем созвон", "можем встретить", "давайте обсудим", "готов обсудить",
-		"да, давайте", "да давайте", "конечно, давайте", "с удовольствием",
-		"когда удобно", "выберу время", "забронир", "запишусь",
-		"да, можно", "да можно", "ок, давай", "ок давай",
-	}
-	for _, m := range markers {
-		if strings.Contains(lower, m) {
-			return true
-		}
-	}
-	return false
-}
 
 // TelegramBot listens for incoming Telegram messages and creates leads.
 type TelegramBot struct {
@@ -145,7 +124,7 @@ func (t *TelegramBot) handleMessage(ctx context.Context, msg *tgbotapi.Message) 
 	}
 
 	// Auto-reply with booking link if lead agrees to a call
-	if detectCallAgreement(text) {
+	if domain.DetectCallAgreement(text) {
 		bookingMsg := "Отлично! Вот ссылка для выбора удобного времени для звонка: https://calendar.app.google/CQciFBayHqi6CstB7\n\nВыберите слот и я получу уведомление. До связи!"
 		tgReply := tgbotapi.NewMessage(chatID, bookingMsg)
 		if _, err := t.bot.Send(tgReply); err != nil {
@@ -168,7 +147,8 @@ func (t *TelegramBot) handleMessage(ctx context.Context, msg *tgbotapi.Message) 
 	{
 		qualifyText := text // use latest message for qualification
 		go func() {
-			qCtx := context.Background()
+			qCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
 			result, err := t.aiClient.Qualify(qCtx, contactName, string(lead.Channel), qualifyText)
 			if err != nil {
 				log.Printf("telegram inbox: qualification error for lead %s: %v", lead.ID, err)

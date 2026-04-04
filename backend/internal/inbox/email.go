@@ -12,21 +12,23 @@ import (
 	"github.com/emersion/go-imap/v2/imapclient"
 	"github.com/emersion/go-message/mail"
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/daniil/floq/internal/ai"
 	"github.com/daniil/floq/internal/leads"
 	"github.com/daniil/floq/internal/leads/domain"
+	"github.com/daniil/floq/internal/prospects"
+	"github.com/daniil/floq/internal/sequences"
 	"github.com/daniil/floq/internal/settings"
 )
 
 // EmailPoller polls an IMAP mailbox for new emails and creates leads.
 type EmailPoller struct {
-	store    *settings.Store
-	pool     *pgxpool.Pool
-	repo     *leads.Repository
-	aiClient *ai.AIClient
-	ownerID  uuid.UUID
+	store        *settings.Store
+	repo         *leads.Repository
+	prospectRepo *prospects.Repository
+	seqRepo      *sequences.Repository
+	aiClient     *ai.AIClient
+	ownerID      uuid.UUID
 
 	fallbackHost     string
 	fallbackPort     string
@@ -34,11 +36,12 @@ type EmailPoller struct {
 	fallbackPassword string
 }
 
-func NewEmailPoller(store *settings.Store, ownerID uuid.UUID, fallbackHost, fallbackPort, fallbackUser, fallbackPassword string, pool *pgxpool.Pool, repo *leads.Repository, aiClient *ai.AIClient) *EmailPoller {
+func NewEmailPoller(store *settings.Store, ownerID uuid.UUID, fallbackHost, fallbackPort, fallbackUser, fallbackPassword string, repo *leads.Repository, prospectRepo *prospects.Repository, seqRepo *sequences.Repository, aiClient *ai.AIClient) *EmailPoller {
 	return &EmailPoller{
 		store:            store,
-		pool:             pool,
 		repo:             repo,
+		prospectRepo:     prospectRepo,
+		seqRepo:          seqRepo,
 		aiClient:         aiClient,
 		ownerID:          ownerID,
 		fallbackHost:     fallbackHost,
@@ -269,22 +272,18 @@ func (e *EmailPoller) processEmail(ctx context.Context, fromName, fromEmail, bod
 	var lead *domain.Lead
 
 	// Check if sender is a known prospect
-	var prospectID uuid.UUID
-	var prospectName, prospectCompany, prospectStatus string
-	prospectErr := e.pool.QueryRow(ctx,
-		`SELECT id, name, company, status FROM prospects WHERE user_id = $1 AND LOWER(email) = LOWER($2) LIMIT 1`,
-		e.ownerID, fromEmail).Scan(&prospectID, &prospectName, &prospectCompany, &prospectStatus)
-	hasProspectMatch := prospectErr == nil && prospectStatus != "converted"
+	prospect, prospectErr := e.prospectRepo.FindByEmail(ctx, e.ownerID, fromEmail)
+	hasProspectMatch := prospectErr == nil && prospect != nil && string(prospect.Status) != "converted"
 
 	if isNewLead {
 		contactName := fromName
 		company := ""
 		if hasProspectMatch {
-			if contactName == fromEmail && prospectName != "" {
-				contactName = prospectName
+			if contactName == fromEmail && prospect.Name != "" {
+				contactName = prospect.Name
 			}
-			if prospectCompany != "" {
-				company = prospectCompany
+			if prospect.Company != "" {
+				company = prospect.Company
 			}
 		}
 
@@ -309,18 +308,13 @@ func (e *EmailPoller) processEmail(ctx context.Context, fromName, fromEmail, bod
 
 		// Auto-convert matched prospect to lead
 		if hasProspectMatch {
-			_, convErr := e.pool.Exec(ctx,
-				`UPDATE prospects SET status = 'converted', converted_lead_id = $2, updated_at = $3 WHERE id = $1`,
-				prospectID, lead.ID, time.Now().UTC())
-			if convErr != nil {
-				log.Printf("[email-poller] error converting prospect %s: %v", prospectID, convErr)
+			if convErr := e.prospectRepo.ConvertToLead(ctx, prospect.ID, lead.ID); convErr != nil {
+				log.Printf("[email-poller] error converting prospect %s: %v", prospect.ID, convErr)
 			} else {
-				log.Printf("[email-poller] prospect %s auto-converted to lead %s", prospectID, lead.ID)
+				log.Printf("[email-poller] prospect %s auto-converted to lead %s", prospect.ID, lead.ID)
 			}
 			// Mark outbound messages as replied
-			_, _ = e.pool.Exec(ctx,
-				`UPDATE outbound_messages SET replied_at = COALESCE(replied_at, NOW()) WHERE prospect_id = $1 AND status = 'sent'`,
-				prospectID)
+			_ = e.seqRepo.MarkRepliedByProspect(ctx, prospect.ID)
 		}
 	} else {
 		lead = existing
@@ -340,7 +334,8 @@ func (e *EmailPoller) processEmail(ctx context.Context, fromName, fromEmail, bod
 
 	if isNewLead {
 		go func() {
-			qCtx := context.Background()
+			qCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
 			result, err := e.aiClient.Qualify(qCtx, fromName, string(lead.Channel), lead.FirstMessage)
 			if err != nil {
 				log.Printf("[email-poller] qualification error for lead %s: %v", lead.ID, err)

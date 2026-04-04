@@ -75,6 +75,8 @@ func main() {
 
 	// 2. Settings store (reads user_settings from DB, used by services)
 	settingsStore := settings.NewStore(pool)
+	settingsRepo := settings.NewRepository(pool)
+	settingsUC := settings.NewUseCase(settingsRepo)
 
 	ownerID, err := uuid.Parse(cfg.OwnerUserID)
 	if err != nil {
@@ -143,8 +145,8 @@ func main() {
 		prospects.RegisterRoutes(r, prospectsUC)
 		sequences.RegisterRoutes(r, sequencesUC)
 		verify.RegisterRoutes(r, prospectsRepo, nil) // TG bot passed as nil for now
-		parser.RegisterRoutes(r)
-		settings.RegisterRoutes(r, pool)
+		parser.RegisterRoutes(r, cfg.TwoGISAPIKey)
+		settings.RegisterRoutes(r, settingsUC)
 	})
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -152,7 +154,7 @@ func main() {
 
 	// 7. Outbound email sender (cron every 30 seconds)
 	// Always starts — reads Resend API key from DB each tick (falls back to .env)
-	emailSender := outbound.NewSender(settingsStore, ownerID, cfg.ResendAPIKey, cfg.SMTPFrom, sequencesRepo, prospectsRepo)
+	emailSender := outbound.NewSender(settingsStore, ownerID, cfg.ResendAPIKey, cfg.SMTPFrom, cfg.AppBaseURL, sequencesRepo, prospectsRepo)
 	go func() {
 		ticker := time.NewTicker(30 * time.Second)
 		defer ticker.Stop()
@@ -187,7 +189,7 @@ func main() {
 	}
 
 	// 9. Email IMAP poller (reads settings from DB, falls back to .env)
-	emailPoller := inbox.NewEmailPoller(settingsStore, ownerID, cfg.IMAPHost, cfg.IMAPPort, cfg.IMAPUser, cfg.IMAPPassword, pool, leadsRepo, aiClient)
+	emailPoller := inbox.NewEmailPoller(settingsStore, ownerID, cfg.IMAPHost, cfg.IMAPPort, cfg.IMAPUser, cfg.IMAPPassword, leadsRepo, prospectsRepo, sequencesRepo, aiClient)
 	go emailPoller.Start(ctx)
 
 	// 10. Reminders cron (hourly, checks for stale leads)

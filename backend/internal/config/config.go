@@ -22,6 +22,8 @@ type Config struct {
 	IMAPUser        string
 	IMAPPassword    string
 	OwnerUserID     string
+	AppBaseURL      string
+	TwoGISAPIKey    string
 }
 
 // Load reads configuration from environment variables and returns a Config.
@@ -45,6 +47,8 @@ func Load() *Config {
 		IMAPUser:        os.Getenv("IMAP_USER"),
 		IMAPPassword:    os.Getenv("IMAP_PASSWORD"),
 		OwnerUserID:     getEnv("OWNER_USER_ID", "00000000-0000-0000-0000-000000000001"),
+		AppBaseURL:      os.Getenv("APP_BASE_URL"),
+		TwoGISAPIKey:    os.Getenv("TWOGIS_API_KEY"),
 	}
 }
 

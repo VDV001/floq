@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"log"
-	"os"
 	"strings"
 	"time"
 
@@ -22,18 +21,20 @@ type Sender struct {
 	ownerID      uuid.UUID
 	fallbackKey  string
 	fromAddress  string
+	appBaseURL   string
 	seqRepo      *sequences.Repository
 	prospectRepo *prospects.Repository
 }
 
 // NewSender creates a sender that reads the Resend API key from user_settings (DB),
 // falling back to the provided fallbackKey (from .env) if the DB value is empty.
-func NewSender(store *settings.Store, ownerID uuid.UUID, fallbackKey, fromAddress string, seqRepo *sequences.Repository, prospectRepo *prospects.Repository) *Sender {
+func NewSender(store *settings.Store, ownerID uuid.UUID, fallbackKey, fromAddress, appBaseURL string, seqRepo *sequences.Repository, prospectRepo *prospects.Repository) *Sender {
 	return &Sender{
 		store:        store,
 		ownerID:      ownerID,
 		fallbackKey:  fallbackKey,
 		fromAddress:  fromAddress,
+		appBaseURL:   appBaseURL,
 		seqRepo:      seqRepo,
 		prospectRepo: prospectRepo,
 	}
@@ -72,8 +73,8 @@ func (s *Sender) SendPending(ctx context.Context) error {
 		}
 
 		trackingPixel := ""
-		if baseURL := os.Getenv("APP_BASE_URL"); baseURL != "" {
-			trackingPixel = fmt.Sprintf(`<img src="%s/api/track/open/%s" width="1" height="1" style="display:none" />`, baseURL, msg.ID)
+		if s.appBaseURL != "" {
+			trackingPixel = fmt.Sprintf(`<img src="%s/api/track/open/%s" width="1" height="1" style="display:none" />`, s.appBaseURL, msg.ID)
 		}
 
 		params := &resend.SendEmailRequest{
