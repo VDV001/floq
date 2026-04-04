@@ -84,7 +84,7 @@ export default function OutboundPage() {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editText, setEditText] = useState("");
   const [search, setSearch] = useState("");
-  const [stats, setStats] = useState({ draft: 0, approved: 0, sent: 0 });
+  const [stats, setStats] = useState({ draft: 0, approved: 0, sent: 0, opened: 0, replied: 0, bounced: 0 });
 
   useEffect(() => {
     setLoading(true);
@@ -207,6 +207,27 @@ export default function OutboundPage() {
                 В очереди
               </span>
               <span className="text-2xl font-black text-[#004ac6]">{stats.draft}</span>
+            </div>
+            <div className="h-10 w-px bg-[#c3c6d7]/20" />
+            <div className="flex flex-col">
+              <span className="mb-1 text-[10px] font-bold uppercase tracking-widest text-[#737686]">
+                Открыто
+              </span>
+              <span className="text-2xl font-black text-green-600">{stats.opened ?? 0}</span>
+            </div>
+            <div className="h-10 w-px bg-[#c3c6d7]/20" />
+            <div className="flex flex-col">
+              <span className="mb-1 text-[10px] font-bold uppercase tracking-widest text-[#737686]">
+                Ответили
+              </span>
+              <span className="text-2xl font-black text-green-600">{stats.replied ?? 0}</span>
+            </div>
+            <div className="h-10 w-px bg-[#c3c6d7]/20" />
+            <div className="flex flex-col">
+              <span className="mb-1 text-[10px] font-bold uppercase tracking-widest text-[#737686]">
+                Bounce
+              </span>
+              <span className="text-2xl font-black text-red-500">{stats.bounced ?? 0}</span>
             </div>
           </div>
         </div>

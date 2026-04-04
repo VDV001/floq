@@ -79,6 +79,26 @@ export default function SequencesPage() {
     }
   }, []);
 
+  const handleAddStep = useCallback(async () => {
+    if (!selectedSeqId) return;
+    const delay = window.prompt("Задержка в днях:", "1");
+    if (!delay) return;
+    const hint = window.prompt("Подсказка для AI (prompt_hint):", "фоллоуап");
+    if (hint === null) return;
+    try {
+      await api.addStep(selectedSeqId, {
+        step_order: steps.length + 1,
+        delay_days: parseInt(delay),
+        prompt_hint: hint || "фоллоуап",
+        channel: "email",
+      });
+      const data = await api.getSequence(selectedSeqId);
+      setSteps(data.steps ?? []);
+    } catch {
+      // silently ignore
+    }
+  }, [selectedSeqId, steps]);
+
   const handleToggleSequence = useCallback(
     async (seqId: string, isActive: boolean) => {
       try {
@@ -339,7 +359,7 @@ export default function SequencesPage() {
             {/* Add step */}
             {selectedSeqId && !stepsLoading && (
               <div className="mt-6 ml-3 pl-8">
-                <button className="flex w-full items-center justify-center gap-2 rounded-xl border-2 border-dashed border-slate-200 py-3 text-sm font-medium text-[#434655] transition hover:border-[#004ac6] hover:text-[#004ac6]">
+                <button onClick={handleAddStep} className="flex w-full items-center justify-center gap-2 rounded-xl border-2 border-dashed border-slate-200 py-3 text-sm font-medium text-[#434655] transition hover:border-[#004ac6] hover:text-[#004ac6]">
                   <Plus className="size-4" />
                   Добавить шаг
                 </button>

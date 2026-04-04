@@ -1,6 +1,7 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
+import { api } from "@/lib/api";
 import {
   ShieldCheck,
   FileEdit,
@@ -130,6 +131,21 @@ const AUTOMATIONS: Automation[] = [
 /*  Page                                                               */
 /* ------------------------------------------------------------------ */
 
+// Mapping from automation IDs to settings fields
+const TOGGLE_MAP: Record<string, string> = {
+  "auto-qualify": "auto_qualify",
+  "auto-draft": "auto_draft",
+  "auto-send": "auto_send",
+  "auto-followup": "auto_followup",
+  "prospect-to-lead": "auto_prospect_to_lead",
+  "verify-import": "auto_verify_import",
+};
+
+const INPUT_MAP: Record<string, string> = {
+  "auto-send": "auto_send_delay_min",
+  "auto-followup": "auto_followup_days",
+};
+
 export default function AutomationsPage() {
   const [toggles, setToggles] = useState<Record<string, boolean>>(
     Object.fromEntries(AUTOMATIONS.map((a) => [a.id, a.defaultOn]))
@@ -138,9 +154,47 @@ export default function AutomationsPage() {
     "auto-send": 5,
     "auto-followup": 2,
   });
+  const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const toggle = (id: string) =>
-    setToggles((prev) => ({ ...prev, [id]: !prev[id] }));
+  // Load settings from API on mount
+  useEffect(() => {
+    api.getSettings().then((s) => {
+      const newToggles: Record<string, boolean> = {};
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const sAny = s as any;
+      for (const [autoId, field] of Object.entries(TOGGLE_MAP)) {
+        newToggles[autoId] = (sAny[field] as boolean) ?? AUTOMATIONS.find(a => a.id === autoId)?.defaultOn ?? false;
+      }
+      setToggles(newToggles);
+      setInputs({
+        "auto-send": s.auto_send_delay_min || 5,
+        "auto-followup": s.auto_followup_days || 2,
+      });
+    }).catch(() => {});
+  }, []);
+
+  // Debounced save to API
+  const saveToAPI = useCallback((newToggles: Record<string, boolean>, newInputs: Record<string, number>) => {
+    if (saveTimer.current !== null) clearTimeout(saveTimer.current);
+    saveTimer.current = setTimeout(() => {
+      const data: Record<string, unknown> = {};
+      for (const [autoId, field] of Object.entries(TOGGLE_MAP)) {
+        data[field] = newToggles[autoId];
+      }
+      for (const [autoId, field] of Object.entries(INPUT_MAP)) {
+        data[field] = newInputs[autoId];
+      }
+      api.updateSettings(data as Partial<import("@/lib/api").UserSettings>).catch(() => {});
+    }, 500);
+  }, []);
+
+  const toggle = (id: string) => {
+    setToggles((prev) => {
+      const next = { ...prev, [id]: !prev[id] };
+      saveToAPI(next, inputs);
+      return next;
+    });
+  };
 
   return (
     <div className="min-h-full px-10 pb-12 pt-24">
@@ -211,12 +265,14 @@ export default function AutomationsPage() {
                   <input
                     type="number"
                     value={inputs[auto.id] ?? auto.bottom.defaultValue}
-                    onChange={(e) =>
-                      setInputs((prev) => ({
-                        ...prev,
-                        [auto.id]: Number(e.target.value),
-                      }))
-                    }
+                    onChange={(e) => {
+                      const val = Number(e.target.value);
+                      setInputs((prev) => {
+                        const next = { ...prev, [auto.id]: val };
+                        saveToAPI(toggles, next);
+                        return next;
+                      });
+                    }}
                     className="rounded border border-[#c3c6d7]/30 bg-white px-2 py-1 text-sm outline-none focus:border-[#004ac6] focus:ring-1 focus:ring-[#004ac6]"
                   />
                 </div>
