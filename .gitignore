@@ -32,3 +32,9 @@ docs/
 
 # Docker
 docker-compose.override.yml
+
+# Serena MCP
+.serena/
+
+# Misc
+*.pdf
