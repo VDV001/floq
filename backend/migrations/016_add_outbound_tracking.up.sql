@@ -1,0 +1,3 @@
+ALTER TABLE outbound_messages
+    ADD COLUMN IF NOT EXISTS opened_at TIMESTAMPTZ,
+    ADD COLUMN IF NOT EXISTS replied_at TIMESTAMPTZ;
