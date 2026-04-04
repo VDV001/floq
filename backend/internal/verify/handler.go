@@ -7,6 +7,7 @@ import (
 
 	"github.com/daniil/floq/internal/httputil"
 	"github.com/daniil/floq/internal/prospects"
+	"github.com/daniil/floq/internal/prospects/domain"
 	"github.com/go-chi/chi/v5"
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
@@ -61,7 +62,7 @@ func (h *Handler) verifyBatch() http.HandlerFunc {
 
 		count := 0
 		for _, p := range prospectList {
-			if p.VerifyStatus != "not_checked" {
+			if p.VerifyStatus != domain.VerifyStatusNotChecked {
 				continue
 			}
 
@@ -84,7 +85,7 @@ func (h *Handler) verifyBatch() http.HandlerFunc {
 			err = h.prospectRepo.UpdateVerification(
 				r.Context(),
 				p.ID,
-				emailResult.Status,
+				domain.VerifyStatus(emailResult.Status),
 				emailResult.Score,
 				string(detailsJSON),
 				time.Now().UTC(),
@@ -126,4 +127,3 @@ func (h *Handler) getVerifyStatus() http.HandlerFunc {
 		})
 	}
 }
-

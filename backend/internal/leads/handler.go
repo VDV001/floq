@@ -5,6 +5,7 @@ import (
 	"net/http"
 
 	"github.com/daniil/floq/internal/httputil"
+	"github.com/daniil/floq/internal/leads/domain"
 	"github.com/go-chi/chi/v5"
 )
 
@@ -33,7 +34,7 @@ func listLeads(uc *UseCase) http.HandlerFunc {
 			return
 		}
 		if leads == nil {
-			leads = []Lead{}
+			leads = []domain.Lead{}
 		}
 		httputil.WriteJSON(w, http.StatusOK, leads)
 	}
@@ -100,7 +101,7 @@ func listMessages(uc *UseCase) http.HandlerFunc {
 			return
 		}
 		if msgs == nil {
-			msgs = []Message{}
+			msgs = []domain.Message{}
 		}
 		httputil.WriteJSON(w, http.StatusOK, msgs)
 	}

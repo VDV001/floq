@@ -4,10 +4,14 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"os"
+	"strings"
+	"time"
 
 	resend "github.com/resendlabs/resend-go"
 
 	"github.com/daniil/floq/internal/prospects"
+	prospectsdomain "github.com/daniil/floq/internal/prospects/domain"
 	"github.com/daniil/floq/internal/sequences"
 	"github.com/daniil/floq/internal/settings"
 	"github.com/google/uuid"
@@ -43,7 +47,7 @@ func (s *Sender) SendPending(ctx context.Context) error {
 		apiKey = cfg.ResendAPIKey
 	}
 	if apiKey == "" {
-		return nil // no API key configured — skip silently
+		return nil // no API key configured -- skip silently
 	}
 
 	msgs, err := s.seqRepo.GetPendingSends(ctx)
@@ -67,15 +71,31 @@ func (s *Sender) SendPending(ctx context.Context) error {
 			continue
 		}
 
+		trackingPixel := ""
+		if baseURL := os.Getenv("APP_BASE_URL"); baseURL != "" {
+			trackingPixel = fmt.Sprintf(`<img src="%s/api/track/open/%s" width="1" height="1" style="display:none" />`, baseURL, msg.ID)
+		}
+
 		params := &resend.SendEmailRequest{
 			From:    s.fromAddress,
 			To:      []string{prospect.Email},
 			Subject: "Сообщение от Floq",
-			Html:    "<html><body>" + msg.Body + "</body></html>",
+			Html:    "<html><body>" + msg.Body + trackingPixel + "</body></html>",
 		}
 
 		_, err = client.Emails.Send(params)
 		if err != nil {
+			errStr := err.Error()
+			if strings.Contains(errStr, "bounce") || strings.Contains(errStr, "invalid email") || strings.Contains(errStr, "recipient rejected") || strings.Contains(errStr, "mailbox not found") {
+				log.Printf("[outbound] bounce detected for %s (msg %s): %v", prospect.Email, msg.ID, err)
+				if markErr := s.seqRepo.MarkBounced(ctx, msg.ID); markErr != nil {
+					log.Printf("[outbound] failed to mark message %s as bounced: %v", msg.ID, markErr)
+				}
+				if markErr := s.prospectRepo.UpdateVerification(ctx, msg.ProspectID, prospectsdomain.VerifyStatusInvalid, 0, `{"bounce":true}`, time.Now().UTC()); markErr != nil {
+					log.Printf("[outbound] failed to mark prospect %s as invalid: %v", msg.ProspectID, markErr)
+				}
+				continue
+			}
 			log.Printf("[outbound] failed to send email to %s (msg %s): %v", prospect.Email, msg.ID, err)
 			continue
 		}

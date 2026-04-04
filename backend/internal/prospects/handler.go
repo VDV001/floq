@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/daniil/floq/internal/httputil"
+	"github.com/daniil/floq/internal/prospects/domain"
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 )
@@ -37,7 +38,7 @@ func (h *Handler) listProspects() http.HandlerFunc {
 			return
 		}
 		if prospects == nil {
-			prospects = []Prospect{}
+			prospects = []domain.Prospect{}
 		}
 		httputil.WriteJSON(w, http.StatusOK, prospects)
 	}
@@ -84,7 +85,7 @@ func (h *Handler) createProspect() http.HandlerFunc {
 		}
 
 		now := time.Now().UTC()
-		p := &Prospect{
+		p := &domain.Prospect{
 			ID:               uuid.New(),
 			UserID:           userID,
 			Name:             body.Name,
@@ -97,8 +98,8 @@ func (h *Handler) createProspect() http.HandlerFunc {
 			CompanySize:      body.CompanySize,
 			Context:          body.Context,
 			Source:           "manual",
-			Status:           "new",
-			VerifyStatus:     "not_checked",
+			Status:           domain.ProspectStatusNew,
+			VerifyStatus:     domain.VerifyStatusNotChecked,
 			VerifyDetails:    "{}",
 			CreatedAt:        now,
 			UpdatedAt:        now,

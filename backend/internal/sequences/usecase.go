@@ -6,16 +6,13 @@ import (
 	"time"
 
 	"github.com/daniil/floq/internal/ai"
+	leadsdomain "github.com/daniil/floq/internal/leads/domain"
 	"github.com/daniil/floq/internal/leads"
 	"github.com/daniil/floq/internal/prospects"
+	prospectsdomain "github.com/daniil/floq/internal/prospects/domain"
+	"github.com/daniil/floq/internal/sequences/domain"
 	"github.com/google/uuid"
 )
-
-type Stats struct {
-	Draft    int `json:"draft"`
-	Approved int `json:"approved"`
-	Sent     int `json:"sent"`
-}
 
 type UseCase struct {
 	repo         *Repository
@@ -28,19 +25,19 @@ func NewUseCase(repo *Repository, aiClient *ai.AIClient, prospectRepo *prospects
 	return &UseCase{repo: repo, aiClient: aiClient, prospectRepo: prospectRepo, leadsRepo: leadsRepo}
 }
 
-func (uc *UseCase) ListSequences(ctx context.Context, userID uuid.UUID) ([]Sequence, error) {
+func (uc *UseCase) ListSequences(ctx context.Context, userID uuid.UUID) ([]domain.Sequence, error) {
 	return uc.repo.ListSequences(ctx, userID)
 }
 
-func (uc *UseCase) GetSequence(ctx context.Context, id uuid.UUID) (*Sequence, error) {
+func (uc *UseCase) GetSequence(ctx context.Context, id uuid.UUID) (*domain.Sequence, error) {
 	return uc.repo.GetSequence(ctx, id)
 }
 
-func (uc *UseCase) CreateSequence(ctx context.Context, s *Sequence) error {
+func (uc *UseCase) CreateSequence(ctx context.Context, s *domain.Sequence) error {
 	return uc.repo.CreateSequence(ctx, s)
 }
 
-func (uc *UseCase) UpdateSequence(ctx context.Context, s *Sequence) error {
+func (uc *UseCase) UpdateSequence(ctx context.Context, s *domain.Sequence) error {
 	return uc.repo.UpdateSequence(ctx, s)
 }
 
@@ -52,11 +49,11 @@ func (uc *UseCase) ToggleActive(ctx context.Context, id uuid.UUID, active bool) 
 	return uc.repo.ToggleActive(ctx, id, active)
 }
 
-func (uc *UseCase) ListSteps(ctx context.Context, sequenceID uuid.UUID) ([]SequenceStep, error) {
+func (uc *UseCase) ListSteps(ctx context.Context, sequenceID uuid.UUID) ([]domain.SequenceStep, error) {
 	return uc.repo.ListSteps(ctx, sequenceID)
 }
 
-func (uc *UseCase) CreateStep(ctx context.Context, step *SequenceStep) error {
+func (uc *UseCase) CreateStep(ctx context.Context, step *domain.SequenceStep) error {
 	return uc.repo.CreateStep(ctx, step)
 }
 
@@ -81,14 +78,17 @@ func (uc *UseCase) Launch(ctx context.Context, sequenceID uuid.UUID, prospectIDs
 		}
 
 		// Deduplication checks
-		if prospect.Status == "converted" || prospect.Status == "opted_out" {
-			continue // skip — already in inbox or opted out
+		if prospect.Status == prospectsdomain.ProspectStatusConverted || prospect.Status == "opted_out" {
+			continue // skip -- already in inbox or opted out
 		}
-		if prospect.Status == "in_sequence" {
-			continue // skip — already in a sequence
+		if prospect.Status == prospectsdomain.ProspectStatusInSequence {
+			continue // skip -- already in a sequence
 		}
-		if prospect.VerifyStatus == "invalid" {
-			continue // skip — verified as invalid email
+		if prospect.VerifyStatus == prospectsdomain.VerifyStatusInvalid {
+			continue // skip -- verified as invalid email
+		}
+		if prospect.VerifyStatus == prospectsdomain.VerifyStatusNotChecked && prospect.Email != "" {
+			continue // skip -- email not verified yet
 		}
 
 		var cumulativeDelay int
@@ -100,9 +100,9 @@ func (uc *UseCase) Launch(ctx context.Context, sequenceID uuid.UUID, prospectIDs
 			var genErr error
 
 			switch step.Channel {
-			case "telegram":
+			case domain.StepChannelTelegram:
 				body, genErr = uc.aiClient.GenerateTelegramMessage(ctx, prospect.Name, prospect.Title, prospect.Company, prospect.Context, step.PromptHint, previousBody)
-			case "phone_call":
+			case domain.StepChannelPhoneCall:
 				body, genErr = uc.aiClient.GenerateCallBrief(ctx, prospect.Name, prospect.Title, prospect.Company, prospect.Context, step.PromptHint, previousBody)
 			default: // "email" or empty
 				body, genErr = uc.aiClient.GenerateColdMessage(ctx, prospect.Name, prospect.Title, prospect.Company, prospect.Context, step.PromptHint, previousBody)
@@ -111,14 +111,14 @@ func (uc *UseCase) Launch(ctx context.Context, sequenceID uuid.UUID, prospectIDs
 				return fmt.Errorf("launch: generate message for prospect %s step %d: %w", pid, step.StepOrder, genErr)
 			}
 
-			msg := &OutboundMessage{
+			msg := &domain.OutboundMessage{
 				ID:          uuid.New(),
 				ProspectID:  pid,
 				SequenceID:  sequenceID,
 				StepOrder:   step.StepOrder,
 				Channel:     step.Channel,
 				Body:        body,
-				Status:      "draft",
+				Status:      domain.OutboundStatusDraft,
 				ScheduledAt: now.AddDate(0, 0, cumulativeDelay),
 				CreatedAt:   now,
 			}
@@ -129,7 +129,7 @@ func (uc *UseCase) Launch(ctx context.Context, sequenceID uuid.UUID, prospectIDs
 			previousBody = body
 		}
 
-		if err := uc.prospectRepo.UpdateStatus(ctx, pid, "in_sequence"); err != nil {
+		if err := uc.prospectRepo.UpdateStatus(ctx, pid, prospectsdomain.ProspectStatusInSequence); err != nil {
 			return fmt.Errorf("launch: update prospect status: %w", err)
 		}
 	}
@@ -138,22 +138,22 @@ func (uc *UseCase) Launch(ctx context.Context, sequenceID uuid.UUID, prospectIDs
 }
 
 func (uc *UseCase) ApproveMessage(ctx context.Context, id uuid.UUID) error {
-	return uc.repo.UpdateOutboundStatus(ctx, id, "approved")
+	return uc.repo.UpdateOutboundStatus(ctx, id, domain.OutboundStatusApproved)
 }
 
 func (uc *UseCase) RejectMessage(ctx context.Context, id uuid.UUID) error {
-	return uc.repo.UpdateOutboundStatus(ctx, id, "rejected")
+	return uc.repo.UpdateOutboundStatus(ctx, id, domain.OutboundStatusRejected)
 }
 
 func (uc *UseCase) EditMessage(ctx context.Context, id uuid.UUID, body string) error {
 	return uc.repo.UpdateOutboundBody(ctx, id, body)
 }
 
-func (uc *UseCase) GetQueue(ctx context.Context, userID uuid.UUID) ([]OutboundMessage, error) {
+func (uc *UseCase) GetQueue(ctx context.Context, userID uuid.UUID) ([]domain.OutboundMessage, error) {
 	return uc.repo.ListOutboundQueue(ctx, userID)
 }
 
-func (uc *UseCase) GetStats(ctx context.Context, userID uuid.UUID) (*Stats, error) {
+func (uc *UseCase) GetStats(ctx context.Context, userID uuid.UUID) (*domain.Stats, error) {
 	return uc.repo.GetStats(ctx, userID)
 }
 
@@ -169,14 +169,14 @@ func (uc *UseCase) ConvertToLead(ctx context.Context, prospectID uuid.UUID) erro
 	// Create a lead from the prospect data
 	leadID := uuid.New()
 	now := time.Now().UTC()
-	lead := &leads.Lead{
+	lead := &leadsdomain.Lead{
 		ID:           leadID,
 		UserID:       prospect.UserID,
-		Channel:      "email",
+		Channel:      leadsdomain.ChannelEmail,
 		ContactName:  prospect.Name,
 		Company:      prospect.Company,
 		FirstMessage: "Ответ на outbound секвенцию",
-		Status:       "new",
+		Status:       leadsdomain.StatusNew,
 		CreatedAt:    now,
 		UpdatedAt:    now,
 	}

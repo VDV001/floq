@@ -1,56 +1,65 @@
 package inbox
 
 import (
+	"bytes"
 	"context"
+	"io"
 	"log"
+	"strings"
 	"time"
 
+	"github.com/emersion/go-imap/v2"
+	"github.com/emersion/go-imap/v2/imapclient"
+	"github.com/emersion/go-message/mail"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/daniil/floq/internal/ai"
 	"github.com/daniil/floq/internal/leads"
+	"github.com/daniil/floq/internal/leads/domain"
+	"github.com/daniil/floq/internal/settings"
 )
 
 // EmailPoller polls an IMAP mailbox for new emails and creates leads.
 type EmailPoller struct {
-	host     string
-	port     string
-	user     string
-	password string
+	store    *settings.Store
 	pool     *pgxpool.Pool
 	repo     *leads.Repository
 	aiClient *ai.AIClient
 	ownerID  uuid.UUID
+
+	fallbackHost     string
+	fallbackPort     string
+	fallbackUser     string
+	fallbackPassword string
 }
 
-// NewEmailPoller creates a new EmailPoller with the given IMAP credentials and dependencies.
-func NewEmailPoller(host, port, user, password string, pool *pgxpool.Pool, repo *leads.Repository, aiClient *ai.AIClient, ownerID uuid.UUID) *EmailPoller {
+func NewEmailPoller(store *settings.Store, ownerID uuid.UUID, fallbackHost, fallbackPort, fallbackUser, fallbackPassword string, pool *pgxpool.Pool, repo *leads.Repository, aiClient *ai.AIClient) *EmailPoller {
 	return &EmailPoller{
-		host:     host,
-		port:     port,
-		user:     user,
-		password: password,
-		pool:     pool,
-		repo:     repo,
-		aiClient: aiClient,
-		ownerID:  ownerID,
+		store:            store,
+		pool:             pool,
+		repo:             repo,
+		aiClient:         aiClient,
+		ownerID:          ownerID,
+		fallbackHost:     fallbackHost,
+		fallbackPort:     fallbackPort,
+		fallbackUser:     fallbackUser,
+		fallbackPassword: fallbackPassword,
 	}
 }
 
-// Start begins polling the IMAP mailbox for new emails.
-// It blocks until ctx is cancelled.
 func (e *EmailPoller) Start(ctx context.Context) {
-	log.Println("Email polling started")
-	log.Println("Email polling not fully implemented (IMAP stub)")
+	log.Println("email poller started (every 60s)")
 
-	ticker := time.NewTicker(30 * time.Second)
+	ticker := time.NewTicker(60 * time.Second)
 	defer ticker.Stop()
+
+	e.poll(ctx)
 
 	for {
 		select {
 		case <-ctx.Done():
-			log.Println("Email poller shutting down")
+			log.Println("email poller shutting down")
 			return
 		case <-ticker.C:
 			e.poll(ctx)
@@ -58,78 +67,287 @@ func (e *EmailPoller) Start(ctx context.Context) {
 	}
 }
 
-// poll checks the mailbox for new emails. This is a stub for MVP.
-func (e *EmailPoller) poll(ctx context.Context) {
-	// TODO: Implement full IMAP connection using crypto/tls + net.
-	// For each new email:
-	//   1. Parse From header for contact name and email address
-	//   2. Check if lead with this email_address already exists
-	//   3. If not, create new Lead (channel="email")
-	//   4. Create inbound Message
-	//   5. Trigger async qualification for new leads
-	//
-	// Skeleton for processing a new email (not called yet):
-	// e.processEmail(ctx, fromName, fromEmail, subject, body)
-	_ = ctx
+func (e *EmailPoller) resolveConfig(ctx context.Context) (host, port, user, password string) {
+	host, port, user, password = e.fallbackHost, e.fallbackPort, e.fallbackUser, e.fallbackPassword
+	if cfg, err := e.store.GetConfig(ctx, e.ownerID); err == nil {
+		if cfg.IMAPHost != "" {
+			host = cfg.IMAPHost
+		}
+		if cfg.IMAPPort != "" {
+			port = cfg.IMAPPort
+		}
+		if cfg.IMAPUser != "" {
+			user = cfg.IMAPUser
+		}
+		if cfg.IMAPPassword != "" {
+			password = cfg.IMAPPassword
+		}
+	}
+	return
 }
 
-// processEmail handles a single inbound email, creating or updating leads.
-// This will be called by poll() once IMAP fetching is implemented.
+func (e *EmailPoller) poll(ctx context.Context) {
+	host, port, user, password := e.resolveConfig(ctx)
+	if host == "" || user == "" || password == "" {
+		return
+	}
+
+	addr := host + ":" + port
+	c, err := imapclient.DialTLS(addr, nil)
+	if err != nil {
+		log.Printf("[email-poller] connect error: %v", err)
+		return
+	}
+	defer c.Close()
+
+	if err := c.Login(user, password).Wait(); err != nil {
+		log.Printf("[email-poller] login error: %v", err)
+		return
+	}
+
+	if _, err := c.Select("INBOX", nil).Wait(); err != nil {
+		log.Printf("[email-poller] select INBOX error: %v", err)
+		return
+	}
+
+	// Search unseen messages
+	criteria := &imap.SearchCriteria{
+		NotFlag: []imap.Flag{imap.FlagSeen},
+	}
+	searchData, err := c.UIDSearch(criteria, nil).Wait()
+	if err != nil {
+		log.Printf("[email-poller] search error: %v", err)
+		_ = c.Logout().Wait()
+		return
+	}
+
+	uids := searchData.AllUIDs()
+	if len(uids) == 0 {
+		_ = c.Logout().Wait()
+		return
+	}
+
+	log.Printf("[email-poller] found %d unseen emails", len(uids))
+
+	// Fetch messages with envelope + body
+	uidSet := imap.UIDSetNum(uids...)
+	bodySection := &imap.FetchItemBodySection{}
+	fetchOptions := &imap.FetchOptions{
+		Envelope:    true,
+		UID:         true,
+		BodySection: []*imap.FetchItemBodySection{bodySection},
+	}
+
+	fetchCmd := c.Fetch(uidSet, fetchOptions)
+
+	var processedUIDs []imap.UID
+
+	for {
+		msgData := fetchCmd.Next()
+		if msgData == nil {
+			break
+		}
+
+		// Collect into buffer for easy access
+		buf, err := msgData.Collect()
+		if err != nil {
+			log.Printf("[email-poller] collect error: %v", err)
+			continue
+		}
+
+		fromName := ""
+		fromEmail := ""
+		if buf.Envelope != nil && len(buf.Envelope.From) > 0 {
+			from := buf.Envelope.From[0]
+			fromName = from.Name
+			fromEmail = from.Addr()
+			if fromName == "" {
+				fromName = fromEmail
+			}
+		}
+
+		// Skip emails from ourselves or automated/noreply senders
+		if fromEmail == user || shouldSkipEmail(fromEmail) {
+			processedUIDs = append(processedUIDs, buf.UID)
+			continue
+		}
+
+		// Extract text body from body section
+		var bodyText string
+		if len(buf.BodySection) > 0 {
+			bodyText = extractTextBody(buf.BodySection[0].Bytes)
+		}
+
+		if fromEmail != "" && bodyText != "" {
+			e.processEmail(ctx, fromName, fromEmail, bodyText)
+			processedUIDs = append(processedUIDs, buf.UID)
+		}
+	}
+
+	if err := fetchCmd.Close(); err != nil {
+		log.Printf("[email-poller] fetch error: %v", err)
+	}
+
+	// Mark processed messages as seen
+	if len(processedUIDs) > 0 {
+		markSet := imap.UIDSetNum(processedUIDs...)
+		storeFlags := &imap.StoreFlags{
+			Op:     imap.StoreFlagsAdd,
+			Flags:  []imap.Flag{imap.FlagSeen},
+			Silent: true,
+		}
+		if err := c.Store(markSet, storeFlags, nil).Close(); err != nil {
+			log.Printf("[email-poller] mark seen error: %v", err)
+		}
+	}
+
+	_ = c.Logout().Wait()
+}
+
+// shouldSkipEmail returns true for automated/noreply/service addresses.
+func shouldSkipEmail(email string) bool {
+	email = strings.ToLower(email)
+	prefixes := []string{"noreply@", "no-reply@", "no_reply@", "mailer-daemon@", "postmaster@"}
+	for _, p := range prefixes {
+		if strings.HasPrefix(email, p) {
+			return true
+		}
+	}
+	// Skip common service domains
+	domains := []string{"@yandex.ru", "@yandex.com", "@google.com", "@gmail.com", "@mail.ru",
+		"@facebook.com", "@facebookmail.com", "@linkedin.com", "@twitter.com",
+		"@github.com", "@apple.com", "@microsoft.com"}
+	for _, d := range domains {
+		if strings.HasSuffix(email, d) {
+			// Only skip if it looks automated (contains service-like prefixes)
+			for _, sp := range []string{"noreply", "no-reply", "hello@", "news@", "info@", "support@", "notify@", "notification@", "api_", "alert"} {
+				if strings.Contains(email, sp) {
+					return true
+				}
+			}
+		}
+	}
+	return false
+}
+
+func extractTextBody(raw []byte) string {
+	mr, err := mail.CreateReader(bytes.NewReader(raw))
+	if err != nil {
+		// Fallback: treat as plain text
+		return strings.TrimSpace(string(raw))
+	}
+
+	var textBody string
+	for {
+		p, err := mr.NextPart()
+		if err != nil {
+			break
+		}
+		if _, ok := p.Header.(*mail.InlineHeader); ok {
+			ct := p.Header.Get("Content-Type")
+			b, err := io.ReadAll(p.Body)
+			if err != nil {
+				continue
+			}
+			text := strings.TrimSpace(string(b))
+			if strings.Contains(ct, "text/plain") || textBody == "" {
+				textBody = text
+			}
+		}
+	}
+	return textBody
+}
+
 func (e *EmailPoller) processEmail(ctx context.Context, fromName, fromEmail, body string) {
 	existing, err := e.repo.GetLeadByEmailAddress(ctx, e.ownerID, fromEmail)
 	if err != nil {
-		log.Printf("email inbox: error looking up lead for %s: %v", fromEmail, err)
+		log.Printf("[email-poller] error looking up lead for %s: %v", fromEmail, err)
 		return
 	}
 
 	isNewLead := existing == nil
-	var lead *leads.Lead
+	var lead *domain.Lead
+
+	// Check if sender is a known prospect
+	var prospectID uuid.UUID
+	var prospectName, prospectCompany, prospectStatus string
+	prospectErr := e.pool.QueryRow(ctx,
+		`SELECT id, name, company, status FROM prospects WHERE user_id = $1 AND LOWER(email) = LOWER($2) LIMIT 1`,
+		e.ownerID, fromEmail).Scan(&prospectID, &prospectName, &prospectCompany, &prospectStatus)
+	hasProspectMatch := prospectErr == nil && prospectStatus != "converted"
 
 	if isNewLead {
+		contactName := fromName
+		company := ""
+		if hasProspectMatch {
+			if contactName == fromEmail && prospectName != "" {
+				contactName = prospectName
+			}
+			if prospectCompany != "" {
+				company = prospectCompany
+			}
+		}
+
 		emailAddr := fromEmail
-		lead = &leads.Lead{
+		lead = &domain.Lead{
 			ID:           uuid.New(),
 			UserID:       e.ownerID,
-			Channel:      "email",
-			ContactName:  fromName,
-			Company:      "",
+			Channel:      domain.ChannelEmail,
+			ContactName:  contactName,
+			Company:      company,
 			FirstMessage: body,
-			Status:       "new",
+			Status:       domain.StatusNew,
 			EmailAddress: &emailAddr,
 			CreatedAt:    time.Now().UTC(),
 			UpdatedAt:    time.Now().UTC(),
 		}
 		if err := e.repo.CreateLead(ctx, lead); err != nil {
-			log.Printf("email inbox: error creating lead: %v", err)
+			log.Printf("[email-poller] error creating lead: %v", err)
 			return
 		}
-		log.Printf("email inbox: new lead created for %s (%s)", fromEmail, fromName)
+		log.Printf("[email-poller] new lead created for %s (%s)", fromEmail, contactName)
+
+		// Auto-convert matched prospect to lead
+		if hasProspectMatch {
+			_, convErr := e.pool.Exec(ctx,
+				`UPDATE prospects SET status = 'converted', converted_lead_id = $2, updated_at = $3 WHERE id = $1`,
+				prospectID, lead.ID, time.Now().UTC())
+			if convErr != nil {
+				log.Printf("[email-poller] error converting prospect %s: %v", prospectID, convErr)
+			} else {
+				log.Printf("[email-poller] prospect %s auto-converted to lead %s", prospectID, lead.ID)
+			}
+			// Mark outbound messages as replied
+			_, _ = e.pool.Exec(ctx,
+				`UPDATE outbound_messages SET replied_at = COALESCE(replied_at, NOW()) WHERE prospect_id = $1 AND status = 'sent'`,
+				prospectID)
+		}
 	} else {
 		lead = existing
 	}
 
-	message := &leads.Message{
+	message := &domain.Message{
 		ID:        uuid.New(),
 		LeadID:    lead.ID,
-		Direction: "inbound",
+		Direction: domain.DirectionInbound,
 		Body:      body,
 		SentAt:    time.Now().UTC(),
 	}
 	if err := e.repo.CreateMessage(ctx, message); err != nil {
-		log.Printf("email inbox: error creating message: %v", err)
+		log.Printf("[email-poller] error creating message: %v", err)
 		return
 	}
 
 	if isNewLead {
 		go func() {
 			qCtx := context.Background()
-			result, err := e.aiClient.Qualify(qCtx, fromName, lead.Channel, lead.FirstMessage)
+			result, err := e.aiClient.Qualify(qCtx, fromName, string(lead.Channel), lead.FirstMessage)
 			if err != nil {
-				log.Printf("email inbox: qualification error for lead %s: %v", lead.ID, err)
+				log.Printf("[email-poller] qualification error for lead %s: %v", lead.ID, err)
 				return
 			}
 
-			q := &leads.Qualification{
+			q := &domain.Qualification{
 				ID:                uuid.New(),
 				LeadID:            lead.ID,
 				IdentifiedNeed:    result.IdentifiedNeed,
@@ -142,14 +360,14 @@ func (e *EmailPoller) processEmail(ctx context.Context, fromName, fromEmail, bod
 				GeneratedAt:       time.Now().UTC(),
 			}
 			if err := e.repo.UpsertQualification(qCtx, q); err != nil {
-				log.Printf("email inbox: error saving qualification for lead %s: %v", lead.ID, err)
+				log.Printf("[email-poller] error saving qualification for lead %s: %v", lead.ID, err)
 				return
 			}
-			if err := e.repo.UpdateLeadStatus(qCtx, lead.ID, "qualified"); err != nil {
-				log.Printf("email inbox: error updating lead status for %s: %v", lead.ID, err)
+			if err := e.repo.UpdateLeadStatus(qCtx, lead.ID, domain.StatusQualified); err != nil {
+				log.Printf("[email-poller] error updating lead status for %s: %v", lead.ID, err)
 				return
 			}
-			log.Printf("email inbox: lead %s qualified (score=%d)", lead.ID, result.Score)
+			log.Printf("[email-poller] lead %s qualified (score=%d)", lead.ID, result.Score)
 		}()
 	}
 }

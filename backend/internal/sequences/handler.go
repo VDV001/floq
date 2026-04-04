@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/daniil/floq/internal/httputil"
+	"github.com/daniil/floq/internal/sequences/domain"
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 )
@@ -40,7 +41,7 @@ func listSequences(uc *UseCase) http.HandlerFunc {
 			return
 		}
 		if seqs == nil {
-			seqs = []Sequence{}
+			seqs = []domain.Sequence{}
 		}
 		httputil.WriteJSON(w, http.StatusOK, seqs)
 	}
@@ -66,7 +67,7 @@ func createSequence(uc *UseCase) http.HandlerFunc {
 			return
 		}
 
-		s := &Sequence{
+		s := &domain.Sequence{
 			ID:        uuid.New(),
 			UserID:    userID,
 			Name:      body.Name,
@@ -104,7 +105,7 @@ func getSequence(uc *UseCase) http.HandlerFunc {
 			return
 		}
 		if steps == nil {
-			steps = []SequenceStep{}
+			steps = []domain.SequenceStep{}
 		}
 
 		httputil.WriteJSON(w, http.StatusOK, map[string]any{
@@ -134,7 +135,7 @@ func updateSequence(uc *UseCase) http.HandlerFunc {
 			return
 		}
 
-		s := &Sequence{ID: id, Name: body.Name}
+		s := &domain.Sequence{ID: id, Name: body.Name}
 		if err := uc.UpdateSequence(r.Context(), s); err != nil {
 			httputil.WriteError(w, http.StatusInternalServerError, "failed to update sequence")
 			return
@@ -177,12 +178,12 @@ func addStep(uc *UseCase) http.HandlerFunc {
 			return
 		}
 
-		channel := body.Channel
-		if channel == "" {
-			channel = "email"
+		channel := domain.StepChannel(body.Channel)
+		if body.Channel == "" {
+			channel = domain.StepChannelEmail
 		}
 
-		step := &SequenceStep{
+		step := &domain.SequenceStep{
 			ID:         uuid.New(),
 			SequenceID: id,
 			StepOrder:  body.StepOrder,
@@ -264,7 +265,7 @@ func getQueue(uc *UseCase) http.HandlerFunc {
 			return
 		}
 		if msgs == nil {
-			msgs = []OutboundMessage{}
+			msgs = []domain.OutboundMessage{}
 		}
 		httputil.WriteJSON(w, http.StatusOK, msgs)
 	}

@@ -8,6 +8,7 @@ import (
 	"io"
 	"time"
 
+	"github.com/daniil/floq/internal/prospects/domain"
 	"github.com/google/uuid"
 )
 
@@ -19,15 +20,19 @@ func NewUseCase(repo *Repository) *UseCase {
 	return &UseCase{repo: repo}
 }
 
-func (uc *UseCase) ListProspects(ctx context.Context, userID uuid.UUID) ([]Prospect, error) {
+func (uc *UseCase) ListProspects(ctx context.Context, userID uuid.UUID) ([]domain.Prospect, error) {
 	return uc.repo.ListProspects(ctx, userID)
 }
 
-func (uc *UseCase) GetProspect(ctx context.Context, id uuid.UUID) (*Prospect, error) {
+func (uc *UseCase) GetProspect(ctx context.Context, id uuid.UUID) (*domain.Prospect, error) {
 	return uc.repo.GetProspect(ctx, id)
 }
 
-func (uc *UseCase) CreateProspect(ctx context.Context, prospect *Prospect) error {
+func (uc *UseCase) FindByEmail(ctx context.Context, userID uuid.UUID, email string) (*domain.Prospect, error) {
+	return uc.repo.FindByEmail(ctx, userID, email)
+}
+
+func (uc *UseCase) CreateProspect(ctx context.Context, prospect *domain.Prospect) error {
 	return uc.repo.CreateProspect(ctx, prospect)
 }
 
@@ -61,7 +66,7 @@ func (uc *UseCase) ImportCSV(ctx context.Context, userID uuid.UUID, csvData []by
 	}
 
 	now := time.Now().UTC()
-	var prospects []Prospect
+	var prospects []domain.Prospect
 	for {
 		record, err := reader.Read()
 		if err == io.EOF {
@@ -71,7 +76,7 @@ func (uc *UseCase) ImportCSV(ctx context.Context, userID uuid.UUID, csvData []by
 			return 0, fmt.Errorf("read csv record: %w", err)
 		}
 
-		prospects = append(prospects, Prospect{
+		prospects = append(prospects, domain.Prospect{
 			ID:               uuid.New(),
 			UserID:           userID,
 			Name:             record[0],
@@ -84,8 +89,8 @@ func (uc *UseCase) ImportCSV(ctx context.Context, userID uuid.UUID, csvData []by
 			CompanySize:      getCol(record, "company_size"),
 			Context:          getCol(record, "context"),
 			Source:           "csv",
-			Status:           "new",
-			VerifyStatus:     "not_checked",
+			Status:           domain.ProspectStatusNew,
+			VerifyStatus:     domain.VerifyStatusNotChecked,
 			VerifyDetails:    "{}",
 			CreatedAt:        now,
 			UpdatedAt:        now,

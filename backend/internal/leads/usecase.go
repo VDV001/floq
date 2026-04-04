@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/daniil/floq/internal/ai"
+	"github.com/daniil/floq/internal/leads/domain"
 	"github.com/google/uuid"
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
@@ -26,23 +27,23 @@ func (uc *UseCase) SetBot(bot *tgbotapi.BotAPI) {
 	uc.bot = bot
 }
 
-func (uc *UseCase) ListLeads(ctx context.Context, userID uuid.UUID) ([]Lead, error) {
+func (uc *UseCase) ListLeads(ctx context.Context, userID uuid.UUID) ([]domain.Lead, error) {
 	return uc.repo.ListLeads(ctx, userID)
 }
 
-func (uc *UseCase) GetLead(ctx context.Context, id uuid.UUID) (*Lead, error) {
+func (uc *UseCase) GetLead(ctx context.Context, id uuid.UUID) (*domain.Lead, error) {
 	return uc.repo.GetLead(ctx, id)
 }
 
 func (uc *UseCase) UpdateStatus(ctx context.Context, id uuid.UUID, status string) error {
-	return uc.repo.UpdateLeadStatus(ctx, id, status)
+	return uc.repo.UpdateLeadStatus(ctx, id, domain.LeadStatus(status))
 }
 
-func (uc *UseCase) GetMessages(ctx context.Context, leadID uuid.UUID) ([]Message, error) {
+func (uc *UseCase) GetMessages(ctx context.Context, leadID uuid.UUID) ([]domain.Message, error) {
 	return uc.repo.ListMessages(ctx, leadID)
 }
 
-func (uc *UseCase) SendMessage(ctx context.Context, leadID uuid.UUID, body string) (*Message, error) {
+func (uc *UseCase) SendMessage(ctx context.Context, leadID uuid.UUID, body string) (*domain.Message, error) {
 	// Get lead to find the channel and chat ID
 	lead, err := uc.repo.GetLead(ctx, leadID)
 	if err != nil {
@@ -50,7 +51,7 @@ func (uc *UseCase) SendMessage(ctx context.Context, leadID uuid.UUID, body strin
 	}
 
 	// Send via Telegram if applicable
-	if lead.Channel == "telegram" && lead.TelegramChatID != nil && uc.bot != nil {
+	if lead.Channel == domain.ChannelTelegram && lead.TelegramChatID != nil && uc.bot != nil {
 		tgMsg := tgbotapi.NewMessage(*lead.TelegramChatID, body)
 		if _, err := uc.bot.Send(tgMsg); err != nil {
 			return nil, fmt.Errorf("send telegram message: %w", err)
@@ -58,10 +59,10 @@ func (uc *UseCase) SendMessage(ctx context.Context, leadID uuid.UUID, body strin
 	}
 
 	// Save to DB
-	msg := &Message{
+	msg := &domain.Message{
 		ID:        uuid.New(),
 		LeadID:    leadID,
-		Direction: "outbound",
+		Direction: domain.DirectionOutbound,
 		Body:      body,
 		SentAt:    time.Now().UTC(),
 	}
@@ -71,11 +72,11 @@ func (uc *UseCase) SendMessage(ctx context.Context, leadID uuid.UUID, body strin
 	return msg, nil
 }
 
-func (uc *UseCase) GetQualification(ctx context.Context, leadID uuid.UUID) (*Qualification, error) {
+func (uc *UseCase) GetQualification(ctx context.Context, leadID uuid.UUID) (*domain.Qualification, error) {
 	return uc.repo.GetQualification(ctx, leadID)
 }
 
-func (uc *UseCase) QualifyLead(ctx context.Context, leadID uuid.UUID) (*Qualification, error) {
+func (uc *UseCase) QualifyLead(ctx context.Context, leadID uuid.UUID) (*domain.Qualification, error) {
 	lead, err := uc.repo.GetLead(ctx, leadID)
 	if err != nil {
 		return nil, err
@@ -84,12 +85,12 @@ func (uc *UseCase) QualifyLead(ctx context.Context, leadID uuid.UUID) (*Qualific
 		return nil, fmt.Errorf("lead not found")
 	}
 
-	result, err := uc.ai.Qualify(ctx, lead.ContactName, lead.Channel, lead.FirstMessage)
+	result, err := uc.ai.Qualify(ctx, lead.ContactName, string(lead.Channel), lead.FirstMessage)
 	if err != nil {
 		return nil, err
 	}
 
-	q := &Qualification{
+	q := &domain.Qualification{
 		ID:                uuid.New(),
 		LeadID:            lead.ID,
 		IdentifiedNeed:    result.IdentifiedNeed,
@@ -106,18 +107,18 @@ func (uc *UseCase) QualifyLead(ctx context.Context, leadID uuid.UUID) (*Qualific
 		return nil, err
 	}
 
-	if err := uc.repo.UpdateLeadStatus(ctx, leadID, "qualified"); err != nil {
+	if err := uc.repo.UpdateLeadStatus(ctx, leadID, domain.StatusQualified); err != nil {
 		return nil, err
 	}
 
 	return q, nil
 }
 
-func (uc *UseCase) GetDraft(ctx context.Context, leadID uuid.UUID) (*Draft, error) {
+func (uc *UseCase) GetDraft(ctx context.Context, leadID uuid.UUID) (*domain.Draft, error) {
 	return uc.repo.GetLatestDraft(ctx, leadID)
 }
 
-func (uc *UseCase) RegenerateDraft(ctx context.Context, leadID uuid.UUID) (*Draft, error) {
+func (uc *UseCase) RegenerateDraft(ctx context.Context, leadID uuid.UUID) (*domain.Draft, error) {
 	lead, err := uc.repo.GetLead(ctx, leadID)
 	if err != nil {
 		return nil, err
@@ -138,12 +139,12 @@ func (uc *UseCase) RegenerateDraft(ctx context.Context, leadID uuid.UUID) (*Draf
 		}
 	}
 
-	body, err := uc.ai.DraftReply(ctx, lead.ContactName, lead.Company, lead.Channel, lead.FirstMessage, qualJSON)
+	body, err := uc.ai.DraftReply(ctx, lead.ContactName, lead.Company, string(lead.Channel), lead.FirstMessage, qualJSON)
 	if err != nil {
 		return nil, err
 	}
 
-	d := &Draft{
+	d := &domain.Draft{
 		ID:        uuid.New(),
 		LeadID:    lead.ID,
 		Body:      body,
