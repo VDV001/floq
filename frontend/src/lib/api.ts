@@ -138,6 +138,11 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ url }),
     }),
+  searchTwoGIS: (query: string, city: string) =>
+    apiFetch<{ name: string; address: string; phone: string; category: string; website: string; city: string }[]>("/api/parser/twogis", {
+      method: "POST",
+      body: JSON.stringify({ query, city }),
+    }),
 
   // Sequences
   getSequences: () => apiFetch<Sequence[]>("/api/sequences"),
@@ -319,6 +324,9 @@ export interface OutboundStats {
   draft: number;
   approved: number;
   sent: number;
+  opened: number;
+  replied: number;
+  bounced: number;
 }
 
 export interface UserSettings {
@@ -336,4 +344,12 @@ export interface UserSettings {
   ai_api_key: string;
   notify_telegram: boolean;
   notify_email_digest: boolean;
+  auto_qualify: boolean;
+  auto_draft: boolean;
+  auto_send: boolean;
+  auto_send_delay_min: number;
+  auto_followup: boolean;
+  auto_followup_days: number;
+  auto_prospect_to_lead: boolean;
+  auto_verify_import: boolean;
 }
