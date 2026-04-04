@@ -49,11 +49,8 @@ type TwoGISClient struct {
 	APIKey string
 }
 
-// NewTwoGISClient creates a new client. If apiKey is empty, a default public widget key is used.
+// NewTwoGISClient creates a new client with the given API key.
 func NewTwoGISClient(apiKey string) *TwoGISClient {
-	if apiKey == "" {
-		apiKey = "rurbbn3446"
-	}
 	return &TwoGISClient{APIKey: apiKey}
 }
 

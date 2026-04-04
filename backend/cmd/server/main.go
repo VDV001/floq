@@ -85,7 +85,7 @@ func main() {
 
 	// 2b. AI provider (dynamic: reads provider/model/key from DB, falls back to .env)
 	aiProvider := providers.NewDynamicProvider(settingsStore, ownerID, cfg)
-	aiClient := ai.NewAIClient(aiProvider)
+	aiClient := ai.NewAIClient(aiProvider, cfg.BookingLink)
 
 	// 3. Repositories
 	leadsRepo := leads.NewRepository(pool)
@@ -178,7 +178,7 @@ func main() {
 		tgToken = dbCfg.TelegramBotToken
 	}
 	if tgToken != "" {
-		tgBot, err := inbox.NewTelegramBot(tgToken, pool, leadsRepo, aiClient, ownerID)
+		tgBot, err := inbox.NewTelegramBot(tgToken, pool, leadsRepo, aiClient, ownerID, cfg.BookingLink)
 		if err != nil {
 			log.Printf("telegram bot init failed: %v", err)
 		} else {
@@ -204,7 +204,7 @@ func main() {
 			}
 		}
 	}
-	remindersCron := reminders.NewCron(pool, leadsRepo, aiClient, notifier)
+	remindersCron := reminders.NewCron(pool, leadsRepo, aiClient, notifier, cfg.StaleDays)
 	go remindersCron.Start(ctx)
 	log.Println("reminders cron started (hourly)")
 

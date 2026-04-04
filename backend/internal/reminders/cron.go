@@ -15,19 +15,21 @@ import (
 
 // Cron periodically checks for stale leads and creates follow-up reminders.
 type Cron struct {
-	pool     *pgxpool.Pool
-	repo     *leads.Repository
-	aiClient *ai.AIClient
-	notifier *notify.TelegramNotifier
+	pool      *pgxpool.Pool
+	repo      *leads.Repository
+	aiClient  *ai.AIClient
+	notifier  *notify.TelegramNotifier
+	staleDays int
 }
 
 // NewCron creates a new Cron instance.
-func NewCron(pool *pgxpool.Pool, repo *leads.Repository, aiClient *ai.AIClient, notifier *notify.TelegramNotifier) *Cron {
+func NewCron(pool *pgxpool.Pool, repo *leads.Repository, aiClient *ai.AIClient, notifier *notify.TelegramNotifier, staleDays int) *Cron {
 	return &Cron{
-		pool:     pool,
-		repo:     repo,
-		aiClient: aiClient,
-		notifier: notifier,
+		pool:      pool,
+		repo:      repo,
+		aiClient:  aiClient,
+		notifier:  notifier,
+		staleDays: staleDays,
 	}
 }
 
@@ -55,9 +57,7 @@ func (c *Cron) Start(ctx context.Context) {
 
 // check finds stale leads and creates reminders with AI-generated follow-up messages.
 func (c *Cron) check(ctx context.Context) {
-	const staleDays = 2
-
-	staleLeads, err := c.repo.StaleLeadsWithoutReminder(ctx, staleDays)
+	staleLeads, err := c.repo.StaleLeadsWithoutReminder(ctx, c.staleDays)
 	if err != nil {
 		log.Printf("reminders cron: error querying stale leads: %v", err)
 		return
@@ -71,7 +71,7 @@ func (c *Cron) check(ctx context.Context) {
 
 	for _, lead := range staleLeads {
 		// Generate a follow-up message using AI.
-		daysAgo := fmt.Sprintf("%d", staleDays)
+		daysAgo := fmt.Sprintf("%d", c.staleDays)
 		body, err := c.aiClient.GenerateFollowup(ctx, lead.ContactName, lead.Company, daysAgo, lead.FirstMessage, "")
 		if err != nil {
 			log.Printf("reminders cron: error generating followup for lead %s: %v", lead.ID, err)

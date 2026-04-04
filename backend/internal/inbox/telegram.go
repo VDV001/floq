@@ -16,20 +16,21 @@ import (
 
 // TelegramBot listens for incoming Telegram messages and creates leads.
 type TelegramBot struct {
-	bot      *tgbotapi.BotAPI
-	pool     *pgxpool.Pool
-	repo     *leads.Repository
-	aiClient *ai.AIClient
-	ownerID  uuid.UUID // the manager's user ID who receives all leads
+	bot         *tgbotapi.BotAPI
+	pool        *pgxpool.Pool
+	repo        *leads.Repository
+	aiClient    *ai.AIClient
+	ownerID     uuid.UUID // the manager's user ID who receives all leads
+	bookingLink string
 }
 
 // NewTelegramBot creates a new TelegramBot with the given token and dependencies.
-func NewTelegramBot(token string, pool *pgxpool.Pool, repo *leads.Repository, aiClient *ai.AIClient, ownerID uuid.UUID) (*TelegramBot, error) {
+func NewTelegramBot(token string, pool *pgxpool.Pool, repo *leads.Repository, aiClient *ai.AIClient, ownerID uuid.UUID, bookingLink string) (*TelegramBot, error) {
 	bot, err := tgbotapi.NewBotAPI(token)
 	if err != nil {
 		return nil, err
 	}
-	return &TelegramBot{bot: bot, pool: pool, repo: repo, aiClient: aiClient, ownerID: ownerID}, nil
+	return &TelegramBot{bot: bot, pool: pool, repo: repo, aiClient: aiClient, ownerID: ownerID, bookingLink: bookingLink}, nil
 }
 
 // Bot returns the underlying BotAPI for sharing with other modules.
@@ -125,7 +126,7 @@ func (t *TelegramBot) handleMessage(ctx context.Context, msg *tgbotapi.Message) 
 
 	// Auto-reply with booking link if lead agrees to a call
 	if domain.DetectCallAgreement(text) {
-		bookingMsg := "Отлично! Вот ссылка для выбора удобного времени для звонка: https://calendar.app.google/CQciFBayHqi6CstB7\n\nВыберите слот и я получу уведомление. До связи!"
+		bookingMsg := "Отлично! Вот ссылка для выбора удобного времени для звонка: " + t.bookingLink + "\n\nВыберите слот и я получу уведомление. До связи!"
 		tgReply := tgbotapi.NewMessage(chatID, bookingMsg)
 		if _, err := t.bot.Send(tgReply); err != nil {
 			log.Printf("telegram inbox: error sending booking link: %v", err)

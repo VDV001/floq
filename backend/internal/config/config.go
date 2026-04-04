@@ -1,6 +1,9 @@
 package config
 
-import "os"
+import (
+	"os"
+	"strconv"
+)
 
 // Config holds all application configuration read from environment variables.
 type Config struct {
@@ -24,6 +27,8 @@ type Config struct {
 	OwnerUserID     string
 	AppBaseURL      string
 	TwoGISAPIKey    string
+	BookingLink     string
+	StaleDays       int
 }
 
 // Load reads configuration from environment variables and returns a Config.
@@ -49,12 +54,23 @@ func Load() *Config {
 		OwnerUserID:     getEnv("OWNER_USER_ID", "00000000-0000-0000-0000-000000000001"),
 		AppBaseURL:      os.Getenv("APP_BASE_URL"),
 		TwoGISAPIKey:    os.Getenv("TWOGIS_API_KEY"),
+		BookingLink:     getEnv("BOOKING_LINK", "https://calendar.app.google/CQciFBayHqi6CstB7"),
+		StaleDays:       getEnvInt("STALE_DAYS", 2),
 	}
 }
 
 func getEnv(key, fallback string) string {
 	if v := os.Getenv(key); v != "" {
 		return v
+	}
+	return fallback
+}
+
+func getEnvInt(key string, fallback int) int {
+	if v := os.Getenv(key); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			return n
+		}
 	}
 	return fallback
 }

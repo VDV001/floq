@@ -41,11 +41,16 @@ type QualificationResult struct {
 }
 
 type AIClient struct {
-	provider Provider
+	provider    Provider
+	bookingLink string
 }
 
-func NewAIClient(provider Provider) *AIClient {
-	return &AIClient{provider: provider}
+func NewAIClient(provider Provider, bookingLink string) *AIClient {
+	return &AIClient{provider: provider, bookingLink: bookingLink}
+}
+
+func (c *AIClient) resolveSystemPrompt(prompt string) string {
+	return strings.ReplaceAll(prompt, "{{booking_link}}", c.bookingLink)
 }
 
 func (c *AIClient) ProviderName() string {
@@ -91,7 +96,7 @@ func (c *AIClient) DraftReply(ctx context.Context, contactName, company, channel
 
 	resp, err := c.provider.Complete(ctx, CompletionRequest{
 		Messages: []Message{
-			{Role: "system", Content: DraftSystem},
+			{Role: "system", Content: c.resolveSystemPrompt(DraftSystem)},
 			{Role: "user", Content: userPrompt},
 		},
 		MaxTokens: 1024,
@@ -143,7 +148,7 @@ func (c *AIClient) GenerateColdMessage(ctx context.Context, name, title, company
 
 	resp, err := c.provider.Complete(ctx, CompletionRequest{
 		Messages: []Message{
-			{Role: "system", Content: ColdOutreachSystem},
+			{Role: "system", Content: c.resolveSystemPrompt(ColdOutreachSystem)},
 			{Role: "user", Content: userPrompt},
 		},
 		MaxTokens: 1024,
