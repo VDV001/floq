@@ -40,7 +40,7 @@ func (h *Handler) listProspects() http.HandlerFunc {
 		if prospects == nil {
 			prospects = []domain.Prospect{}
 		}
-		httputil.WriteJSON(w, http.StatusOK, prospects)
+		httputil.WriteJSON(w, http.StatusOK, ProspectsToResponse(prospects))
 	}
 }
 
@@ -109,7 +109,7 @@ func (h *Handler) createProspect() http.HandlerFunc {
 			httputil.WriteError(w, http.StatusInternalServerError, "failed to create prospect")
 			return
 		}
-		httputil.WriteJSON(w, http.StatusCreated, p)
+		httputil.WriteJSON(w, http.StatusCreated, ProspectToResponse(p))
 	}
 }
 
@@ -159,7 +159,7 @@ func (h *Handler) getProspect() http.HandlerFunc {
 			httputil.WriteError(w, http.StatusNotFound, "prospect not found")
 			return
 		}
-		httputil.WriteJSON(w, http.StatusOK, prospect)
+		httputil.WriteJSON(w, http.StatusOK, ProspectToResponse(prospect))
 	}
 }
 

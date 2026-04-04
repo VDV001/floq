@@ -43,7 +43,7 @@ func listSequences(uc *UseCase) http.HandlerFunc {
 		if seqs == nil {
 			seqs = []domain.Sequence{}
 		}
-		httputil.WriteJSON(w, http.StatusOK, seqs)
+		httputil.WriteJSON(w, http.StatusOK, SequencesToResponse(seqs))
 	}
 }
 
@@ -78,7 +78,7 @@ func createSequence(uc *UseCase) http.HandlerFunc {
 			httputil.WriteError(w, http.StatusInternalServerError, "failed to create sequence")
 			return
 		}
-		httputil.WriteJSON(w, http.StatusCreated, s)
+		httputil.WriteJSON(w, http.StatusCreated, SequenceToResponse(s))
 	}
 }
 
@@ -108,9 +108,9 @@ func getSequence(uc *UseCase) http.HandlerFunc {
 			steps = []domain.SequenceStep{}
 		}
 
-		httputil.WriteJSON(w, http.StatusOK, map[string]any{
-			"sequence": seq,
-			"steps":    steps,
+		httputil.WriteJSON(w, http.StatusOK, SequenceDetailResponse{
+			Sequence: SequenceToResponse(seq),
+			Steps:    StepsToResponse(steps),
 		})
 	}
 }
@@ -196,7 +196,7 @@ func addStep(uc *UseCase) http.HandlerFunc {
 			httputil.WriteError(w, http.StatusInternalServerError, "failed to create step")
 			return
 		}
-		httputil.WriteJSON(w, http.StatusCreated, step)
+		httputil.WriteJSON(w, http.StatusCreated, StepToResponse(step))
 	}
 }
 
@@ -267,7 +267,7 @@ func getQueue(uc *UseCase) http.HandlerFunc {
 		if msgs == nil {
 			msgs = []domain.OutboundMessage{}
 		}
-		httputil.WriteJSON(w, http.StatusOK, msgs)
+		httputil.WriteJSON(w, http.StatusOK, OutboundMessagesToResponse(msgs))
 	}
 }
 
@@ -341,6 +341,6 @@ func getStats(uc *UseCase) http.HandlerFunc {
 			httputil.WriteError(w, http.StatusInternalServerError, "failed to get stats")
 			return
 		}
-		httputil.WriteJSON(w, http.StatusOK, stats)
+		httputil.WriteJSON(w, http.StatusOK, StatsToResponse(stats))
 	}
 }

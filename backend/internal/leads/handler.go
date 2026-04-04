@@ -36,7 +36,7 @@ func listLeads(uc *UseCase) http.HandlerFunc {
 		if leads == nil {
 			leads = []domain.Lead{}
 		}
-		httputil.WriteJSON(w, http.StatusOK, leads)
+		httputil.WriteJSON(w, http.StatusOK, LeadsToResponse(leads))
 	}
 }
 
@@ -56,7 +56,7 @@ func getLead(uc *UseCase) http.HandlerFunc {
 			httputil.WriteError(w, http.StatusNotFound, "lead not found")
 			return
 		}
-		httputil.WriteJSON(w, http.StatusOK, lead)
+		httputil.WriteJSON(w, http.StatusOK, LeadToResponse(lead))
 	}
 }
 
@@ -103,7 +103,7 @@ func listMessages(uc *UseCase) http.HandlerFunc {
 		if msgs == nil {
 			msgs = []domain.Message{}
 		}
-		httputil.WriteJSON(w, http.StatusOK, msgs)
+		httputil.WriteJSON(w, http.StatusOK, MessagesToResponse(msgs))
 	}
 }
 
@@ -132,7 +132,7 @@ func sendMessage(uc *UseCase) http.HandlerFunc {
 			httputil.WriteError(w, http.StatusInternalServerError, "failed to send message")
 			return
 		}
-		httputil.WriteJSON(w, http.StatusCreated, msg)
+		httputil.WriteJSON(w, http.StatusCreated, MessageToResponse(msg))
 	}
 }
 
@@ -152,7 +152,7 @@ func getQualification(uc *UseCase) http.HandlerFunc {
 			httputil.WriteError(w, http.StatusNotFound, "qualification not found")
 			return
 		}
-		httputil.WriteJSON(w, http.StatusOK, q)
+		httputil.WriteJSON(w, http.StatusOK, QualificationToResponse(q))
 	}
 }
 
@@ -168,7 +168,7 @@ func qualifyLead(uc *UseCase) http.HandlerFunc {
 			httputil.WriteError(w, http.StatusInternalServerError, "failed to qualify lead")
 			return
 		}
-		httputil.WriteJSON(w, http.StatusOK, q)
+		httputil.WriteJSON(w, http.StatusOK, QualificationToResponse(q))
 	}
 }
 
@@ -188,7 +188,7 @@ func getDraft(uc *UseCase) http.HandlerFunc {
 			httputil.WriteError(w, http.StatusNotFound, "draft not found")
 			return
 		}
-		httputil.WriteJSON(w, http.StatusOK, d)
+		httputil.WriteJSON(w, http.StatusOK, DraftToResponse(d))
 	}
 }
 
@@ -204,6 +204,6 @@ func regenerateDraft(uc *UseCase) http.HandlerFunc {
 			httputil.WriteError(w, http.StatusInternalServerError, "failed to regenerate draft")
 			return
 		}
-		httputil.WriteJSON(w, http.StatusOK, d)
+		httputil.WriteJSON(w, http.StatusOK, DraftToResponse(d))
 	}
 }
