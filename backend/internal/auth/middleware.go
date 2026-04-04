@@ -1,10 +1,10 @@
 package auth
 
 import (
-	"context"
 	"net/http"
 	"strings"
 
+	"github.com/daniil/floq/internal/httputil"
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
 )
@@ -47,7 +47,7 @@ func AuthMiddleware(jwtSecret string) func(http.Handler) http.Handler {
 				return
 			}
 
-			ctx := context.WithValue(r.Context(), "user_id", userID)
+			ctx := httputil.WithUserID(r.Context(), userID)
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
 	}

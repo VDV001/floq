@@ -5,14 +5,10 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/daniil/floq/internal/httputil"
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 )
-
-func getUserID(r *http.Request) uuid.UUID {
-	uid, _ := r.Context().Value("user_id").(uuid.UUID)
-	return uid
-}
 
 func RegisterRoutes(router chi.Router, uc *UseCase) {
 	router.Get("/api/sequences", listSequences(uc))
@@ -31,91 +27,87 @@ func RegisterRoutes(router chi.Router, uc *UseCase) {
 	router.Get("/api/outbound/stats", getStats(uc))
 }
 
-func parseIDParam(r *http.Request) (uuid.UUID, error) {
-	return uuid.Parse(chi.URLParam(r, "id"))
-}
-
-func writeJSON(w http.ResponseWriter, status int, v any) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	json.NewEncoder(w).Encode(v)
-}
-
-func writeError(w http.ResponseWriter, status int, msg string) {
-	writeJSON(w, status, map[string]string{"error": msg})
-}
-
 func listSequences(uc *UseCase) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		userID := getUserID(r)
+		userID, ok := httputil.UserIDFromContext(r.Context())
+		if !ok {
+			httputil.WriteError(w, http.StatusUnauthorized, "unauthorized")
+			return
+		}
 		seqs, err := uc.ListSequences(r.Context(), userID)
 		if err != nil {
-			writeError(w, http.StatusInternalServerError, "failed to list sequences")
+			httputil.WriteError(w, http.StatusInternalServerError, "failed to list sequences")
 			return
 		}
 		if seqs == nil {
 			seqs = []Sequence{}
 		}
-		writeJSON(w, http.StatusOK, seqs)
+		httputil.WriteJSON(w, http.StatusOK, seqs)
 	}
 }
 
 func createSequence(uc *UseCase) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		userID, ok := httputil.UserIDFromContext(r.Context())
+		if !ok {
+			httputil.WriteError(w, http.StatusUnauthorized, "unauthorized")
+			return
+		}
+
 		var body struct {
 			Name string `json:"name"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-			writeError(w, http.StatusBadRequest, "invalid request body")
+			httputil.WriteError(w, http.StatusBadRequest, "invalid request body")
 			return
 		}
 		if body.Name == "" {
-			writeError(w, http.StatusBadRequest, "name is required")
+			httputil.WriteError(w, http.StatusBadRequest, "name is required")
 			return
 		}
 
 		s := &Sequence{
 			ID:        uuid.New(),
-			UserID:    getUserID(r),
+			UserID:    userID,
 			Name:      body.Name,
 			IsActive:  false,
 			CreatedAt: time.Now().UTC(),
 		}
 		if err := uc.CreateSequence(r.Context(), s); err != nil {
-			writeError(w, http.StatusInternalServerError, "failed to create sequence")
+			httputil.WriteError(w, http.StatusInternalServerError, "failed to create sequence")
 			return
 		}
-		writeJSON(w, http.StatusCreated, s)
+		httputil.WriteJSON(w, http.StatusCreated, s)
 	}
 }
 
 func getSequence(uc *UseCase) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		id, err := parseIDParam(r)
+		id, err := httputil.ParseIDParam(r, "id")
 		if err != nil {
-			writeError(w, http.StatusBadRequest, "invalid sequence id")
+			httputil.WriteError(w, http.StatusBadRequest, "invalid sequence id")
 			return
 		}
 		seq, err := uc.GetSequence(r.Context(), id)
 		if err != nil {
-			writeError(w, http.StatusInternalServerError, "failed to get sequence")
+			httputil.WriteError(w, http.StatusInternalServerError, "failed to get sequence")
 			return
 		}
 		if seq == nil {
-			writeError(w, http.StatusNotFound, "sequence not found")
+			httputil.WriteError(w, http.StatusNotFound, "sequence not found")
 			return
 		}
 
 		steps, err := uc.ListSteps(r.Context(), id)
 		if err != nil {
-			writeError(w, http.StatusInternalServerError, "failed to list steps")
+			httputil.WriteError(w, http.StatusInternalServerError, "failed to list steps")
 			return
 		}
 		if steps == nil {
 			steps = []SequenceStep{}
 		}
 
-		writeJSON(w, http.StatusOK, map[string]any{
+		httputil.WriteJSON(w, http.StatusOK, map[string]any{
 			"sequence": seq,
 			"steps":    steps,
 		})
@@ -124,9 +116,9 @@ func getSequence(uc *UseCase) http.HandlerFunc {
 
 func updateSequence(uc *UseCase) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		id, err := parseIDParam(r)
+		id, err := httputil.ParseIDParam(r, "id")
 		if err != nil {
-			writeError(w, http.StatusBadRequest, "invalid sequence id")
+			httputil.WriteError(w, http.StatusBadRequest, "invalid sequence id")
 			return
 		}
 
@@ -134,43 +126,43 @@ func updateSequence(uc *UseCase) http.HandlerFunc {
 			Name string `json:"name"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-			writeError(w, http.StatusBadRequest, "invalid request body")
+			httputil.WriteError(w, http.StatusBadRequest, "invalid request body")
 			return
 		}
 		if body.Name == "" {
-			writeError(w, http.StatusBadRequest, "name is required")
+			httputil.WriteError(w, http.StatusBadRequest, "name is required")
 			return
 		}
 
 		s := &Sequence{ID: id, Name: body.Name}
 		if err := uc.UpdateSequence(r.Context(), s); err != nil {
-			writeError(w, http.StatusInternalServerError, "failed to update sequence")
+			httputil.WriteError(w, http.StatusInternalServerError, "failed to update sequence")
 			return
 		}
-		writeJSON(w, http.StatusOK, map[string]string{"name": body.Name})
+		httputil.WriteJSON(w, http.StatusOK, map[string]string{"name": body.Name})
 	}
 }
 
 func deleteSequence(uc *UseCase) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		id, err := parseIDParam(r)
+		id, err := httputil.ParseIDParam(r, "id")
 		if err != nil {
-			writeError(w, http.StatusBadRequest, "invalid sequence id")
+			httputil.WriteError(w, http.StatusBadRequest, "invalid sequence id")
 			return
 		}
 		if err := uc.DeleteSequence(r.Context(), id); err != nil {
-			writeError(w, http.StatusInternalServerError, "failed to delete sequence")
+			httputil.WriteError(w, http.StatusInternalServerError, "failed to delete sequence")
 			return
 		}
-		writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
+		httputil.WriteJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
 	}
 }
 
 func addStep(uc *UseCase) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		id, err := parseIDParam(r)
+		id, err := httputil.ParseIDParam(r, "id")
 		if err != nil {
-			writeError(w, http.StatusBadRequest, "invalid sequence id")
+			httputil.WriteError(w, http.StatusBadRequest, "invalid sequence id")
 			return
 		}
 
@@ -181,7 +173,7 @@ func addStep(uc *UseCase) http.HandlerFunc {
 			PromptHint string `json:"prompt_hint"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-			writeError(w, http.StatusBadRequest, "invalid request body")
+			httputil.WriteError(w, http.StatusBadRequest, "invalid request body")
 			return
 		}
 
@@ -200,18 +192,18 @@ func addStep(uc *UseCase) http.HandlerFunc {
 			CreatedAt:  time.Now().UTC(),
 		}
 		if err := uc.CreateStep(r.Context(), step); err != nil {
-			writeError(w, http.StatusInternalServerError, "failed to create step")
+			httputil.WriteError(w, http.StatusInternalServerError, "failed to create step")
 			return
 		}
-		writeJSON(w, http.StatusCreated, step)
+		httputil.WriteJSON(w, http.StatusCreated, step)
 	}
 }
 
 func launchSequence(uc *UseCase) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		id, err := parseIDParam(r)
+		id, err := httputil.ParseIDParam(r, "id")
 		if err != nil {
-			writeError(w, http.StatusBadRequest, "invalid sequence id")
+			httputil.WriteError(w, http.StatusBadRequest, "invalid sequence id")
 			return
 		}
 
@@ -219,27 +211,27 @@ func launchSequence(uc *UseCase) http.HandlerFunc {
 			ProspectIDs []uuid.UUID `json:"prospect_ids"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-			writeError(w, http.StatusBadRequest, "invalid request body")
+			httputil.WriteError(w, http.StatusBadRequest, "invalid request body")
 			return
 		}
 		if len(body.ProspectIDs) == 0 {
-			writeError(w, http.StatusBadRequest, "prospect_ids is required")
+			httputil.WriteError(w, http.StatusBadRequest, "prospect_ids is required")
 			return
 		}
 
 		if err := uc.Launch(r.Context(), id, body.ProspectIDs); err != nil {
-			writeError(w, http.StatusInternalServerError, "failed to launch sequence")
+			httputil.WriteError(w, http.StatusInternalServerError, "failed to launch sequence")
 			return
 		}
-		writeJSON(w, http.StatusOK, map[string]string{"status": "launched"})
+		httputil.WriteJSON(w, http.StatusOK, map[string]string{"status": "launched"})
 	}
 }
 
 func toggleActive(uc *UseCase) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		id, err := parseIDParam(r)
+		id, err := httputil.ParseIDParam(r, "id")
 		if err != nil {
-			writeError(w, http.StatusBadRequest, "invalid sequence id")
+			httputil.WriteError(w, http.StatusBadRequest, "invalid sequence id")
 			return
 		}
 
@@ -247,68 +239,72 @@ func toggleActive(uc *UseCase) http.HandlerFunc {
 			IsActive bool `json:"is_active"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-			writeError(w, http.StatusBadRequest, "invalid request body")
+			httputil.WriteError(w, http.StatusBadRequest, "invalid request body")
 			return
 		}
 
 		if err := uc.ToggleActive(r.Context(), id, body.IsActive); err != nil {
-			writeError(w, http.StatusInternalServerError, "failed to toggle sequence")
+			httputil.WriteError(w, http.StatusInternalServerError, "failed to toggle sequence")
 			return
 		}
-		writeJSON(w, http.StatusOK, map[string]bool{"is_active": body.IsActive})
+		httputil.WriteJSON(w, http.StatusOK, map[string]bool{"is_active": body.IsActive})
 	}
 }
 
 func getQueue(uc *UseCase) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		userID := getUserID(r)
+		userID, ok := httputil.UserIDFromContext(r.Context())
+		if !ok {
+			httputil.WriteError(w, http.StatusUnauthorized, "unauthorized")
+			return
+		}
 		msgs, err := uc.GetQueue(r.Context(), userID)
 		if err != nil {
-			writeError(w, http.StatusInternalServerError, "failed to get queue")
+			httputil.WriteError(w, http.StatusInternalServerError, "failed to get queue")
 			return
 		}
 		if msgs == nil {
 			msgs = []OutboundMessage{}
 		}
-		writeJSON(w, http.StatusOK, msgs)
+		httputil.WriteJSON(w, http.StatusOK, msgs)
 	}
 }
 
 func approveMessage(uc *UseCase) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		id, err := parseIDParam(r)
+		id, err := httputil.ParseIDParam(r, "id")
 		if err != nil {
-			writeError(w, http.StatusBadRequest, "invalid message id")
+			httputil.WriteError(w, http.StatusBadRequest, "invalid message id")
 			return
 		}
 		if err := uc.ApproveMessage(r.Context(), id); err != nil {
-			writeError(w, http.StatusInternalServerError, "failed to approve message")
+			httputil.WriteError(w, http.StatusInternalServerError, "failed to approve message")
 			return
 		}
-		writeJSON(w, http.StatusOK, map[string]string{"status": "approved"})
+		httputil.WriteJSON(w, http.StatusOK, map[string]string{"status": "approved"})
 	}
 }
 
 func rejectMessage(uc *UseCase) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		id, err := parseIDParam(r)
+		id, err := httputil.ParseIDParam(r, "id")
 		if err != nil {
-			writeError(w, http.StatusBadRequest, "invalid message id")
+			httputil.WriteError(w, http.StatusBadRequest, "invalid message id")
 			return
 		}
 		if err := uc.RejectMessage(r.Context(), id); err != nil {
-			writeError(w, http.StatusInternalServerError, "failed to reject message")
+			httputil.WriteError(w, http.StatusInternalServerError, "failed to reject message")
 			return
 		}
-		writeJSON(w, http.StatusOK, map[string]string{"status": "rejected"})
+		httputil.WriteJSON(w, http.StatusOK, map[string]string{"status": "rejected"})
 	}
 }
 
 func editMessage(uc *UseCase) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		id, err := parseIDParam(r)
+		id, err := httputil.ParseIDParam(r, "id")
 		if err != nil {
-			writeError(w, http.StatusBadRequest, "invalid message id")
+			httputil.WriteError(w, http.StatusBadRequest, "invalid message id")
 			return
 		}
 
@@ -316,30 +312,34 @@ func editMessage(uc *UseCase) http.HandlerFunc {
 			Body string `json:"body"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-			writeError(w, http.StatusBadRequest, "invalid request body")
+			httputil.WriteError(w, http.StatusBadRequest, "invalid request body")
 			return
 		}
 		if body.Body == "" {
-			writeError(w, http.StatusBadRequest, "body is required")
+			httputil.WriteError(w, http.StatusBadRequest, "body is required")
 			return
 		}
 
 		if err := uc.EditMessage(r.Context(), id, body.Body); err != nil {
-			writeError(w, http.StatusInternalServerError, "failed to edit message")
+			httputil.WriteError(w, http.StatusInternalServerError, "failed to edit message")
 			return
 		}
-		writeJSON(w, http.StatusOK, map[string]string{"status": "updated"})
+		httputil.WriteJSON(w, http.StatusOK, map[string]string{"status": "updated"})
 	}
 }
 
 func getStats(uc *UseCase) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		userID := getUserID(r)
-		stats, err := uc.GetStats(r.Context(), userID)
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, "failed to get stats")
+		userID, ok := httputil.UserIDFromContext(r.Context())
+		if !ok {
+			httputil.WriteError(w, http.StatusUnauthorized, "unauthorized")
 			return
 		}
-		writeJSON(w, http.StatusOK, stats)
+		stats, err := uc.GetStats(r.Context(), userID)
+		if err != nil {
+			httputil.WriteError(w, http.StatusInternalServerError, "failed to get stats")
+			return
+		}
+		httputil.WriteJSON(w, http.StatusOK, stats)
 	}
 }

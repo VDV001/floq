@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 
+	"github.com/daniil/floq/internal/httputil"
 	"github.com/go-chi/chi/v5"
 )
 
@@ -12,6 +13,7 @@ type Handler struct{}
 func RegisterRoutes(r chi.Router) {
 	h := &Handler{}
 	r.Post("/api/parser/website", h.scrapeWebsite())
+	r.Post("/api/parser/twogis", h.searchTwoGIS())
 }
 
 func (h *Handler) scrapeWebsite() http.HandlerFunc {
@@ -21,34 +23,54 @@ func (h *Handler) scrapeWebsite() http.HandlerFunc {
 		}
 
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-			writeError(w, http.StatusBadRequest, "invalid request body")
+			httputil.WriteError(w, http.StatusBadRequest, "invalid request body")
 			return
 		}
 
 		if body.URL == "" {
-			writeError(w, http.StatusBadRequest, "url is required")
+			httputil.WriteError(w, http.StatusBadRequest, "url is required")
 			return
 		}
 
 		emails, err := ScrapeEmails(body.URL)
 		if err != nil {
-			writeError(w, http.StatusUnprocessableEntity, err.Error())
+			httputil.WriteError(w, http.StatusUnprocessableEntity, err.Error())
 			return
 		}
 
-		writeJSON(w, http.StatusOK, map[string]any{
+		httputil.WriteJSON(w, http.StatusOK, map[string]any{
 			"url":    body.URL,
 			"emails": emails,
 		})
 	}
 }
 
-func writeJSON(w http.ResponseWriter, status int, v any) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	json.NewEncoder(w).Encode(v)
-}
+func (h *Handler) searchTwoGIS() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Query string `json:"query"`
+			City  string `json:"city"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			httputil.WriteError(w, http.StatusBadRequest, "invalid request body")
+			return
+		}
+		if body.Query == "" {
+			httputil.WriteError(w, http.StatusBadRequest, "query is required")
+			return
+		}
+		if body.City == "" {
+			body.City = "Москва"
+		}
 
-func writeError(w http.ResponseWriter, status int, msg string) {
-	writeJSON(w, status, map[string]string{"error": msg})
+		results, err := Search2GIS(r.Context(), body.Query, body.City)
+		if err != nil {
+			httputil.WriteError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		if results == nil {
+			results = []TwoGISResult{}
+		}
+		httputil.WriteJSON(w, http.StatusOK, results)
+	}
 }

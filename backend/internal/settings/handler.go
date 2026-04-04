@@ -11,8 +11,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/daniil/floq/internal/httputil"
 	"github.com/go-chi/chi/v5"
-	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -47,6 +47,16 @@ type Settings struct {
 	// Notifications
 	NotifyTelegram    bool `json:"notify_telegram"`
 	NotifyEmailDigest bool `json:"notify_email_digest"`
+
+	// Automations
+	AutoQualify        bool `json:"auto_qualify"`
+	AutoDraft          bool `json:"auto_draft"`
+	AutoSend           bool `json:"auto_send"`
+	AutoSendDelayMin   int  `json:"auto_send_delay_min"`
+	AutoFollowup       bool `json:"auto_followup"`
+	AutoFollowupDays   int  `json:"auto_followup_days"`
+	AutoProspectToLead bool `json:"auto_prospect_to_lead"`
+	AutoVerifyImport   bool `json:"auto_verify_import"`
 }
 
 func RegisterRoutes(r chi.Router, pool *pgxpool.Pool) {
@@ -54,21 +64,6 @@ func RegisterRoutes(r chi.Router, pool *pgxpool.Pool) {
 	r.Get("/api/settings", h.getSettings())
 	r.Put("/api/settings", h.updateSettings())
 	r.Post("/api/settings/test-imap", h.testIMAP())
-}
-
-func getUserID(r *http.Request) uuid.UUID {
-	uid, _ := r.Context().Value("user_id").(uuid.UUID)
-	return uid
-}
-
-func writeJSON(w http.ResponseWriter, status int, v any) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	json.NewEncoder(w).Encode(v)
-}
-
-func writeError(w http.ResponseWriter, status int, msg string) {
-	writeJSON(w, status, map[string]string{"error": msg})
 }
 
 // maskSecret returns the last 4 characters of a secret prefixed with "...",
@@ -85,9 +80,9 @@ func maskSecret(s string) string {
 
 func (h *Handler) getSettings() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		userID := getUserID(r)
-		if userID == uuid.Nil {
-			writeError(w, http.StatusUnauthorized, "unauthorized")
+		userID, ok := httputil.UserIDFromContext(r.Context())
+		if !ok {
+			httputil.WriteError(w, http.StatusUnauthorized, "unauthorized")
 			return
 		}
 
@@ -99,18 +94,24 @@ func (h *Handler) getSettings() http.HandlerFunc {
 			`SELECT full_name, email FROM users WHERE id = $1`, userID,
 		).Scan(&fullName, &email)
 		if err != nil {
-			writeError(w, http.StatusInternalServerError, "failed to load user profile")
+			httputil.WriteError(w, http.StatusInternalServerError, "failed to load user profile")
 			return
 		}
 
 		// Get settings (may not exist yet — use defaults).
 		s := Settings{
-			FullName:       fullName,
-			Email:          email,
-			IMAPPort:       "993",
-			AIProvider:     "ollama",
-			AIModel:        "gemma3:4b",
-			NotifyTelegram: true,
+			FullName:           fullName,
+			Email:              email,
+			IMAPPort:           "993",
+			AIProvider:         "ollama",
+			AIModel:            "gemma3:4b",
+			NotifyTelegram:     true,
+			AutoQualify:        true,
+			AutoDraft:          true,
+			AutoFollowup:       true,
+			AutoFollowupDays:   2,
+			AutoSendDelayMin:   5,
+			AutoProspectToLead: true,
 		}
 
 		err = h.pool.QueryRow(ctx,
@@ -118,7 +119,9 @@ func (h *Handler) getSettings() http.HandlerFunc {
 			        imap_host, imap_port, imap_user, imap_password,
 			        resend_api_key,
 			        ai_provider, ai_model, ai_api_key,
-			        notify_telegram, notify_email_digest
+			        notify_telegram, notify_email_digest,
+			        auto_qualify, auto_draft, auto_send, auto_send_delay_min,
+			        auto_followup, auto_followup_days, auto_prospect_to_lead, auto_verify_import
 			 FROM user_settings WHERE user_id = $1`, userID,
 		).Scan(
 			&s.TelegramBotToken, &s.TelegramBotActive,
@@ -126,9 +129,11 @@ func (h *Handler) getSettings() http.HandlerFunc {
 			&s.ResendAPIKey,
 			&s.AIProvider, &s.AIModel, &s.AIAPIKey,
 			&s.NotifyTelegram, &s.NotifyEmailDigest,
+			&s.AutoQualify, &s.AutoDraft, &s.AutoSend, &s.AutoSendDelayMin,
+			&s.AutoFollowup, &s.AutoFollowupDays, &s.AutoProspectToLead, &s.AutoVerifyImport,
 		)
 		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
-			writeError(w, http.StatusInternalServerError, "failed to load settings")
+			httputil.WriteError(w, http.StatusInternalServerError, "failed to load settings")
 			return
 		}
 
@@ -138,42 +143,42 @@ func (h *Handler) getSettings() http.HandlerFunc {
 		s.ResendAPIKey = maskSecret(s.ResendAPIKey)
 		s.AIAPIKey = maskSecret(s.AIAPIKey)
 
-		writeJSON(w, http.StatusOK, s)
+		httputil.WriteJSON(w, http.StatusOK, s)
 	}
 }
 
 func (h *Handler) updateSettings() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		userID := getUserID(r)
-		if userID == uuid.Nil {
-			writeError(w, http.StatusUnauthorized, "unauthorized")
+		userID, ok := httputil.UserIDFromContext(r.Context())
+		if !ok {
+			httputil.WriteError(w, http.StatusUnauthorized, "unauthorized")
 			return
 		}
 
 		body, err := io.ReadAll(r.Body)
 		if err != nil {
-			writeError(w, http.StatusBadRequest, "failed to read request body")
+			httputil.WriteError(w, http.StatusBadRequest, "failed to read request body")
 			return
 		}
 
 		// Decode into a map so we know which fields were actually sent.
 		var raw map[string]json.RawMessage
 		if err := json.Unmarshal(body, &raw); err != nil {
-			writeError(w, http.StatusBadRequest, "invalid JSON")
+			httputil.WriteError(w, http.StatusBadRequest, "invalid JSON")
 			return
 		}
 
 		// Also decode into the struct for typed access.
 		var input Settings
 		if err := json.Unmarshal(body, &input); err != nil {
-			writeError(w, http.StatusBadRequest, "invalid JSON")
+			httputil.WriteError(w, http.StatusBadRequest, "invalid JSON")
 			return
 		}
 
 		// If telegram_bot_token is being set, validate it.
 		if _, ok := raw["telegram_bot_token"]; ok && input.TelegramBotToken != "" {
 			if err := validateTelegramToken(input.TelegramBotToken); err != nil {
-				writeError(w, http.StatusBadRequest, fmt.Sprintf("invalid telegram bot token: %v", err))
+				httputil.WriteError(w, http.StatusBadRequest, fmt.Sprintf("invalid telegram bot token: %v", err))
 				return
 			}
 		}
@@ -229,9 +234,33 @@ func (h *Handler) updateSettings() http.HandlerFunc {
 		if _, ok := raw["notify_email_digest"]; ok {
 			cols = append(cols, col{"notify_email_digest", input.NotifyEmailDigest})
 		}
+		if _, ok := raw["auto_qualify"]; ok {
+			cols = append(cols, col{"auto_qualify", input.AutoQualify})
+		}
+		if _, ok := raw["auto_draft"]; ok {
+			cols = append(cols, col{"auto_draft", input.AutoDraft})
+		}
+		if _, ok := raw["auto_send"]; ok {
+			cols = append(cols, col{"auto_send", input.AutoSend})
+		}
+		if _, ok := raw["auto_send_delay_min"]; ok {
+			cols = append(cols, col{"auto_send_delay_min", input.AutoSendDelayMin})
+		}
+		if _, ok := raw["auto_followup"]; ok {
+			cols = append(cols, col{"auto_followup", input.AutoFollowup})
+		}
+		if _, ok := raw["auto_followup_days"]; ok {
+			cols = append(cols, col{"auto_followup_days", input.AutoFollowupDays})
+		}
+		if _, ok := raw["auto_prospect_to_lead"]; ok {
+			cols = append(cols, col{"auto_prospect_to_lead", input.AutoProspectToLead})
+		}
+		if _, ok := raw["auto_verify_import"]; ok {
+			cols = append(cols, col{"auto_verify_import", input.AutoVerifyImport})
+		}
 
 		if len(cols) == 0 {
-			writeError(w, http.StatusBadRequest, "no fields to update")
+			httputil.WriteError(w, http.StatusBadRequest, "no fields to update")
 			return
 		}
 
@@ -258,7 +287,7 @@ func (h *Handler) updateSettings() http.HandlerFunc {
 
 		_, err = h.pool.Exec(ctx, query, args...)
 		if err != nil {
-			writeError(w, http.StatusInternalServerError, "failed to save settings")
+			httputil.WriteError(w, http.StatusInternalServerError, "failed to save settings")
 			return
 		}
 
@@ -269,12 +298,18 @@ func (h *Handler) updateSettings() http.HandlerFunc {
 		).Scan(&fullName, &email)
 
 		s := Settings{
-			FullName:       fullName,
-			Email:          email,
-			IMAPPort:       "993",
-			AIProvider:     "ollama",
-			AIModel:        "gemma3:4b",
-			NotifyTelegram: true,
+			FullName:           fullName,
+			Email:              email,
+			IMAPPort:           "993",
+			AIProvider:         "ollama",
+			AIModel:            "gemma3:4b",
+			NotifyTelegram:     true,
+			AutoQualify:        true,
+			AutoDraft:          true,
+			AutoFollowup:       true,
+			AutoFollowupDays:   2,
+			AutoSendDelayMin:   5,
+			AutoProspectToLead: true,
 		}
 
 		_ = h.pool.QueryRow(ctx,
@@ -282,7 +317,9 @@ func (h *Handler) updateSettings() http.HandlerFunc {
 			        imap_host, imap_port, imap_user, imap_password,
 			        resend_api_key,
 			        ai_provider, ai_model, ai_api_key,
-			        notify_telegram, notify_email_digest
+			        notify_telegram, notify_email_digest,
+			        auto_qualify, auto_draft, auto_send, auto_send_delay_min,
+			        auto_followup, auto_followup_days, auto_prospect_to_lead, auto_verify_import
 			 FROM user_settings WHERE user_id = $1`, userID,
 		).Scan(
 			&s.TelegramBotToken, &s.TelegramBotActive,
@@ -290,6 +327,8 @@ func (h *Handler) updateSettings() http.HandlerFunc {
 			&s.ResendAPIKey,
 			&s.AIProvider, &s.AIModel, &s.AIAPIKey,
 			&s.NotifyTelegram, &s.NotifyEmailDigest,
+			&s.AutoQualify, &s.AutoDraft, &s.AutoSend, &s.AutoSendDelayMin,
+			&s.AutoFollowup, &s.AutoFollowupDays, &s.AutoProspectToLead, &s.AutoVerifyImport,
 		)
 
 		// Mask sensitive fields.
@@ -298,7 +337,7 @@ func (h *Handler) updateSettings() http.HandlerFunc {
 		s.ResendAPIKey = maskSecret(s.ResendAPIKey)
 		s.AIAPIKey = maskSecret(s.AIAPIKey)
 
-		writeJSON(w, http.StatusOK, s)
+		httputil.WriteJSON(w, http.StatusOK, s)
 	}
 }
 
@@ -328,9 +367,9 @@ func validateTelegramToken(token string) error {
 
 func (h *Handler) testIMAP() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		userID := getUserID(r)
-		if userID == uuid.Nil {
-			writeError(w, http.StatusUnauthorized, "unauthorized")
+		userID, ok := httputil.UserIDFromContext(r.Context())
+		if !ok {
+			httputil.WriteError(w, http.StatusUnauthorized, "unauthorized")
 			return
 		}
 
@@ -342,7 +381,7 @@ func (h *Handler) testIMAP() http.HandlerFunc {
 			UseStored bool   `json:"use_stored"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-			writeError(w, http.StatusBadRequest, "invalid JSON")
+			httputil.WriteError(w, http.StatusBadRequest, "invalid JSON")
 			return
 		}
 
@@ -359,7 +398,7 @@ func (h *Handler) testIMAP() http.HandlerFunc {
 		}
 
 		if body.Host == "" || body.Port == "" || body.User == "" || body.Password == "" {
-			writeJSON(w, http.StatusOK, map[string]any{"success": false, "error": "Заполните все поля IMAP"})
+			httputil.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "error": "Заполните все поля IMAP"})
 			return
 		}
 
@@ -371,7 +410,7 @@ func (h *Handler) testIMAP() http.HandlerFunc {
 			&tls.Config{ServerName: body.Host},
 		)
 		if err != nil {
-			writeJSON(w, http.StatusOK, map[string]any{"success": false, "error": fmt.Sprintf("Не удалось подключиться: %v", err)})
+			httputil.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "error": fmt.Sprintf("Не удалось подключиться: %v", err)})
 			return
 		}
 		defer conn.Close()
@@ -381,7 +420,7 @@ func (h *Handler) testIMAP() http.HandlerFunc {
 		_ = conn.SetReadDeadline(time.Now().Add(5 * time.Second))
 		n, err := conn.Read(buf)
 		if err != nil {
-			writeJSON(w, http.StatusOK, map[string]any{"success": false, "error": "Сервер не отвечает"})
+			httputil.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "error": "Сервер не отвечает"})
 			return
 		}
 		greeting := string(buf[:n])
@@ -390,7 +429,7 @@ func (h *Handler) testIMAP() http.HandlerFunc {
 		loginCmd := fmt.Sprintf("A1 LOGIN \"%s\" \"%s\"\r\n", body.User, body.Password)
 		_, err = conn.Write([]byte(loginCmd))
 		if err != nil {
-			writeJSON(w, http.StatusOK, map[string]any{"success": false, "error": "Ошибка отправки команды"})
+			httputil.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "error": "Ошибка отправки команды"})
 			return
 		}
 
@@ -414,9 +453,9 @@ func (h *Handler) testIMAP() http.HandlerFunc {
 		_ = greeting // used for connection check
 
 		if strings.Contains(response, "A1 OK") {
-			writeJSON(w, http.StatusOK, map[string]any{"success": true, "message": "Подключение успешно!"})
+			httputil.WriteJSON(w, http.StatusOK, map[string]any{"success": true, "message": "Подключение успешно!"})
 		} else {
-			writeJSON(w, http.StatusOK, map[string]any{"success": false, "error": "Неверный логин или пароль"})
+			httputil.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "error": "Неверный логин или пароль"})
 		}
 	}
 }

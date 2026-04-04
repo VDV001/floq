@@ -5,11 +5,12 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/daniil/floq/internal/httputil"
 	"github.com/daniil/floq/internal/prospects"
 	"github.com/go-chi/chi/v5"
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
-	"github.com/google/uuid"
 )
+
 
 // Handler exposes verification endpoints.
 type Handler struct {
@@ -31,30 +32,30 @@ func (h *Handler) verifyEmailSingle() http.HandlerFunc {
 			Email string `json:"email"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-			writeError(w, http.StatusBadRequest, "invalid request body")
+			httputil.WriteError(w, http.StatusBadRequest, "invalid request body")
 			return
 		}
 		if body.Email == "" {
-			writeError(w, http.StatusBadRequest, "email is required")
+			httputil.WriteError(w, http.StatusBadRequest, "email is required")
 			return
 		}
 
 		result := VerifyEmail(body.Email)
-		writeJSON(w, http.StatusOK, result)
+		httputil.WriteJSON(w, http.StatusOK, result)
 	}
 }
 
 func (h *Handler) verifyBatch() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		userID, ok := r.Context().Value("user_id").(uuid.UUID)
+		userID, ok := httputil.UserIDFromContext(r.Context())
 		if !ok {
-			writeError(w, http.StatusUnauthorized, "missing user_id in context")
+			httputil.WriteError(w, http.StatusUnauthorized, "unauthorized")
 			return
 		}
 
 		prospectList, err := h.prospectRepo.ListProspects(r.Context(), userID)
 		if err != nil {
-			writeError(w, http.StatusInternalServerError, "failed to list prospects")
+			httputil.WriteError(w, http.StatusInternalServerError, "failed to list prospects")
 			return
 		}
 
@@ -95,30 +96,29 @@ func (h *Handler) verifyBatch() http.HandlerFunc {
 			count++
 		}
 
-		writeJSON(w, http.StatusOK, map[string]int{"verified": count})
+		httputil.WriteJSON(w, http.StatusOK, map[string]int{"verified": count})
 	}
 }
 
 func (h *Handler) getVerifyStatus() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		idStr := chi.URLParam(r, "id")
-		id, err := uuid.Parse(idStr)
+		id, err := httputil.ParseIDParam(r, "id")
 		if err != nil {
-			writeError(w, http.StatusBadRequest, "invalid prospect id")
+			httputil.WriteError(w, http.StatusBadRequest, "invalid prospect id")
 			return
 		}
 
 		p, err := h.prospectRepo.GetProspect(r.Context(), id)
 		if err != nil {
-			writeError(w, http.StatusInternalServerError, "failed to get prospect")
+			httputil.WriteError(w, http.StatusInternalServerError, "failed to get prospect")
 			return
 		}
 		if p == nil {
-			writeError(w, http.StatusNotFound, "prospect not found")
+			httputil.WriteError(w, http.StatusNotFound, "prospect not found")
 			return
 		}
 
-		writeJSON(w, http.StatusOK, map[string]any{
+		httputil.WriteJSON(w, http.StatusOK, map[string]any{
 			"verify_status":  p.VerifyStatus,
 			"verify_score":   p.VerifyScore,
 			"verify_details": p.VerifyDetails,
@@ -127,12 +127,3 @@ func (h *Handler) getVerifyStatus() http.HandlerFunc {
 	}
 }
 
-func writeJSON(w http.ResponseWriter, status int, v any) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	json.NewEncoder(w).Encode(v)
-}
-
-func writeError(w http.ResponseWriter, status int, msg string) {
-	writeJSON(w, status, map[string]string{"error": msg})
-}
