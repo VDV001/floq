@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/daniil/floq/internal/httputil"
 	"github.com/go-chi/chi/v5"
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
@@ -36,21 +37,21 @@ type registerRequest struct {
 func (h *Handler) Register(w http.ResponseWriter, r *http.Request) {
 	var req registerRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request body")
+		httputil.WriteError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
 	if req.Email == "" || req.Password == "" || req.FullName == "" {
-		writeError(w, http.StatusBadRequest, "email, password and full_name are required")
+		httputil.WriteError(w, http.StatusBadRequest, "email, password and full_name are required")
 		return
 	}
 	if len(req.Password) < 6 {
-		writeError(w, http.StatusBadRequest, "password must be at least 6 characters")
+		httputil.WriteError(w, http.StatusBadRequest, "password must be at least 6 characters")
 		return
 	}
 
 	hash, err := bcrypt.GenerateFromPassword([]byte(req.Password), 10)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to hash password")
+		httputil.WriteError(w, http.StatusInternalServerError, "failed to hash password")
 		return
 	}
 
@@ -61,17 +62,17 @@ func (h *Handler) Register(w http.ResponseWriter, r *http.Request) {
 		 VALUES ($1, $2, $3, $4, $5, $6)`,
 		userID, req.Email, string(hash), req.FullName, now, now)
 	if err != nil {
-		writeError(w, http.StatusConflict, "user with this email already exists")
+		httputil.WriteError(w, http.StatusConflict, "user with this email already exists")
 		return
 	}
 
 	token, refreshToken, err := h.generateTokenPair(userID)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to generate tokens")
+		httputil.WriteError(w, http.StatusInternalServerError, "failed to generate tokens")
 		return
 	}
 
-	writeJSON(w, http.StatusCreated, tokenResponse{Token: token, RefreshToken: refreshToken})
+	httputil.WriteJSON(w, http.StatusCreated, tokenResponse{Token: token, RefreshToken: refreshToken})
 }
 
 type loginRequest struct {
@@ -87,11 +88,11 @@ type tokenResponse struct {
 func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
 	var req loginRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request body")
+		httputil.WriteError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
 	if req.Email == "" || req.Password == "" {
-		writeError(w, http.StatusBadRequest, "email and password are required")
+		httputil.WriteError(w, http.StatusBadRequest, "email and password are required")
 		return
 	}
 
@@ -101,22 +102,22 @@ func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
 		`SELECT id, password_hash FROM users WHERE email = $1`, req.Email).
 		Scan(&userID, &passwordHash)
 	if err != nil {
-		writeError(w, http.StatusUnauthorized, "invalid credentials")
+		httputil.WriteError(w, http.StatusUnauthorized, "invalid credentials")
 		return
 	}
 
 	if err := bcrypt.CompareHashAndPassword([]byte(passwordHash), []byte(req.Password)); err != nil {
-		writeError(w, http.StatusUnauthorized, "invalid credentials")
+		httputil.WriteError(w, http.StatusUnauthorized, "invalid credentials")
 		return
 	}
 
 	token, refreshToken, err := h.generateTokenPair(userID)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to generate tokens")
+		httputil.WriteError(w, http.StatusInternalServerError, "failed to generate tokens")
 		return
 	}
 
-	writeJSON(w, http.StatusOK, tokenResponse{Token: token, RefreshToken: refreshToken})
+	httputil.WriteJSON(w, http.StatusOK, tokenResponse{Token: token, RefreshToken: refreshToken})
 }
 
 func (h *Handler) Refresh(w http.ResponseWriter, r *http.Request) {
@@ -124,11 +125,11 @@ func (h *Handler) Refresh(w http.ResponseWriter, r *http.Request) {
 		RefreshToken string `json:"refresh_token"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request body")
+		httputil.WriteError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
 	if req.RefreshToken == "" {
-		writeError(w, http.StatusBadRequest, "refresh_token is required")
+		httputil.WriteError(w, http.StatusBadRequest, "refresh_token is required")
 		return
 	}
 
@@ -137,30 +138,30 @@ func (h *Handler) Refresh(w http.ResponseWriter, r *http.Request) {
 		return h.jwtSecret, nil
 	})
 	if err != nil || !token.Valid {
-		writeError(w, http.StatusUnauthorized, "invalid refresh token")
+		httputil.WriteError(w, http.StatusUnauthorized, "invalid refresh token")
 		return
 	}
 
 	tokenType, _ := claims["type"].(string)
 	if tokenType != "refresh" {
-		writeError(w, http.StatusUnauthorized, "invalid token type")
+		httputil.WriteError(w, http.StatusUnauthorized, "invalid token type")
 		return
 	}
 
 	userIDStr, _ := claims["user_id"].(string)
 	userID, err := uuid.Parse(userIDStr)
 	if err != nil {
-		writeError(w, http.StatusUnauthorized, "invalid token claims")
+		httputil.WriteError(w, http.StatusUnauthorized, "invalid token claims")
 		return
 	}
 
 	newToken, newRefresh, err := h.generateTokenPair(userID)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to generate tokens")
+		httputil.WriteError(w, http.StatusInternalServerError, "failed to generate tokens")
 		return
 	}
 
-	writeJSON(w, http.StatusOK, tokenResponse{Token: newToken, RefreshToken: newRefresh})
+	httputil.WriteJSON(w, http.StatusOK, tokenResponse{Token: newToken, RefreshToken: newRefresh})
 }
 
 func (h *Handler) generateTokenPair(userID uuid.UUID) (string, string, error) {
@@ -193,12 +194,3 @@ func (h *Handler) generateTokenPair(userID uuid.UUID) (string, string, error) {
 	return accessStr, refreshStr, nil
 }
 
-func writeJSON(w http.ResponseWriter, status int, v any) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	json.NewEncoder(w).Encode(v)
-}
-
-func writeError(w http.ResponseWriter, status int, msg string) {
-	writeJSON(w, status, map[string]string{"error": msg})
-}

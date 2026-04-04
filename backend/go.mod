@@ -16,7 +16,6 @@ require (
 	github.com/openai/openai-go v1.12.0
 	github.com/resendlabs/resend-go v1.7.0
 	github.com/stretchr/testify v1.11.1
-	go.uber.org/mock v0.6.0
 	golang.org/x/crypto v0.49.0
 )
 
