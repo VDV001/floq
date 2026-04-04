@@ -5,24 +5,19 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/daniil/floq/internal/ai"
-	leadsdomain "github.com/daniil/floq/internal/leads/domain"
-	"github.com/daniil/floq/internal/leads"
-	"github.com/daniil/floq/internal/prospects"
-	prospectsdomain "github.com/daniil/floq/internal/prospects/domain"
 	"github.com/daniil/floq/internal/sequences/domain"
 	"github.com/google/uuid"
 )
 
 type UseCase struct {
-	repo         *Repository
-	aiClient     *ai.AIClient
-	prospectRepo *prospects.Repository
-	leadsRepo    *leads.Repository
+	repo        domain.Repository
+	aiGenerator domain.AIMessageGenerator
+	prospects   domain.ProspectReader
+	leadCreator domain.LeadCreator
 }
 
-func NewUseCase(repo *Repository, aiClient *ai.AIClient, prospectRepo *prospects.Repository, leadsRepo *leads.Repository) *UseCase {
-	return &UseCase{repo: repo, aiClient: aiClient, prospectRepo: prospectRepo, leadsRepo: leadsRepo}
+func NewUseCase(repo domain.Repository, aiGenerator domain.AIMessageGenerator, prospects domain.ProspectReader, leadCreator domain.LeadCreator) *UseCase {
+	return &UseCase{repo: repo, aiGenerator: aiGenerator, prospects: prospects, leadCreator: leadCreator}
 }
 
 func (uc *UseCase) ListSequences(ctx context.Context, userID uuid.UUID) ([]domain.Sequence, error) {
@@ -69,7 +64,7 @@ func (uc *UseCase) Launch(ctx context.Context, sequenceID uuid.UUID, prospectIDs
 	now := time.Now().UTC()
 
 	for _, pid := range prospectIDs {
-		prospect, err := uc.prospectRepo.GetProspect(ctx, pid)
+		prospect, err := uc.prospects.GetProspect(ctx, pid)
 		if err != nil {
 			return fmt.Errorf("launch: get prospect %s: %w", pid, err)
 		}
@@ -78,17 +73,17 @@ func (uc *UseCase) Launch(ctx context.Context, sequenceID uuid.UUID, prospectIDs
 		}
 
 		// Deduplication checks
-		if prospect.Status == prospectsdomain.ProspectStatusConverted || prospect.Status == "opted_out" {
-			continue // skip -- already in inbox or opted out
+		if prospect.Status == "converted" || prospect.Status == "opted_out" {
+			continue
 		}
-		if prospect.Status == prospectsdomain.ProspectStatusInSequence {
-			continue // skip -- already in a sequence
+		if prospect.Status == "in_sequence" {
+			continue
 		}
-		if prospect.VerifyStatus == prospectsdomain.VerifyStatusInvalid {
-			continue // skip -- verified as invalid email
+		if prospect.VerifyStatus == "invalid" {
+			continue
 		}
-		if prospect.VerifyStatus == prospectsdomain.VerifyStatusNotChecked && prospect.Email != "" {
-			continue // skip -- email not verified yet
+		if prospect.VerifyStatus == "not_checked" && prospect.Email != "" {
+			continue
 		}
 
 		var cumulativeDelay int
@@ -101,11 +96,11 @@ func (uc *UseCase) Launch(ctx context.Context, sequenceID uuid.UUID, prospectIDs
 
 			switch step.Channel {
 			case domain.StepChannelTelegram:
-				body, genErr = uc.aiClient.GenerateTelegramMessage(ctx, prospect.Name, prospect.Title, prospect.Company, prospect.Context, step.PromptHint, previousBody)
+				body, genErr = uc.aiGenerator.GenerateTelegramMessage(ctx, prospect.Name, prospect.Title, prospect.Company, prospect.Context, step.PromptHint, previousBody)
 			case domain.StepChannelPhoneCall:
-				body, genErr = uc.aiClient.GenerateCallBrief(ctx, prospect.Name, prospect.Title, prospect.Company, prospect.Context, step.PromptHint, previousBody)
+				body, genErr = uc.aiGenerator.GenerateCallBrief(ctx, prospect.Name, prospect.Title, prospect.Company, prospect.Context, step.PromptHint, previousBody)
 			default: // "email" or empty
-				body, genErr = uc.aiClient.GenerateColdMessage(ctx, prospect.Name, prospect.Title, prospect.Company, prospect.Context, step.PromptHint, previousBody)
+				body, genErr = uc.aiGenerator.GenerateColdMessage(ctx, prospect.Name, prospect.Title, prospect.Company, prospect.Context, step.PromptHint, previousBody)
 			}
 			if genErr != nil {
 				return fmt.Errorf("launch: generate message for prospect %s step %d: %w", pid, step.StepOrder, genErr)
@@ -129,7 +124,7 @@ func (uc *UseCase) Launch(ctx context.Context, sequenceID uuid.UUID, prospectIDs
 			previousBody = body
 		}
 
-		if err := uc.prospectRepo.UpdateStatus(ctx, pid, prospectsdomain.ProspectStatusInSequence); err != nil {
+		if err := uc.prospects.UpdateStatus(ctx, pid, "in_sequence"); err != nil {
 			return fmt.Errorf("launch: update prospect status: %w", err)
 		}
 	}
@@ -158,7 +153,7 @@ func (uc *UseCase) GetStats(ctx context.Context, userID uuid.UUID) (*domain.Stat
 }
 
 func (uc *UseCase) ConvertToLead(ctx context.Context, prospectID uuid.UUID) error {
-	prospect, err := uc.prospectRepo.GetProspect(ctx, prospectID)
+	prospect, err := uc.prospects.GetProspect(ctx, prospectID)
 	if err != nil {
 		return fmt.Errorf("convert: get prospect: %w", err)
 	}
@@ -166,26 +161,13 @@ func (uc *UseCase) ConvertToLead(ctx context.Context, prospectID uuid.UUID) erro
 		return fmt.Errorf("convert: prospect not found")
 	}
 
-	// Create a lead from the prospect data
-	leadID := uuid.New()
-	now := time.Now().UTC()
-	lead := &leadsdomain.Lead{
-		ID:           leadID,
-		UserID:       prospect.UserID,
-		Channel:      leadsdomain.ChannelEmail,
-		ContactName:  prospect.Name,
-		Company:      prospect.Company,
-		FirstMessage: "Ответ на outbound секвенцию",
-		Status:       leadsdomain.StatusNew,
-		CreatedAt:    now,
-		UpdatedAt:    now,
-	}
-	if err := uc.leadsRepo.CreateLead(ctx, lead); err != nil {
+	leadID, err := uc.leadCreator.CreateLeadFromProspect(ctx, prospect, prospect.UserID)
+	if err != nil {
 		return fmt.Errorf("convert: create lead: %w", err)
 	}
+	_ = leadID
 
-	// Update prospect as converted
-	if err := uc.prospectRepo.ConvertToLead(ctx, prospectID, leadID); err != nil {
+	if err := uc.prospects.UpdateStatus(ctx, prospectID, "converted"); err != nil {
 		return fmt.Errorf("convert: update prospect: %w", err)
 	}
 

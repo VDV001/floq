@@ -13,10 +13,10 @@ import (
 )
 
 type UseCase struct {
-	repo *Repository
+	repo domain.Repository
 }
 
-func NewUseCase(repo *Repository) *UseCase {
+func NewUseCase(repo domain.Repository) *UseCase {
 	return &UseCase{repo: repo}
 }
 

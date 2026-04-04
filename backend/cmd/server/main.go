@@ -4,8 +4,10 @@ import (
 	"context"
 	"log"
 	"net/http"
+	"encoding/base64"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -20,8 +22,10 @@ import (
 	"github.com/daniil/floq/internal/config"
 	"github.com/daniil/floq/internal/inbox"
 	"github.com/daniil/floq/internal/leads"
+	"github.com/daniil/floq/internal/notify"
 	"github.com/daniil/floq/internal/outbound"
 	"github.com/daniil/floq/internal/parser"
+	"github.com/daniil/floq/internal/reminders"
 	"github.com/daniil/floq/internal/prospects"
 	"github.com/daniil/floq/internal/sequences"
 	"github.com/daniil/floq/internal/settings"
@@ -86,10 +90,16 @@ func main() {
 	prospectsRepo := prospects.NewRepository(pool)
 	sequencesRepo := sequences.NewRepository(pool)
 
-	// 4. Use cases
-	leadsUC := leads.NewUseCase(leadsRepo, aiClient)
+	// 4. Adapters
+	leadsAI := leads.NewAIAdapter(aiClient)
+	seqAI := sequences.NewAIMessageGeneratorAdapter(aiClient)
+	prospectReader := sequences.NewProspectReaderAdapter(prospectsRepo)
+	leadCreatorAdapter := sequences.NewLeadCreatorAdapter(leadsRepo)
+
+	// 5. Use cases
+	leadsUC := leads.NewUseCase(leadsRepo, leadsAI, nil) // sender set after bot init
 	prospectsUC := prospects.NewUseCase(prospectsRepo)
-	sequencesUC := sequences.NewUseCase(sequencesRepo, aiClient, prospectsRepo, leadsRepo)
+	sequencesUC := sequences.NewUseCase(sequencesRepo, seqAI, prospectReader, leadCreatorAdapter)
 
 	// 5. Auth
 	authHandler := auth.NewHandler(pool, cfg.JWTSecret)
@@ -105,6 +115,22 @@ func main() {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte(`{"status":"ok"}`))
+	})
+
+	// Tracking pixel (public, no auth — loaded by email clients)
+	r.Get("/api/track/open/{id}", func(w http.ResponseWriter, r *http.Request) {
+		idStr := chi.URLParam(r, "id")
+		msgID, err := uuid.Parse(idStr)
+		if err != nil {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		_, _ = pool.Exec(r.Context(),
+			`UPDATE outbound_messages SET opened_at = COALESCE(opened_at, NOW()) WHERE id = $1`, msgID)
+		w.Header().Set("Content-Type", "image/gif")
+		w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
+		pixel, _ := base64.StdEncoding.DecodeString("R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7")
+		_, _ = w.Write(pixel)
 	})
 
 	// Auth (public)
@@ -155,12 +181,32 @@ func main() {
 			log.Printf("telegram bot init failed: %v", err)
 		} else {
 			go tgBot.Start(ctx)
-			// Share bot with leads usecase for outbound messages
-			leadsUC.SetBot(tgBot.Bot())
+			// Set the telegram sender on the leads use case
+			leadsUC.SetSender(leads.NewTelegramSender(tgBot.Bot()))
 		}
 	}
 
-	// 8. Server
+	// 9. Email IMAP poller (reads settings from DB, falls back to .env)
+	emailPoller := inbox.NewEmailPoller(settingsStore, ownerID, cfg.IMAPHost, cfg.IMAPPort, cfg.IMAPUser, cfg.IMAPPassword, pool, leadsRepo, aiClient)
+	go emailPoller.Start(ctx)
+
+	// 10. Reminders cron (hourly, checks for stale leads)
+	var notifier *notify.TelegramNotifier
+	notifyChatIDStr := os.Getenv("NOTIFY_CHAT_ID")
+	if tgToken != "" && notifyChatIDStr != "" {
+		chatID, err := strconv.ParseInt(notifyChatIDStr, 10, 64)
+		if err == nil {
+			notifier, err = notify.NewTelegramNotifier(tgToken, chatID)
+			if err != nil {
+				log.Printf("telegram notifier init failed: %v", err)
+			}
+		}
+	}
+	remindersCron := reminders.NewCron(pool, leadsRepo, aiClient, notifier)
+	go remindersCron.Start(ctx)
+	log.Println("reminders cron started (hourly)")
+
+	// 11. Server
 	srv := &http.Server{
 		Addr:    ":" + cfg.AppPort,
 		Handler: r,

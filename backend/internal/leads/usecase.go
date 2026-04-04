@@ -6,25 +6,24 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/daniil/floq/internal/ai"
 	"github.com/daniil/floq/internal/leads/domain"
 	"github.com/google/uuid"
-	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
 
 type UseCase struct {
-	repo *Repository
-	ai   *ai.AIClient
-	bot  *tgbotapi.BotAPI // can be nil
+	repo   domain.Repository
+	ai     domain.AIService
+	sender domain.MessageSender
 }
 
-func NewUseCase(repo *Repository, aiClient *ai.AIClient) *UseCase {
-	return &UseCase{repo: repo, ai: aiClient}
+func NewUseCase(repo domain.Repository, ai domain.AIService, sender domain.MessageSender) *UseCase {
+	return &UseCase{repo: repo, ai: ai, sender: sender}
 }
 
-// SetBot sets the Telegram bot for sending outbound messages.
-func (uc *UseCase) SetBot(bot *tgbotapi.BotAPI) {
-	uc.bot = bot
+// SetSender sets the message sender after construction (e.g. when the Telegram bot
+// is initialised later than the use case).
+func (uc *UseCase) SetSender(sender domain.MessageSender) {
+	uc.sender = sender
 }
 
 func (uc *UseCase) ListLeads(ctx context.Context, userID uuid.UUID) ([]domain.Lead, error) {
@@ -44,17 +43,15 @@ func (uc *UseCase) GetMessages(ctx context.Context, leadID uuid.UUID) ([]domain.
 }
 
 func (uc *UseCase) SendMessage(ctx context.Context, leadID uuid.UUID, body string) (*domain.Message, error) {
-	// Get lead to find the channel and chat ID
 	lead, err := uc.repo.GetLead(ctx, leadID)
 	if err != nil {
 		return nil, fmt.Errorf("get lead: %w", err)
 	}
 
-	// Send via Telegram if applicable
-	if lead.Channel == domain.ChannelTelegram && lead.TelegramChatID != nil && uc.bot != nil {
-		tgMsg := tgbotapi.NewMessage(*lead.TelegramChatID, body)
-		if _, err := uc.bot.Send(tgMsg); err != nil {
-			return nil, fmt.Errorf("send telegram message: %w", err)
+	// Send via the message sender if available and applicable
+	if lead.Channel == domain.ChannelTelegram && lead.TelegramChatID != nil && uc.sender != nil {
+		if err := uc.sender.SendMessage(ctx, lead, body); err != nil {
+			return nil, fmt.Errorf("send message: %w", err)
 		}
 	}
 
@@ -85,23 +82,14 @@ func (uc *UseCase) QualifyLead(ctx context.Context, leadID uuid.UUID) (*domain.Q
 		return nil, fmt.Errorf("lead not found")
 	}
 
-	result, err := uc.ai.Qualify(ctx, lead.ContactName, string(lead.Channel), lead.FirstMessage)
+	q, err := uc.ai.Qualify(ctx, lead.ContactName, lead.Channel, lead.FirstMessage)
 	if err != nil {
 		return nil, err
 	}
 
-	q := &domain.Qualification{
-		ID:                uuid.New(),
-		LeadID:            lead.ID,
-		IdentifiedNeed:    result.IdentifiedNeed,
-		EstimatedBudget:   result.EstimatedBudget,
-		Deadline:          result.Deadline,
-		Score:             result.Score,
-		ScoreReason:       result.ScoreReason,
-		RecommendedAction: result.RecommendedAction,
-		ProviderUsed:      uc.ai.ProviderName(),
-		GeneratedAt:       time.Now().UTC(),
-	}
+	q.ID = uuid.New()
+	q.LeadID = lead.ID
+	q.GeneratedAt = time.Now().UTC()
 
 	if err := uc.repo.UpsertQualification(ctx, q); err != nil {
 		return nil, err
@@ -132,14 +120,15 @@ func (uc *UseCase) RegenerateDraft(ctx context.Context, leadID uuid.UUID) (*doma
 		return nil, err
 	}
 
-	qualJSON := "{}"
+	// Build context-enriched first message for the AI
+	firstMsg := lead.FirstMessage
 	if qual != nil {
 		if b, err := json.Marshal(qual); err == nil {
-			qualJSON = string(b)
+			firstMsg = firstMsg + "\n\nQualification: " + string(b)
 		}
 	}
 
-	body, err := uc.ai.DraftReply(ctx, lead.ContactName, lead.Company, string(lead.Channel), lead.FirstMessage, qualJSON)
+	body, err := uc.ai.DraftReply(ctx, lead.ContactName, firstMsg)
 	if err != nil {
 		return nil, err
 	}
