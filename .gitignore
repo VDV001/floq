@@ -38,3 +38,8 @@ docker-compose.override.yml
 
 # Misc
 *.pdf
+
+# Working files
+backend/coverage.out
+*.docx
+backend/server
