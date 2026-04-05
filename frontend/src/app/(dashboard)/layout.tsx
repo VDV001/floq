@@ -33,7 +33,7 @@ export default function DashboardLayout({
   return (
     <div className="flex h-screen" style={{ backgroundColor: "#f8f9ff" }}>
       <Sidebar />
-      <main className="flex-1 overflow-auto">{children}</main>
+      <main className="flex-1 overflow-auto pl-0">{children}</main>
       <FloatingActionButton />
     </div>
   );

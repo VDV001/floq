@@ -81,7 +81,7 @@ export default function AlertsPage() {
 
   if (followupLeads.length === 0) {
     return (
-      <div className="flex min-h-full items-center justify-center p-12">
+      <div className="flex min-h-full items-center justify-center p-4 sm:p-8 lg:p-12">
         <div className="text-center">
           <p className="text-2xl font-bold text-[#0d1c2e]">Нет напоминаний</p>
           <p className="mt-2 text-sm text-[#434655]">
@@ -93,7 +93,7 @@ export default function AlertsPage() {
   }
 
   return (
-    <div className="min-h-full p-12">
+    <div className="min-h-full p-4 sm:p-8 lg:p-12">
       {/* Header */}
       <header className="mb-12 flex items-end justify-between">
         <div className="max-w-2xl">
@@ -103,7 +103,7 @@ export default function AlertsPage() {
             </span>
             <span className="size-1.5 animate-pulse rounded-full bg-[#ba1a1a]" />
           </div>
-          <h2 className="mb-4 text-5xl font-extrabold tracking-tight text-[#0d1c2e]">
+          <h2 className="mb-4 text-2xl sm:text-4xl lg:text-5xl font-extrabold tracking-tight text-[#0d1c2e]">
             Напоминания
           </h2>
           <p className="text-lg font-medium text-[#434655]">

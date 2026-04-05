@@ -185,7 +185,7 @@ export default function LeadDetailPage() {
   return (
     <div className="flex h-full overflow-hidden">
       {/* ── Main Content ── */}
-      <div className="flex-1 overflow-y-auto px-10 py-8">
+      <div className="flex-1 overflow-y-auto px-4 sm:px-6 lg:px-10 py-8">
         {/* Back link */}
         <Link
           href="/inbox"
@@ -203,7 +203,7 @@ export default function LeadDetailPage() {
             </div>
             <div>
               <div className="mb-1 flex items-center gap-3">
-                <h2 className="text-3xl font-extrabold tracking-tight text-[#0d1c2e]">
+                <h2 className="text-xl sm:text-2xl lg:text-3xl font-extrabold tracking-tight text-[#0d1c2e]">
                   {lead.contact_name}
                 </h2>
                 {lead.channel === "telegram" && (

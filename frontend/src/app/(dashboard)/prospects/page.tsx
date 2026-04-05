@@ -4,7 +4,6 @@ import { useState, useEffect } from "react";
 import {
   Search,
   Upload,
-  UserPlus,
   ChevronLeft,
   ChevronRight,
   Sparkles,
@@ -176,7 +175,7 @@ export default function ProspectsPage() {
   return (
     <div className="min-h-full">
       {/* Top search bar */}
-      <header className="flex h-16 items-center justify-between px-10">
+      <header className="flex h-16 items-center justify-between px-4 sm:px-6 lg:px-10">
         <div className="relative max-w-md flex-1">
           <Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-slate-400" />
           <input
@@ -190,11 +189,11 @@ export default function ProspectsPage() {
       </header>
 
       {/* Page content */}
-      <section className="px-10 py-8">
+      <section className="px-4 sm:px-6 lg:px-10 py-8">
         {/* Header */}
         <div className="mb-10 flex flex-col gap-6 md:flex-row md:items-end md:justify-between">
           <div>
-            <h2 className="mb-2 text-4xl font-extrabold tracking-tight text-[#0d1c2e]">
+            <h2 className="mb-2 text-2xl sm:text-3xl lg:text-4xl font-extrabold tracking-tight text-[#0d1c2e]">
               Проспекты
             </h2>
             <p className="font-medium text-[#434655]">

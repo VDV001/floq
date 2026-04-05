@@ -276,22 +276,6 @@ function MetricCards({
   );
 }
 
-// ---------- Floating AI Button ----------
-
-function FloatingAiButton() {
-  return (
-    <button className="fixed bottom-6 right-6 z-50 flex items-center gap-3 rounded-full bg-[#0d1c2e] px-5 py-3 shadow-2xl transition-transform hover:scale-105">
-      <div className="flex size-8 items-center justify-center rounded-full bg-[#3e3fcc]">
-        <Sparkles className="size-4 text-white" />
-      </div>
-      <div className="text-left">
-        <p className="text-sm font-semibold text-white">Floq AI</p>
-        <p className="text-[11px] text-[#737686]">Анализ воронки</p>
-      </div>
-    </button>
-  );
-}
-
 // ---------- Page ----------
 
 export default function PipelinePage() {
@@ -346,7 +330,7 @@ export default function PipelinePage() {
         <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
           <div>
             <div className="flex items-center gap-3">
-              <h1 className="text-3xl font-extrabold text-[#0d1c2e]">
+              <h1 className="text-xl sm:text-2xl lg:text-3xl font-extrabold text-[#0d1c2e]">
                 Воронка продаж
               </h1>
               {loading && (

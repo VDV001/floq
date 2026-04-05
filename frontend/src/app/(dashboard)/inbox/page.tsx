@@ -199,7 +199,7 @@ export default function InboxPage() {
       </nav>
 
       {/* ── Main Feed ── */}
-      <section className="flex-1 overflow-y-auto px-12 py-8">
+      <section className="flex-1 overflow-y-auto px-4 sm:px-8 lg:px-12 py-8">
         <div className="mx-auto max-w-4xl space-y-8">
           {/* Feed Header */}
           <div className="flex items-end justify-between">

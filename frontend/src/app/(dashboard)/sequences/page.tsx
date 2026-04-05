@@ -121,7 +121,7 @@ export default function SequencesPage() {
       <header className="px-8 pt-8 pb-6">
         <div className="flex items-start justify-between">
           <div>
-            <h1 className="text-4xl font-extrabold tracking-tight text-[#0d1c2e]">
+            <h1 className="text-2xl sm:text-3xl lg:text-4xl font-extrabold tracking-tight text-[#0d1c2e]">
               Секвенции
             </h1>
             <p className="mt-2 text-[#434655]">
