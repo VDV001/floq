@@ -1,6 +1,7 @@
 package settings
 
 import (
+	"context"
 	"crypto/tls"
 	"encoding/json"
 	"fmt"
@@ -13,6 +14,7 @@ import (
 	"github.com/daniil/floq/internal/httputil"
 	"github.com/daniil/floq/internal/settings/domain"
 	"github.com/go-chi/chi/v5"
+	"github.com/google/uuid"
 )
 
 // Settings is the JSON DTO returned by the API.
@@ -39,6 +41,11 @@ type Settings struct {
 	AIModel    string `json:"ai_model"`
 	AIAPIKey   string `json:"ai_api_key"`
 
+	// Connection statuses (computed, read-only)
+	IMAPActive   bool `json:"imap_active"`
+	ResendActive bool `json:"resend_active"`
+	AIActive     bool `json:"ai_active"`
+
 	// Notifications
 	NotifyTelegram    bool `json:"notify_telegram"`
 	NotifyEmailDigest bool `json:"notify_email_digest"`
@@ -54,15 +61,28 @@ type Settings struct {
 	AutoVerifyImport   bool `json:"auto_verify_import"`
 }
 
+// AITester tests an AI provider connection by sending a simple prompt.
+// Injected from main.go to avoid import cycles with ai/providers.
+type AITester func(ctx context.Context, provider, model, apiKey string) (providerName string, err error)
+
+// UsageCounter counts leads for usage stats.
+// Injected from main.go to avoid circular imports with leads package.
+type UsageCounter func(ctx context.Context, userID uuid.UUID) (monthLeads, totalLeads int, err error)
+
 type Handler struct {
-	uc *UseCase
+	uc           *UseCase
+	aiTester     AITester
+	usageCounter UsageCounter
 }
 
-func RegisterRoutes(r chi.Router, uc *UseCase) {
-	h := &Handler{uc: uc}
+func RegisterRoutes(r chi.Router, uc *UseCase, aiTester AITester, usageCounter UsageCounter) {
+	h := &Handler{uc: uc, aiTester: aiTester, usageCounter: usageCounter}
 	r.Get("/api/settings", h.getSettings())
 	r.Put("/api/settings", h.updateSettings())
 	r.Post("/api/settings/test-imap", h.testIMAP())
+	r.Post("/api/settings/test-ai", h.testAI())
+	r.Post("/api/settings/test-resend", h.testResend())
+	r.Get("/api/usage", h.getUsage())
 }
 
 // maskSecret returns the last 4 characters of a secret prefixed with "...",
@@ -79,6 +99,8 @@ func maskSecret(s string) string {
 
 // domainToDTO converts a domain.Settings to the JSON DTO.
 func domainToDTO(ds *domain.Settings) Settings {
+	aiActive := ds.AIProvider == "ollama" || (ds.AIProvider != "" && ds.AIAPIKey != "")
+
 	return Settings{
 		FullName:           ds.FullName,
 		Email:              ds.Email,
@@ -92,6 +114,9 @@ func domainToDTO(ds *domain.Settings) Settings {
 		AIProvider:         ds.AIProvider,
 		AIModel:            ds.AIModel,
 		AIAPIKey:           ds.AIAPIKey,
+		IMAPActive:         ds.IMAPHost != "" && ds.IMAPUser != "" && ds.IMAPPassword != "",
+		ResendActive:       ds.ResendAPIKey != "",
+		AIActive:           aiActive,
 		NotifyTelegram:     ds.NotifyTelegram,
 		NotifyEmailDigest:  ds.NotifyEmailDigest,
 		AutoQualify:        ds.AutoQualify,
@@ -240,5 +265,147 @@ func (h *Handler) testIMAP() http.HandlerFunc {
 		} else {
 			httputil.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "error": "Неверный логин или пароль"})
 		}
+	}
+}
+
+func (h *Handler) testAI() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		userID, ok := httputil.UserIDFromContext(r.Context())
+		if !ok {
+			httputil.WriteError(w, http.StatusUnauthorized, "unauthorized")
+			return
+		}
+
+		var body struct {
+			Provider  string `json:"provider"`
+			Model     string `json:"model"`
+			APIKey    string `json:"api_key"`
+			UseStored bool   `json:"use_stored"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			httputil.WriteError(w, http.StatusBadRequest, "invalid JSON")
+			return
+		}
+
+		// If use_stored or empty key, read from DB
+		if body.UseStored || body.APIKey == "" {
+			stored, err := h.uc.GetStoredAISettings(r.Context(), userID)
+			if err == nil {
+				if body.Provider == "" {
+					body.Provider = stored.Provider
+				}
+				if body.Model == "" {
+					body.Model = stored.Model
+				}
+				if body.APIKey == "" {
+					body.APIKey = stored.APIKey
+				}
+			}
+		}
+
+		if body.Provider == "" {
+			httputil.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "error": "Провайдер не выбран"})
+			return
+		}
+
+		if h.aiTester == nil {
+			httputil.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "error": "Тест AI недоступен"})
+			return
+		}
+
+		ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+		defer cancel()
+
+		providerName, err := h.aiTester(ctx, body.Provider, body.Model, body.APIKey)
+		if err != nil {
+			httputil.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "error": fmt.Sprintf("Ошибка подключения: %v", err)})
+			return
+		}
+
+		httputil.WriteJSON(w, http.StatusOK, map[string]any{
+			"success":  true,
+			"message":  fmt.Sprintf("Подключение к %s успешно!", providerName),
+			"provider": providerName,
+		})
+	}
+}
+
+func (h *Handler) testResend() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		userID, ok := httputil.UserIDFromContext(r.Context())
+		if !ok {
+			httputil.WriteError(w, http.StatusUnauthorized, "unauthorized")
+			return
+		}
+
+		var body struct {
+			APIKey    string `json:"api_key"`
+			UseStored bool   `json:"use_stored"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			httputil.WriteError(w, http.StatusBadRequest, "invalid JSON")
+			return
+		}
+
+		if body.UseStored || body.APIKey == "" {
+			stored, err := h.uc.GetStoredResendKey(r.Context(), userID)
+			if err == nil && stored != "" {
+				body.APIKey = stored
+			}
+		}
+
+		if body.APIKey == "" {
+			httputil.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "error": "API ключ не задан"})
+			return
+		}
+
+		// Verify Resend API key by calling GET /api-keys
+		req, _ := http.NewRequestWithContext(r.Context(), "GET", "https://api.resend.com/api-keys", nil)
+		req.Header.Set("Authorization", "Bearer "+body.APIKey)
+
+		client := &http.Client{Timeout: 10 * time.Second}
+		resp, err := client.Do(req)
+		if err != nil {
+			httputil.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "error": fmt.Sprintf("Ошибка запроса: %v", err)})
+			return
+		}
+		defer resp.Body.Close()
+
+		if resp.StatusCode == 200 {
+			httputil.WriteJSON(w, http.StatusOK, map[string]any{"success": true, "message": "Resend API подключен!"})
+		} else {
+			httputil.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "error": "Неверный API ключ Resend"})
+		}
+	}
+}
+
+func (h *Handler) getUsage() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		userID, ok := httputil.UserIDFromContext(r.Context())
+		if !ok {
+			httputil.WriteError(w, http.StatusUnauthorized, "unauthorized")
+			return
+		}
+
+		monthLeads, totalLeads := 0, 0
+		if h.usageCounter != nil {
+			var err error
+			monthLeads, totalLeads, err = h.usageCounter(r.Context(), userID)
+			if err != nil {
+				httputil.WriteError(w, http.StatusInternalServerError, "failed to get usage")
+				return
+			}
+		}
+
+		// Plan limits (from env or default). Will be dynamic when billing is added.
+		plan := "growth"
+		limit := 1000
+
+		httputil.WriteJSON(w, http.StatusOK, map[string]any{
+			"plan":         plan,
+			"limit":        limit,
+			"month_leads":  monthLeads,
+			"total_leads":  totalLeads,
+		})
 	}
 }

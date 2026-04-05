@@ -161,6 +161,35 @@ func (uc *UseCase) GetStoredIMAPPassword(ctx context.Context, userID uuid.UUID) 
 	return uc.repo.GetStoredIMAPPassword(ctx, userID)
 }
 
+// GetStoredResendKey returns the stored Resend API key from the database.
+func (uc *UseCase) GetStoredResendKey(ctx context.Context, userID uuid.UUID) (string, error) {
+	s, err := uc.repo.GetSettings(ctx, userID)
+	if err != nil {
+		return "", err
+	}
+	return s.ResendAPIKey, nil
+}
+
+// StoredAISettings holds provider/model/key read from DB.
+type StoredAISettings struct {
+	Provider string
+	Model    string
+	APIKey   string
+}
+
+// GetStoredAISettings returns the stored AI settings from the database.
+func (uc *UseCase) GetStoredAISettings(ctx context.Context, userID uuid.UUID) (*StoredAISettings, error) {
+	s, err := uc.repo.GetSettings(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+	return &StoredAISettings{
+		Provider: s.AIProvider,
+		Model:    s.AIModel,
+		APIKey:   s.AIAPIKey,
+	}, nil
+}
+
 // validateTelegramToken calls the Telegram getMe API to verify the token is valid.
 func validateTelegramToken(token string) error {
 	resp, err := http.Get(fmt.Sprintf("https://api.telegram.org/bot%s/getMe", token))

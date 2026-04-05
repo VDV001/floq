@@ -166,7 +166,18 @@ export const api = {
     apiFetch(`/api/outbound/${id}/reject`, { method: "POST" }),
   editMessage: (id: string, body: string) =>
     apiFetch(`/api/outbound/${id}/edit`, { method: "POST", body: JSON.stringify({ body }) }),
+  getOutboundSent: () => apiFetch<OutboundMessage[]>("/api/outbound/sent"),
   getOutboundStats: () => apiFetch<OutboundStats>("/api/outbound/stats"),
+
+  // AI Chat
+  chatWithAI: (message: string, history: { role: string; content: string }[], context?: string) =>
+    apiFetch<{ reply: string }>("/api/chat", {
+      method: "POST",
+      body: JSON.stringify({ message, history, context: context || "" }),
+    }),
+
+  // Usage
+  getUsage: () => apiFetch<{ plan: string; limit: number; month_leads: number; total_leads: number }>("/api/usage"),
 
   // Settings
   getSettings: () => apiFetch<UserSettings>("/api/settings"),
@@ -179,6 +190,16 @@ export const api = {
     apiFetch<{ success: boolean; message?: string; error?: string }>("/api/settings/test-imap", {
       method: "POST",
       body: JSON.stringify({ host, port, user, password, use_stored: useStored || false }),
+    }),
+  testAI: (provider: string, model: string, apiKey: string, useStored?: boolean) =>
+    apiFetch<{ success: boolean; message?: string; error?: string; provider?: string }>("/api/settings/test-ai", {
+      method: "POST",
+      body: JSON.stringify({ provider, model, api_key: apiKey, use_stored: useStored || false }),
+    }),
+  testResend: (apiKey: string, useStored?: boolean) =>
+    apiFetch<{ success: boolean; message?: string; error?: string }>("/api/settings/test-resend", {
+      method: "POST",
+      body: JSON.stringify({ api_key: apiKey, use_stored: useStored || false }),
     }),
 };
 
@@ -342,6 +363,9 @@ export interface UserSettings {
   ai_provider: string;
   ai_model: string;
   ai_api_key: string;
+  imap_active: boolean;
+  resend_active: boolean;
+  ai_active: boolean;
   notify_telegram: boolean;
   notify_email_digest: boolean;
   auto_qualify: boolean;

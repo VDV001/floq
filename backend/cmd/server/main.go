@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"net/http"
 	"encoding/base64"
@@ -19,6 +20,7 @@ import (
 	"github.com/daniil/floq/internal/ai"
 	"github.com/daniil/floq/internal/ai/providers"
 	"github.com/daniil/floq/internal/auth"
+	"github.com/daniil/floq/internal/chat"
 	"github.com/daniil/floq/internal/config"
 	"github.com/daniil/floq/internal/inbox"
 	"github.com/daniil/floq/internal/leads"
@@ -85,7 +87,7 @@ func main() {
 
 	// 2b. AI provider (dynamic: reads provider/model/key from DB, falls back to .env)
 	aiProvider := providers.NewDynamicProvider(settingsStore, ownerID, cfg)
-	aiClient := ai.NewAIClient(aiProvider, cfg.BookingLink)
+	aiClient := ai.NewAIClient(aiProvider, cfg.BookingLink, cfg.SenderName, cfg.SenderCompany)
 
 	// 3. Repositories
 	leadsRepo := leads.NewRepository(pool)
@@ -146,7 +148,8 @@ func main() {
 		sequences.RegisterRoutes(r, sequencesUC)
 		verify.RegisterRoutes(r, prospectsRepo, nil) // TG bot passed as nil for now
 		parser.RegisterRoutes(r, cfg.TwoGISAPIKey)
-		settings.RegisterRoutes(r, settingsUC)
+		settings.RegisterRoutes(r, settingsUC, buildAITester(cfg), buildUsageCounter(pool))
+		chat.RegisterRoutes(r, chat.NewHandler(pool, aiClient))
 	})
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -231,6 +234,77 @@ func main() {
 		log.Fatalf("server shutdown: %v", err)
 	}
 	log.Println("server stopped")
+}
+
+func buildUsageCounter(pool *pgxpool.Pool) settings.UsageCounter {
+	return func(ctx context.Context, userID uuid.UUID) (int, int, error) {
+		var monthLeads, totalLeads int
+
+		// Leads created this month
+		err := pool.QueryRow(ctx,
+			`SELECT COUNT(*) FROM leads WHERE user_id = $1 AND created_at >= date_trunc('month', CURRENT_DATE)`,
+			userID).Scan(&monthLeads)
+		if err != nil {
+			return 0, 0, err
+		}
+
+		// Total leads
+		err = pool.QueryRow(ctx,
+			`SELECT COUNT(*) FROM leads WHERE user_id = $1`, userID).Scan(&totalLeads)
+		if err != nil {
+			return 0, 0, err
+		}
+
+		return monthLeads, totalLeads, nil
+	}
+}
+
+func buildAITester(cfg *config.Config) settings.AITester {
+	return func(ctx context.Context, provider, model, apiKey string) (string, error) {
+		var p ai.Provider
+		switch provider {
+		case "claude":
+			if apiKey == "" {
+				apiKey = cfg.AnthropicAPIKey
+			}
+			p = providers.NewClaudeProvider(apiKey)
+		case "openai":
+			if apiKey == "" {
+				apiKey = cfg.OpenAIAPIKey
+			}
+			if model == "" {
+				model = cfg.OpenAIModel
+			}
+			p = providers.NewOpenAIProvider(apiKey, model)
+		case "groq":
+			if apiKey == "" {
+				apiKey = cfg.GroqAPIKey
+			}
+			if model == "" {
+				model = cfg.GroqModel
+			}
+			p = providers.NewOpenAICompatibleProvider(apiKey, model, "https://api.groq.com/openai/v1")
+		case "ollama":
+			if model == "" {
+				model = cfg.OllamaModel
+			}
+			p = providers.NewOllamaProvider(cfg.OllamaBaseURL, model)
+		default:
+			return "", fmt.Errorf("неизвестный провайдер: %s", provider)
+		}
+
+		resp, err := p.Complete(ctx, ai.CompletionRequest{
+			Messages:  []ai.Message{{Role: "user", Content: "Ответь одним словом: привет"}},
+			MaxTokens: 256,
+		})
+		if err != nil {
+			return "", err
+		}
+		// Some reasoning models (gpt-oss) return empty content while thinking;
+		// a successful API call with no error is enough to confirm connectivity.
+		_ = resp
+		return p.Name(), nil
+	}
 }
 
 func corsMiddleware(next http.Handler) http.Handler {
