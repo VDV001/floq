@@ -271,7 +271,7 @@ export interface Prospect {
   status: "new" | "in_sequence" | "replied" | "converted" | "opted_out";
   verify_status: "not_checked" | "valid" | "risky" | "invalid";
   verify_score: number;
-  verify_details: Record<string, any>;
+  verify_details: Record<string, unknown>;
   verified_at: string | null;
   converted_lead_id: string | null;
   created_at: string;
@@ -306,7 +306,7 @@ export interface EmailVerifyResult {
 export interface VerifyStatus {
   verify_status: "not_checked" | "valid" | "risky" | "invalid";
   verify_score: number;
-  verify_details: Record<string, any>;
+  verify_details: Record<string, unknown>;
   verified_at: string | null;
 }
 

@@ -3,7 +3,6 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { Sparkles, User, Mail, Lock, Eye, EyeOff, ArrowRight, Info } from "lucide-react";
-import { FloqIcon } from "@/components/ui/floq-icon";
 import { api } from "@/lib/api";
 
 export default function LoginPage() {
@@ -30,7 +29,7 @@ export default function LoginPage() {
   const strengthLabel = ["", "Слабый", "Средний", "Надежный", "Отличный"][passwordStrength] || "";
   const strengthColor = ["", "text-[#ba1a1a]", "text-[#f59e0b]", "text-[#3e3fcc]", "text-green-600"][passwordStrength] || "";
 
-  async function handleSubmit(e: React.FormEvent) {
+  async function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
     setError("");
     setLoading(true);

@@ -18,7 +18,7 @@ export default function DashboardLayout({
     if (!token) {
       router.replace("/login");
     } else {
-      setReady(true);
+      queueMicrotask(() => setReady(true));
     }
   }, [router]);
 

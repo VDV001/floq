@@ -37,7 +37,6 @@ export default function SequencesPage() {
 
   // Fetch all sequences on mount
   useEffect(() => {
-    setLoading(true);
     api
       .getSequences()
       .then((data) => {
@@ -54,10 +53,10 @@ export default function SequencesPage() {
   // Fetch steps when a sequence is selected
   useEffect(() => {
     if (!selectedSeqId) {
-      setSteps([]);
+      queueMicrotask(() => setSteps([]));
       return;
     }
-    setStepsLoading(true);
+    queueMicrotask(() => setStepsLoading(true));
     api
       .getSequence(selectedSeqId)
       .then((data) => {

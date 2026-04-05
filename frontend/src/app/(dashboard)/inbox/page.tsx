@@ -105,10 +105,10 @@ export default function InboxPage() {
           }
           setStatusCounts(counts);
         })
-        .catch(() => {});
+        .catch(() => {})
+        .finally(() => setLoading(false));
     };
     fetchLeads();
-    setLoading(false);
     const interval = setInterval(fetchLeads, 5000);
     return () => clearInterval(interval);
   }, []);

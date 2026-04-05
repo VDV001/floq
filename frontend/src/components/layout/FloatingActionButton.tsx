@@ -81,7 +81,7 @@ export function FloatingActionButton() {
     }
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     sendMessage();
   };

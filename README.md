@@ -259,27 +259,6 @@ npm run lint
 
 ---
 
-## Монетизация
-
-| Тариф | Цена | Лимит |
-|-------|------|-------|
-| Starter | 3 900 руб/мес | 200 лидов |
-| Growth | 7 900 руб/мес | 1 000 лидов |
-| Pro | 14 900 руб/мес | Безлимит + API |
-
----
-
-## Документация
-
-| Файл | Описание |
-|------|----------|
-| [PROJECT_FOUNDATION.md](PROJECT_FOUNDATION.md) | Полная техническая спецификация |
-| [ROADMAP.md](ROADMAP.md) | Дорожная карта разработки |
-| [docs/PITCH_FOR_PM.md](docs/PITCH_FOR_PM.md) | Питч продукта |
-| [docs/B2B_COST_ANALYSIS.md](docs/B2B_COST_ANALYSIS.md) | Анализ стоимости внедрения |
-
----
-
 ## Лицензия
 
 [MIT](LICENSE)

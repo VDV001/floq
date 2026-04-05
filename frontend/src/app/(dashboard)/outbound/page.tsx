@@ -91,7 +91,6 @@ export default function OutboundPage() {
   const [stats, setStats] = useState({ draft: 0, approved: 0, sent: 0, opened: 0, replied: 0, bounced: 0 });
 
   useEffect(() => {
-    setLoading(true);
     Promise.all([
       api.getOutboundQueue(),
       api.getOutboundSent(),

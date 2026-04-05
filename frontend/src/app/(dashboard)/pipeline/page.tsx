@@ -285,10 +285,9 @@ export default function PipelinePage() {
 
   useEffect(() => {
     const fetchLeads = () => {
-      api.getLeads().then((data) => setLeads(data)).catch(() => {});
+      api.getLeads().then((data) => setLeads(data)).catch(() => {}).finally(() => setLoading(false));
     };
     fetchLeads();
-    setLoading(false);
     const interval = setInterval(fetchLeads, 5000);
     return () => clearInterval(interval);
   }, []);
