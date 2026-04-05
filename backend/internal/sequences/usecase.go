@@ -96,7 +96,7 @@ func (uc *UseCase) Launch(ctx context.Context, sequenceID uuid.UUID, prospectIDs
 
 			switch step.Channel {
 			case domain.StepChannelTelegram:
-				body, genErr = uc.aiGenerator.GenerateTelegramMessage(ctx, prospect.Name, prospect.Title, prospect.Company, prospect.Context, step.PromptHint, previousBody)
+				body, genErr = uc.aiGenerator.GenerateTelegramMessage(ctx, prospect.Name, prospect.Title, prospect.Company, prospect.Context, step.PromptHint, previousBody, prospect.Source)
 			case domain.StepChannelPhoneCall:
 				body, genErr = uc.aiGenerator.GenerateCallBrief(ctx, prospect.Name, prospect.Title, prospect.Company, prospect.Context, step.PromptHint, previousBody)
 			default: // "email" or empty
@@ -146,6 +146,10 @@ func (uc *UseCase) EditMessage(ctx context.Context, id uuid.UUID, body string) e
 
 func (uc *UseCase) GetQueue(ctx context.Context, userID uuid.UUID) ([]domain.OutboundMessage, error) {
 	return uc.repo.ListOutboundQueue(ctx, userID)
+}
+
+func (uc *UseCase) GetSent(ctx context.Context, userID uuid.UUID) ([]domain.OutboundMessage, error) {
+	return uc.repo.ListSentMessages(ctx, userID)
 }
 
 func (uc *UseCase) GetStats(ctx context.Context, userID uuid.UUID) (*domain.Stats, error) {

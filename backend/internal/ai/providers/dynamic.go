@@ -79,6 +79,13 @@ func (d *DynamicProvider) resolve(ctx context.Context) (ai.Provider, error) {
 		if model == "" {
 			model = d.fallbackCfg.OpenAIModel
 		}
+	case "groq":
+		if apiKey == "" {
+			apiKey = d.fallbackCfg.GroqAPIKey
+		}
+		if model == "" {
+			model = d.fallbackCfg.GroqModel
+		}
 	case "ollama":
 		if model == "" {
 			model = d.fallbackCfg.OllamaModel
@@ -101,6 +108,8 @@ func (d *DynamicProvider) resolve(ctx context.Context) (ai.Provider, error) {
 		p = NewClaudeProvider(apiKey)
 	case "openai":
 		p = NewOpenAIProvider(apiKey, model)
+	case "groq":
+		p = NewOpenAICompatibleProvider(apiKey, model, "https://api.groq.com/openai/v1")
 	case "ollama":
 		p = NewOllamaProvider(d.fallbackCfg.OllamaBaseURL, model)
 	default:

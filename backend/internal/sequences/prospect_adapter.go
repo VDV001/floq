@@ -37,6 +37,7 @@ func (a *ProspectReaderAdapter) GetProspect(ctx context.Context, id uuid.UUID) (
 		Phone:            p.Phone,
 		TelegramUsername: p.TelegramUsername,
 		Context:          p.Context,
+		Source:           p.Source,
 		Status:           string(p.Status),
 		VerifyStatus:     string(p.VerifyStatus),
 		VerifiedAt:       p.VerifiedAt,

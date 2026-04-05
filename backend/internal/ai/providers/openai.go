@@ -2,6 +2,7 @@ package providers
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 
 	"github.com/daniil/floq/internal/ai"
@@ -15,11 +16,19 @@ type OpenAIProvider struct {
 	model  string
 }
 
-func NewOpenAIProvider(apiKey, model string) *OpenAIProvider {
+func NewOpenAIProvider(apiKey, model string, opts ...option.RequestOption) *OpenAIProvider {
+	clientOpts := []option.RequestOption{option.WithAPIKey(apiKey)}
+	clientOpts = append(clientOpts, opts...)
 	return &OpenAIProvider{
-		client: openai.NewClient(option.WithAPIKey(apiKey)),
+		client: openai.NewClient(clientOpts...),
 		model:  model,
 	}
+}
+
+// NewOpenAICompatibleProvider creates an OpenAI-compatible provider with a custom base URL.
+// Works with Groq, Together, Fireworks, etc.
+func NewOpenAICompatibleProvider(apiKey, model, baseURL string) *OpenAIProvider {
+	return NewOpenAIProvider(apiKey, model, option.WithBaseURL(baseURL))
 }
 
 func (p *OpenAIProvider) Name() string { return "openai" }
@@ -51,5 +60,23 @@ func (p *OpenAIProvider) Complete(ctx context.Context, req ai.CompletionRequest)
 		return "", fmt.Errorf("openai complete: no choices in response")
 	}
 
-	return resp.Choices[0].Message.Content, nil
+	content := resp.Choices[0].Message.Content
+	if content != "" {
+		return content, nil
+	}
+
+	// Reasoning models (e.g. gpt-oss on Groq) may return empty content
+	// with the actual text in a non-standard "reasoning" field.
+	// Extract it from the raw JSON response.
+	rawJSON := resp.Choices[0].Message.RawJSON()
+	if rawJSON != "" {
+		var msgFields struct {
+			Reasoning string `json:"reasoning"`
+		}
+		if err := json.Unmarshal([]byte(rawJSON), &msgFields); err == nil && msgFields.Reasoning != "" {
+			return msgFields.Reasoning, nil
+		}
+	}
+
+	return "", nil
 }

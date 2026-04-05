@@ -20,8 +20,8 @@ func (a *AIMessageGeneratorAdapter) GenerateColdMessage(ctx context.Context, nam
 	return a.client.GenerateColdMessage(ctx, name, title, company, prospectContext, stepHint, previousMessage)
 }
 
-func (a *AIMessageGeneratorAdapter) GenerateTelegramMessage(ctx context.Context, name, title, company, prospectContext, stepHint, previousMessage string) (string, error) {
-	return a.client.GenerateTelegramMessage(ctx, name, title, company, prospectContext, stepHint, previousMessage)
+func (a *AIMessageGeneratorAdapter) GenerateTelegramMessage(ctx context.Context, name, title, company, prospectContext, stepHint, previousMessage, source string) (string, error) {
+	return a.client.GenerateTelegramMessage(ctx, name, title, company, prospectContext, stepHint, previousMessage, source)
 }
 
 func (a *AIMessageGeneratorAdapter) GenerateCallBrief(ctx context.Context, name, title, company, prospectContext, stepHint, previousMessage string) (string, error) {

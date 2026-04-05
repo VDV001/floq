@@ -17,6 +17,8 @@ type Config struct {
 	OpenAIModel     string
 	OllamaBaseURL   string
 	OllamaModel     string
+	GroqAPIKey      string
+	GroqModel       string
 	TelegramBotToken string
 	ResendAPIKey    string
 	SMTPFrom        string
@@ -28,6 +30,8 @@ type Config struct {
 	AppBaseURL      string
 	TwoGISAPIKey    string
 	BookingLink     string
+	SenderName      string
+	SenderCompany   string
 	StaleDays       int
 }
 
@@ -44,6 +48,8 @@ func Load() *Config {
 		OpenAIModel:     getEnv("OPENAI_MODEL", "gpt-4o"),
 		OllamaBaseURL:   getEnv("OLLAMA_BASE_URL", "http://localhost:11434"),
 		OllamaModel:     getEnv("OLLAMA_MODEL", "llama3"),
+		GroqAPIKey:      os.Getenv("GROQ_API_KEY"),
+		GroqModel:       getEnv("GROQ_MODEL", "openai/gpt-oss-120b"),
 		TelegramBotToken: os.Getenv("TELEGRAM_BOT_TOKEN"),
 		ResendAPIKey:    os.Getenv("RESEND_API_KEY"),
 		SMTPFrom:        os.Getenv("SMTP_FROM"),
@@ -55,6 +61,8 @@ func Load() *Config {
 		AppBaseURL:      os.Getenv("APP_BASE_URL"),
 		TwoGISAPIKey:    os.Getenv("TWOGIS_API_KEY"),
 		BookingLink:     getEnv("BOOKING_LINK", "https://calendar.app.google/CQciFBayHqi6CstB7"),
+		SenderName:      getEnv("SENDER_NAME", "Дмитрий"),
+		SenderCompany:   getEnv("SENDER_COMPANY", "dev-bot.su"),
 		StaleDays:       getEnvInt("STALE_DAYS", 2),
 	}
 }

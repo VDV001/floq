@@ -24,6 +24,7 @@ type Repository interface {
 	// Outbound messages
 	CreateOutboundMessage(ctx context.Context, msg *OutboundMessage) error
 	ListOutboundQueue(ctx context.Context, userID uuid.UUID) ([]OutboundMessage, error)
+	ListSentMessages(ctx context.Context, userID uuid.UUID) ([]OutboundMessage, error)
 	UpdateOutboundStatus(ctx context.Context, id uuid.UUID, status OutboundStatus) error
 	UpdateOutboundBody(ctx context.Context, id uuid.UUID, body string) error
 	GetPendingSends(ctx context.Context) ([]OutboundMessage, error)
@@ -37,7 +38,7 @@ type Repository interface {
 // AIMessageGenerator generates outbound messages using AI.
 type AIMessageGenerator interface {
 	GenerateColdMessage(ctx context.Context, name, title, company, prospectContext, stepHint, previousMessage string) (string, error)
-	GenerateTelegramMessage(ctx context.Context, name, title, company, prospectContext, stepHint, previousMessage string) (string, error)
+	GenerateTelegramMessage(ctx context.Context, name, title, company, prospectContext, stepHint, previousMessage, source string) (string, error)
 	GenerateCallBrief(ctx context.Context, name, title, company, prospectContext, stepHint, previousMessage string) (string, error)
 }
 
@@ -52,6 +53,7 @@ type ProspectView struct {
 	Phone            string
 	TelegramUsername string
 	Context          string
+	Source           string
 	Status           string
 	VerifyStatus     string
 	VerifiedAt       *time.Time

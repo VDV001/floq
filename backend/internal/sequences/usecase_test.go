@@ -45,6 +45,9 @@ func (m *mockRepo) CreateOutboundMessage(_ context.Context, msg *domain.Outbound
 func (m *mockRepo) ListOutboundQueue(_ context.Context, _ uuid.UUID) ([]domain.OutboundMessage, error) {
 	return nil, nil
 }
+func (m *mockRepo) ListSentMessages(_ context.Context, _ uuid.UUID) ([]domain.OutboundMessage, error) {
+	return nil, nil
+}
 func (m *mockRepo) UpdateOutboundStatus(_ context.Context, _ uuid.UUID, _ domain.OutboundStatus) error {
 	return nil
 }
@@ -73,7 +76,7 @@ func (m *mockAI) GenerateColdMessage(_ context.Context, _, _, _, _, _, _ string)
 	return m.coldBody, m.err
 }
 
-func (m *mockAI) GenerateTelegramMessage(_ context.Context, _, _, _, _, _, _ string) (string, error) {
+func (m *mockAI) GenerateTelegramMessage(_ context.Context, _, _, _, _, _, _, _ string) (string, error) {
 	m.calls++
 	return m.telegramBody, m.err
 }

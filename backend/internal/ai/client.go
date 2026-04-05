@@ -41,20 +41,40 @@ type QualificationResult struct {
 }
 
 type AIClient struct {
-	provider    Provider
-	bookingLink string
+	provider      Provider
+	bookingLink   string
+	senderName    string
+	senderCompany string
 }
 
-func NewAIClient(provider Provider, bookingLink string) *AIClient {
-	return &AIClient{provider: provider, bookingLink: bookingLink}
+func NewAIClient(provider Provider, bookingLink, senderName, senderCompany string) *AIClient {
+	return &AIClient{
+		provider:      provider,
+		bookingLink:   bookingLink,
+		senderName:    senderName,
+		senderCompany: senderCompany,
+	}
 }
 
 func (c *AIClient) resolveSystemPrompt(prompt string) string {
 	return strings.ReplaceAll(prompt, "{{booking_link}}", c.bookingLink)
 }
 
+func (c *AIClient) resolveSenderVars(prompt string) string {
+	r := strings.NewReplacer(
+		"{{sender_name}}", c.senderName,
+		"{{sender_company}}", c.senderCompany,
+	)
+	return r.Replace(prompt)
+}
+
 func (c *AIClient) ProviderName() string {
 	return c.provider.Name()
+}
+
+// Complete exposes the underlying provider's Complete method for direct use.
+func (c *AIClient) Complete(ctx context.Context, req CompletionRequest) (string, error) {
+	return c.provider.Complete(ctx, req)
 }
 
 func (c *AIClient) Qualify(ctx context.Context, contactName, channel, firstMessage string) (*QualificationResult, error) {
@@ -159,7 +179,7 @@ func (c *AIClient) GenerateColdMessage(ctx context.Context, name, title, company
 	return resp, nil
 }
 
-func (c *AIClient) GenerateTelegramMessage(ctx context.Context, name, title, company, prospectContext, stepHint, previousMessage string) (string, error) {
+func (c *AIClient) GenerateTelegramMessage(ctx context.Context, name, title, company, prospectContext, stepHint, previousMessage, source string) (string, error) {
 	previousContext := ""
 	if previousMessage != "" {
 		previousContext = "Предыдущее сообщение: \"" + previousMessage + "\""
@@ -172,11 +192,15 @@ func (c *AIClient) GenerateTelegramMessage(ctx context.Context, name, title, com
 		"{{prospect_context}}", prospectContext,
 		"{{step_hint}}", stepHint,
 		"{{previous_context}}", previousContext,
+		"{{source}}", source,
 	)
+
+	systemPrompt := c.resolveSystemPrompt(TelegramOutreachSystem)
+	systemPrompt = c.resolveSenderVars(systemPrompt)
 
 	resp, err := c.provider.Complete(ctx, CompletionRequest{
 		Messages: []Message{
-			{Role: "system", Content: TelegramOutreachSystem},
+			{Role: "system", Content: systemPrompt},
 			{Role: "user", Content: r.Replace(TelegramOutreachUser)},
 		},
 		MaxTokens: 512,
@@ -185,6 +209,46 @@ func (c *AIClient) GenerateTelegramMessage(ctx context.Context, name, title, com
 		return "", fmt.Errorf("ai telegram message: %w", err)
 	}
 	return resp, nil
+}
+
+// TelegramReplyResult holds the AI response and whether escalation to a manager is needed.
+type TelegramReplyResult struct {
+	Text            string
+	NeedsEscalation bool
+	EscalationNote  string
+}
+
+func (c *AIClient) GenerateTelegramReply(ctx context.Context, name, title, company, prospectContext, conversationHistory, lastMessage string) (*TelegramReplyResult, error) {
+	r := strings.NewReplacer(
+		"{{name}}", name,
+		"{{title}}", title,
+		"{{company}}", company,
+		"{{prospect_context}}", prospectContext,
+		"{{conversation_history}}", conversationHistory,
+		"{{last_message}}", lastMessage,
+	)
+
+	systemPrompt := c.resolveSystemPrompt(TelegramConversationSystem)
+	systemPrompt = c.resolveSenderVars(systemPrompt)
+
+	resp, err := c.provider.Complete(ctx, CompletionRequest{
+		Messages: []Message{
+			{Role: "system", Content: systemPrompt},
+			{Role: "user", Content: r.Replace(TelegramConversationUser)},
+		},
+		MaxTokens: 512,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("ai telegram reply: %w", err)
+	}
+
+	result := &TelegramReplyResult{Text: resp}
+	if strings.Contains(resp, "[ТРЕБУЕТСЯ МЕНЕДЖЕР]") {
+		result.NeedsEscalation = true
+		result.EscalationNote = strings.TrimPrefix(resp, "[ТРЕБУЕТСЯ МЕНЕДЖЕР]")
+		result.EscalationNote = strings.TrimSpace(result.EscalationNote)
+	}
+	return result, nil
 }
 
 func (c *AIClient) GenerateCallBrief(ctx context.Context, name, title, company, prospectContext, stepHint, previousMessage string) (string, error) {
