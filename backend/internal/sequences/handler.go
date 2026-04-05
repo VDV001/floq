@@ -22,6 +22,7 @@ func RegisterRoutes(router chi.Router, uc *UseCase) {
 	router.Patch("/api/sequences/{id}/toggle", toggleActive(uc))
 
 	router.Get("/api/outbound/queue", getQueue(uc))
+	router.Get("/api/outbound/sent", getSent(uc))
 	router.Post("/api/outbound/{id}/approve", approveMessage(uc))
 	router.Post("/api/outbound/{id}/reject", rejectMessage(uc))
 	router.Post("/api/outbound/{id}/edit", editMessage(uc))
@@ -262,6 +263,25 @@ func getQueue(uc *UseCase) http.HandlerFunc {
 		msgs, err := uc.GetQueue(r.Context(), userID)
 		if err != nil {
 			httputil.WriteError(w, http.StatusInternalServerError, "failed to get queue")
+			return
+		}
+		if msgs == nil {
+			msgs = []domain.OutboundMessage{}
+		}
+		httputil.WriteJSON(w, http.StatusOK, OutboundMessagesToResponse(msgs))
+	}
+}
+
+func getSent(uc *UseCase) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		userID, ok := httputil.UserIDFromContext(r.Context())
+		if !ok {
+			httputil.WriteError(w, http.StatusUnauthorized, "unauthorized")
+			return
+		}
+		msgs, err := uc.GetSent(r.Context(), userID)
+		if err != nil {
+			httputil.WriteError(w, http.StatusInternalServerError, "failed to get sent messages")
 			return
 		}
 		if msgs == nil {

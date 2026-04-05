@@ -35,6 +35,7 @@ interface UIMessage {
   body: string;
   scheduledAt: string;
   channel: "email" | "telegram" | "phone_call";
+  status: string;
 }
 
 function formatScheduledAt(iso: string): string {
@@ -70,6 +71,7 @@ function mapOutboundToUI(msg: OutboundMessage, idx: number): UIMessage {
     body: msg.body,
     scheduledAt: formatScheduledAt(msg.scheduled_at),
     channel: msg.channel,
+    status: msg.status,
   };
 }
 
@@ -80,6 +82,8 @@ function mapOutboundToUI(msg: OutboundMessage, idx: number): UIMessage {
 export default function OutboundPage() {
   const [autopilot, setAutopilot] = useState(false);
   const [messages, setMessages] = useState<UIMessage[]>([]);
+  const [sentMessages, setSentMessages] = useState<UIMessage[]>([]);
+  const [tab, setTab] = useState<"queue" | "sent">("queue");
   const [loading, setLoading] = useState(true);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editText, setEditText] = useState("");
@@ -88,10 +92,13 @@ export default function OutboundPage() {
 
   useEffect(() => {
     setLoading(true);
-    api
-      .getOutboundQueue()
-      .then((data) => {
-        setMessages(data.map(mapOutboundToUI));
+    Promise.all([
+      api.getOutboundQueue(),
+      api.getOutboundSent(),
+    ])
+      .then(([queue, sent]) => {
+        setMessages(queue.map(mapOutboundToUI));
+        setSentMessages(sent.map(mapOutboundToUI));
       })
       .catch(() => {})
       .finally(() => setLoading(false));
@@ -144,18 +151,19 @@ export default function OutboundPage() {
     setEditText("");
   };
 
+  const activeList = tab === "queue" ? messages : sentMessages;
   const filtered = search.trim()
-    ? messages.filter(
+    ? activeList.filter(
         (m) =>
           m.name.toLowerCase().includes(search.toLowerCase()) ||
           m.body.toLowerCase().includes(search.toLowerCase())
       )
-    : messages;
+    : activeList;
 
   return (
     <div className="min-h-full">
       {/* Top search bar */}
-      <header className="flex h-16 items-center justify-between px-10">
+      <header className="flex h-16 items-center justify-between px-4 sm:px-6 lg:px-10">
         <div className="relative w-96">
           <Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-slate-400" />
           <input
@@ -169,21 +177,21 @@ export default function OutboundPage() {
       </header>
 
       {/* Page content */}
-      <div className="mx-auto max-w-6xl px-10 py-8">
+      <div className="mx-auto max-w-6xl px-4 sm:px-6 lg:px-10 py-8">
         {/* Header */}
         <div className="mb-12 flex flex-col items-start justify-between gap-6 md:flex-row md:items-end">
           <div>
-            <h2 className="mb-2 text-4xl font-extrabold tracking-tight text-[#0d1c2e]">
+            <h2 className="mb-2 text-2xl sm:text-3xl lg:text-4xl font-extrabold tracking-tight text-[#0d1c2e]">
               Очередь отправки
             </h2>
-            <div className="flex items-center gap-3">
-              <span className="rounded-full bg-[#dbe1ff] px-3 py-1 text-xs font-bold text-[#003ea8]">
-                {filtered.length} сообщений ожидают
-              </span>
-              <p className="text-sm font-medium text-[#434655]">
-                Контроль качества AI-сообщений перед отправкой
-              </p>
-            </div>
+            <p className="text-sm font-medium text-[#434655]">
+              Контроль качества AI-сообщений перед отправкой
+              {filtered.length > 0 && (
+                <span className="ml-2 rounded-full bg-[#dbe1ff] px-3 py-1 text-xs font-bold text-[#003ea8]">
+                  {filtered.length} в очереди
+                </span>
+              )}
+            </p>
           </div>
 
           {/* Stats */}
@@ -232,8 +240,32 @@ export default function OutboundPage() {
           </div>
         </div>
 
-        {/* Autopilot toggle */}
-        <div className="mb-10 flex items-center justify-between rounded-2xl border border-transparent bg-[#eff4ff] p-6 transition-all hover:border-[#c3c6d7]/20 hover:bg-white">
+        {/* Tabs */}
+        <div className="mb-8 flex gap-1 rounded-xl bg-[#eff4ff] p-1">
+          <button
+            onClick={() => setTab("queue")}
+            className={`flex-1 rounded-lg px-4 py-2.5 text-sm font-bold transition-all ${
+              tab === "queue"
+                ? "bg-white text-[#0d1c2e] shadow-sm"
+                : "text-[#434655] hover:text-[#0d1c2e]"
+            }`}
+          >
+            В очереди{messages.length > 0 && ` (${messages.length})`}
+          </button>
+          <button
+            onClick={() => setTab("sent")}
+            className={`flex-1 rounded-lg px-4 py-2.5 text-sm font-bold transition-all ${
+              tab === "sent"
+                ? "bg-white text-[#0d1c2e] shadow-sm"
+                : "text-[#434655] hover:text-[#0d1c2e]"
+            }`}
+          >
+            Отправленные{sentMessages.length > 0 && ` (${sentMessages.length})`}
+          </button>
+        </div>
+
+        {/* Autopilot toggle — only in queue tab */}
+        {tab === "queue" && <div className="mb-10 flex items-center justify-between rounded-2xl border border-transparent bg-[#eff4ff] p-6 transition-all hover:border-[#c3c6d7]/20 hover:bg-white">
           <div className="flex items-center gap-4">
             <div className="flex size-12 items-center justify-center rounded-full bg-[#e1e0ff] text-[#3e3fcc]">
               <Bot className="size-6" />
@@ -251,18 +283,20 @@ export default function OutboundPage() {
             </span>
             <Switch checked={autopilot} onCheckedChange={setAutopilot} />
           </div>
-        </div>
+        </div>}
 
-        {/* Queue list */}
+        {/* Message list */}
         <div className="space-y-4">
           {!loading && filtered.length === 0 && (
             <div className="flex flex-col items-center justify-center rounded-2xl bg-white py-16 text-center">
               <Send className="mb-4 size-10 text-[#c3c6d7]" />
               <p className="text-lg font-semibold text-[#434655]">
-                Нет сообщений в очереди
+                {tab === "queue" ? "Нет сообщений в очереди" : "Нет отправленных сообщений"}
               </p>
               <p className="mt-1 text-sm text-[#737686]">
-                Новые сообщения появятся здесь после генерации AI
+                {tab === "queue"
+                  ? "Новые сообщения появятся здесь после генерации AI"
+                  : "Одобренные и отправленные сообщения будут отображаться здесь"}
               </p>
             </div>
           )}
@@ -330,28 +364,42 @@ export default function OutboundPage() {
                 </div>
               </div>
 
-              {/* Right: actions */}
-              <div className="flex w-full items-center gap-2 lg:w-auto">
-                <button
-                  onClick={() => handleApprove(msg.id)}
-                  className="flex flex-1 items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-[#004ac6] to-[#2563eb] px-4 py-2.5 text-xs font-bold text-white transition-opacity hover:opacity-90 lg:flex-none"
-                >
-                  <Send className="size-3.5" />
-                  Подтвердить
-                </button>
-                <button
-                  onClick={() => handleEdit(msg)}
-                  className="flex size-10 items-center justify-center rounded-xl border border-[#c3c6d7] text-[#434655] transition-colors hover:bg-[#eff4ff]"
-                >
-                  <Pencil className="size-[18px]" />
-                </button>
-                <button
-                  onClick={() => handleReject(msg.id)}
-                  className="flex size-10 items-center justify-center rounded-xl text-[#ba1a1a] transition-colors hover:bg-[#ffdad6]/20"
-                >
-                  <X className="size-[18px]" />
-                </button>
-              </div>
+              {/* Right: actions (queue only) or status badge (sent) */}
+              {tab === "queue" ? (
+                <div className="flex w-full items-center gap-2 lg:w-auto">
+                  <button
+                    onClick={() => handleApprove(msg.id)}
+                    className="flex flex-1 items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-[#004ac6] to-[#2563eb] px-4 py-2.5 text-xs font-bold text-white transition-opacity hover:opacity-90 lg:flex-none"
+                  >
+                    <Send className="size-3.5" />
+                    Подтвердить
+                  </button>
+                  <button
+                    onClick={() => handleEdit(msg)}
+                    className="flex size-10 items-center justify-center rounded-xl border border-[#c3c6d7] text-[#434655] transition-colors hover:bg-[#eff4ff]"
+                  >
+                    <Pencil className="size-[18px]" />
+                  </button>
+                  <button
+                    onClick={() => handleReject(msg.id)}
+                    className="flex size-10 items-center justify-center rounded-xl text-[#ba1a1a] transition-colors hover:bg-[#ffdad6]/20"
+                  >
+                    <X className="size-[18px]" />
+                  </button>
+                </div>
+              ) : (
+                <div className="flex shrink-0 items-center gap-2">
+                  <span className={`rounded-full px-3 py-1 text-[10px] font-bold uppercase tracking-wider ${
+                    msg.status === "sent"
+                      ? "bg-green-100 text-green-700"
+                      : msg.status === "rejected"
+                        ? "bg-red-100 text-red-600"
+                        : "bg-blue-100 text-blue-700"
+                  }`}>
+                    {msg.status === "sent" ? "Отправлено" : msg.status === "rejected" ? "Отклонено" : "Одобрено"}
+                  </span>
+                </div>
+              )}
             </div>
           ))}
         </div>

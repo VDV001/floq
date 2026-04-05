@@ -197,11 +197,11 @@ export default function AutomationsPage() {
   };
 
   return (
-    <div className="min-h-full px-10 pb-12 pt-24">
+    <div className="min-h-full px-4 sm:px-6 lg:px-10 pb-12 pt-8 sm:pt-16 lg:pt-24">
       {/* Header */}
       <div className="mb-12 flex flex-col gap-2">
         <div className="flex items-center gap-3">
-          <h1 className="text-4xl font-extrabold tracking-tight text-[#0d1c2e]">
+          <h1 className="text-2xl sm:text-3xl lg:text-4xl font-extrabold tracking-tight text-[#0d1c2e]">
             Автоматизации
           </h1>
           <div className="flex items-center gap-1.5 rounded-full bg-[#e1e0ff] px-3 py-1 text-xs font-bold uppercase tracking-wider text-[#2f2ebe]">
@@ -282,7 +282,7 @@ export default function AutomationsPage() {
         })}
       </div>
 
-      {/* AI Insight Box */}
+      {/* Quick actions */}
       <div className="group relative mt-12 overflow-hidden rounded-xl bg-[#e1e0ff] p-8">
         <div className="absolute -mr-20 -mt-20 right-0 top-0 size-64 rounded-full bg-[#585be6]/10 blur-3xl transition-transform duration-700 group-hover:scale-110" />
         <div className="relative z-10 flex flex-col items-start gap-8 md:flex-row md:items-center">
@@ -291,22 +291,28 @@ export default function AutomationsPage() {
           </div>
           <div className="flex-1">
             <h2 className="mb-2 text-xl font-bold text-[#07006c]">
-              Рекомендация AI
+              Быстрые действия
             </h2>
             <p className="max-w-2xl font-medium leading-relaxed text-[#2f2ebe]">
-              Включение автоматизации{" "}
-              <strong className="text-[#3e3fcc]">
-                &laquo;Авто-фоллоуап&raquo;
-              </strong>{" "}
-              может повысить коэффициент конверсии на{" "}
-              <span className="rounded bg-white/40 px-1.5 py-0.5 font-bold text-[#3e3fcc]">
-                24%
-              </span>{" "}
-              на основе данных вашей воронки за прошлый месяц.
+              {Object.values(toggles).every(Boolean)
+                ? "Все автоматизации включены. Система работает на максимум."
+                : `Включено ${Object.values(toggles).filter(Boolean).length} из ${AUTOMATIONS.length} автоматизаций. Включите все для максимальной эффективности.`}
             </p>
           </div>
-          <button className="whitespace-nowrap rounded-xl bg-[#3e3fcc] px-6 py-3 font-bold text-white transition-all hover:bg-[#585be6] hover:shadow-lg active:scale-95">
-            Применить ко всем
+          <button
+            onClick={() => {
+              const allOn = Object.values(toggles).every(Boolean);
+              const next = Object.fromEntries(
+                AUTOMATIONS.map((a) => [a.id, !allOn])
+              );
+              setToggles(next);
+              saveToAPI(next, inputs);
+            }}
+            className="whitespace-nowrap rounded-xl bg-[#3e3fcc] px-6 py-3 font-bold text-white transition-all hover:bg-[#585be6] hover:shadow-lg active:scale-95"
+          >
+            {Object.values(toggles).every(Boolean)
+              ? "Выключить все"
+              : "Включить все"}
           </button>
         </div>
       </div>

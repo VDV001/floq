@@ -161,6 +161,30 @@ func (r *Repository) ListOutboundQueue(ctx context.Context, userID uuid.UUID) ([
 	return msgs, rows.Err()
 }
 
+func (r *Repository) ListSentMessages(ctx context.Context, userID uuid.UUID) ([]domain.OutboundMessage, error) {
+	rows, err := r.pool.Query(ctx,
+		`SELECT om.id, om.prospect_id, om.sequence_id, om.step_order, om.channel, om.body, om.status, om.scheduled_at, om.sent_at, om.created_at
+		 FROM outbound_messages om
+		 JOIN prospects p ON p.id = om.prospect_id
+		 WHERE p.user_id = $1 AND om.status IN ('sent', 'approved', 'rejected')
+		 ORDER BY om.created_at DESC
+		 LIMIT 100`, userID)
+	if err != nil {
+		return nil, fmt.Errorf("list sent messages: %w", err)
+	}
+	defer rows.Close()
+
+	var msgs []domain.OutboundMessage
+	for rows.Next() {
+		var m domain.OutboundMessage
+		if err := rows.Scan(&m.ID, &m.ProspectID, &m.SequenceID, &m.StepOrder, &m.Channel, &m.Body, &m.Status, &m.ScheduledAt, &m.SentAt, &m.CreatedAt); err != nil {
+			return nil, fmt.Errorf("scan sent message: %w", err)
+		}
+		msgs = append(msgs, m)
+	}
+	return msgs, rows.Err()
+}
+
 func (r *Repository) UpdateOutboundStatus(ctx context.Context, id uuid.UUID, status domain.OutboundStatus) error {
 	_, err := r.pool.Exec(ctx,
 		`UPDATE outbound_messages SET status = $1 WHERE id = $2`,
