@@ -185,9 +185,9 @@ export default function OutboundPage() {
             </h2>
             <p className="text-sm font-medium text-[#434655]">
               Контроль качества AI-сообщений перед отправкой
-              {filtered.length > 0 && (
+              {messages.length > 0 && (
                 <span className="ml-2 rounded-full bg-[#dbe1ff] px-3 py-1 text-xs font-bold text-[#003ea8]">
-                  {filtered.length} в очереди
+                  {messages.length} в очереди
                 </span>
               )}
             </p>
