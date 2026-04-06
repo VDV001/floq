@@ -57,6 +57,26 @@ const STEPS: StepDef[] = [
     check: (s) => s.ai_active,
   },
   {
+    id: "email-out",
+    icon: Mail,
+    title: "Настройте отправку писем",
+    description:
+      "Подключите SMTP (mail.ru, Яндекс, Gmail) или Resend API для отправки холодных писем из секвенций.",
+    href: "/settings",
+    btnLabel: "Настроить",
+    check: (s) => s.smtp_active || s.resend_active,
+  },
+  {
+    id: "email-in",
+    icon: Mail,
+    title: "Подключите приём почты (IMAP)",
+    description:
+      "Настройте IMAP для автоматического приёма входящих писем. Ответы от проспектов будут создавать лидов автоматически.",
+    href: "/settings",
+    btnLabel: "Настроить",
+    check: (s) => s.imap_active,
+  },
+  {
     id: "prospects",
     icon: UserPlus,
     title: "Добавьте первых проспектов",

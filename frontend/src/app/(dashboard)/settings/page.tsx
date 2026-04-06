@@ -37,6 +37,18 @@ function ConnectionBadge({ active }: { active: boolean }) {
   );
 }
 
+function HintIcon({ text }: { text: string }) {
+  return (
+    <span className="group/hint relative">
+      <Info className="size-4 cursor-help text-[#434655]/30 transition-colors hover:text-[#004ac6]" />
+      <span className="pointer-events-none absolute left-full top-1/2 z-50 ml-2 w-64 -translate-y-1/2 rounded-lg bg-[#0d1c2e] px-4 py-3 text-xs font-normal leading-relaxed text-white/90 opacity-0 shadow-xl transition-opacity duration-200 group-hover/hint:pointer-events-auto group-hover/hint:opacity-100">
+        {text}
+        <span className="absolute right-full top-1/2 -translate-y-1/2 border-4 border-transparent border-r-[#0d1c2e]" />
+      </span>
+    </span>
+  );
+}
+
 function StatusBanner({ result, onDismiss }: { result: TestResult; onDismiss: () => void }) {
   if (!result) return null;
   return (
@@ -72,6 +84,10 @@ export default function SettingsPage() {
   const [imapUser, setImapUser] = useState("");
   const [imapPassword, setImapPassword] = useState("");
   const [resendKey, setResendKey] = useState("");
+  const [smtpHost, setSmtpHost] = useState("");
+  const [smtpPort, setSmtpPort] = useState("465");
+  const [smtpUser, setSmtpUser] = useState("");
+  const [smtpPassword, setSmtpPassword] = useState("");
   const [aiProvider, setAiProvider] = useState("ollama");
   const [aiModel, setAiModel] = useState("gemma3:4b");
   const [aiApiKey, setAiApiKey] = useState("");
@@ -85,6 +101,9 @@ export default function SettingsPage() {
   const [resendTesting, setResendTesting] = useState(false);
   const [resendTestResult, setResendTestResult] = useState<TestResult>(null);
   const [resendVerified, setResendVerified] = useState<boolean | null>(null);
+  const [smtpTesting, setSmtpTesting] = useState(false);
+  const [smtpTestResult, setSmtpTestResult] = useState<TestResult>(null);
+  const [smtpVerified, setSmtpVerified] = useState<boolean | null>(null);
   const [aiTesting, setAiTesting] = useState(false);
   const [aiTestResult, setAiTestResult] = useState<TestResult>(null);
   const [aiVerified, setAiVerified] = useState<boolean | null>(null);
@@ -104,6 +123,9 @@ export default function SettingsPage() {
         setImapHost(data.imap_host);
         setImapPort(data.imap_port);
         setImapUser(data.imap_user);
+        setSmtpHost(data.smtp_host);
+        setSmtpPort(data.smtp_port || "465");
+        setSmtpUser(data.smtp_user);
         setAiProvider(data.ai_provider || "ollama");
         setAiModel(data.ai_model || providerDefaults[data.ai_provider] || "gemma3:4b");
         setNotifyTg(data.notify_telegram);
@@ -135,6 +157,12 @@ export default function SettingsPage() {
       }
       if (resendKey && !resendKey.startsWith("...")) {
         update.resend_api_key = resendKey;
+      }
+      if (smtpHost) update.smtp_host = smtpHost;
+      if (smtpPort) update.smtp_port = smtpPort;
+      if (smtpUser) update.smtp_user = smtpUser;
+      if (smtpPassword && !smtpPassword.startsWith("...")) {
+        update.smtp_password = smtpPassword;
       }
       if (aiApiKey && !aiApiKey.startsWith("...")) {
         update.ai_api_key = aiApiKey;
@@ -194,6 +222,36 @@ export default function SettingsPage() {
       setResendVerified(false);
     } finally {
       setResendTesting(false);
+    }
+  };
+
+  const handleTestSMTP = async () => {
+    setSmtpTesting(true);
+    setSmtpTestResult(null);
+    try {
+      const host = smtpHost || settings?.smtp_host || "";
+      const port = smtpPort || settings?.smtp_port || "465";
+      const user = smtpUser || settings?.smtp_user || "";
+      const password = smtpPassword && !smtpPassword.startsWith("...") ? smtpPassword : "";
+      if (!host || !user) {
+        setSmtpTestResult({ success: false, error: "Заполните хост и пользователя SMTP" });
+        return;
+      }
+      const res = await api.testSMTP(host, port, user, password);
+      setSmtpTestResult(res);
+      setSmtpVerified(res.success);
+      if (res.success && (user || password)) {
+        const update: Partial<UserSettings> = { smtp_host: host, smtp_port: port, smtp_user: user };
+        if (password) update.smtp_password = password;
+        const updated = await api.updateSettings(update);
+        setSettings(updated);
+        setSmtpPassword("");
+      }
+    } catch {
+      setSmtpTestResult({ success: false, error: "Ошибка запроса" });
+      setSmtpVerified(false);
+    } finally {
+      setSmtpTesting(false);
     }
   };
 
@@ -406,6 +464,7 @@ export default function SettingsPage() {
                     <div className="flex items-center gap-2">
                       <Send className="size-5 text-[#229ED9]" />
                       <h4 className="font-bold text-[#0d1c2e]">Telegram bot</h4>
+                      <HintIcon text="Бот для приёма входящих сообщений. Клиент пишет боту → Floq создаёт лида → AI квалифицирует и генерирует ответ. Создайте бота через @BotFather в Telegram." />
                     </div>
                     <ConnectionBadge active={!!settings?.telegram_bot_active} />
                   </div>
@@ -439,6 +498,7 @@ export default function SettingsPage() {
                     <div className="flex items-center gap-2">
                       <Mail className="size-5 text-[#545f73]" />
                       <h4 className="font-bold text-[#0d1c2e]">Email IMAP</h4>
+                      <HintIcon text="Приём входящих писем. Floq каждую минуту проверяет почту через IMAP. Если ответил проспект из базы — автоматически создаётся лид. Для Gmail нужен пароль приложения." />
                     </div>
                     <ConnectionBadge active={imapVerified ?? !!settings?.imap_active} />
                   </div>
@@ -511,6 +571,7 @@ export default function SettingsPage() {
                     <div className="flex items-center gap-2">
                       <Send className="size-5 text-[#0d1c2e]" />
                       <h4 className="font-bold text-[#0d1c2e]">Resend API</h4>
+                      <HintIcon text="Сервис для отправки email через API. Требует верифицированный домен. Бесплатно до 100 писем/день. Альтернатива — SMTP ниже." />
                     </div>
                     <ConnectionBadge active={resendVerified ?? !!settings?.resend_active} />
                   </div>
@@ -532,11 +593,87 @@ export default function SettingsPage() {
                   </div>
                   <StatusBanner result={resendTestResult} onDismiss={() => setResendTestResult(null)} />
                 </div>
+
+                <hr className="border-[#c3c6d7]/10" />
+
+                {/* SMTP */}
+                <div>
+                  <div className="mb-6 flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <Mail className="size-5 text-[#545f73]" />
+                      <h4 className="font-bold text-[#0d1c2e]">SMTP (отправка писем)</h4>
+                      <HintIcon text="Отправка холодных писем через обычную почту (mail.ru, Яндекс, Gmail). Используйте пароль приложения, не обычный пароль аккаунта. Если настроен SMTP — Resend не нужен." />
+                    </div>
+                    <ConnectionBadge active={smtpVerified ?? !!settings?.smtp_active} />
+                  </div>
+                  <p className="mb-4 text-xs text-[#434655]/70">
+                    Альтернатива Resend — отправка через mail.ru, Яндекс, Gmail и др.
+                  </p>
+                  <div className="grid grid-cols-12 gap-4">
+                    <div className="col-span-8">
+                      <label className="mb-2 block text-xs font-bold uppercase tracking-wide text-[#434655]">
+                        Хост
+                      </label>
+                      <input
+                        type="text"
+                        placeholder="smtp.mail.ru"
+                        value={smtpHost}
+                        onChange={(e) => setSmtpHost(e.target.value)}
+                        className="w-full rounded-lg border-none bg-[#eff4ff] px-4 py-3 text-sm outline-none transition-all focus:ring-2 focus:ring-[#004ac6]/20"
+                      />
+                    </div>
+                    <div className="col-span-4">
+                      <label className="mb-2 block text-xs font-bold uppercase tracking-wide text-[#434655]">
+                        Порт
+                      </label>
+                      <input
+                        type="text"
+                        placeholder="465"
+                        value={smtpPort}
+                        onChange={(e) => setSmtpPort(e.target.value)}
+                        className="w-full rounded-lg border-none bg-[#eff4ff] px-4 py-3 text-sm outline-none transition-all focus:ring-2 focus:ring-[#004ac6]/20"
+                      />
+                    </div>
+                    <div className="col-span-6">
+                      <label className="mb-2 block text-xs font-bold uppercase tracking-wide text-[#434655]">
+                        Email
+                      </label>
+                      <input
+                        type="text"
+                        placeholder="hello@yourdomain.com"
+                        value={smtpUser}
+                        onChange={(e) => setSmtpUser(e.target.value)}
+                        className="w-full rounded-lg border-none bg-[#eff4ff] px-4 py-3 text-sm outline-none transition-all focus:ring-2 focus:ring-[#004ac6]/20"
+                      />
+                    </div>
+                    <div className="col-span-6">
+                      <label className="mb-2 block text-xs font-bold uppercase tracking-wide text-[#434655]">
+                        Пароль
+                      </label>
+                      <input
+                        type="password"
+                        placeholder={settings?.smtp_password || "••••••••••••"}
+                        value={smtpPassword}
+                        onChange={(e) => setSmtpPassword(e.target.value)}
+                        className="w-full rounded-lg border-none bg-[#eff4ff] px-4 py-3 text-sm outline-none transition-all focus:ring-2 focus:ring-[#004ac6]/20"
+                      />
+                    </div>
+                  </div>
+                  <button
+                    onClick={handleTestSMTP}
+                    disabled={smtpTesting}
+                    className="mt-6 flex w-full items-center justify-center gap-2 rounded-lg bg-[#eff4ff] py-3 text-sm font-bold text-[#0d1c2e] transition-colors hover:bg-[#dce9ff] disabled:opacity-50"
+                  >
+                    {smtpTesting ? <Loader2 className="size-[18px] animate-spin" /> : <Shield className="size-[18px]" />}
+                    {smtpTesting ? "Проверяем..." : "Тест соединения"}
+                  </button>
+                  <StatusBanner result={smtpTestResult} onDismiss={() => setSmtpTestResult(null)} />
+                </div>
               </div>
             </section>
 
             {/* AI Provider */}
-            <section className="relative overflow-hidden rounded-xl bg-white p-8 shadow-sm ring-1 ring-[#c3c6d7]/10">
+            <section className="relative rounded-xl bg-white p-8 shadow-sm ring-1 ring-[#c3c6d7]/10">
               <div className="absolute -mr-16 -mt-16 right-0 top-0 size-32 rounded-full bg-[#3e3fcc]/5 blur-3xl" />
 
               <div className="mb-8 flex items-center justify-between">
@@ -545,6 +682,7 @@ export default function SettingsPage() {
                   <h3 className="text-xl font-bold text-[#0d1c2e]">
                     ИИ Провайдер
                   </h3>
+                  <HintIcon text="AI-модель для генерации текстов: квалификация лидов, черновики ответов, холодные письма. Ollama — бесплатно и локально. Claude/OpenAI/Groq — через облако с API-ключом." />
                 </div>
                 <ConnectionBadge active={aiVerified ?? !!settings?.ai_active} />
               </div>
