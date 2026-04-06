@@ -19,6 +19,10 @@ type settingsInput struct {
 	IMAPUser          string `json:"imap_user"`
 	IMAPPassword      string `json:"imap_password"`
 	ResendAPIKey      string `json:"resend_api_key"`
+	SMTPHost          string `json:"smtp_host"`
+	SMTPPort          string `json:"smtp_port"`
+	SMTPUser          string `json:"smtp_user"`
+	SMTPPassword      string `json:"smtp_password"`
 	AIProvider        string `json:"ai_provider"`
 	AIModel           string `json:"ai_model"`
 	AIAPIKey          string `json:"ai_api_key"`
@@ -52,6 +56,7 @@ func (uc *UseCase) GetSettings(ctx context.Context, userID uuid.UUID) (*domain.S
 	s.TelegramBotToken = maskSecret(s.TelegramBotToken)
 	s.IMAPPassword = maskSecret(s.IMAPPassword)
 	s.ResendAPIKey = maskSecret(s.ResendAPIKey)
+	s.SMTPPassword = maskSecret(s.SMTPPassword)
 	s.AIAPIKey = maskSecret(s.AIAPIKey)
 
 	return s, nil
@@ -104,6 +109,18 @@ func (uc *UseCase) UpdateSettings(ctx context.Context, userID uuid.UUID, rawBody
 	}
 	if _, ok := raw["resend_api_key"]; ok {
 		fields["resend_api_key"] = input.ResendAPIKey
+	}
+	if _, ok := raw["smtp_host"]; ok {
+		fields["smtp_host"] = input.SMTPHost
+	}
+	if _, ok := raw["smtp_port"]; ok {
+		fields["smtp_port"] = input.SMTPPort
+	}
+	if _, ok := raw["smtp_user"]; ok {
+		fields["smtp_user"] = input.SMTPUser
+	}
+	if _, ok := raw["smtp_password"]; ok {
+		fields["smtp_password"] = input.SMTPPassword
 	}
 	if _, ok := raw["ai_provider"]; ok {
 		fields["ai_provider"] = input.AIProvider

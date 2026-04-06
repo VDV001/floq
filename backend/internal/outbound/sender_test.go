@@ -8,7 +8,7 @@ import (
 
 func TestNewSender_Fields(t *testing.T) {
 	ownerID := uuid.New()
-	s := NewSender(nil, ownerID, "key123", "from@test.com", "https://app.test", nil, nil)
+	s := NewSender(nil, ownerID, "key123", "from@test.com", "https://app.test", "smtp.mail.ru", "465", "user@test.com", "pass", nil, nil)
 
 	if s.ownerID != ownerID {
 		t.Errorf("expected ownerID %s, got %s", ownerID, s.ownerID)
@@ -19,17 +19,17 @@ func TestNewSender_Fields(t *testing.T) {
 	if s.fromAddress != "from@test.com" {
 		t.Errorf("expected fromAddress %q, got %q", "from@test.com", s.fromAddress)
 	}
-	if s.appBaseURL != "https://app.test" {
-		t.Errorf("expected appBaseURL %q, got %q", "https://app.test", s.appBaseURL)
+	if s.smtpHost != "smtp.mail.ru" {
+		t.Errorf("expected smtpHost %q, got %q", "smtp.mail.ru", s.smtpHost)
+	}
+	if s.smtpUser != "user@test.com" {
+		t.Errorf("expected smtpUser %q, got %q", "user@test.com", s.smtpUser)
 	}
 }
 
 func TestNewSender_NilDeps(t *testing.T) {
-	s := NewSender(nil, uuid.Nil, "", "", "", nil, nil)
+	s := NewSender(nil, uuid.Nil, "", "", "", "", "", "", "", nil, nil)
 	if s == nil {
 		t.Fatal("expected non-nil Sender")
-	}
-	if s.fallbackKey != "" {
-		t.Errorf("expected empty fallbackKey, got %q", s.fallbackKey)
 	}
 }

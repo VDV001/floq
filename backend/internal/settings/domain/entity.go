@@ -19,6 +19,12 @@ type Settings struct {
 	// Resend
 	ResendAPIKey string
 
+	// SMTP (outbound email)
+	SMTPHost     string
+	SMTPPort     string
+	SMTPUser     string
+	SMTPPassword string
+
 	// AI
 	AIProvider string
 	AIModel    string

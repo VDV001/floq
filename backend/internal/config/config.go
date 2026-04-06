@@ -26,6 +26,10 @@ type Config struct {
 	IMAPPort        string
 	IMAPUser        string
 	IMAPPassword    string
+	SMTPHost        string
+	SMTPPort        string
+	SMTPUser        string
+	SMTPPassword    string
 	OwnerUserID     string
 	AppBaseURL      string
 	TwoGISAPIKey    string
@@ -57,6 +61,10 @@ func Load() *Config {
 		IMAPPort:        getEnv("IMAP_PORT", "993"),
 		IMAPUser:        os.Getenv("IMAP_USER"),
 		IMAPPassword:    os.Getenv("IMAP_PASSWORD"),
+		SMTPHost:        os.Getenv("SMTP_HOST"),
+		SMTPPort:        getEnv("SMTP_PORT", "465"),
+		SMTPUser:        os.Getenv("SMTP_USER"),
+		SMTPPassword:    os.Getenv("SMTP_PASSWORD"),
 		OwnerUserID:     getEnv("OWNER_USER_ID", "00000000-0000-0000-0000-000000000001"),
 		AppBaseURL:      os.Getenv("APP_BASE_URL"),
 		TwoGISAPIKey:    os.Getenv("TWOGIS_API_KEY"),

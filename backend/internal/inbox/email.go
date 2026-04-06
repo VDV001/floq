@@ -223,8 +223,9 @@ func shouldSkipEmail(email string) bool {
 	for _, d := range domains {
 		if strings.HasSuffix(email, d) {
 			// Only skip if it looks automated (contains service-like prefixes)
-			for _, sp := range []string{"noreply", "no-reply", "hello@", "news@", "info@", "support@", "notify@", "notification@", "api_", "alert"} {
-				if strings.Contains(email, sp) {
+			localPart := strings.Split(email, "@")[0]
+			for _, sp := range []string{"noreply", "no-reply", "no_reply", "mailer-daemon", "postmaster", "bounce", "notification", "notify", "newsletter", "updates"} {
+				if strings.Contains(localPart, sp) {
 					return true
 				}
 			}

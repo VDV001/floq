@@ -8,6 +8,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	smtpLib "net/smtp"
 	"strings"
 	"time"
 
@@ -35,6 +36,13 @@ type Settings struct {
 
 	// Resend
 	ResendAPIKey string `json:"resend_api_key"`
+
+	// SMTP
+	SMTPHost     string `json:"smtp_host"`
+	SMTPPort     string `json:"smtp_port"`
+	SMTPUser     string `json:"smtp_user"`
+	SMTPPassword string `json:"smtp_password"`
+	SMTPActive   bool   `json:"smtp_active"`
 
 	// AI
 	AIProvider string `json:"ai_provider"`
@@ -82,6 +90,7 @@ func RegisterRoutes(r chi.Router, uc *UseCase, aiTester AITester, usageCounter U
 	r.Post("/api/settings/test-imap", h.testIMAP())
 	r.Post("/api/settings/test-ai", h.testAI())
 	r.Post("/api/settings/test-resend", h.testResend())
+	r.Post("/api/settings/test-smtp", h.testSMTP())
 	r.Get("/api/usage", h.getUsage())
 }
 
@@ -111,6 +120,11 @@ func domainToDTO(ds *domain.Settings) Settings {
 		IMAPUser:           ds.IMAPUser,
 		IMAPPassword:       ds.IMAPPassword,
 		ResendAPIKey:       ds.ResendAPIKey,
+		SMTPHost:           ds.SMTPHost,
+		SMTPPort:           ds.SMTPPort,
+		SMTPUser:           ds.SMTPUser,
+		SMTPPassword:       ds.SMTPPassword,
+		SMTPActive:         ds.SMTPHost != "" && ds.SMTPUser != "" && ds.SMTPPassword != "",
 		AIProvider:         ds.AIProvider,
 		AIModel:            ds.AIModel,
 		AIAPIKey:           ds.AIAPIKey,
@@ -376,6 +390,58 @@ func (h *Handler) testResend() http.HandlerFunc {
 		} else {
 			httputil.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "error": "Неверный API ключ Resend"})
 		}
+	}
+}
+
+func (h *Handler) testSMTP() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Host     string `json:"host"`
+			Port     string `json:"port"`
+			User     string `json:"user"`
+			Password string `json:"password"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			httputil.WriteError(w, http.StatusBadRequest, "invalid JSON")
+			return
+		}
+
+		if body.Host == "" || body.User == "" || body.Password == "" {
+			httputil.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "error": "Заполните хост, пользователя и пароль SMTP"})
+			return
+		}
+		if body.Port == "" {
+			body.Port = "465"
+		}
+
+		// Test TLS connection and auth
+		addr := net.JoinHostPort(body.Host, body.Port)
+		conn, err := tls.DialWithDialer(
+			&net.Dialer{Timeout: 10 * time.Second},
+			"tcp", addr,
+			&tls.Config{ServerName: body.Host},
+		)
+		if err != nil {
+			httputil.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "error": fmt.Sprintf("Не удалось подключиться: %v", err)})
+			return
+		}
+		defer conn.Close()
+
+		client, err := smtpLib.NewClient(conn, body.Host)
+		if err != nil {
+			httputil.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "error": "Ошибка создания SMTP-клиента"})
+			return
+		}
+		defer client.Close()
+
+		auth := smtpLib.PlainAuth("", body.User, body.Password, body.Host)
+		if err := client.Auth(auth); err != nil {
+			httputil.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "error": "Неверный логин или пароль SMTP"})
+			return
+		}
+		_ = client.Quit()
+
+		httputil.WriteJSON(w, http.StatusOK, map[string]any{"success": true, "message": "SMTP подключен!"})
 	}
 }
 

@@ -1,0 +1,5 @@
+ALTER TABLE user_settings
+DROP COLUMN IF EXISTS smtp_host,
+DROP COLUMN IF EXISTS smtp_port,
+DROP COLUMN IF EXISTS smtp_user,
+DROP COLUMN IF EXISTS smtp_password;

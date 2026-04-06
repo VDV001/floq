@@ -11,6 +11,10 @@ import (
 type UserConfig struct {
 	ResendAPIKey     string
 	SMTPFrom         string
+	SMTPHost         string
+	SMTPPort         string
+	SMTPUser         string
+	SMTPPassword     string
 	AIProvider       string
 	AIModel          string
 	AIAPIKey         string
@@ -35,12 +39,14 @@ func (s *Store) GetConfig(ctx context.Context, userID uuid.UUID) (*UserConfig, e
 	cfg := &UserConfig{}
 	err := s.pool.QueryRow(ctx,
 		`SELECT COALESCE(resend_api_key, ''),
+		        COALESCE(smtp_host, ''), COALESCE(smtp_port, '465'), COALESCE(smtp_user, ''), COALESCE(smtp_password, ''),
 		        COALESCE(ai_provider, ''), COALESCE(ai_model, ''), COALESCE(ai_api_key, ''),
 		        COALESCE(imap_host, ''), COALESCE(imap_port, '993'), COALESCE(imap_user, ''), COALESCE(imap_password, ''),
 		        COALESCE(telegram_bot_token, '')
 		 FROM user_settings WHERE user_id = $1`, userID,
 	).Scan(
 		&cfg.ResendAPIKey,
+		&cfg.SMTPHost, &cfg.SMTPPort, &cfg.SMTPUser, &cfg.SMTPPassword,
 		&cfg.AIProvider, &cfg.AIModel, &cfg.AIAPIKey,
 		&cfg.IMAPHost, &cfg.IMAPPort, &cfg.IMAPUser, &cfg.IMAPPassword,
 		&cfg.TelegramBotToken,
