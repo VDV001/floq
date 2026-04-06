@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import { api, type Sequence, type SequenceStep } from "@/lib/api";
+import { api, type Sequence, type SequenceStep, type Prospect } from "@/lib/api";
 import {
   Plus,
   Layers,
@@ -34,6 +34,10 @@ export default function SequencesPage() {
   const [selectedSeqId, setSelectedSeqId] = useState<string | null>(null);
   const [steps, setSteps] = useState<SequenceStep[]>([]);
   const [stepsLoading, setStepsLoading] = useState(false);
+  const [prospects, setProspects] = useState<Prospect[]>([]);
+  const [selectedProspects, setSelectedProspects] = useState<Set<string>>(new Set());
+  const [launching, setLaunching] = useState(false);
+  const [launchResult, setLaunchResult] = useState<string | null>(null);
 
   // Fetch all sequences on mount
   useEffect(() => {
@@ -48,7 +52,43 @@ export default function SequencesPage() {
       })
       .catch(() => {})
       .finally(() => setLoading(false));
+    api.getProspects().then(setProspects).catch(() => {});
   }, []);
+
+  const toggleProspect = (id: string) => {
+    setSelectedProspects((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const selectAllProspects = () => {
+    if (selectedProspects.size === prospects.length) {
+      setSelectedProspects(new Set());
+    } else {
+      setSelectedProspects(new Set(prospects.map((p) => p.id)));
+    }
+  };
+
+  const handleLaunch = async () => {
+    if (!selectedSeqId || selectedProspects.size === 0) return;
+    setLaunching(true);
+    setLaunchResult(null);
+    try {
+      await api.launchSequence(selectedSeqId, Array.from(selectedProspects));
+      setLaunchResult(`Запущено для ${selectedProspects.size} проспектов`);
+      setSelectedProspects(new Set());
+      // Refresh prospects to update statuses
+      api.getProspects().then(setProspects).catch(() => {});
+    } catch {
+      setLaunchResult("Ошибка запуска");
+    } finally {
+      setLaunching(false);
+      setTimeout(() => setLaunchResult(null), 4000);
+    }
+  };
 
   // Fetch steps when a sequence is selected
   useEffect(() => {
@@ -80,21 +120,28 @@ export default function SequencesPage() {
 
   const handleAddStep = useCallback(async () => {
     if (!selectedSeqId) return;
+    const channelChoice = window.prompt("Канал (email / telegram / phone_call):", "email");
+    if (!channelChoice) return;
+    const channel = channelChoice.trim().toLowerCase();
+    if (!["email", "telegram", "phone_call"].includes(channel)) {
+      alert("Канал должен быть: email, telegram или phone_call");
+      return;
+    }
     const delay = window.prompt("Задержка в днях:", "1");
     if (!delay) return;
-    const hint = window.prompt("Подсказка для AI (prompt_hint):", "фоллоуап");
+    const hint = window.prompt("Подсказка для AI:", "первое касание");
     if (hint === null) return;
     try {
       await api.addStep(selectedSeqId, {
         step_order: steps.length + 1,
         delay_days: parseInt(delay),
-        prompt_hint: hint || "фоллоуап",
-        channel: "email",
+        prompt_hint: hint || "первое касание",
+        channel: channel as "email" | "telegram" | "phone_call",
       });
       const data = await api.getSequence(selectedSeqId);
       setSteps(data.steps ?? []);
     } catch {
-      // silently ignore
+      alert("Ошибка добавления шага");
     }
   }, [selectedSeqId, steps]);
 
@@ -228,7 +275,24 @@ export default function SequencesPage() {
                 ? "Создайте первую секвенцию для автоматизации холодного outreach."
                 : `У вас ${sequences.length} секвенций. Добавьте шаги с разными каналами для повышения конверсии.`}
             </p>
-            <button className="mt-3 text-xs font-semibold text-[#2f2ebe] hover:underline">
+            <button
+              onClick={() => {
+                if (selectedSeqId && steps.length > 0) {
+                  const channels: string[] = steps.map(s => s.channel);
+                  const allChannels = ["email", "telegram", "phone_call"];
+                  const missing = allChannels.filter(c => !channels.includes(c));
+                  if (missing.length > 0) {
+                    const labels: Record<string, string> = { email: "Email", telegram: "Telegram", phone_call: "Звонок" };
+                    alert(`Добавьте шаги с каналами: ${missing.map(c => labels[c] || c).join(", ")}`);
+                  } else {
+                    alert("Все каналы уже используются — секвенция оптимальна!");
+                  }
+                } else {
+                  alert("Выберите секвенцию и добавьте хотя бы один шаг");
+                }
+              }}
+              className="mt-3 text-xs font-semibold text-[#2f2ebe] hover:underline"
+            >
               Оптимизировать сейчас &rarr;
             </button>
           </div>
@@ -332,7 +396,19 @@ export default function SequencesPage() {
                             <button className="text-[#737686] hover:text-[#0d1c2e]">
                               <Copy className="size-3.5" />
                             </button>
-                            <button className="text-[#737686] hover:text-red-500">
+                            <button
+                              onClick={async () => {
+                                if (!selectedSeqId || !confirm("Удалить шаг?")) return;
+                                try {
+                                  await api.deleteStep(selectedSeqId, step.id);
+                                  const data = await api.getSequence(selectedSeqId);
+                                  setSteps(data.steps ?? []);
+                                } catch {
+                                  alert("Ошибка удаления");
+                                }
+                              }}
+                              className="text-[#737686] hover:text-red-500"
+                            >
                               <Trash2 className="size-3.5" />
                             </button>
                           </div>
@@ -345,7 +421,23 @@ export default function SequencesPage() {
                         )}
 
                         <div className="mt-3">
-                          <button className="rounded-lg bg-[#004ac6] px-3 py-1.5 text-xs font-medium text-white transition hover:bg-[#004ac6]/90">
+                          <button
+                            onClick={async () => {
+                              const preview = prompt("Имя проспекта для примера:", "Иван Петров");
+                              if (!preview) return;
+                              try {
+                                const msg = await api.chatWithAI(
+                                  `Сгенерируй пример ${step.channel === "email" ? "холодного письма" : step.channel === "telegram" ? "сообщения в Telegram" : "брифа для звонка"} для проспекта "${preview}" компания "Тест". Подсказка: "${step.prompt_hint || "первый контакт"}". Только текст, без пояснений.`,
+                                  [],
+                                  "sequences"
+                                );
+                                alert(msg.reply);
+                              } catch {
+                                alert("Ошибка генерации");
+                              }
+                            }}
+                            className="rounded-lg bg-[#004ac6] px-3 py-1.5 text-xs font-medium text-white transition hover:bg-[#004ac6]/90"
+                          >
                             Сгенерировать пример
                           </button>
                         </div>
@@ -373,22 +465,81 @@ export default function SequencesPage() {
         <div className="col-span-3 flex flex-col gap-5">
           {/* Prospects */}
           <div className="rounded-2xl bg-[#eff4ff]/50 p-5">
-            <h2 className="mb-4 flex items-center gap-2 text-sm font-semibold text-[#0d1c2e]">
-              <Users className="size-4" />
-              Проспекты
-            </h2>
-
-            <div className="flex flex-col gap-4">
-              <p className="py-6 text-center text-xs text-[#737686]">
-                Выберите секвенцию, чтобы увидеть проспекты
-              </p>
+            <div className="mb-3 flex items-center justify-between">
+              <h2 className="flex items-center gap-2 text-sm font-semibold text-[#0d1c2e]">
+                <Users className="size-4" />
+                Проспекты ({prospects.length})
+              </h2>
+              {prospects.length > 0 && (
+                <button
+                  onClick={selectAllProspects}
+                  className="text-[10px] font-bold text-[#004ac6] hover:underline"
+                >
+                  {selectedProspects.size === prospects.length ? "Снять все" : "Выбрать все"}
+                </button>
+              )}
             </div>
 
-            <div className="mt-4 text-center">
-              <button className="text-xs font-medium text-[#004ac6] hover:underline">
-                Управление проспектами
+            <div className="flex max-h-64 flex-col gap-1 overflow-y-auto">
+              {prospects.length === 0 ? (
+                <p className="py-6 text-center text-xs text-[#737686]">
+                  Нет проспектов. Добавьте в разделе «Проспекты».
+                </p>
+              ) : (
+                prospects.map((p) => (
+                  <label
+                    key={p.id}
+                    className="flex cursor-pointer items-center gap-3 rounded-lg px-3 py-2 transition-colors hover:bg-white/60"
+                  >
+                    <input
+                      type="checkbox"
+                      checked={selectedProspects.has(p.id)}
+                      onChange={() => toggleProspect(p.id)}
+                      className="size-4 rounded border-[#c3c6d7] text-[#004ac6] focus:ring-[#004ac6]/30"
+                    />
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-sm font-medium text-[#0d1c2e]">{p.name}</p>
+                      <p className="truncate text-[11px] text-[#434655]">{p.company || p.email}</p>
+                    </div>
+                    <span className={`shrink-0 rounded-full px-2 py-0.5 text-[9px] font-bold uppercase ${
+                      p.status === "in_sequence" ? "bg-blue-100 text-blue-700" :
+                      p.status === "replied" ? "bg-green-100 text-green-700" :
+                      p.status === "converted" ? "bg-purple-100 text-purple-700" :
+                      p.status === "opted_out" ? "bg-red-100 text-red-600" :
+                      "bg-gray-100 text-gray-600"
+                    }`}>
+                      {p.status === "new" ? "новый" :
+                       p.status === "in_sequence" ? "в секв." :
+                       p.status === "replied" ? "ответил" :
+                       p.status === "converted" ? "лид" :
+                       p.status === "opted_out" ? "отказ" : p.status}
+                    </span>
+                  </label>
+                ))
+              )}
+            </div>
+
+            {/* Launch button */}
+            {selectedSeqId && selectedProspects.size > 0 && (
+              <button
+                onClick={handleLaunch}
+                disabled={launching}
+                className="mt-4 flex w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-[#004ac6] to-[#2563eb] py-3 text-sm font-bold text-white shadow-md transition-all hover:-translate-y-0.5 hover:shadow-lg disabled:opacity-50"
+              >
+                {launching ? (
+                  <span className="size-4 animate-spin rounded-full border-2 border-white border-t-transparent" />
+                ) : (
+                  <Sparkles className="size-4" />
+                )}
+                {launching ? "Генерация..." : `Запустить (${selectedProspects.size})`}
               </button>
-            </div>
+            )}
+
+            {launchResult && (
+              <p className={`mt-2 text-center text-xs font-medium ${launchResult.includes("Ошибка") ? "text-red-500" : "text-green-600"}`}>
+                {launchResult}
+              </p>
+            )}
           </div>
 
           {/* Stats Card */}

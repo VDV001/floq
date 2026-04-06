@@ -153,6 +153,8 @@ export const api = {
     apiFetch(`/api/sequences/${id}`, { method: "DELETE" }),
   addStep: (seqId: string, data: { step_order: number; delay_days: number; channel: string; prompt_hint: string }) =>
     apiFetch<SequenceStep>(`/api/sequences/${seqId}/steps`, { method: "POST", body: JSON.stringify(data) }),
+  deleteStep: (seqId: string, stepId: string) =>
+    apiFetch(`/api/sequences/${seqId}/steps/${stepId}`, { method: "DELETE" }),
   launchSequence: (seqId: string, prospectIds: string[]) =>
     apiFetch(`/api/sequences/${seqId}/launch`, { method: "POST", body: JSON.stringify({ prospect_ids: prospectIds }) }),
   toggleSequence: (seqId: string, isActive: boolean) =>
@@ -195,6 +197,11 @@ export const api = {
     apiFetch<{ success: boolean; message?: string; error?: string; provider?: string }>("/api/settings/test-ai", {
       method: "POST",
       body: JSON.stringify({ provider, model, api_key: apiKey, use_stored: useStored || false }),
+    }),
+  testSMTP: (host: string, port: string, user: string, password: string) =>
+    apiFetch<{ success: boolean; message?: string; error?: string }>("/api/settings/test-smtp", {
+      method: "POST",
+      body: JSON.stringify({ host, port, user, password }),
     }),
   testResend: (apiKey: string, useStored?: boolean) =>
     apiFetch<{ success: boolean; message?: string; error?: string }>("/api/settings/test-resend", {
@@ -360,6 +367,11 @@ export interface UserSettings {
   imap_user: string;
   imap_password: string;
   resend_api_key: string;
+  smtp_host: string;
+  smtp_port: string;
+  smtp_user: string;
+  smtp_password: string;
+  smtp_active: boolean;
   ai_provider: string;
   ai_model: string;
   ai_api_key: string;

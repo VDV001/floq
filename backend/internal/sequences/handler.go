@@ -18,6 +18,7 @@ func RegisterRoutes(router chi.Router, uc *UseCase) {
 	router.Put("/api/sequences/{id}", updateSequence(uc))
 	router.Delete("/api/sequences/{id}", deleteSequence(uc))
 	router.Post("/api/sequences/{id}/steps", addStep(uc))
+	router.Delete("/api/sequences/{id}/steps/{stepId}", deleteStep(uc))
 	router.Post("/api/sequences/{id}/launch", launchSequence(uc))
 	router.Patch("/api/sequences/{id}/toggle", toggleActive(uc))
 
@@ -198,6 +199,21 @@ func addStep(uc *UseCase) http.HandlerFunc {
 			return
 		}
 		httputil.WriteJSON(w, http.StatusCreated, StepToResponse(step))
+	}
+}
+
+func deleteStep(uc *UseCase) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		stepID, err := uuid.Parse(chi.URLParam(r, "stepId"))
+		if err != nil {
+			httputil.WriteError(w, http.StatusBadRequest, "invalid step id")
+			return
+		}
+		if err := uc.DeleteStep(r.Context(), stepID); err != nil {
+			httputil.WriteError(w, http.StatusInternalServerError, "failed to delete step")
+			return
+		}
+		httputil.WriteJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
 	}
 }
 

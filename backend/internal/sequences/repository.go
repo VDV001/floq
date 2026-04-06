@@ -127,6 +127,14 @@ func (r *Repository) CreateStep(ctx context.Context, step *domain.SequenceStep) 
 	return nil
 }
 
+func (r *Repository) DeleteStep(ctx context.Context, stepID uuid.UUID) error {
+	_, err := r.pool.Exec(ctx, `DELETE FROM sequence_steps WHERE id = $1`, stepID)
+	if err != nil {
+		return fmt.Errorf("delete step: %w", err)
+	}
+	return nil
+}
+
 func (r *Repository) CreateOutboundMessage(ctx context.Context, msg *domain.OutboundMessage) error {
 	_, err := r.pool.Exec(ctx,
 		`INSERT INTO outbound_messages (id, prospect_id, sequence_id, step_order, channel, body, status, scheduled_at, sent_at, created_at)
