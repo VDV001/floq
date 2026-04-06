@@ -150,7 +150,7 @@ func (c *AIClient) GenerateFollowup(ctx context.Context, contactName, company, d
 	return resp, nil
 }
 
-func (c *AIClient) GenerateColdMessage(ctx context.Context, name, title, company, prospectContext, stepHint, previousMessage string) (string, error) {
+func (c *AIClient) GenerateColdMessage(ctx context.Context, name, title, company, prospectContext, stepHint, previousMessage, source string) (string, error) {
 	previousContext := ""
 	if previousMessage != "" {
 		previousContext = "Предыдущее отправленное сообщение: \"" + previousMessage + "\""
@@ -163,15 +163,16 @@ func (c *AIClient) GenerateColdMessage(ctx context.Context, name, title, company
 		"{{prospect_context}}", prospectContext,
 		"{{step_hint}}", stepHint,
 		"{{previous_context}}", previousContext,
+		"{{source}}", source,
 	)
 	userPrompt := r.Replace(ColdOutreachUser)
 
 	resp, err := c.provider.Complete(ctx, CompletionRequest{
 		Messages: []Message{
-			{Role: "system", Content: c.resolveSystemPrompt(ColdOutreachSystem)},
+			{Role: "system", Content: c.resolveSenderVars(c.resolveSystemPrompt(ColdOutreachSystem))},
 			{Role: "user", Content: userPrompt},
 		},
-		MaxTokens: 1024,
+		MaxTokens: 2048,
 	})
 	if err != nil {
 		return "", fmt.Errorf("ai cold message: %w", err)

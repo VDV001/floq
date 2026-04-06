@@ -20,6 +20,7 @@ type Repository interface {
 	// Steps
 	ListSteps(ctx context.Context, sequenceID uuid.UUID) ([]SequenceStep, error)
 	CreateStep(ctx context.Context, step *SequenceStep) error
+	DeleteStep(ctx context.Context, stepID uuid.UUID) error
 
 	// Outbound messages
 	CreateOutboundMessage(ctx context.Context, msg *OutboundMessage) error
@@ -37,7 +38,7 @@ type Repository interface {
 
 // AIMessageGenerator generates outbound messages using AI.
 type AIMessageGenerator interface {
-	GenerateColdMessage(ctx context.Context, name, title, company, prospectContext, stepHint, previousMessage string) (string, error)
+	GenerateColdMessage(ctx context.Context, name, title, company, prospectContext, stepHint, previousMessage, source string) (string, error)
 	GenerateTelegramMessage(ctx context.Context, name, title, company, prospectContext, stepHint, previousMessage, source string) (string, error)
 	GenerateCallBrief(ctx context.Context, name, title, company, prospectContext, stepHint, previousMessage string) (string, error)
 }

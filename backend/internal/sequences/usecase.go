@@ -100,7 +100,7 @@ func (uc *UseCase) Launch(ctx context.Context, sequenceID uuid.UUID, prospectIDs
 			case domain.StepChannelPhoneCall:
 				body, genErr = uc.aiGenerator.GenerateCallBrief(ctx, prospect.Name, prospect.Title, prospect.Company, prospect.Context, step.PromptHint, previousBody)
 			default: // "email" or empty
-				body, genErr = uc.aiGenerator.GenerateColdMessage(ctx, prospect.Name, prospect.Title, prospect.Company, prospect.Context, step.PromptHint, previousBody)
+				body, genErr = uc.aiGenerator.GenerateColdMessage(ctx, prospect.Name, prospect.Title, prospect.Company, prospect.Context, step.PromptHint, previousBody, prospect.Source)
 			}
 			if genErr != nil {
 				return fmt.Errorf("launch: generate message for prospect %s step %d: %w", pid, step.StepOrder, genErr)
@@ -142,6 +142,10 @@ func (uc *UseCase) RejectMessage(ctx context.Context, id uuid.UUID) error {
 
 func (uc *UseCase) EditMessage(ctx context.Context, id uuid.UUID, body string) error {
 	return uc.repo.UpdateOutboundBody(ctx, id, body)
+}
+
+func (uc *UseCase) DeleteStep(ctx context.Context, stepID uuid.UUID) error {
+	return uc.repo.DeleteStep(ctx, stepID)
 }
 
 func (uc *UseCase) GetQueue(ctx context.Context, userID uuid.UUID) ([]domain.OutboundMessage, error) {
