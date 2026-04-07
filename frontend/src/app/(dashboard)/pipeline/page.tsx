@@ -281,11 +281,22 @@ function MetricCards({
 export default function PipelinePage() {
   const [activeChannel, setActiveChannel] = useState<Channel>("all");
   const [leads, setLeads] = useState<Lead[]>([]);
+  const [qualifications, setQualifications] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     const fetchLeads = () => {
-      api.getLeads().then((data) => setLeads(data)).catch(() => {}).finally(() => setLoading(false));
+      api.getLeads().then((data) => {
+        setLeads(data);
+        // Fetch qualifications for all leads
+        data.forEach((l) => {
+          api.getQualification(l.id).then((q) => {
+            if (q?.identified_need) {
+              setQualifications((prev) => ({ ...prev, [l.id]: q.identified_need }));
+            }
+          }).catch(() => {});
+        });
+      }).catch(() => {}).finally(() => setLoading(false));
     };
     fetchLeads();
     const interval = setInterval(fetchLeads, 5000);
@@ -306,7 +317,7 @@ export default function PipelinePage() {
         name: l.contact_name,
         company: l.company || "",
         channel: l.channel,
-        preview: l.first_message || undefined,
+        preview: qualifications[l.id] || (l.first_message === "/start" ? "Новый контакт через Telegram" : l.first_message) || undefined,
         timeAgo: getTimeAgo(l.created_at),
       })),
     };
@@ -329,7 +340,7 @@ export default function PipelinePage() {
         <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
           <div>
             <div className="flex items-center gap-3">
-              <h1 className="text-xl sm:text-2xl lg:text-3xl font-extrabold text-[#0d1c2e]">
+              <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight text-[#0d1c2e]">
                 Воронка продаж
               </h1>
               {loading && (

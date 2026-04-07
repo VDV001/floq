@@ -32,21 +32,25 @@ func DetectCallAgreement(text string) bool {
 type LeadStatus string
 
 const (
-	StatusNew       LeadStatus = "new"
-	StatusQualified LeadStatus = "qualified"
-	StatusClosed    LeadStatus = "closed"
-	StatusWon       LeadStatus = "won"
+	StatusNew            LeadStatus = "new"
+	StatusQualified      LeadStatus = "qualified"
+	StatusInConversation LeadStatus = "in_conversation"
+	StatusFollowup       LeadStatus = "followup"
+	StatusClosed         LeadStatus = "closed"
+	StatusWon            LeadStatus = "won"
 )
 
 var allowedTransitions = map[LeadStatus][]LeadStatus{
-	StatusNew:       {StatusQualified, StatusClosed},
-	StatusQualified: {StatusClosed, StatusWon},
-	StatusWon:       {StatusClosed},
+	StatusNew:            {StatusQualified, StatusClosed},
+	StatusQualified:      {StatusInConversation, StatusFollowup, StatusClosed, StatusWon},
+	StatusInConversation: {StatusFollowup, StatusClosed, StatusWon},
+	StatusFollowup:       {StatusInConversation, StatusClosed, StatusWon},
+	StatusWon:            {StatusClosed},
 }
 
 func (s LeadStatus) IsValid() bool {
 	switch s {
-	case StatusNew, StatusQualified, StatusClosed, StatusWon:
+	case StatusNew, StatusQualified, StatusInConversation, StatusFollowup, StatusClosed, StatusWon:
 		return true
 	}
 	return false

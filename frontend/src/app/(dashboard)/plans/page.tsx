@@ -87,7 +87,7 @@ export default function PlansPage() {
       <div className="mx-auto max-w-5xl">
         {/* Header */}
         <header className="mb-12 text-center">
-          <h2 className="text-2xl sm:text-3xl lg:text-4xl font-extrabold tracking-tight text-[#0d1c2e]">
+          <h2 className="text-2xl sm:text-3xl font-extrabold tracking-tight text-[#0d1c2e]">
             Тарифные планы
           </h2>
           <p className="mt-3 text-lg text-[#434655]">
@@ -154,7 +154,7 @@ export default function PlansPage() {
                 {/* Price */}
                 <div className="mb-8">
                   <div className="flex items-baseline gap-1">
-                    <span className="text-2xl sm:text-3xl lg:text-4xl font-extrabold tracking-tight text-[#0d1c2e]">
+                    <span className="text-2xl sm:text-3xl font-extrabold tracking-tight text-[#0d1c2e]">
                       {plan.price}
                     </span>
                     <span className="text-lg font-semibold text-[#434655]">

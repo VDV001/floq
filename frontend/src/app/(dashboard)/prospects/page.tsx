@@ -206,7 +206,7 @@ export default function ProspectsPage() {
         {/* Header */}
         <div className="mb-10 flex flex-col gap-6 md:flex-row md:items-end md:justify-between">
           <div>
-            <h2 className="mb-2 text-2xl sm:text-3xl lg:text-4xl font-extrabold tracking-tight text-[#0d1c2e]">
+            <h2 className="mb-2 text-2xl sm:text-3xl font-extrabold tracking-tight text-[#0d1c2e]">
               Проспекты
             </h2>
             <p className="font-medium text-[#434655]">

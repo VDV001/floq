@@ -102,7 +102,7 @@ export default function AlertsPage() {
             </span>
             <span className="size-1.5 animate-pulse rounded-full bg-[#ba1a1a]" />
           </div>
-          <h2 className="mb-4 text-2xl sm:text-4xl lg:text-5xl font-extrabold tracking-tight text-[#0d1c2e]">
+          <h2 className="mb-4 text-2xl sm:text-3xl font-extrabold tracking-tight text-[#0d1c2e]">
             Напоминания
           </h2>
           <p className="text-lg font-medium text-[#434655]">

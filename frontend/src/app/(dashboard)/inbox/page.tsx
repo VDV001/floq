@@ -93,7 +93,7 @@ export default function InboxPage() {
             company: l.company || "—",
             contact: l.contact_name,
             channel: l.channel as "email" | "telegram",
-            preview: l.first_message || "Нет сообщений",
+            preview: l.first_message === "/start" ? "Новый контакт через Telegram" : (l.first_message || "Нет сообщений"),
             timeAgo: getTimeAgo(l.created_at),
             status: mapStatus(l.status),
           }));
@@ -205,7 +205,7 @@ export default function InboxPage() {
           <div className="flex items-end justify-between">
             <div>
               <div className="flex items-center gap-3">
-                <h2 className="text-2xl font-extrabold tracking-tight text-[#0d1c2e]">
+                <h2 className="text-2xl sm:text-3xl font-extrabold tracking-tight text-[#0d1c2e]">
                   Лента лидов
                 </h2>
                 {loading && (
@@ -299,17 +299,17 @@ export default function InboxPage() {
                 </div>
 
                 {/* Hover actions */}
-                <div className="absolute bottom-4 right-6 flex items-center gap-2 opacity-0 transition-opacity group-hover:opacity-100">
-                  <button className="rounded-lg border border-[#c3c6d7]/20 p-2 text-[#004ac6] shadow-sm transition-colors hover:bg-white">
-                    <Bot className="size-[18px]" />
+                <div className="absolute top-4 right-6 flex items-center gap-1.5 rounded-lg bg-white/90 p-1 shadow-md opacity-0 backdrop-blur-sm transition-opacity group-hover:opacity-100">
+                  <button className="rounded-md p-1.5 text-[#004ac6] transition-colors hover:bg-[#eff4ff]">
+                    <Bot className="size-4" />
                   </button>
                   {lead.status === "Квалифицирован" && (
-                    <button className="rounded-lg border border-[#c3c6d7]/20 p-2 text-[#004ac6] shadow-sm transition-colors hover:bg-white">
-                      <Calendar className="size-[18px]" />
+                    <button className="rounded-md p-1.5 text-[#004ac6] transition-colors hover:bg-[#eff4ff]">
+                      <Calendar className="size-4" />
                     </button>
                   )}
-                  <button className="rounded-lg border border-[#c3c6d7]/20 p-2 text-[#434655] shadow-sm transition-colors hover:bg-white">
-                    <Archive className="size-[18px]" />
+                  <button className="rounded-md p-1.5 text-[#434655] transition-colors hover:bg-[#eff4ff]">
+                    <Archive className="size-4" />
                   </button>
                 </div>
               </Link>

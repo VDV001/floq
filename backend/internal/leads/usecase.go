@@ -66,6 +66,12 @@ func (uc *UseCase) SendMessage(ctx context.Context, leadID uuid.UUID, body strin
 	if err := uc.repo.CreateMessage(ctx, msg); err != nil {
 		return nil, err
 	}
+
+	// Auto-transition: qualified → in_conversation on first outbound message
+	if lead.Status == domain.StatusQualified {
+		_ = uc.repo.UpdateLeadStatus(ctx, leadID, domain.StatusInConversation)
+	}
+
 	return msg, nil
 }
 

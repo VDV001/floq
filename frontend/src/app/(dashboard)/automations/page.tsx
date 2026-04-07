@@ -201,7 +201,7 @@ export default function AutomationsPage() {
       {/* Header */}
       <div className="mb-12 flex flex-col gap-2">
         <div className="flex items-center gap-3">
-          <h1 className="text-2xl sm:text-3xl lg:text-4xl font-extrabold tracking-tight text-[#0d1c2e]">
+          <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight text-[#0d1c2e]">
             Автоматизации
           </h1>
           <div className="flex items-center gap-1.5 rounded-full bg-[#e1e0ff] px-3 py-1 text-xs font-bold uppercase tracking-wider text-[#2f2ebe]">

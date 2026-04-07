@@ -320,7 +320,7 @@ export default function SettingsPage() {
       <div className="mx-auto max-w-5xl">
         {/* Header */}
         <header className="mb-10">
-          <h2 className="text-2xl sm:text-3xl lg:text-4xl font-extrabold tracking-tight text-[#0d1c2e]">
+          <h2 className="text-2xl sm:text-3xl font-extrabold tracking-tight text-[#0d1c2e]">
             Настройки
           </h2>
           <p className="mt-2 text-[#434655]">

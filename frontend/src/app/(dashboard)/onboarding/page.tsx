@@ -178,7 +178,7 @@ export default function OnboardingPage() {
           <div className="mb-1 text-sm font-bold uppercase tracking-widest text-[#004ac6]/60">
             Начало работы
           </div>
-          <h2 className="mb-3 text-2xl sm:text-3xl lg:text-[2.5rem] font-extrabold leading-tight tracking-tight text-[#0d1c2e]">
+          <h2 className="mb-3 text-2xl sm:text-3xl font-extrabold tracking-tight text-[#0d1c2e]">
             {allDone ? "Всё готово!" : "Добро пожаловать в Floq"}
           </h2>
           <p className="mb-8 text-lg text-[#434655]">
