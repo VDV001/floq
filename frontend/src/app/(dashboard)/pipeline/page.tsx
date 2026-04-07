@@ -317,7 +317,7 @@ export default function PipelinePage() {
         name: l.contact_name,
         company: l.company || "",
         channel: l.channel,
-        preview: qualifications[l.id] || (l.first_message === "/start" ? "Новый контакт через Telegram" : l.first_message) || undefined,
+        preview: qualifications[l.id] || (l.first_message === "/start" ? undefined : l.first_message) || undefined,
         timeAgo: getTimeAgo(l.created_at),
       })),
     };

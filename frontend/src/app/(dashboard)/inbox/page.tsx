@@ -93,11 +93,24 @@ export default function InboxPage() {
             company: l.company || "—",
             contact: l.contact_name,
             channel: l.channel as "email" | "telegram",
-            preview: l.first_message === "/start" ? "Новый контакт через Telegram" : (l.first_message || "Нет сообщений"),
+            preview: l.first_message === "/start" ? "Загрузка..." : (l.first_message || "Нет сообщений"),
             timeAgo: getTimeAgo(l.created_at),
             status: mapStatus(l.status),
           }));
           setLeads(mapped);
+
+          // Load qualifications for better previews
+          data.forEach((l) => {
+            if (l.first_message === "/start") {
+              api.getQualification(l.id).then((q) => {
+                if (q?.identified_need) {
+                  setLeads((prev) => prev.map((lead) =>
+                    lead.id === l.id ? { ...lead, preview: q.identified_need } : lead
+                  ));
+                }
+              }).catch(() => {});
+            }
+          });
 
           const counts: Record<string, number> = {};
           for (const l of data) {
