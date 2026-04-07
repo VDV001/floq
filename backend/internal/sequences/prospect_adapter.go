@@ -35,6 +35,7 @@ func (a *ProspectReaderAdapter) GetProspect(ctx context.Context, id uuid.UUID) (
 		Title:            p.Title,
 		Email:            p.Email,
 		Phone:            p.Phone,
+		WhatsApp:         p.WhatsApp,
 		TelegramUsername: p.TelegramUsername,
 		Context:          p.Context,
 		Source:           p.Source,

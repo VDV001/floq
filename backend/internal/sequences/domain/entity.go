@@ -106,3 +106,13 @@ type Stats struct {
 	Replied  int
 	Bounced  int
 }
+
+type PromptFeedback struct {
+	ID              uuid.UUID
+	UserID          uuid.UUID
+	OriginalBody    string
+	EditedBody      string
+	ProspectContext string
+	Channel         string
+	CreatedAt       time.Time
+}

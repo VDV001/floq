@@ -84,6 +84,7 @@ func (uc *UseCase) ImportCSV(ctx context.Context, userID uuid.UUID, csvData []by
 			Title:            record[2],
 			Email:            record[3],
 			Phone:            getCol(record, "phone"),
+			WhatsApp:         getCol(record, "whatsapp"),
 			TelegramUsername: getCol(record, "telegram_username"),
 			Industry:         getCol(record, "industry"),
 			CompanySize:      getCol(record, "company_size"),

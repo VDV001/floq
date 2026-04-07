@@ -264,6 +264,52 @@ func (r *Repository) MarkRepliedByProspect(ctx context.Context, prospectID uuid.
 	return nil
 }
 
+func (r *Repository) GetOutboundMessage(ctx context.Context, id uuid.UUID) (*domain.OutboundMessage, error) {
+	var m domain.OutboundMessage
+	err := r.pool.QueryRow(ctx,
+		`SELECT id, prospect_id, sequence_id, step_order, channel, body, status, scheduled_at, sent_at, created_at
+		 FROM outbound_messages WHERE id = $1`, id).
+		Scan(&m.ID, &m.ProspectID, &m.SequenceID, &m.StepOrder, &m.Channel, &m.Body, &m.Status, &m.ScheduledAt, &m.SentAt, &m.CreatedAt)
+	if err == pgx.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("get outbound message: %w", err)
+	}
+	return &m, nil
+}
+
+func (r *Repository) SavePromptFeedback(ctx context.Context, userID uuid.UUID, original, edited, prospectContext, channel string) error {
+	_, err := r.pool.Exec(ctx,
+		`INSERT INTO prompt_feedback (user_id, original_body, edited_body, prospect_context, channel)
+		 VALUES ($1, $2, $3, $4, $5)`,
+		userID, original, edited, prospectContext, channel)
+	if err != nil {
+		return fmt.Errorf("save prompt feedback: %w", err)
+	}
+	return nil
+}
+
+func (r *Repository) GetRecentFeedback(ctx context.Context, userID uuid.UUID, limit int) ([]domain.PromptFeedback, error) {
+	rows, err := r.pool.Query(ctx,
+		`SELECT id, user_id, original_body, edited_body, prospect_context, channel, created_at
+		 FROM prompt_feedback WHERE user_id = $1 ORDER BY created_at DESC LIMIT $2`, userID, limit)
+	if err != nil {
+		return nil, fmt.Errorf("get recent feedback: %w", err)
+	}
+	defer rows.Close()
+
+	var feedback []domain.PromptFeedback
+	for rows.Next() {
+		var f domain.PromptFeedback
+		if err := rows.Scan(&f.ID, &f.UserID, &f.OriginalBody, &f.EditedBody, &f.ProspectContext, &f.Channel, &f.CreatedAt); err != nil {
+			return nil, fmt.Errorf("scan prompt feedback: %w", err)
+		}
+		feedback = append(feedback, f)
+	}
+	return feedback, rows.Err()
+}
+
 func (r *Repository) GetStats(ctx context.Context, userID uuid.UUID) (*domain.Stats, error) {
 	var stats domain.Stats
 	err := r.pool.QueryRow(ctx,

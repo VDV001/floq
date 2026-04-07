@@ -58,6 +58,7 @@ func (h *Handler) createProspect() http.HandlerFunc {
 			Title            string `json:"title"`
 			Email            string `json:"email"`
 			Phone            string `json:"phone"`
+			WhatsApp         string `json:"whatsapp"`
 			TelegramUsername string `json:"telegram_username"`
 			Industry         string `json:"industry"`
 			CompanySize      string `json:"company_size"`
@@ -93,6 +94,7 @@ func (h *Handler) createProspect() http.HandlerFunc {
 			Title:            body.Title,
 			Email:            body.Email,
 			Phone:            body.Phone,
+			WhatsApp:         body.WhatsApp,
 			TelegramUsername: body.TelegramUsername,
 			Industry:         body.Industry,
 			CompanySize:      body.CompanySize,

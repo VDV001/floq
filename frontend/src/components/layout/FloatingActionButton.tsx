@@ -1,8 +1,27 @@
 "use client";
 
+/* eslint-disable @typescript-eslint/no-explicit-any */
+declare global {
+  interface Window {
+    SpeechRecognition: any;
+    webkitSpeechRecognition: any;
+  }
+}
+
 import { useState, useRef, useEffect, useCallback } from "react";
 import { usePathname } from "next/navigation";
-import { Sparkles, X, Send, Trash2, Loader2 } from "lucide-react";
+import {
+  Sparkles,
+  X,
+  Send,
+  Trash2,
+  Loader2,
+  Maximize2,
+  Minimize2,
+  Mic,
+  MicOff,
+  Eye,
+} from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import { api } from "@/lib/api";
 
@@ -23,9 +42,14 @@ function TypingIndicator() {
 
 export function FloatingActionButton() {
   const [open, setOpen] = useState(false);
+  const [expanded, setExpanded] = useState(false);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
+  const [showContext, setShowContext] = useState(false);
+  const [contextData, setContextData] = useState<string | null>(null);
+  const [listening, setListening] = useState(false);
+  const recognitionRef = useRef<ReturnType<typeof Object> | null>(null);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -41,7 +65,6 @@ export function FloatingActionButton() {
 
   useEffect(() => {
     if (open) {
-      // Small delay to let the panel render before focusing
       setTimeout(() => inputRef.current?.focus(), 100);
     }
   }, [open]);
@@ -90,13 +113,77 @@ export function FloatingActionButton() {
     setMessages([]);
   };
 
+  // Fetch context data for transparency panel
+  const fetchContext = async () => {
+    if (showContext) {
+      setShowContext(false);
+      return;
+    }
+    try {
+      const usage = await api.getUsage();
+      const ctx = `Страница: ${deriveContext()}\nЛидов: ${usage.total_leads}\nЛидов в месяце: ${usage.month_leads}\nПлан: ${usage.plan} (${usage.limit} лимит)`;
+      setContextData(ctx);
+      setShowContext(true);
+    } catch {
+      setContextData("Не удалось загрузить контекст");
+      setShowContext(true);
+    }
+  };
+
+  // Voice input via Web Speech API
+  const toggleVoice = () => {
+    if (listening) {
+      recognitionRef.current?.stop();
+      setListening(false);
+      return;
+    }
+
+    const SpeechRecognition =
+      typeof window !== "undefined"
+        ? window.SpeechRecognition || window.webkitSpeechRecognition
+        : null;
+
+    if (!SpeechRecognition) {
+      alert("Браузер не поддерживает голосовой ввод");
+      return;
+    }
+
+    const recognition = new SpeechRecognition();
+    recognition.lang = "ru-RU";
+    recognition.interimResults = false;
+    recognition.maxAlternatives = 1;
+
+    recognition.onresult = (event: any) => {
+      const transcript = event.results[0][0].transcript;
+      setInput((prev) => prev + (prev ? " " : "") + transcript);
+      setListening(false);
+    };
+
+    recognition.onerror = () => {
+      setListening(false);
+    };
+
+    recognition.onend = () => {
+      setListening(false);
+    };
+
+    recognitionRef.current = recognition;
+    recognition.start();
+    setListening(true);
+  };
+
+  // Panel size classes
+  const panelClasses = expanded
+    ? "fixed inset-y-4 right-4 z-50 flex w-[min(48rem,calc(100vw-2rem))] flex-col rounded-2xl border border-[#c3c6d7]/20 bg-white shadow-2xl"
+    : "fixed bottom-24 right-6 z-50 flex h-[min(32rem,calc(100vh-8rem))] w-[calc(100vw-2rem)] flex-col overflow-hidden rounded-2xl border border-[#c3c6d7]/20 bg-white shadow-2xl sm:w-96";
+
   return (
     <>
       {/* Chat panel */}
       {open && (
-        <div className="fixed bottom-24 right-6 z-50 flex h-[min(32rem,calc(100vh-8rem))] w-[calc(100vw-2rem)] flex-col overflow-hidden rounded-2xl border border-[#c3c6d7]/20 bg-white shadow-2xl sm:w-96">
+        <div className={panelClasses}>
           {/* Header */}
-          <div className="flex items-center justify-between border-b border-[#c3c6d7]/20 px-5 py-4">
+          <div className="flex items-center justify-between px-5 py-4">
             <div className="flex items-center gap-3">
               <Sparkles className="size-6 text-[#3b6ef6]" />
               <div>
@@ -107,6 +194,35 @@ export function FloatingActionButton() {
               </div>
             </div>
             <div className="flex items-center gap-1">
+              {/* Context / transparency */}
+              <button
+                onClick={fetchContext}
+                title="Контекст AI"
+                className={`rounded-lg p-1.5 transition-colors hover:bg-[#eff4ff] ${
+                  showContext ? "bg-[#eff4ff] text-[#3b6ef6]" : "text-[#434655] hover:text-[#0d1c2e]"
+                }`}
+              >
+                <Eye className="size-4" />
+              </button>
+              {/* Voice input */}
+              <button
+                onClick={toggleVoice}
+                title="Голосовой ввод"
+                className={`rounded-lg p-1.5 transition-colors hover:bg-[#eff4ff] ${
+                  listening ? "bg-red-50 text-red-500" : "text-[#434655] hover:text-[#0d1c2e]"
+                }`}
+              >
+                {listening ? <MicOff className="size-4" /> : <Mic className="size-4" />}
+              </button>
+              {/* Expand / collapse */}
+              <button
+                onClick={() => setExpanded(!expanded)}
+                title={expanded ? "Компактный вид" : "Развернуть"}
+                className="rounded-lg p-1.5 text-[#434655] transition-colors hover:bg-[#eff4ff] hover:text-[#0d1c2e]"
+              >
+                {expanded ? <Minimize2 className="size-4" /> : <Maximize2 className="size-4" />}
+              </button>
+              {/* Clear */}
               {messages.length > 0 && (
                 <button
                   onClick={clearChat}
@@ -116,14 +232,20 @@ export function FloatingActionButton() {
                   <Trash2 className="size-4" />
                 </button>
               )}
-              <button
-                onClick={() => setOpen(false)}
-                className="rounded-lg p-1.5 text-[#434655] transition-colors hover:bg-[#eff4ff] hover:text-[#0d1c2e]"
-              >
-                <X className="size-5" />
-              </button>
             </div>
           </div>
+
+          {/* Context panel */}
+          {showContext && contextData && (
+            <div className="mx-4 mb-2 rounded-lg bg-[#eff4ff] px-4 py-3">
+              <p className="mb-1 text-[10px] font-bold uppercase tracking-wider text-[#004ac6]">
+                Что видит AI
+              </p>
+              <pre className="whitespace-pre-wrap text-xs leading-relaxed text-[#434655]">
+                {contextData}
+              </pre>
+            </div>
+          )}
 
           {/* Messages */}
           <div className="flex-1 overflow-y-auto px-4 py-4">
@@ -147,7 +269,9 @@ export function FloatingActionButton() {
                 className={`mb-3 flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}
               >
                 <div
-                  className={`max-w-[80%] rounded-2xl px-4 py-2.5 text-sm leading-relaxed ${
+                  className={`rounded-2xl px-4 py-2.5 text-sm leading-relaxed ${
+                    expanded ? "max-w-[85%]" : "max-w-[80%]"
+                  } ${
                     msg.role === "user"
                       ? "rounded-br-md bg-[#2563eb] text-white whitespace-pre-wrap"
                       : "rounded-bl-md bg-[#eff4ff] text-[#0d1c2e]"
@@ -176,21 +300,25 @@ export function FloatingActionButton() {
           </div>
 
           {/* Input */}
-          <form onSubmit={handleSubmit} className="border-t border-[#c3c6d7]/20 p-4">
-            <div className="flex items-center gap-2">
+          <form onSubmit={handleSubmit} className={expanded ? "px-5 py-4" : "p-4"}>
+            <div className="flex items-center gap-3">
               <input
                 ref={inputRef}
                 type="text"
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
-                placeholder="Спросите что-нибудь..."
+                placeholder={listening ? "Говорите..." : "Спросите что-нибудь..."}
                 disabled={loading}
-                className="flex-1 rounded-xl bg-[#eff4ff] px-4 py-2.5 text-sm text-[#0d1c2e] placeholder-[#737686] outline-none transition-colors focus:ring-2 focus:ring-[#3b6ef6]/30 disabled:opacity-50"
+                className={`flex-1 rounded-xl bg-[#eff4ff] px-4 text-[#0d1c2e] placeholder-[#737686] outline-none transition-colors focus:ring-2 focus:ring-[#3b6ef6]/30 disabled:opacity-50 ${
+                  expanded ? "py-3 text-sm" : "py-2.5 text-sm"
+                } ${listening ? "ring-2 ring-red-300" : ""}`}
               />
               <button
                 type="submit"
                 disabled={loading || !input.trim()}
-                className="flex size-10 items-center justify-center rounded-xl bg-[#3b6ef6] text-white transition-colors hover:bg-[#2563eb] disabled:opacity-50"
+                className={`flex items-center justify-center rounded-xl bg-[#3b6ef6] text-white transition-colors hover:bg-[#2563eb] disabled:opacity-50 ${
+                  expanded ? "size-11" : "size-10"
+                }`}
               >
                 {loading ? (
                   <Loader2 className="size-4 animate-spin" />
@@ -203,13 +331,23 @@ export function FloatingActionButton() {
         </div>
       )}
 
-      {/* FAB button */}
-      <button
-        onClick={() => setOpen(!open)}
-        className="fixed bottom-6 right-6 z-50 flex size-14 items-center justify-center rounded-full bg-[#3b6ef6] text-white shadow-lg transition-all hover:scale-105 hover:shadow-xl"
-      >
-        {open ? <X className="size-6" /> : <Sparkles className="size-6" />}
-      </button>
+      {/* Backdrop — click outside closes chat */}
+      {open && (
+        <div
+          className={`fixed inset-0 z-40 ${expanded ? "bg-black/20 backdrop-blur-sm" : ""}`}
+          onClick={() => { setOpen(false); setExpanded(false); }}
+        />
+      )}
+
+      {/* FAB button — hidden when expanded */}
+      {!expanded && (
+        <button
+          onClick={() => setOpen(!open)}
+          className="fixed bottom-6 right-6 z-50 flex size-14 items-center justify-center rounded-full bg-[#3b6ef6] text-white shadow-lg transition-all hover:scale-105 hover:shadow-xl"
+        >
+          {open ? <X className="size-6" /> : <Sparkles className="size-6" />}
+        </button>
+      )}
     </>
   );
 }

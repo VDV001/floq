@@ -285,11 +285,11 @@ export default function SequencesPage() {
               <div
                 key={seq.id}
                 onClick={() => setSelectedSeqId(seq.id)}
-                className={`cursor-pointer rounded-2xl border bg-white p-5 shadow-sm transition ${
+                className={`cursor-pointer rounded-2xl bg-white p-5 shadow-sm transition ${
                   isSelected
-                    ? "border-l-4 border-l-[#004ac6] border-white/80"
-                    : "border-white/80 hover:border-[#004ac6]/20"
-                } ${!seq.is_active ? "opacity-70 grayscale" : ""}`}
+                    ? "border-2 border-[#22c55e] shadow-md shadow-[#22c55e]/15"
+                    : "border border-[#e2e8f0] hover:border-[#004ac6]/30"
+                } ${!seq.is_active && !isSelected ? "opacity-70 grayscale" : !seq.is_active ? "opacity-85" : ""}`}
               >
                 <div className="flex items-start justify-between gap-2">
                   <h3 className="text-sm font-semibold text-[#0d1c2e]">
@@ -518,7 +518,7 @@ export default function SequencesPage() {
 
             {/* Add step */}
             {selectedSeqId && !stepsLoading && (
-              <div className="mt-6 ml-3 pl-8">
+              <div className="mt-6">
                 {!showAddStep ? (
                   <button
                     onClick={() => setShowAddStep(true)}

@@ -15,6 +15,10 @@ import {
   Globe,
   MoreHorizontal,
   ArrowRight,
+  Mail,
+  Phone,
+  MessageCircle,
+  MessageSquare,
 } from "lucide-react";
 import { api } from "@/lib/api";
 
@@ -36,6 +40,9 @@ interface UIProspect {
   company: string;
   position: string;
   email: string;
+  phone: string;
+  whatsapp: string;
+  telegramUsername: string;
   status: ProspectStatus;
   verifyStatus: "not_checked" | "valid" | "risky" | "invalid";
   verifyScore: number;
@@ -52,7 +59,7 @@ function mapProspectStatus(s: string): ProspectStatus {
   return m[s] || "Новый";
 }
 
-function mapProspects(data: { name: string; company: string; title: string; email: string; status: string; verify_status: string; verify_score: number }[]): UIProspect[] {
+function mapProspects(data: { name: string; company: string; title: string; email: string; phone: string; whatsapp: string; telegram_username: string; status: string; verify_status: string; verify_score: number }[]): UIProspect[] {
   return data.map((p) => ({
     initials: p.name.split(" ").map((w) => w[0]).join("").toUpperCase().slice(0, 2),
     avatarColor: "bg-[#d8e3fb]",
@@ -60,6 +67,9 @@ function mapProspects(data: { name: string; company: string; title: string; emai
     company: p.company,
     position: p.title,
     email: p.email,
+    phone: p.phone || "",
+    whatsapp: p.whatsapp || "",
+    telegramUsername: p.telegram_username || "",
     status: mapProspectStatus(p.status),
     verifyStatus: p.verify_status as UIProspect["verifyStatus"],
     verifyScore: p.verify_score,
@@ -96,6 +106,7 @@ export default function ProspectsPage() {
   const [formCompany, setFormCompany] = useState("");
   const [formPosition, setFormPosition] = useState("");
   const [formEmail, setFormEmail] = useState("");
+  const [formWhatsApp, setFormWhatsApp] = useState("");
   const [scrapeUrl, setScrapeUrl] = useState("");
   const [scrapeLoading, setScrapeLoading] = useState(false);
   const [scrapeResults, setScrapeResults] = useState<string[]>([]);
@@ -125,12 +136,14 @@ export default function ProspectsPage() {
         company: formCompany,
         title: formPosition,
         email: formEmail,
+        whatsapp: formWhatsApp || undefined,
       });
       await fetchProspects();
       setFormName("");
       setFormCompany("");
       setFormPosition("");
       setFormEmail("");
+      setFormWhatsApp("");
     } catch {
       alert("Ошибка добавления");
     }
@@ -271,6 +284,9 @@ export default function ProspectsPage() {
                       Email
                     </th>
                     <th className="px-6 py-4 text-xs font-bold uppercase tracking-wider text-[#434655]">
+                      Каналы
+                    </th>
+                    <th className="px-6 py-4 text-xs font-bold uppercase tracking-wider text-[#434655]">
                       Проверка
                     </th>
                     <th className="px-6 py-4 text-xs font-bold uppercase tracking-wider text-[#434655]">
@@ -284,7 +300,7 @@ export default function ProspectsPage() {
                 <tbody className="divide-y divide-[#c3c6d7]/5">
                   {!loading && prospects.length === 0 && (
                     <tr>
-                      <td colSpan={7} className="px-6 py-12 text-center text-sm text-[#434655]">
+                      <td colSpan={8} className="px-6 py-12 text-center text-sm text-[#434655]">
                         Нет проспектов
                       </td>
                     </tr>
@@ -320,6 +336,14 @@ export default function ProspectsPage() {
                         <span className="text-sm font-medium text-[#004ac6] underline underline-offset-4 decoration-[#004ac6]/20">
                           {p.email}
                         </span>
+                      </td>
+                      <td className="px-6 py-4">
+                        <div className="flex items-center gap-1.5">
+                          <span title={p.email ? `Email: ${p.email}` : "Email не указан"}><Mail className={`size-4 ${p.email ? "text-blue-600" : "text-slate-300"}`} /></span>
+                          <span title={p.phone ? `Тел: ${p.phone}` : "Телефон не указан"}><Phone className={`size-4 ${p.phone ? "text-green-600" : "text-slate-300"}`} /></span>
+                          <span title={p.telegramUsername ? `TG: @${p.telegramUsername}` : "Telegram не указан"}><MessageCircle className={`size-4 ${p.telegramUsername ? "text-sky-500" : "text-slate-300"}`} /></span>
+                          <span title={p.whatsapp ? `WA: ${p.whatsapp}` : "WhatsApp не указан"}><MessageSquare className={`size-4 ${p.whatsapp ? "text-emerald-500" : "text-slate-300"}`} /></span>
+                        </div>
                       </td>
                       <td className="px-6 py-4">
                         {(() => {
@@ -427,6 +451,17 @@ export default function ProspectsPage() {
                     type="email"
                     value={formEmail}
                     onChange={(e) => setFormEmail(e.target.value)}
+                  />
+                </div>
+                <div>
+                  <label className="mb-2 block text-xs font-bold uppercase tracking-wider text-[#434655]">
+                    WhatsApp
+                  </label>
+                  <input
+                    className="w-full rounded-lg border-none bg-[#eff4ff] px-4 py-2.5 text-sm placeholder-slate-400 outline-none transition-all focus:ring-2 focus:ring-[#004ac6]/20"
+                    placeholder="+7 900 123-45-67"
+                    value={formWhatsApp}
+                    onChange={(e) => setFormWhatsApp(e.target.value)}
                   />
                 </div>
                 <button

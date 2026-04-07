@@ -34,12 +34,19 @@ type Repository interface {
 
 	// Stats
 	GetStats(ctx context.Context, userID uuid.UUID) (*Stats, error)
+
+	// Outbound message lookup
+	GetOutboundMessage(ctx context.Context, id uuid.UUID) (*OutboundMessage, error)
+
+	// Prompt feedback
+	SavePromptFeedback(ctx context.Context, userID uuid.UUID, original, edited, prospectContext, channel string) error
+	GetRecentFeedback(ctx context.Context, userID uuid.UUID, limit int) ([]PromptFeedback, error)
 }
 
 // AIMessageGenerator generates outbound messages using AI.
 type AIMessageGenerator interface {
-	GenerateColdMessage(ctx context.Context, name, title, company, prospectContext, stepHint, previousMessage, source string) (string, error)
-	GenerateTelegramMessage(ctx context.Context, name, title, company, prospectContext, stepHint, previousMessage, source string) (string, error)
+	GenerateColdMessage(ctx context.Context, name, title, company, prospectContext, stepHint, previousMessage, source, feedbackExamples string) (string, error)
+	GenerateTelegramMessage(ctx context.Context, name, title, company, prospectContext, stepHint, previousMessage, source, feedbackExamples string) (string, error)
 	GenerateCallBrief(ctx context.Context, name, title, company, prospectContext, stepHint, previousMessage string) (string, error)
 }
 
@@ -52,6 +59,7 @@ type ProspectView struct {
 	Title            string
 	Email            string
 	Phone            string
+	WhatsApp         string
 	TelegramUsername string
 	Context          string
 	Source           string

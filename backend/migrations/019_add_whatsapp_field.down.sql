@@ -1,0 +1,1 @@
+ALTER TABLE prospects DROP COLUMN IF EXISTS whatsapp;

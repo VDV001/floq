@@ -3,6 +3,7 @@ package sequences
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/daniil/floq/internal/sequences/domain"
@@ -64,6 +65,15 @@ func (uc *UseCase) Launch(ctx context.Context, sequenceID uuid.UUID, prospectIDs
 	now := time.Now().UTC()
 	immediate := len(sendNow) > 0 && sendNow[0]
 
+	// Build feedback examples string once for the entire launch (use first prospect's userID).
+	var feedbackExamples string
+	if len(prospectIDs) > 0 {
+		firstProspect, _ := uc.prospects.GetProspect(ctx, prospectIDs[0])
+		if firstProspect != nil {
+			feedbackExamples = uc.buildFeedbackExamples(ctx, firstProspect.UserID)
+		}
+	}
+
 	for _, pid := range prospectIDs {
 		prospect, err := uc.prospects.GetProspect(ctx, pid)
 		if err != nil {
@@ -97,11 +107,11 @@ func (uc *UseCase) Launch(ctx context.Context, sequenceID uuid.UUID, prospectIDs
 
 			switch step.Channel {
 			case domain.StepChannelTelegram:
-				body, genErr = uc.aiGenerator.GenerateTelegramMessage(ctx, prospect.Name, prospect.Title, prospect.Company, prospect.Context, step.PromptHint, previousBody, prospect.Source)
+				body, genErr = uc.aiGenerator.GenerateTelegramMessage(ctx, prospect.Name, prospect.Title, prospect.Company, prospect.Context, step.PromptHint, previousBody, prospect.Source, feedbackExamples)
 			case domain.StepChannelPhoneCall:
 				body, genErr = uc.aiGenerator.GenerateCallBrief(ctx, prospect.Name, prospect.Title, prospect.Company, prospect.Context, step.PromptHint, previousBody)
 			default: // "email" or empty
-				body, genErr = uc.aiGenerator.GenerateColdMessage(ctx, prospect.Name, prospect.Title, prospect.Company, prospect.Context, step.PromptHint, previousBody, prospect.Source)
+				body, genErr = uc.aiGenerator.GenerateColdMessage(ctx, prospect.Name, prospect.Title, prospect.Company, prospect.Context, step.PromptHint, previousBody, prospect.Source, feedbackExamples)
 			}
 			if genErr != nil {
 				return fmt.Errorf("launch: generate message for prospect %s step %d: %w", pid, step.StepOrder, genErr)
@@ -147,7 +157,45 @@ func (uc *UseCase) RejectMessage(ctx context.Context, id uuid.UUID) error {
 }
 
 func (uc *UseCase) EditMessage(ctx context.Context, id uuid.UUID, body string) error {
-	return uc.repo.UpdateOutboundBody(ctx, id, body)
+	// Read original message before updating.
+	msg, err := uc.repo.GetOutboundMessage(ctx, id)
+	if err != nil {
+		return fmt.Errorf("edit message: get original: %w", err)
+	}
+	if msg == nil {
+		return fmt.Errorf("edit message: message not found")
+	}
+
+	originalBody := msg.Body
+
+	// Update the body.
+	if err := uc.repo.UpdateOutboundBody(ctx, id, body); err != nil {
+		return err
+	}
+
+	// Save feedback if the body actually changed.
+	if originalBody != body {
+		// Get prospect context for the feedback record.
+		var prospectContext string
+		prospect, pErr := uc.prospects.GetProspect(ctx, msg.ProspectID)
+		if pErr == nil && prospect != nil {
+			prospectContext = prospect.Context
+		}
+
+		channel := string(msg.Channel)
+		if channel == "" {
+			channel = "email"
+		}
+
+		_ = uc.repo.SavePromptFeedback(ctx, func() uuid.UUID {
+			if prospect != nil {
+				return prospect.UserID
+			}
+			return uuid.Nil
+		}(), originalBody, body, prospectContext, channel)
+	}
+
+	return nil
 }
 
 func (uc *UseCase) DeleteStep(ctx context.Context, stepID uuid.UUID) error {
@@ -164,6 +212,24 @@ func (uc *UseCase) GetSent(ctx context.Context, userID uuid.UUID) ([]domain.Outb
 
 func (uc *UseCase) GetStats(ctx context.Context, userID uuid.UUID) (*domain.Stats, error) {
 	return uc.repo.GetStats(ctx, userID)
+}
+
+func (uc *UseCase) buildFeedbackExamples(ctx context.Context, userID uuid.UUID) string {
+	feedback, err := uc.repo.GetRecentFeedback(ctx, userID, 3)
+	if err != nil || len(feedback) == 0 {
+		return ""
+	}
+
+	var b strings.Builder
+	b.WriteString("Примеры правок менеджера (учитывай стиль):")
+	for _, f := range feedback {
+		b.WriteString("\nБыло: \"")
+		b.WriteString(f.OriginalBody)
+		b.WriteString("\" → Стало: \"")
+		b.WriteString(f.EditedBody)
+		b.WriteString("\"")
+	}
+	return b.String()
 }
 
 func (uc *UseCase) ConvertToLead(ctx context.Context, prospectID uuid.UUID) error {

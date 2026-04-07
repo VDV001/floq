@@ -270,6 +270,7 @@ export interface Prospect {
   title: string;
   email: string;
   phone: string;
+  whatsapp: string;
   telegram_username: string;
   industry: string;
   company_size: string;
@@ -291,6 +292,7 @@ export interface CreateProspectBody {
   title?: string;
   email: string;
   phone?: string;
+  whatsapp?: string;
   telegram_username?: string;
   industry?: string;
   company_size?: string;

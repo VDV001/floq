@@ -17,6 +17,7 @@ type ProspectResponse struct {
 	Title            string     `json:"title"`
 	Email            string     `json:"email"`
 	Phone            string     `json:"phone"`
+	WhatsApp         string     `json:"whatsapp"`
 	TelegramUsername string     `json:"telegram_username"`
 	Industry         string     `json:"industry"`
 	CompanySize      string     `json:"company_size"`
@@ -43,6 +44,7 @@ func ProspectToResponse(p *domain.Prospect) ProspectResponse {
 		Title:            p.Title,
 		Email:            p.Email,
 		Phone:            p.Phone,
+		WhatsApp:         p.WhatsApp,
 		TelegramUsername: p.TelegramUsername,
 		Industry:         p.Industry,
 		CompanySize:      p.CompanySize,

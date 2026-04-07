@@ -64,6 +64,7 @@ type Prospect struct {
 	Title            string
 	Email            string
 	Phone            string
+	WhatsApp         string
 	TelegramUsername string
 	Industry         string
 	CompanySize      string

@@ -150,7 +150,7 @@ func (c *AIClient) GenerateFollowup(ctx context.Context, contactName, company, d
 	return resp, nil
 }
 
-func (c *AIClient) GenerateColdMessage(ctx context.Context, name, title, company, prospectContext, stepHint, previousMessage, source string) (string, error) {
+func (c *AIClient) GenerateColdMessage(ctx context.Context, name, title, company, prospectContext, stepHint, previousMessage, source, feedbackExamples string) (string, error) {
 	previousContext := ""
 	if previousMessage != "" {
 		previousContext = "Предыдущее отправленное сообщение: \"" + previousMessage + "\""
@@ -167,9 +167,14 @@ func (c *AIClient) GenerateColdMessage(ctx context.Context, name, title, company
 	)
 	userPrompt := r.Replace(ColdOutreachUser)
 
+	systemPrompt := c.resolveSenderVars(c.resolveSystemPrompt(ColdOutreachSystem))
+	if feedbackExamples != "" {
+		systemPrompt += "\n\n" + feedbackExamples
+	}
+
 	resp, err := c.provider.Complete(ctx, CompletionRequest{
 		Messages: []Message{
-			{Role: "system", Content: c.resolveSenderVars(c.resolveSystemPrompt(ColdOutreachSystem))},
+			{Role: "system", Content: systemPrompt},
 			{Role: "user", Content: userPrompt},
 		},
 		MaxTokens: 2048,
@@ -180,7 +185,7 @@ func (c *AIClient) GenerateColdMessage(ctx context.Context, name, title, company
 	return resp, nil
 }
 
-func (c *AIClient) GenerateTelegramMessage(ctx context.Context, name, title, company, prospectContext, stepHint, previousMessage, source string) (string, error) {
+func (c *AIClient) GenerateTelegramMessage(ctx context.Context, name, title, company, prospectContext, stepHint, previousMessage, source, feedbackExamples string) (string, error) {
 	previousContext := ""
 	if previousMessage != "" {
 		previousContext = "Предыдущее сообщение: \"" + previousMessage + "\""
@@ -198,6 +203,9 @@ func (c *AIClient) GenerateTelegramMessage(ctx context.Context, name, title, com
 
 	systemPrompt := c.resolveSystemPrompt(TelegramOutreachSystem)
 	systemPrompt = c.resolveSenderVars(systemPrompt)
+	if feedbackExamples != "" {
+		systemPrompt += "\n\n" + feedbackExamples
+	}
 
 	resp, err := c.provider.Complete(ctx, CompletionRequest{
 		Messages: []Message{

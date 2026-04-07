@@ -63,6 +63,20 @@ func (m *mockRepo) MarkBounced(_ context.Context, _ uuid.UUID) error { return ni
 func (m *mockRepo) GetStats(_ context.Context, _ uuid.UUID) (*domain.Stats, error) {
 	return nil, nil
 }
+func (m *mockRepo) GetOutboundMessage(_ context.Context, id uuid.UUID) (*domain.OutboundMessage, error) {
+	for _, msg := range m.messages {
+		if msg.ID == id {
+			return msg, nil
+		}
+	}
+	return nil, nil
+}
+func (m *mockRepo) SavePromptFeedback(_ context.Context, _ uuid.UUID, _, _, _, _ string) error {
+	return nil
+}
+func (m *mockRepo) GetRecentFeedback(_ context.Context, _ uuid.UUID, _ int) ([]domain.PromptFeedback, error) {
+	return nil, nil
+}
 
 // --- Mock AI Generator ---
 
@@ -74,12 +88,12 @@ type mockAI struct {
 	calls        int
 }
 
-func (m *mockAI) GenerateColdMessage(_ context.Context, _, _, _, _, _, _, _ string) (string, error) {
+func (m *mockAI) GenerateColdMessage(_ context.Context, _, _, _, _, _, _, _, _ string) (string, error) {
 	m.calls++
 	return m.coldBody, m.err
 }
 
-func (m *mockAI) GenerateTelegramMessage(_ context.Context, _, _, _, _, _, _, _ string) (string, error) {
+func (m *mockAI) GenerateTelegramMessage(_ context.Context, _, _, _, _, _, _, _, _ string) (string, error) {
 	m.calls++
 	return m.telegramBody, m.err
 }
