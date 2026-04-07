@@ -155,8 +155,8 @@ export const api = {
     apiFetch<SequenceStep>(`/api/sequences/${seqId}/steps`, { method: "POST", body: JSON.stringify(data) }),
   deleteStep: (seqId: string, stepId: string) =>
     apiFetch(`/api/sequences/${seqId}/steps/${stepId}`, { method: "DELETE" }),
-  launchSequence: (seqId: string, prospectIds: string[]) =>
-    apiFetch(`/api/sequences/${seqId}/launch`, { method: "POST", body: JSON.stringify({ prospect_ids: prospectIds }) }),
+  launchSequence: (seqId: string, prospectIds: string[], sendNow = true) =>
+    apiFetch(`/api/sequences/${seqId}/launch`, { method: "POST", body: JSON.stringify({ prospect_ids: prospectIds, send_now: sendNow }) }),
   toggleSequence: (seqId: string, isActive: boolean) =>
     apiFetch(`/api/sequences/${seqId}/toggle`, { method: "PATCH", body: JSON.stringify({ is_active: isActive }) }),
 

@@ -10,6 +10,13 @@ import {
   Sparkles,
   Copy,
   Trash2,
+  Mail,
+  MessageCircle,
+  Phone,
+  Clock,
+  Send,
+  X,
+  ChevronDown,
 } from "lucide-react";
 import { Switch } from "@/components/ui/switch";
 import { Separator } from "@/components/ui/separator";
@@ -38,6 +45,20 @@ export default function SequencesPage() {
   const [selectedProspects, setSelectedProspects] = useState<Set<string>>(new Set());
   const [launching, setLaunching] = useState(false);
   const [launchResult, setLaunchResult] = useState<string | null>(null);
+
+  // New sequence inline form
+  const [showNewSeq, setShowNewSeq] = useState(false);
+  const [newSeqName, setNewSeqName] = useState("");
+
+  // Add step inline form
+  const [showAddStep, setShowAddStep] = useState(false);
+  const [addStepChannel, setAddStepChannel] = useState<"email" | "telegram">("email");
+  const [addStepDelay, setAddStepDelay] = useState(0);
+  const [addStepHint, setAddStepHint] = useState("первое касание");
+
+  // Launch options
+  const [showLaunchOptions, setShowLaunchOptions] = useState(false);
+  const [sendNow, setSendNow] = useState(true);
 
   // Fetch all sequences on mount
   useEffect(() => {
@@ -76,11 +97,32 @@ export default function SequencesPage() {
     if (!selectedSeqId || selectedProspects.size === 0) return;
     setLaunching(true);
     setLaunchResult(null);
+    setShowLaunchOptions(false);
     try {
-      await api.launchSequence(selectedSeqId, Array.from(selectedProspects));
+      await api.launchSequence(selectedSeqId, Array.from(selectedProspects), sendNow);
       setLaunchResult(`Запущено для ${selectedProspects.size} проспектов`);
       setSelectedProspects(new Set());
       // Refresh prospects to update statuses
+      api.getProspects().then(setProspects).catch(() => {});
+    } catch {
+      setLaunchResult("Ошибка запуска");
+    } finally {
+      setLaunching(false);
+      setTimeout(() => setLaunchResult(null), 4000);
+    }
+  };
+
+  const handleLaunchAllNew = async () => {
+    if (!selectedSeqId) return;
+    const newProspects = prospects.filter((p) => p.status === "new");
+    if (newProspects.length === 0) return;
+    setSelectedProspects(new Set(newProspects.map((p) => p.id)));
+    setLaunching(true);
+    setLaunchResult(null);
+    try {
+      await api.launchSequence(selectedSeqId, newProspects.map((p) => p.id), sendNow);
+      setLaunchResult(`Запущено для ${newProspects.length} новых проспектов`);
+      setSelectedProspects(new Set());
       api.getProspects().then(setProspects).catch(() => {});
     } catch {
       setLaunchResult("Ошибка запуска");
@@ -107,43 +149,38 @@ export default function SequencesPage() {
   }, [selectedSeqId]);
 
   const handleCreateSequence = useCallback(async () => {
-    const name = window.prompt("Название новой секвенции:");
-    if (!name || !name.trim()) return;
+    if (!newSeqName.trim()) return;
     try {
-      const newSeq = await api.createSequence(name.trim());
+      const newSeq = await api.createSequence(newSeqName.trim());
       setSequences((prev) => [...prev, newSeq]);
       setSelectedSeqId(newSeq.id);
+      setNewSeqName("");
+      setShowNewSeq(false);
     } catch {
       // silently ignore
     }
-  }, []);
+  }, [newSeqName]);
 
   const handleAddStep = useCallback(async () => {
     if (!selectedSeqId) return;
-    const channelChoice = window.prompt("Канал (email / telegram / phone_call):", "email");
-    if (!channelChoice) return;
-    const channel = channelChoice.trim().toLowerCase();
-    if (!["email", "telegram", "phone_call"].includes(channel)) {
-      alert("Канал должен быть: email, telegram или phone_call");
-      return;
-    }
-    const delay = window.prompt("Задержка в днях:", "1");
-    if (!delay) return;
-    const hint = window.prompt("Подсказка для AI:", "первое касание");
-    if (hint === null) return;
     try {
       await api.addStep(selectedSeqId, {
         step_order: steps.length + 1,
-        delay_days: parseInt(delay),
-        prompt_hint: hint || "первое касание",
-        channel: channel as "email" | "telegram" | "phone_call",
+        delay_days: addStepDelay,
+        prompt_hint: addStepHint || "первое касание",
+        channel: addStepChannel,
       });
       const data = await api.getSequence(selectedSeqId);
       setSteps(data.steps ?? []);
+      // Reset form
+      setShowAddStep(false);
+      setAddStepChannel("email");
+      setAddStepDelay(0);
+      setAddStepHint("первое касание");
     } catch {
       alert("Ошибка добавления шага");
     }
-  }, [selectedSeqId, steps]);
+  }, [selectedSeqId, steps, addStepChannel, addStepDelay, addStepHint]);
 
   const handleToggleSequence = useCallback(
     async (seqId: string, isActive: boolean) => {
@@ -160,10 +197,11 @@ export default function SequencesPage() {
   );
 
   const selectedSequence = sequences.find((s) => s.id === selectedSeqId) ?? null;
+  const newProspectsCount = prospects.filter((p) => p.status === "new").length;
 
   return (
     <div className="min-h-screen bg-[#f8f9ff]">
-      {/* ── Header ── */}
+      {/* -- Header -- */}
       <header className="px-8 pt-8 pb-6">
         <div className="flex items-start justify-between">
           <div>
@@ -174,24 +212,55 @@ export default function SequencesPage() {
               Автоматические цепочки холодных писем для вашего B2B отдела
             </p>
           </div>
-          <button
-            onClick={handleCreateSequence}
-            className="flex items-center gap-2 rounded-xl bg-gradient-to-r from-[#004ac6] to-[#2563eb] px-5 py-2.5 text-sm font-semibold text-white shadow-lg shadow-[#004ac6]/25 transition hover:shadow-xl hover:shadow-[#004ac6]/30"
-          >
-            <Plus className="size-4" />
-            Новая секвенция
-          </button>
+          {!showNewSeq ? (
+            <button
+              onClick={() => setShowNewSeq(true)}
+              className="flex items-center gap-2 rounded-xl bg-gradient-to-r from-[#004ac6] to-[#2563eb] px-5 py-2.5 text-sm font-semibold text-white shadow-lg shadow-[#004ac6]/25 transition hover:shadow-xl hover:shadow-[#004ac6]/30"
+            >
+              <Plus className="size-4" />
+              Новая секвенция
+            </button>
+          ) : (
+            <div className="flex items-center gap-2">
+              <input
+                type="text"
+                autoFocus
+                value={newSeqName}
+                onChange={(e) => setNewSeqName(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") handleCreateSequence();
+                  if (e.key === "Escape") { setShowNewSeq(false); setNewSeqName(""); }
+                }}
+                placeholder="Название секвенции..."
+                className="rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm text-[#0d1c2e] placeholder:text-[#737686] focus:border-[#004ac6] focus:outline-none focus:ring-2 focus:ring-[#004ac6]/20"
+              />
+              <button
+                onClick={handleCreateSequence}
+                disabled={!newSeqName.trim()}
+                className="flex items-center gap-1.5 rounded-xl bg-gradient-to-r from-[#004ac6] to-[#2563eb] px-4 py-2.5 text-sm font-semibold text-white shadow-lg shadow-[#004ac6]/25 transition hover:shadow-xl disabled:opacity-50"
+              >
+                <Plus className="size-4" />
+                Создать
+              </button>
+              <button
+                onClick={() => { setShowNewSeq(false); setNewSeqName(""); }}
+                className="rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-[#434655] transition hover:bg-slate-50"
+              >
+                <X className="size-4" />
+              </button>
+            </div>
+          )}
         </div>
         {loading && (
           <div className="mt-3 size-5 animate-spin rounded-full border-2 border-[#004ac6] border-t-transparent" />
         )}
       </header>
 
-      {/* ── Bento Grid ── */}
+      {/* -- Bento Grid -- */}
       <div className="grid grid-cols-12 gap-6 px-8 pb-8">
-        {/* ════════════════════════════════════════════
+        {/* ====================================================
             LEFT COLUMN (col-span-4): Campaigns + AI tip
-           ════════════════════════════════════════════ */}
+           ==================================================== */}
         <div className="col-span-4 flex flex-col gap-5">
           <h2 className="flex items-center gap-2 text-sm font-semibold uppercase tracking-wider text-[#434655]">
             <Layers className="size-4" />
@@ -298,9 +367,9 @@ export default function SequencesPage() {
           </div>
         </div>
 
-        {/* ════════════════════════════════════════════
+        {/* ====================================================
             MIDDLE COLUMN (col-span-5): Step Timeline
-           ════════════════════════════════════════════ */}
+           ==================================================== */}
         <div className="col-span-5">
           <div className="rounded-2xl bg-white p-6 shadow-sm">
             <h2 className="mb-6 text-base font-semibold text-[#0d1c2e]">
@@ -450,18 +519,122 @@ export default function SequencesPage() {
             {/* Add step */}
             {selectedSeqId && !stepsLoading && (
               <div className="mt-6 ml-3 pl-8">
-                <button onClick={handleAddStep} className="flex w-full items-center justify-center gap-2 rounded-xl border-2 border-dashed border-slate-200 py-3 text-sm font-medium text-[#434655] transition hover:border-[#004ac6] hover:text-[#004ac6]">
-                  <Plus className="size-4" />
-                  Добавить шаг
-                </button>
+                {!showAddStep ? (
+                  <button
+                    onClick={() => setShowAddStep(true)}
+                    className="flex w-full items-center justify-center gap-2 rounded-xl border-2 border-dashed border-slate-200 py-3 text-sm font-medium text-[#434655] transition hover:border-[#004ac6] hover:text-[#004ac6]"
+                  >
+                    <Plus className="size-4" />
+                    Добавить шаг
+                  </button>
+                ) : (
+                  <div className="rounded-xl border border-slate-200 bg-[#eff4ff]/50 p-4">
+                    {/* Channel selector */}
+                    <p className="mb-2 text-xs font-semibold text-[#434655]">Канал</p>
+                    <div className="mb-4 grid grid-cols-3 gap-2">
+                      {/* Email */}
+                      <button
+                        onClick={() => setAddStepChannel("email")}
+                        className={`flex flex-col items-center gap-1.5 rounded-xl border-2 p-3 transition ${
+                          addStepChannel === "email"
+                            ? "border-[#004ac6] bg-blue-50"
+                            : "border-slate-200 bg-white hover:border-[#004ac6]/30"
+                        }`}
+                      >
+                        <Mail className={`size-5 ${addStepChannel === "email" ? "text-[#004ac6]" : "text-[#434655]"}`} />
+                        <span className={`text-xs font-medium ${addStepChannel === "email" ? "text-[#004ac6]" : "text-[#434655]"}`}>
+                          Email
+                        </span>
+                      </button>
+                      {/* Telegram */}
+                      <button
+                        onClick={() => setAddStepChannel("telegram")}
+                        className={`flex flex-col items-center gap-1.5 rounded-xl border-2 p-3 transition ${
+                          addStepChannel === "telegram"
+                            ? "border-[#3e3fcc] bg-purple-50"
+                            : "border-slate-200 bg-white hover:border-[#3e3fcc]/30"
+                        }`}
+                      >
+                        <MessageCircle className={`size-5 ${addStepChannel === "telegram" ? "text-[#3e3fcc]" : "text-[#434655]"}`} />
+                        <span className={`text-xs font-medium ${addStepChannel === "telegram" ? "text-[#3e3fcc]" : "text-[#434655]"}`}>
+                          Telegram
+                        </span>
+                      </button>
+                      {/* Phone (disabled) */}
+                      <div
+                        className="relative flex flex-col items-center gap-1.5 rounded-xl border-2 border-slate-200 bg-slate-50 p-3 opacity-50 cursor-not-allowed"
+                      >
+                        <Phone className="size-5 text-[#434655]" />
+                        <span className="text-xs font-medium text-[#434655]">
+                          Звонок
+                        </span>
+                        <span className="absolute -top-2 -right-2 rounded-full bg-orange-100 px-1.5 py-0.5 text-[9px] font-bold text-orange-600">
+                          Скоро
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* Delay input */}
+                    <div className="mb-3">
+                      <label className="mb-1 flex items-center gap-1.5 text-xs font-semibold text-[#434655]">
+                        <Clock className="size-3.5" />
+                        Задержка (дней)
+                      </label>
+                      <input
+                        type="number"
+                        min={0}
+                        value={addStepDelay}
+                        onChange={(e) => setAddStepDelay(Math.max(0, parseInt(e.target.value) || 0))}
+                        className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-[#0d1c2e] focus:border-[#004ac6] focus:outline-none focus:ring-2 focus:ring-[#004ac6]/20"
+                      />
+                    </div>
+
+                    {/* Prompt hint */}
+                    <div className="mb-4">
+                      <label className="mb-1 flex items-center gap-1.5 text-xs font-semibold text-[#434655]">
+                        <Sparkles className="size-3.5" />
+                        Подсказка для AI
+                      </label>
+                      <input
+                        type="text"
+                        value={addStepHint}
+                        onChange={(e) => setAddStepHint(e.target.value)}
+                        placeholder="первое касание"
+                        className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-[#0d1c2e] placeholder:text-[#737686] focus:border-[#004ac6] focus:outline-none focus:ring-2 focus:ring-[#004ac6]/20"
+                      />
+                    </div>
+
+                    {/* Action buttons */}
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={handleAddStep}
+                        className="flex items-center gap-1.5 rounded-lg bg-[#004ac6] px-4 py-2 text-xs font-semibold text-white transition hover:bg-[#004ac6]/90"
+                      >
+                        <Plus className="size-3.5" />
+                        Добавить
+                      </button>
+                      <button
+                        onClick={() => {
+                          setShowAddStep(false);
+                          setAddStepChannel("email");
+                          setAddStepDelay(0);
+                          setAddStepHint("первое касание");
+                        }}
+                        className="rounded-lg border border-slate-200 bg-white px-4 py-2 text-xs font-medium text-[#434655] transition hover:bg-slate-50"
+                      >
+                        Отмена
+                      </button>
+                    </div>
+                  </div>
+                )}
               </div>
             )}
           </div>
         </div>
 
-        {/* ════════════════════════════════════════════
+        {/* ====================================================
             RIGHT COLUMN (col-span-3): Prospects + Stats
-           ════════════════════════════════════════════ */}
+           ==================================================== */}
         <div className="col-span-3 flex flex-col gap-5">
           {/* Prospects */}
           <div className="rounded-2xl bg-[#eff4ff]/50 p-5">
@@ -519,20 +692,77 @@ export default function SequencesPage() {
               )}
             </div>
 
-            {/* Launch button */}
-            {selectedSeqId && selectedProspects.size > 0 && (
-              <button
-                onClick={handleLaunch}
-                disabled={launching}
-                className="mt-4 flex w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-[#004ac6] to-[#2563eb] py-3 text-sm font-bold text-white shadow-md transition-all hover:-translate-y-0.5 hover:shadow-lg disabled:opacity-50"
-              >
-                {launching ? (
-                  <span className="size-4 animate-spin rounded-full border-2 border-white border-t-transparent" />
-                ) : (
-                  <Sparkles className="size-4" />
+            {/* Launch section */}
+            {selectedSeqId && (
+              <div className="relative mt-4">
+                {/* Launch options dropdown */}
+                {showLaunchOptions && selectedProspects.size > 0 && (
+                  <div className="mb-2 rounded-xl border border-slate-200 bg-white p-3 shadow-md">
+                    <p className="mb-2 text-xs font-semibold text-[#434655]">Режим запуска</p>
+                    <label className="flex cursor-pointer items-center gap-2 rounded-lg px-2 py-1.5 transition hover:bg-[#eff4ff]">
+                      <input
+                        type="radio"
+                        name="launch-mode"
+                        checked={sendNow}
+                        onChange={() => setSendNow(true)}
+                        className="size-3.5 text-[#004ac6] focus:ring-[#004ac6]/30"
+                      />
+                      <Send className="size-3.5 text-[#004ac6]" />
+                      <span className="text-xs font-medium text-[#0d1c2e]">Отправить сейчас</span>
+                    </label>
+                    <label className="flex cursor-pointer items-center gap-2 rounded-lg px-2 py-1.5 transition hover:bg-[#eff4ff]">
+                      <input
+                        type="radio"
+                        name="launch-mode"
+                        checked={!sendNow}
+                        onChange={() => setSendNow(false)}
+                        className="size-3.5 text-[#004ac6] focus:ring-[#004ac6]/30"
+                      />
+                      <Clock className="size-3.5 text-[#434655]" />
+                      <span className="text-xs font-medium text-[#0d1c2e]">Запланировать по расписанию</span>
+                    </label>
+                  </div>
                 )}
-                {launching ? "Генерация..." : `Запустить (${selectedProspects.size})`}
-              </button>
+
+                {selectedProspects.size > 0 && (
+                  <button
+                    onClick={() => {
+                      if (!showLaunchOptions) {
+                        setShowLaunchOptions(true);
+                      } else {
+                        handleLaunch();
+                      }
+                    }}
+                    disabled={launching}
+                    className="flex w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-[#004ac6] to-[#2563eb] py-3 text-sm font-bold text-white shadow-md transition-all hover:-translate-y-0.5 hover:shadow-lg disabled:opacity-50"
+                  >
+                    {launching ? (
+                      <span className="size-4 animate-spin rounded-full border-2 border-white border-t-transparent" />
+                    ) : showLaunchOptions ? (
+                      <Send className="size-4" />
+                    ) : (
+                      <ChevronDown className="size-4" />
+                    )}
+                    {launching
+                      ? "Генерация..."
+                      : showLaunchOptions
+                        ? `Запустить (${selectedProspects.size})`
+                        : `Запустить (${selectedProspects.size})`}
+                  </button>
+                )}
+
+                {/* Launch all new button */}
+                {newProspectsCount > 0 && (
+                  <button
+                    onClick={handleLaunchAllNew}
+                    disabled={launching}
+                    className="mt-2 flex w-full items-center justify-center gap-2 rounded-xl border border-[#004ac6] bg-white py-2.5 text-xs font-semibold text-[#004ac6] transition hover:bg-[#eff4ff] disabled:opacity-50"
+                  >
+                    <Users className="size-3.5" />
+                    Запустить для всех новых ({newProspectsCount})
+                  </button>
+                )}
+              </div>
             )}
 
             {launchResult && (

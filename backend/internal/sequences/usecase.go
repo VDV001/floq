@@ -52,7 +52,7 @@ func (uc *UseCase) CreateStep(ctx context.Context, step *domain.SequenceStep) er
 	return uc.repo.CreateStep(ctx, step)
 }
 
-func (uc *UseCase) Launch(ctx context.Context, sequenceID uuid.UUID, prospectIDs []uuid.UUID) error {
+func (uc *UseCase) Launch(ctx context.Context, sequenceID uuid.UUID, prospectIDs []uuid.UUID, sendNow ...bool) error {
 	steps, err := uc.repo.ListSteps(ctx, sequenceID)
 	if err != nil {
 		return fmt.Errorf("launch: list steps: %w", err)
@@ -62,6 +62,7 @@ func (uc *UseCase) Launch(ctx context.Context, sequenceID uuid.UUID, prospectIDs
 	}
 
 	now := time.Now().UTC()
+	immediate := len(sendNow) > 0 && sendNow[0]
 
 	for _, pid := range prospectIDs {
 		prospect, err := uc.prospects.GetProspect(ctx, pid)
@@ -114,7 +115,12 @@ func (uc *UseCase) Launch(ctx context.Context, sequenceID uuid.UUID, prospectIDs
 				Channel:     step.Channel,
 				Body:        body,
 				Status:      domain.OutboundStatusDraft,
-				ScheduledAt: now.AddDate(0, 0, cumulativeDelay),
+				ScheduledAt: func() time.Time {
+					if immediate {
+						return now
+					}
+					return now.AddDate(0, 0, cumulativeDelay)
+				}(),
 				CreatedAt:   now,
 			}
 			if err := uc.repo.CreateOutboundMessage(ctx, msg); err != nil {

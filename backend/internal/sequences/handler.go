@@ -227,6 +227,7 @@ func launchSequence(uc *UseCase) http.HandlerFunc {
 
 		var body struct {
 			ProspectIDs []uuid.UUID `json:"prospect_ids"`
+			SendNow     bool        `json:"send_now"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			httputil.WriteError(w, http.StatusBadRequest, "invalid request body")
@@ -237,7 +238,7 @@ func launchSequence(uc *UseCase) http.HandlerFunc {
 			return
 		}
 
-		if err := uc.Launch(r.Context(), id, body.ProspectIDs); err != nil {
+		if err := uc.Launch(r.Context(), id, body.ProspectIDs, body.SendNow); err != nil {
 			httputil.WriteError(w, http.StatusInternalServerError, "failed to launch sequence")
 			return
 		}
