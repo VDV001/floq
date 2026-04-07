@@ -12,9 +12,6 @@ import {
   MessageCircle,
   RotateCcw,
   CircleCheck,
-  Bot,
-  Archive,
-  Calendar,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -29,13 +26,16 @@ interface Lead {
   channel: "email" | "telegram";
   preview: string;
   timeAgo: string;
-  status: "Новый" | "Квалифицирован" | "Нужен фоллоуап";
+  status: "Новый" | "Квалифицирован" | "В диалоге" | "Нужен фоллоуап" | "Закрыт";
+  apiStatus: string;
 }
 
 const STATUS_STYLES: Record<Lead["status"], string> = {
-  Новый: "bg-[#dbe1ff] text-[#004ac6]",
-  Квалифицирован: "bg-[#e6fffa] text-[#006b5f]",
+  "Новый": "bg-[#dbe1ff] text-[#004ac6]",
+  "Квалифицирован": "bg-[#e6fffa] text-[#006b5f]",
+  "В диалоге": "bg-[#dbeafe] text-[#1e40af]",
   "Нужен фоллоуап": "bg-[#fffbeb] text-[#92400e]",
+  "Закрыт": "bg-[#f3f4f6] text-[#6b7280]",
 };
 
 /* ------------------------------------------------------------------ */
@@ -67,7 +67,9 @@ function mapStatus(status: string): Lead["status"] {
   switch (status) {
     case "new": return "Новый";
     case "qualified": return "Квалифицирован";
+    case "in_conversation": return "В диалоге";
     case "followup": return "Нужен фоллоуап";
+    case "closed": return "Закрыт";
     default: return "Новый";
   }
 }
@@ -96,6 +98,7 @@ export default function InboxPage() {
             preview: l.first_message === "/start" ? "Загрузка..." : (l.first_message || "Нет сообщений"),
             timeAgo: getTimeAgo(l.created_at),
             status: mapStatus(l.status),
+            apiStatus: l.status,
           }));
           setLeads(mapped);
 
@@ -122,7 +125,7 @@ export default function InboxPage() {
         .finally(() => setLoading(false));
     };
     fetchLeads();
-    const interval = setInterval(fetchLeads, 5000);
+    const interval = setInterval(fetchLeads, 30000);
     return () => clearInterval(interval);
   }, []);
 
@@ -258,7 +261,10 @@ export default function InboxPage() {
                 </p>
               </div>
             )}
-            {leads.map((lead) => (
+            {leads.filter((lead) => {
+              const stageConfig = PIPELINE_STAGES_CONFIG.find((s) => s.id === activeStage);
+              return stageConfig ? lead.apiStatus === stageConfig.apiStatus : true;
+            }).map((lead) => (
               <Link
                 key={lead.id}
                 href={`/inbox/${lead.id}`}
@@ -311,20 +317,6 @@ export default function InboxPage() {
                   </span>
                 </div>
 
-                {/* Hover actions */}
-                <div className="absolute top-4 right-6 flex items-center gap-1.5 rounded-lg bg-white/90 p-1 shadow-md opacity-0 backdrop-blur-sm transition-opacity group-hover:opacity-100">
-                  <button className="rounded-md p-1.5 text-[#004ac6] transition-colors hover:bg-[#eff4ff]">
-                    <Bot className="size-4" />
-                  </button>
-                  {lead.status === "Квалифицирован" && (
-                    <button className="rounded-md p-1.5 text-[#004ac6] transition-colors hover:bg-[#eff4ff]">
-                      <Calendar className="size-4" />
-                    </button>
-                  )}
-                  <button className="rounded-md p-1.5 text-[#434655] transition-colors hover:bg-[#eff4ff]">
-                    <Archive className="size-4" />
-                  </button>
-                </div>
               </Link>
             ))}
           </div>
