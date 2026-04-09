@@ -32,10 +32,10 @@ interface Lead {
 
 const STATUS_STYLES: Record<Lead["status"], string> = {
   "Новый": "bg-[#dbe1ff] text-[#004ac6]",
-  "Квалифицирован": "bg-[#e6fffa] text-[#006b5f]",
-  "В диалоге": "bg-[#dbeafe] text-[#1e40af]",
-  "Нужен фоллоуап": "bg-[#fffbeb] text-[#92400e]",
-  "Закрыт": "bg-[#f3f4f6] text-[#6b7280]",
+  "Квалифицирован": "bg-[#c7d2fe] text-[#3730a3]",
+  "В диалоге": "bg-[#fef3c7] text-[#92400e]",
+  "Нужен фоллоуап": "bg-[#fee2e2] text-[#dc2626]",
+  "Закрыт": "bg-[#d1fae5] text-[#065f46]",
 };
 
 /* ------------------------------------------------------------------ */
