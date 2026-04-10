@@ -178,6 +178,22 @@ export const api = {
       body: JSON.stringify({ message, history, context: context || "" }),
     }),
 
+  // Telegram Account (MTProto)
+  tgAccountSendCode: (phone: string) =>
+    apiFetch<{ code_hash: string }>("/api/telegram-account/send-code", {
+      method: "POST",
+      body: JSON.stringify({ phone }),
+    }),
+  tgAccountVerify: (phone: string, code: string, codeHash: string) =>
+    apiFetch<{ status: string }>("/api/telegram-account/verify", {
+      method: "POST",
+      body: JSON.stringify({ phone, code, code_hash: codeHash }),
+    }),
+  tgAccountStatus: () =>
+    apiFetch<{ connected: boolean; phone: string }>("/api/telegram-account/status"),
+  tgAccountDisconnect: () =>
+    apiFetch("/api/telegram-account", { method: "DELETE" }),
+
   // Usage
   getUsage: () => apiFetch<{ plan: string; limit: number; month_leads: number; total_leads: number }>("/api/usage"),
 

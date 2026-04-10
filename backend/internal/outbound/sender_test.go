@@ -8,7 +8,7 @@ import (
 
 func TestNewSender_Fields(t *testing.T) {
 	ownerID := uuid.New()
-	s := NewSender(nil, ownerID, "key123", "from@test.com", "https://app.test", "smtp.mail.ru", "465", "user@test.com", "pass", nil, nil)
+	s := NewSender(nil, ownerID, "key123", "from@test.com", "https://app.test", "smtp.mail.ru", "465", "user@test.com", "pass", nil, nil, nil)
 
 	if s.ownerID != ownerID {
 		t.Errorf("expected ownerID %s, got %s", ownerID, s.ownerID)
@@ -28,7 +28,7 @@ func TestNewSender_Fields(t *testing.T) {
 }
 
 func TestNewSender_NilDeps(t *testing.T) {
-	s := NewSender(nil, uuid.Nil, "", "", "", "", "", "", "", nil, nil)
+	s := NewSender(nil, uuid.Nil, "", "", "", "", "", "", "", nil, nil, nil)
 	if s == nil {
 		t.Fatal("expected non-nil Sender")
 	}

@@ -31,6 +31,7 @@ import (
 	"github.com/daniil/floq/internal/prospects"
 	"github.com/daniil/floq/internal/sequences"
 	"github.com/daniil/floq/internal/settings"
+	"github.com/daniil/floq/internal/tgclient"
 	"github.com/daniil/floq/internal/verify"
 	"github.com/google/uuid"
 	"github.com/go-chi/chi/v5"
@@ -150,6 +151,7 @@ func main() {
 		parser.RegisterRoutes(r, cfg.TwoGISAPIKey)
 		settings.RegisterRoutes(r, settingsUC, buildAITester(cfg), buildUsageCounter(pool))
 		chat.RegisterRoutes(r, chat.NewHandler(pool, aiClient))
+		tgclient.RegisterRoutes(r, tgclient.NewClient(), tgclient.NewRepository(pool))
 	})
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -157,7 +159,8 @@ func main() {
 
 	// 7. Outbound email sender (cron every 30 seconds)
 	// Always starts — reads Resend API key from DB each tick (falls back to .env)
-	emailSender := outbound.NewSender(settingsStore, ownerID, cfg.ResendAPIKey, cfg.SMTPFrom, cfg.AppBaseURL, cfg.SMTPHost, cfg.SMTPPort, cfg.SMTPUser, cfg.SMTPPassword, sequencesRepo, prospectsRepo)
+	tgRepo := tgclient.NewRepository(pool)
+	emailSender := outbound.NewSender(settingsStore, ownerID, cfg.ResendAPIKey, cfg.SMTPFrom, cfg.AppBaseURL, cfg.SMTPHost, cfg.SMTPPort, cfg.SMTPUser, cfg.SMTPPassword, sequencesRepo, prospectsRepo, tgRepo)
 	go func() {
 		ticker := time.NewTicker(30 * time.Second)
 		defer ticker.Stop()

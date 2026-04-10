@@ -108,6 +108,15 @@ export default function SettingsPage() {
   const [aiTestResult, setAiTestResult] = useState<TestResult>(null);
   const [aiVerified, setAiVerified] = useState<boolean | null>(null);
 
+  // TG Account (MTProto)
+  const [tgAccPhone, setTgAccPhone] = useState("");
+  const [tgAccCode, setTgAccCode] = useState("");
+  const [tgAccCodeHash, setTgAccCodeHash] = useState("");
+  const [tgAccStep, setTgAccStep] = useState<"idle" | "code_sent" | "connected">("idle");
+  const [tgAccConnectedPhone, setTgAccConnectedPhone] = useState("");
+  const [tgAccLoading, setTgAccLoading] = useState(false);
+  const [tgAccError, setTgAccError] = useState("");
+
   const providerDefaults: Record<string, string> = {
     ollama: "gemma3:4b",
     claude: "claude-sonnet-4-20250514",
@@ -130,6 +139,14 @@ export default function SettingsPage() {
         setAiModel(data.ai_model || providerDefaults[data.ai_provider] || "gemma3:4b");
         setNotifyTg(data.notify_telegram);
         setNotifyEmail(data.notify_email_digest);
+
+        // Load TG account status
+        api.tgAccountStatus().then((st) => {
+          if (st.connected) {
+            setTgAccStep("connected");
+            setTgAccConnectedPhone(st.phone);
+          }
+        }).catch(() => {});
       })
       .catch(() => {})
       .finally(() => setLoading(false));
@@ -488,6 +505,106 @@ export default function SettingsPage() {
                       {saving ? "..." : "Подключить"}
                     </button>
                   </div>
+                </div>
+
+                <hr className="border-[#c3c6d7]/10" />
+
+                {/* TG Personal Account */}
+                <div>
+                  <div className="mb-4 flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <Send className="size-5 text-[#7c3aed]" />
+                      <h4 className="font-bold text-[#0d1c2e]">TG аккаунт (рассылка)</h4>
+                      <HintIcon text="Подключите личный Telegram аккаунт для автоматической рассылки персонализированных сообщений проспектам. Отправка от вашего имени, не от бота." />
+                    </div>
+                    <ConnectionBadge active={tgAccStep === "connected"} />
+                  </div>
+
+                  {tgAccStep === "connected" ? (
+                    <div className="flex items-center justify-between rounded-lg bg-green-50 px-4 py-3">
+                      <p className="text-sm text-green-700">
+                        Подключен: <span className="font-bold">{tgAccConnectedPhone}</span>
+                      </p>
+                      <button
+                        onClick={async () => {
+                          try {
+                            await api.tgAccountDisconnect();
+                            setTgAccStep("idle");
+                            setTgAccConnectedPhone("");
+                          } catch { /* ignore */ }
+                        }}
+                        className="text-xs font-bold text-red-500 hover:underline"
+                      >
+                        Отключить
+                      </button>
+                    </div>
+                  ) : tgAccStep === "code_sent" ? (
+                    <div className="space-y-3">
+                      <p className="text-xs text-[#434655]">
+                        Код отправлен на <span className="font-bold">{tgAccPhone}</span> в Telegram
+                      </p>
+                      <div className="flex gap-3">
+                        <input
+                          type="text"
+                          placeholder="Введите код..."
+                          value={tgAccCode}
+                          onChange={(e) => setTgAccCode(e.target.value)}
+                          className="flex-1 rounded-lg border-none bg-[#eff4ff] px-4 py-3 text-sm outline-none focus:ring-2 focus:ring-[#7c3aed]/20"
+                        />
+                        <button
+                          disabled={tgAccLoading || !tgAccCode}
+                          onClick={async () => {
+                            setTgAccLoading(true);
+                            setTgAccError("");
+                            try {
+                              await api.tgAccountVerify(tgAccPhone, tgAccCode, tgAccCodeHash);
+                              setTgAccStep("connected");
+                              setTgAccConnectedPhone(tgAccPhone);
+                              setTgAccCode("");
+                            } catch {
+                              setTgAccError("Неверный код");
+                            } finally {
+                              setTgAccLoading(false);
+                            }
+                          }}
+                          className="rounded-lg bg-[#7c3aed] px-6 py-3 text-sm font-bold text-white hover:brightness-110 disabled:opacity-50"
+                        >
+                          {tgAccLoading ? "..." : "Подтвердить"}
+                        </button>
+                      </div>
+                      {tgAccError && <p className="text-xs text-red-500">{tgAccError}</p>}
+                    </div>
+                  ) : (
+                    <div className="flex gap-3">
+                      <input
+                        type="text"
+                        placeholder="+7 999 123 4567"
+                        value={tgAccPhone}
+                        onChange={(e) => setTgAccPhone(e.target.value)}
+                        className="flex-1 rounded-lg border-none bg-[#eff4ff] px-4 py-3 text-sm placeholder-[#434655]/50 outline-none focus:ring-2 focus:ring-[#7c3aed]/20"
+                      />
+                      <button
+                        disabled={tgAccLoading || !tgAccPhone}
+                        onClick={async () => {
+                          setTgAccLoading(true);
+                          setTgAccError("");
+                          try {
+                            const res = await api.tgAccountSendCode(tgAccPhone);
+                            setTgAccCodeHash(res.code_hash);
+                            setTgAccStep("code_sent");
+                          } catch {
+                            setTgAccError("Ошибка отправки кода");
+                          } finally {
+                            setTgAccLoading(false);
+                          }
+                        }}
+                        className="rounded-lg bg-[#7c3aed] px-6 py-3 text-sm font-bold text-white hover:brightness-110 disabled:opacity-50"
+                      >
+                        {tgAccLoading ? "..." : "Отправить код"}
+                      </button>
+                    </div>
+                  )}
+                  {tgAccStep === "idle" && tgAccError && <p className="mt-2 text-xs text-red-500">{tgAccError}</p>}
                 </div>
 
                 <hr className="border-[#c3c6d7]/10" />

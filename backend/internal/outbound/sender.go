@@ -7,6 +7,7 @@ import (
 	"log"
 	"net/smtp"
 	"strings"
+	"sync"
 	"time"
 
 	resend "github.com/resendlabs/resend-go"
@@ -14,7 +15,9 @@ import (
 	"github.com/daniil/floq/internal/prospects"
 	prospectsdomain "github.com/daniil/floq/internal/prospects/domain"
 	"github.com/daniil/floq/internal/sequences"
+	seqdomain "github.com/daniil/floq/internal/sequences/domain"
 	"github.com/daniil/floq/internal/settings"
+	"github.com/daniil/floq/internal/tgclient"
 	"github.com/google/uuid"
 )
 
@@ -30,6 +33,10 @@ type Sender struct {
 	smtpPassword string
 	seqRepo      *sequences.Repository
 	prospectRepo *prospects.Repository
+	tgRepo       *tgclient.Repository
+
+	tgLastSent   time.Time
+	tgRateMu     sync.Mutex
 }
 
 func NewSender(
@@ -37,6 +44,7 @@ func NewSender(
 	fallbackKey, fromAddress, appBaseURL string,
 	smtpHost, smtpPort, smtpUser, smtpPassword string,
 	seqRepo *sequences.Repository, prospectRepo *prospects.Repository,
+	tgRepo *tgclient.Repository,
 ) *Sender {
 	return &Sender{
 		store:        store,
@@ -50,6 +58,7 @@ func NewSender(
 		smtpPassword: smtpPassword,
 		seqRepo:      seqRepo,
 		prospectRepo: prospectRepo,
+		tgRepo:       tgRepo,
 	}
 }
 
@@ -84,6 +93,10 @@ func (s *Sender) SendPending(ctx context.Context) error {
 	}
 
 	for _, msg := range msgs {
+		if msg.Channel == "telegram" {
+			s.handleTelegramMessage(ctx, msg)
+			continue
+		}
 		if msg.Channel != "email" {
 			continue
 		}
@@ -198,6 +211,68 @@ func (s *Sender) sendSMTPWithTLS(addr string, auth smtp.Auth, host, from, to str
 	}
 
 	return client.Quit()
+}
+
+// tgRateInterval is the minimum interval between Telegram messages to avoid flood.
+const tgRateInterval = 90 * time.Second
+
+// handleTelegramMessage sends a single outbound message via personal Telegram account.
+func (s *Sender) handleTelegramMessage(ctx context.Context, msg seqdomain.OutboundMessage) {
+	if s.tgRepo == nil {
+		log.Printf("[outbound] telegram repo not configured, skipping msg %s", msg.ID)
+		return
+	}
+
+	// Rate limit: max 1 TG message per 90 seconds.
+	s.tgRateMu.Lock()
+	if since := time.Since(s.tgLastSent); since < tgRateInterval {
+		s.tgRateMu.Unlock()
+		log.Printf("[outbound] telegram rate limit: %v until next send, skipping msg %s", tgRateInterval-since, msg.ID)
+		return
+	}
+	s.tgRateMu.Unlock()
+
+	phone, sessionData, err := s.tgRepo.GetSession(ctx, s.ownerID.String())
+	if err != nil {
+		log.Printf("[outbound] error getting TG session: %v", err)
+		return
+	}
+	if len(sessionData) == 0 || phone == "" {
+		log.Printf("[outbound] no telegram session configured, skipping msg %s", msg.ID)
+		return
+	}
+
+	prospect, err := s.prospectRepo.GetProspect(ctx, msg.ProspectID)
+	if err != nil {
+		log.Printf("[outbound] error fetching prospect %s: %v", msg.ProspectID, err)
+		return
+	}
+	if prospect == nil || prospect.Phone == "" {
+		log.Printf("[outbound] prospect %s has no phone, skipping TG msg %s", msg.ProspectID, msg.ID)
+		return
+	}
+
+	tgClient := tgclient.NewClient()
+	tgClient.LoadSession(sessionData)
+
+	sendCtx, cancel := context.WithTimeout(ctx, 60*time.Second)
+	defer cancel()
+
+	if err := tgClient.SendMessage(sendCtx, prospect.Phone, msg.Body); err != nil {
+		log.Printf("[outbound] telegram send failed to %s (msg %s): %v", prospect.Phone, msg.ID, err)
+		return
+	}
+
+	s.tgRateMu.Lock()
+	s.tgLastSent = time.Now()
+	s.tgRateMu.Unlock()
+
+	if err := s.seqRepo.MarkSent(ctx, msg.ID); err != nil {
+		log.Printf("[outbound] failed to mark %s as sent: %v", msg.ID, err)
+		return
+	}
+
+	log.Printf("[outbound] sent telegram message to %s (msg %s)", prospect.Phone, msg.ID)
 }
 
 // sendViaResend sends email through the Resend API.
