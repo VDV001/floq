@@ -113,7 +113,7 @@ func (m *mockProvider) Name() string {
 // --- ProviderName ---
 
 func TestProviderName(t *testing.T) {
-	c := NewAIClient(&mockProvider{name: "openai"}, "", "", "")
+	c := NewAIClient(&mockProvider{name: "openai"}, "", "", "", "", "")
 	if got := c.ProviderName(); got != "openai" {
 		t.Errorf("expected %q, got %q", "openai", got)
 	}
@@ -123,7 +123,7 @@ func TestProviderName(t *testing.T) {
 
 func TestQualify_Success(t *testing.T) {
 	jsonResp := `{"identified_need":"website","estimated_budget":"100k","deadline":"Q1","score":8,"score_reason":"hot lead","recommended_action":"call"}`
-	c := NewAIClient(&mockProvider{response: jsonResp}, "", "", "")
+	c := NewAIClient(&mockProvider{response: jsonResp}, "", "", "", "", "")
 
 	result, err := c.Qualify(context.Background(), "John", "email", "I need a website")
 	if err != nil {
@@ -142,7 +142,7 @@ func TestQualify_Success(t *testing.T) {
 
 func TestQualify_WithMarkdownFences(t *testing.T) {
 	jsonResp := "```json\n{\"identified_need\":\"seo\",\"estimated_budget\":\"50k\",\"deadline\":\"Q2\",\"score\":5,\"score_reason\":\"medium\",\"recommended_action\":\"email\"}\n```"
-	c := NewAIClient(&mockProvider{response: jsonResp}, "", "", "")
+	c := NewAIClient(&mockProvider{response: jsonResp}, "", "", "", "", "")
 
 	result, err := c.Qualify(context.Background(), "Jane", "telegram", "Need SEO")
 	if err != nil {
@@ -154,7 +154,7 @@ func TestQualify_WithMarkdownFences(t *testing.T) {
 }
 
 func TestQualify_MalformedJSON(t *testing.T) {
-	c := NewAIClient(&mockProvider{response: "not json at all"}, "", "", "")
+	c := NewAIClient(&mockProvider{response: "not json at all"}, "", "", "", "", "")
 
 	_, err := c.Qualify(context.Background(), "John", "email", "hello")
 	if err == nil {
@@ -163,7 +163,7 @@ func TestQualify_MalformedJSON(t *testing.T) {
 }
 
 func TestQualify_ProviderError(t *testing.T) {
-	c := NewAIClient(&mockProvider{err: errors.New("api down")}, "", "", "")
+	c := NewAIClient(&mockProvider{err: errors.New("api down")}, "", "", "", "", "")
 
 	_, err := c.Qualify(context.Background(), "John", "email", "hello")
 	if err == nil {

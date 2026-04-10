@@ -149,12 +149,19 @@ export const api = {
   getSequence: (id: string) => apiFetch<{ sequence: Sequence; steps: SequenceStep[] }>(`/api/sequences/${id}`),
   createSequence: (name: string) =>
     apiFetch<Sequence>("/api/sequences", { method: "POST", body: JSON.stringify({ name }) }),
+  updateSequence: (id: string, name: string) =>
+    apiFetch<Sequence>(`/api/sequences/${id}`, { method: "PUT", body: JSON.stringify({ name }) }),
   deleteSequence: (id: string) =>
     apiFetch(`/api/sequences/${id}`, { method: "DELETE" }),
   addStep: (seqId: string, data: { step_order: number; delay_days: number; channel: string; prompt_hint: string }) =>
     apiFetch<SequenceStep>(`/api/sequences/${seqId}/steps`, { method: "POST", body: JSON.stringify(data) }),
   deleteStep: (seqId: string, stepId: string) =>
     apiFetch(`/api/sequences/${seqId}/steps/${stepId}`, { method: "DELETE" }),
+  previewMessage: (name: string, company: string, context: string, channel: string, hint: string) =>
+    apiFetch<{ text: string }>("/api/sequences/preview", {
+      method: "POST",
+      body: JSON.stringify({ name, company, context, channel, hint }),
+    }),
   launchSequence: (seqId: string, prospectIds: string[], sendNow = true) =>
     apiFetch(`/api/sequences/${seqId}/launch`, { method: "POST", body: JSON.stringify({ prospect_ids: prospectIds, send_now: sendNow }) }),
   toggleSequence: (seqId: string, isActive: boolean) =>

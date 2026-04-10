@@ -36,6 +36,8 @@ type Config struct {
 	BookingLink     string
 	SenderName      string
 	SenderCompany   string
+	SenderPhone     string
+	SenderWebsite   string
 	StaleDays       int
 }
 
@@ -71,6 +73,8 @@ func Load() *Config {
 		BookingLink:     getEnv("BOOKING_LINK", "https://calendar.app.google/CQciFBayHqi6CstB7"),
 		SenderName:      getEnv("SENDER_NAME", "Дмитрий"),
 		SenderCompany:   getEnv("SENDER_COMPANY", "dev-bot.su"),
+		SenderPhone:     os.Getenv("SENDER_PHONE"),
+		SenderWebsite:   os.Getenv("SENDER_WEBSITE"),
 		StaleDays:       getEnvInt("STALE_DAYS", 2),
 	}
 }

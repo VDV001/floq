@@ -56,6 +56,19 @@ export default function SequencesPage() {
   const [addStepDelay, setAddStepDelay] = useState(0);
   const [addStepHint, setAddStepHint] = useState("первое касание");
 
+  // Confirm dialog
+  const [confirmDialog, setConfirmDialog] = useState<{ title: string; message: string; onConfirm: () => void } | null>(null);
+
+  // Edit name dialog
+  const [editDialog, setEditDialog] = useState<{ seqId: string; currentName: string } | null>(null);
+  const [editName, setEditName] = useState("");
+
+  // Preview modal
+  const [previewStepId, setPreviewStepId] = useState<string | null>(null);
+  const [previewName, setPreviewName] = useState("Иван Петров");
+  const [previewText, setPreviewText] = useState("");
+  const [previewLoading, setPreviewLoading] = useState(false);
+
   // Launch options
   const [showLaunchOptions, setShowLaunchOptions] = useState(false);
   const [sendNow, setSendNow] = useState(true);
@@ -316,16 +329,48 @@ export default function SequencesPage() {
                 <Separator className="my-3" />
 
                 <div className="flex items-center justify-between">
-                  <Switch
-                    checked={seq.is_active}
-                    onCheckedChange={(checked) =>
-                      handleToggleSequence(seq.id, checked)
-                    }
-                    size="sm"
-                  />
-                  <button className="text-xs font-medium text-[#004ac6] hover:underline">
-                    Редактировать
-                  </button>
+                  <div className="flex items-center gap-2">
+                    <Switch
+                      checked={seq.is_active}
+                      onCheckedChange={(checked) =>
+                        handleToggleSequence(seq.id, checked)
+                      }
+                    />
+                    <span className="text-[10px] font-bold uppercase text-[#737686]">
+                      {seq.is_active ? "Активна" : "На паузе"}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-3">
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setEditName(seq.name);
+                        setEditDialog({ seqId: seq.id, currentName: seq.name });
+                      }}
+                      className="text-xs font-medium text-[#004ac6] hover:underline"
+                    >
+                      Редактировать
+                    </button>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setConfirmDialog({
+                          title: "Удалить секвенцию",
+                          message: `Вы уверены что хотите удалить "${seq.name}"? Это действие нельзя отменить.`,
+                          onConfirm: () => {
+                            api.deleteSequence(seq.id).then(() => {
+                              setSequences((prev) => prev.filter((s) => s.id !== seq.id));
+                              if (selectedSeqId === seq.id) setSelectedSeqId(null);
+                              setConfirmDialog(null);
+                            }).catch(() => { setConfirmDialog(null); });
+                          },
+                        });
+                      }}
+                      className="text-xs font-medium text-red-500 hover:underline"
+                    >
+                      Удалить
+                    </button>
+                  </div>
                 </div>
               </div>
             );
@@ -466,15 +511,22 @@ export default function SequencesPage() {
                               <Copy className="size-3.5" />
                             </button>
                             <button
-                              onClick={async () => {
-                                if (!selectedSeqId || !confirm("Удалить шаг?")) return;
-                                try {
-                                  await api.deleteStep(selectedSeqId, step.id);
-                                  const data = await api.getSequence(selectedSeqId);
-                                  setSteps(data.steps ?? []);
-                                } catch {
-                                  alert("Ошибка удаления");
-                                }
+                              onClick={() => {
+                                if (!selectedSeqId) return;
+                                const stepId = step.id;
+                                const seqId = selectedSeqId;
+                                setConfirmDialog({
+                                  title: "Удалить шаг",
+                                  message: `Удалить шаг ${step.step_order} (${CHANNEL_LABELS[step.channel]?.label || step.channel})?`,
+                                  onConfirm: async () => {
+                                    try {
+                                      await api.deleteStep(seqId, stepId);
+                                      const data = await api.getSequence(seqId);
+                                      setSteps(data.steps ?? []);
+                                    } catch { /* ignore */ }
+                                    setConfirmDialog(null);
+                                  },
+                                });
                               }}
                               className="text-[#737686] hover:text-red-500"
                             >
@@ -491,25 +543,70 @@ export default function SequencesPage() {
 
                         <div className="mt-3">
                           <button
-                            onClick={async () => {
-                              const preview = prompt("Имя проспекта для примера:", "Иван Петров");
-                              if (!preview) return;
-                              try {
-                                const msg = await api.chatWithAI(
-                                  `Сгенерируй пример ${step.channel === "email" ? "холодного письма" : step.channel === "telegram" ? "сообщения в Telegram" : "брифа для звонка"} для проспекта "${preview}" компания "Тест". Подсказка: "${step.prompt_hint || "первый контакт"}". Только текст, без пояснений.`,
-                                  [],
-                                  "sequences"
-                                );
-                                alert(msg.reply);
-                              } catch {
-                                alert("Ошибка генерации");
-                              }
-                            }}
+                            onClick={() => { setPreviewStepId(step.id); setPreviewText(""); }}
                             className="rounded-lg bg-[#004ac6] px-3 py-1.5 text-xs font-medium text-white transition hover:bg-[#004ac6]/90"
                           >
                             Сгенерировать пример
                           </button>
                         </div>
+
+                        {/* Preview inline */}
+                        {previewStepId === step.id && (
+                          <div className="mt-3 rounded-xl border border-[#004ac6]/10 bg-[#eff4ff]/50 p-4">
+                            {!previewText ? (
+                              <div className="space-y-3">
+                                <label className="block text-xs font-semibold text-[#434655]">Имя проспекта для примера</label>
+                                <input
+                                  type="text"
+                                  value={previewName}
+                                  onChange={(e) => setPreviewName(e.target.value)}
+                                  placeholder="Иван Петров"
+                                  className="w-full rounded-lg border-none bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-[#004ac6]/20"
+                                />
+                                <div className="flex gap-2">
+                                  <button
+                                    disabled={previewLoading || !previewName}
+                                    onClick={async () => {
+                                      setPreviewLoading(true);
+                                      try {
+                                        const res = await api.previewMessage(
+                                          previewName, "", "", step.channel, step.prompt_hint || "первое касание"
+                                        );
+                                        setPreviewText(res.text);
+                                      } catch {
+                                        setPreviewText("Ошибка генерации");
+                                      } finally {
+                                        setPreviewLoading(false);
+                                      }
+                                    }}
+                                    className="rounded-lg bg-[#004ac6] px-4 py-2 text-xs font-bold text-white disabled:opacity-50"
+                                  >
+                                    {previewLoading ? "Генерация..." : "Сгенерировать"}
+                                  </button>
+                                  <button
+                                    onClick={() => setPreviewStepId(null)}
+                                    className="rounded-lg border border-[#c3c6d7] px-4 py-2 text-xs font-bold text-[#434655]"
+                                  >
+                                    Отмена
+                                  </button>
+                                </div>
+                              </div>
+                            ) : (
+                              <div className="space-y-3">
+                                <p className="text-xs font-semibold text-[#434655]">Пример сообщения:</p>
+                                <div className="rounded-lg bg-white p-3 text-sm leading-relaxed text-[#0d1c2e] whitespace-pre-wrap">
+                                  {previewText}
+                                </div>
+                                <button
+                                  onClick={() => setPreviewStepId(null)}
+                                  className="text-xs font-bold text-[#004ac6] hover:underline"
+                                >
+                                  Закрыть
+                                </button>
+                              </div>
+                            )}
+                          </div>
+                        )}
                       </div>
                     );
                   })}
@@ -787,6 +884,76 @@ export default function SequencesPage() {
           </div>
         </div>
       </div>
+
+      {/* Confirm Dialog */}
+      {confirmDialog && (
+        <>
+          <div className="fixed inset-0 z-40 bg-black/20 backdrop-blur-sm" onClick={() => setConfirmDialog(null)} />
+          <div className="fixed left-1/2 top-1/2 z-50 w-96 -translate-x-1/2 -translate-y-1/2 rounded-2xl bg-white p-6 shadow-2xl">
+            <h3 className="mb-2 text-lg font-bold text-[#0d1c2e]">{confirmDialog.title}</h3>
+            <p className="mb-6 text-sm text-[#434655]">{confirmDialog.message}</p>
+            <div className="flex justify-end gap-3">
+              <button
+                onClick={() => setConfirmDialog(null)}
+                className="rounded-lg border border-[#c3c6d7] px-5 py-2.5 text-sm font-bold text-[#434655] hover:bg-[#eff4ff]"
+              >
+                Отмена
+              </button>
+              <button
+                onClick={confirmDialog.onConfirm}
+                className="rounded-lg bg-red-500 px-5 py-2.5 text-sm font-bold text-white hover:bg-red-600"
+              >
+                Удалить
+              </button>
+            </div>
+          </div>
+        </>
+      )}
+
+      {/* Edit Name Dialog */}
+      {editDialog && (
+        <>
+          <div className="fixed inset-0 z-40 bg-black/20 backdrop-blur-sm" onClick={() => setEditDialog(null)} />
+          <div className="fixed left-1/2 top-1/2 z-50 w-96 -translate-x-1/2 -translate-y-1/2 rounded-2xl bg-white p-6 shadow-2xl">
+            <h3 className="mb-4 text-lg font-bold text-[#0d1c2e]">Переименовать секвенцию</h3>
+            <input
+              type="text"
+              value={editName}
+              onChange={(e) => setEditName(e.target.value)}
+              autoFocus
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && editName.trim()) {
+                  api.updateSequence(editDialog.seqId, editName.trim()).then((updated) => {
+                    setSequences((prev) => prev.map((s) => s.id === editDialog.seqId ? { ...s, name: updated.name } : s));
+                    setEditDialog(null);
+                  }).catch(() => {});
+                }
+              }}
+              className="mb-4 w-full rounded-lg border-none bg-[#eff4ff] px-4 py-3 text-sm outline-none focus:ring-2 focus:ring-[#004ac6]/20"
+            />
+            <div className="flex justify-end gap-3">
+              <button
+                onClick={() => setEditDialog(null)}
+                className="rounded-lg border border-[#c3c6d7] px-5 py-2.5 text-sm font-bold text-[#434655] hover:bg-[#eff4ff]"
+              >
+                Отмена
+              </button>
+              <button
+                onClick={() => {
+                  if (!editName.trim()) return;
+                  api.updateSequence(editDialog.seqId, editName.trim()).then((updated) => {
+                    setSequences((prev) => prev.map((s) => s.id === editDialog.seqId ? { ...s, name: updated.name } : s));
+                    setEditDialog(null);
+                  }).catch(() => {});
+                }}
+                className="rounded-lg bg-[#004ac6] px-5 py-2.5 text-sm font-bold text-white hover:brightness-110"
+              >
+                Сохранить
+              </button>
+            </div>
+          </div>
+        </>
+      )}
     </div>
   );
 }

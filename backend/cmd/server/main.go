@@ -88,7 +88,7 @@ func main() {
 
 	// 2b. AI provider (dynamic: reads provider/model/key from DB, falls back to .env)
 	aiProvider := providers.NewDynamicProvider(settingsStore, ownerID, cfg)
-	aiClient := ai.NewAIClient(aiProvider, cfg.BookingLink, cfg.SenderName, cfg.SenderCompany)
+	aiClient := ai.NewAIClient(aiProvider, cfg.BookingLink, cfg.SenderName, cfg.SenderCompany, cfg.SenderPhone, cfg.SenderWebsite)
 
 	// 3. Repositories
 	leadsRepo := leads.NewRepository(pool)

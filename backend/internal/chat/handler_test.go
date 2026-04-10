@@ -121,7 +121,7 @@ func TestBuildSystemPrompt_NoRecentLeads(t *testing.T) {
 
 func TestChat_MissingMessage(t *testing.T) {
 	provider := &mockProvider{response: "hi"}
-	client := ai.NewAIClient(provider, "", "", "")
+	client := ai.NewAIClient(provider, "", "", "", "", "")
 	h := NewHandler(nil, client)
 
 	body, _ := json.Marshal(chatRequest{Message: "", History: nil})
@@ -139,7 +139,7 @@ func TestChat_MissingMessage(t *testing.T) {
 
 func TestChat_WhitespaceOnlyMessage(t *testing.T) {
 	provider := &mockProvider{response: "hi"}
-	client := ai.NewAIClient(provider, "", "", "")
+	client := ai.NewAIClient(provider, "", "", "", "", "")
 	h := NewHandler(nil, client)
 
 	body, _ := json.Marshal(chatRequest{Message: "   \t\n  ", History: nil})
@@ -156,7 +156,7 @@ func TestChat_WhitespaceOnlyMessage(t *testing.T) {
 
 func TestChat_Unauthorized(t *testing.T) {
 	provider := &mockProvider{response: "hi"}
-	client := ai.NewAIClient(provider, "", "", "")
+	client := ai.NewAIClient(provider, "", "", "", "", "")
 	h := NewHandler(nil, client)
 
 	body, _ := json.Marshal(chatRequest{Message: "hello"})
@@ -172,7 +172,7 @@ func TestChat_Unauthorized(t *testing.T) {
 
 func TestChat_InvalidJSON(t *testing.T) {
 	provider := &mockProvider{response: "hi"}
-	client := ai.NewAIClient(provider, "", "", "")
+	client := ai.NewAIClient(provider, "", "", "", "", "")
 	h := NewHandler(nil, client)
 
 	req := httptest.NewRequest(http.MethodPost, "/api/chat", bytes.NewReader([]byte("not json")))
@@ -191,7 +191,7 @@ func TestChat_InvalidJSON(t *testing.T) {
 
 func TestMockProvider(t *testing.T) {
 	provider := &mockProvider{response: "test response", err: nil}
-	client := ai.NewAIClient(provider, "https://book.me", "Дмитрий", "dev-bot.su")
+	client := ai.NewAIClient(provider, "https://book.me", "Дмитрий", "dev-bot.su", "", "")
 
 	resp, err := client.Complete(context.Background(), ai.CompletionRequest{
 		Messages:  []ai.Message{{Role: "user", Content: "hello"}},

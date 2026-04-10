@@ -14,6 +14,7 @@ import (
 func RegisterRoutes(router chi.Router, uc *UseCase) {
 	router.Get("/api/sequences", listSequences(uc))
 	router.Post("/api/sequences", createSequence(uc))
+	router.Post("/api/sequences/preview", previewMessage(uc))
 	router.Get("/api/sequences/{id}", getSequence(uc))
 	router.Put("/api/sequences/{id}", updateSequence(uc))
 	router.Delete("/api/sequences/{id}", deleteSequence(uc))
@@ -214,6 +215,46 @@ func deleteStep(uc *UseCase) http.HandlerFunc {
 			return
 		}
 		httputil.WriteJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
+	}
+}
+
+func previewMessage(uc *UseCase) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Name    string `json:"name"`
+			Company string `json:"company"`
+			Context string `json:"context"`
+			Channel string `json:"channel"`
+			Hint    string `json:"hint"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			httputil.WriteError(w, http.StatusBadRequest, "invalid request body")
+			return
+		}
+		if body.Name == "" {
+			httputil.WriteError(w, http.StatusBadRequest, "name is required")
+			return
+		}
+		if body.Channel == "" {
+			body.Channel = "email"
+		}
+		if body.Hint == "" {
+			body.Hint = "первое касание"
+		}
+
+		var text string
+		var err error
+		switch domain.StepChannel(body.Channel) {
+		case domain.StepChannelTelegram:
+			text, err = uc.aiGenerator.GenerateTelegramMessage(r.Context(), body.Name, "", body.Company, body.Context, body.Hint, "", "", "")
+		default:
+			text, err = uc.aiGenerator.GenerateColdMessage(r.Context(), body.Name, "", body.Company, body.Context, body.Hint, "", "", "")
+		}
+		if err != nil {
+			httputil.WriteError(w, http.StatusInternalServerError, "generation failed: "+err.Error())
+			return
+		}
+		httputil.WriteJSON(w, http.StatusOK, map[string]string{"text": text})
 	}
 }
 

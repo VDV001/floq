@@ -106,6 +106,8 @@ export default function ProspectsPage() {
   const [formCompany, setFormCompany] = useState("");
   const [formPosition, setFormPosition] = useState("");
   const [formEmail, setFormEmail] = useState("");
+  const [formPhone, setFormPhone] = useState("");
+  const [formTgUsername, setFormTgUsername] = useState("");
   const [formWhatsApp, setFormWhatsApp] = useState("");
   const [scrapeUrl, setScrapeUrl] = useState("");
   const [scrapeLoading, setScrapeLoading] = useState(false);
@@ -131,13 +133,15 @@ export default function ProspectsPage() {
   }, []);
 
   const handleAddProspect = async () => {
-    if (!formName || !formEmail) return;
+    if (!formName) { alert("Введите имя"); return; }
     try {
       await api.createProspect({
         name: formName,
         company: formCompany,
         title: formPosition,
         email: formEmail,
+        phone: formPhone || undefined,
+        telegram_username: formTgUsername || undefined,
         whatsapp: formWhatsApp || undefined,
       });
       await fetchProspects();
@@ -145,6 +149,8 @@ export default function ProspectsPage() {
       setFormCompany("");
       setFormPosition("");
       setFormEmail("");
+      setFormPhone("");
+      setFormTgUsername("");
       setFormWhatsApp("");
     } catch {
       alert("Ошибка добавления");
@@ -479,6 +485,29 @@ export default function ProspectsPage() {
                     type="email"
                     value={formEmail}
                     onChange={(e) => setFormEmail(e.target.value)}
+                  />
+                </div>
+                <div>
+                  <label className="mb-2 block text-xs font-bold uppercase tracking-wider text-[#434655]">
+                    Телефон
+                  </label>
+                  <input
+                    className="w-full rounded-lg border-none bg-[#eff4ff] px-4 py-2.5 text-sm placeholder-slate-400 outline-none transition-all focus:ring-2 focus:ring-[#004ac6]/20"
+                    placeholder="+7 900 123-45-67"
+                    type="tel"
+                    value={formPhone}
+                    onChange={(e) => setFormPhone(e.target.value)}
+                  />
+                </div>
+                <div>
+                  <label className="mb-2 block text-xs font-bold uppercase tracking-wider text-[#434655]">
+                    Telegram
+                  </label>
+                  <input
+                    className="w-full rounded-lg border-none bg-[#eff4ff] px-4 py-2.5 text-sm placeholder-slate-400 outline-none transition-all focus:ring-2 focus:ring-[#004ac6]/20"
+                    placeholder="username (без @)"
+                    value={formTgUsername}
+                    onChange={(e) => setFormTgUsername(e.target.value.replace("@", ""))}
                   />
                 </div>
                 <div>

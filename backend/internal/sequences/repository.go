@@ -216,9 +216,10 @@ func (r *Repository) UpdateOutboundBody(ctx context.Context, id uuid.UUID, body 
 
 func (r *Repository) GetPendingSends(ctx context.Context) ([]domain.OutboundMessage, error) {
 	rows, err := r.pool.Query(ctx,
-		`SELECT id, prospect_id, sequence_id, step_order, channel, body, status, scheduled_at, sent_at, created_at
-		 FROM outbound_messages
-		 WHERE status = 'approved' AND scheduled_at <= NOW()`)
+		`SELECT om.id, om.prospect_id, om.sequence_id, om.step_order, om.channel, om.body, om.status, om.scheduled_at, om.sent_at, om.created_at
+		 FROM outbound_messages om
+		 JOIN sequences s ON s.id = om.sequence_id
+		 WHERE om.status = 'approved' AND om.scheduled_at <= NOW() AND s.is_active = true`)
 	if err != nil {
 		return nil, fmt.Errorf("get pending sends: %w", err)
 	}

@@ -45,14 +45,18 @@ type AIClient struct {
 	bookingLink   string
 	senderName    string
 	senderCompany string
+	senderPhone   string
+	senderWebsite string
 }
 
-func NewAIClient(provider Provider, bookingLink, senderName, senderCompany string) *AIClient {
+func NewAIClient(provider Provider, bookingLink, senderName, senderCompany, senderPhone, senderWebsite string) *AIClient {
 	return &AIClient{
 		provider:      provider,
 		bookingLink:   bookingLink,
 		senderName:    senderName,
 		senderCompany: senderCompany,
+		senderPhone:   senderPhone,
+		senderWebsite: senderWebsite,
 	}
 }
 
@@ -64,6 +68,8 @@ func (c *AIClient) resolveSenderVars(prompt string) string {
 	r := strings.NewReplacer(
 		"{{sender_name}}", c.senderName,
 		"{{sender_company}}", c.senderCompany,
+		"{{sender_phone}}", c.senderPhone,
+		"{{sender_website}}", c.senderWebsite,
 	)
 	return r.Replace(prompt)
 }
@@ -212,7 +218,7 @@ func (c *AIClient) GenerateTelegramMessage(ctx context.Context, name, title, com
 			{Role: "system", Content: systemPrompt},
 			{Role: "user", Content: r.Replace(TelegramOutreachUser)},
 		},
-		MaxTokens: 512,
+		MaxTokens: 2048,
 	})
 	if err != nil {
 		return "", fmt.Errorf("ai telegram message: %w", err)
@@ -245,7 +251,7 @@ func (c *AIClient) GenerateTelegramReply(ctx context.Context, name, title, compa
 			{Role: "system", Content: systemPrompt},
 			{Role: "user", Content: r.Replace(TelegramConversationUser)},
 		},
-		MaxTokens: 512,
+		MaxTokens: 2048,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("ai telegram reply: %w", err)
