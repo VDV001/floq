@@ -38,6 +38,9 @@ type Repository interface {
 	// Outbound message lookup
 	GetOutboundMessage(ctx context.Context, id uuid.UUID) (*OutboundMessage, error)
 
+	// Conversation history
+	GetConversationHistory(ctx context.Context, prospectID uuid.UUID) ([]ConversationEntry, error)
+
 	// Prompt feedback
 	SavePromptFeedback(ctx context.Context, userID uuid.UUID, original, edited, prospectContext, channel string) error
 	GetRecentFeedback(ctx context.Context, userID uuid.UUID, limit int) ([]PromptFeedback, error)

@@ -3,6 +3,7 @@ package sequences
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/daniil/floq/internal/sequences/domain"
 	"github.com/google/uuid"
@@ -308,6 +309,32 @@ func (r *Repository) GetRecentFeedback(ctx context.Context, userID uuid.UUID, li
 		feedback = append(feedback, f)
 	}
 	return feedback, rows.Err()
+}
+
+func (r *Repository) GetConversationHistory(ctx context.Context, prospectID uuid.UUID) ([]domain.ConversationEntry, error) {
+	rows, err := r.pool.Query(ctx,
+		`SELECT body, status, sent_at
+		 FROM outbound_messages
+		 WHERE prospect_id = $1 AND status IN ('sent', 'approved')
+		 ORDER BY created_at ASC`, prospectID)
+	if err != nil {
+		return nil, fmt.Errorf("get conversation history: %w", err)
+	}
+	defer rows.Close()
+
+	var entries []domain.ConversationEntry
+	for rows.Next() {
+		var e domain.ConversationEntry
+		var sentAt *time.Time
+		if err := rows.Scan(&e.Body, &e.Status, &sentAt); err != nil {
+			return nil, fmt.Errorf("scan conversation entry: %w", err)
+		}
+		if sentAt != nil {
+			e.SentAt = *sentAt
+		}
+		entries = append(entries, e)
+	}
+	return entries, rows.Err()
 }
 
 func (r *Repository) GetStats(ctx context.Context, userID uuid.UUID) (*domain.Stats, error) {

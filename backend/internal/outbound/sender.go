@@ -251,12 +251,15 @@ func (s *Sender) handleTelegramMessage(ctx context.Context, msg seqdomain.Outbou
 		return
 	}
 
-	// Determine target: phone or @username
-	target := prospect.Phone
-	if target == "" && prospect.TelegramUsername != "" {
-		target = "@" + prospect.TelegramUsername
+	// Determine targets: try username first (more reliable), then phone
+	var targets []string
+	if prospect.TelegramUsername != "" {
+		targets = append(targets, "@"+prospect.TelegramUsername)
 	}
-	if target == "" {
+	if prospect.Phone != "" {
+		targets = append(targets, prospect.Phone)
+	}
+	if len(targets) == 0 {
 		log.Printf("[outbound] prospect %s has no phone or TG username, skipping msg %s", msg.ProspectID, msg.ID)
 		return
 	}
@@ -267,8 +270,19 @@ func (s *Sender) handleTelegramMessage(ctx context.Context, msg seqdomain.Outbou
 	sendCtx, cancel := context.WithTimeout(ctx, 60*time.Second)
 	defer cancel()
 
-	if err := tgClient.SendMessage(sendCtx, target, msg.Body); err != nil {
-		log.Printf("[outbound] telegram send failed to %s (msg %s): %v", target, msg.ID, err)
+	var lastErr error
+	for _, target := range targets {
+		if err := tgClient.SendMessage(sendCtx, target, msg.Body); err != nil {
+			log.Printf("[outbound] telegram attempt %s failed (msg %s): %v", target, msg.ID, err)
+			lastErr = err
+			continue
+		}
+		lastErr = nil
+		log.Printf("[outbound] sent telegram message via %s (msg %s)", target, msg.ID)
+		break
+	}
+	if lastErr != nil {
+		log.Printf("[outbound] telegram send failed for all targets (msg %s): %v", msg.ID, lastErr)
 		return
 	}
 

@@ -107,6 +107,12 @@ type Stats struct {
 	Bounced  int
 }
 
+type ConversationEntry struct {
+	Body   string
+	Status string
+	SentAt time.Time
+}
+
 type PromptFeedback struct {
 	ID              uuid.UUID
 	UserID          uuid.UUID

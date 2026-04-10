@@ -96,9 +96,19 @@ func (c *Client) newTelegramClient() *telegram.Client {
 	})
 }
 
+// normalizePhone ensures phone number starts with +.
+func normalizePhone(phone string) string {
+	phone = strings.TrimSpace(phone)
+	if phone != "" && !strings.HasPrefix(phone, "+") {
+		phone = "+" + phone
+	}
+	return phone
+}
+
 // SendCode sends an auth code to the given phone number.
 // Returns the code hash needed for SignIn.
 func (c *Client) SendCode(ctx context.Context, phone string) (codeHash string, err error) {
+	phone = normalizePhone(phone)
 	client := c.newTelegramClient()
 
 	err = client.Run(ctx, func(ctx context.Context) error {
@@ -120,6 +130,7 @@ func (c *Client) SendCode(ctx context.Context, phone string) (codeHash string, e
 
 // SignIn completes authentication with the code received via SMS/Telegram.
 func (c *Client) SignIn(ctx context.Context, phone, code, codeHash string) error {
+	phone = normalizePhone(phone)
 	client := c.newTelegramClient()
 
 	return client.Run(ctx, func(ctx context.Context) error {

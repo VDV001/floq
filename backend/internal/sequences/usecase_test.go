@@ -77,6 +77,9 @@ func (m *mockRepo) SavePromptFeedback(_ context.Context, _ uuid.UUID, _, _, _, _
 func (m *mockRepo) GetRecentFeedback(_ context.Context, _ uuid.UUID, _ int) ([]domain.PromptFeedback, error) {
 	return nil, nil
 }
+func (m *mockRepo) GetConversationHistory(_ context.Context, _ uuid.UUID) ([]domain.ConversationEntry, error) {
+	return nil, nil
+}
 
 // --- Mock AI Generator ---
 

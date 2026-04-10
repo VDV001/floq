@@ -97,21 +97,39 @@ func (uc *UseCase) Launch(ctx context.Context, sequenceID uuid.UUID, prospectIDs
 			continue
 		}
 
+		// Load conversation history for this prospect (previously sent/approved messages).
+		var conversationContext string
+		history, histErr := uc.repo.GetConversationHistory(ctx, pid)
+		if histErr == nil && len(history) > 0 {
+			var b strings.Builder
+			b.WriteString("Наши сообщения:")
+			for i, entry := range history {
+				fmt.Fprintf(&b, "\n%d. \"%s\"", i+1, entry.Body)
+			}
+			conversationContext = b.String()
+		}
+
 		var cumulativeDelay int
 		var previousBody string
 		for _, step := range steps {
 			cumulativeDelay += step.DelayDays
+
+			// Use conversation history as context if available, otherwise fall back to previous step body.
+			prevCtx := previousBody
+			if conversationContext != "" {
+				prevCtx = conversationContext
+			}
 
 			var body string
 			var genErr error
 
 			switch step.Channel {
 			case domain.StepChannelTelegram:
-				body, genErr = uc.aiGenerator.GenerateTelegramMessage(ctx, prospect.Name, prospect.Title, prospect.Company, prospect.Context, step.PromptHint, previousBody, prospect.Source, feedbackExamples)
+				body, genErr = uc.aiGenerator.GenerateTelegramMessage(ctx, prospect.Name, prospect.Title, prospect.Company, prospect.Context, step.PromptHint, prevCtx, prospect.Source, feedbackExamples)
 			case domain.StepChannelPhoneCall:
-				body, genErr = uc.aiGenerator.GenerateCallBrief(ctx, prospect.Name, prospect.Title, prospect.Company, prospect.Context, step.PromptHint, previousBody)
+				body, genErr = uc.aiGenerator.GenerateCallBrief(ctx, prospect.Name, prospect.Title, prospect.Company, prospect.Context, step.PromptHint, prevCtx)
 			default: // "email" or empty
-				body, genErr = uc.aiGenerator.GenerateColdMessage(ctx, prospect.Name, prospect.Title, prospect.Company, prospect.Context, step.PromptHint, previousBody, prospect.Source, feedbackExamples)
+				body, genErr = uc.aiGenerator.GenerateColdMessage(ctx, prospect.Name, prospect.Title, prospect.Company, prospect.Context, step.PromptHint, prevCtx, prospect.Source, feedbackExamples)
 			}
 			if genErr != nil {
 				return fmt.Errorf("launch: generate message for prospect %s step %d: %w", pid, step.StepOrder, genErr)

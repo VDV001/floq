@@ -531,7 +531,10 @@ export default function SettingsPage() {
                             await api.tgAccountDisconnect();
                             setTgAccStep("idle");
                             setTgAccConnectedPhone("");
-                          } catch { /* ignore */ }
+                            setTgAccPhone("");
+                          } catch {
+                            setTgAccError("Ошибка отключения");
+                          }
                         }}
                         className="text-xs font-bold text-red-500 hover:underline"
                       >
@@ -540,19 +543,27 @@ export default function SettingsPage() {
                     </div>
                   ) : tgAccStep === "code_sent" ? (
                     <div className="space-y-3">
-                      <p className="text-xs text-[#434655]">
-                        Код отправлен на <span className="font-bold">{tgAccPhone}</span> в Telegram
-                      </p>
+                      <div className="rounded-lg bg-[#eff4ff] px-4 py-3">
+                        <p className="text-xs text-[#434655]">
+                          Код отправлен на <span className="font-bold">{tgAccPhone}</span> в Telegram.
+                          Проверьте «Избранное» или SMS.
+                        </p>
+                      </div>
                       <div className="flex gap-3">
                         <input
                           type="text"
-                          placeholder="Введите код..."
+                          inputMode="numeric"
+                          maxLength={6}
+                          placeholder="Код из Telegram"
                           value={tgAccCode}
-                          onChange={(e) => setTgAccCode(e.target.value)}
-                          className="flex-1 rounded-lg border-none bg-[#eff4ff] px-4 py-3 text-sm outline-none focus:ring-2 focus:ring-[#7c3aed]/20"
+                          onChange={(e) => {
+                            setTgAccCode(e.target.value.replace(/\D/g, ""));
+                            setTgAccError("");
+                          }}
+                          className={`flex-1 rounded-lg border-none bg-[#eff4ff] px-4 py-3 text-sm text-center tracking-widest font-mono outline-none focus:ring-2 focus:ring-[#7c3aed]/20 ${tgAccError ? "ring-2 ring-red-300" : ""}`}
                         />
                         <button
-                          disabled={tgAccLoading || !tgAccCode}
+                          disabled={tgAccLoading || tgAccCode.length < 4}
                           onClick={async () => {
                             setTgAccLoading(true);
                             setTgAccError("");
@@ -561,8 +572,18 @@ export default function SettingsPage() {
                               setTgAccStep("connected");
                               setTgAccConnectedPhone(tgAccPhone);
                               setTgAccCode("");
-                            } catch {
-                              setTgAccError("Неверный код");
+                            } catch (err) {
+                              const msg = err instanceof Error ? err.message : "";
+                              if (msg.includes("PHONE_CODE_INVALID") || msg.includes("400")) {
+                                setTgAccError("Неверный код. Проверьте и попробуйте ещё раз.");
+                              } else if (msg.includes("PHONE_CODE_EXPIRED")) {
+                                setTgAccError("Код истёк. Запросите новый.");
+                                setTgAccStep("idle");
+                              } else if (msg.includes("SESSION_PASSWORD_NEEDED")) {
+                                setTgAccError("Аккаунт защищён 2FA паролем. Пока не поддерживается.");
+                              } else {
+                                setTgAccError("Ошибка авторизации. Попробуйте позже.");
+                              }
                             } finally {
                               setTgAccLoading(false);
                             }
@@ -572,39 +593,70 @@ export default function SettingsPage() {
                           {tgAccLoading ? "..." : "Подтвердить"}
                         </button>
                       </div>
-                      {tgAccError && <p className="text-xs text-red-500">{tgAccError}</p>}
+                      <div className="flex items-center justify-between">
+                        {tgAccError && <p className="text-xs text-red-500">{tgAccError}</p>}
+                        <button
+                          onClick={() => { setTgAccStep("idle"); setTgAccCode(""); setTgAccError(""); }}
+                          className="ml-auto text-xs text-[#434655] hover:underline"
+                        >
+                          Ввести другой номер
+                        </button>
+                      </div>
                     </div>
                   ) : (
-                    <div className="flex gap-3">
-                      <input
-                        type="text"
-                        placeholder="+7 999 123 4567"
-                        value={tgAccPhone}
-                        onChange={(e) => setTgAccPhone(e.target.value)}
-                        className="flex-1 rounded-lg border-none bg-[#eff4ff] px-4 py-3 text-sm placeholder-[#434655]/50 outline-none focus:ring-2 focus:ring-[#7c3aed]/20"
-                      />
-                      <button
-                        disabled={tgAccLoading || !tgAccPhone}
-                        onClick={async () => {
-                          setTgAccLoading(true);
-                          setTgAccError("");
-                          try {
-                            const res = await api.tgAccountSendCode(tgAccPhone);
-                            setTgAccCodeHash(res.code_hash);
-                            setTgAccStep("code_sent");
-                          } catch {
-                            setTgAccError("Ошибка отправки кода");
-                          } finally {
-                            setTgAccLoading(false);
-                          }
-                        }}
-                        className="rounded-lg bg-[#7c3aed] px-6 py-3 text-sm font-bold text-white hover:brightness-110 disabled:opacity-50"
-                      >
-                        {tgAccLoading ? "..." : "Отправить код"}
-                      </button>
+                    <div className="space-y-3">
+                      <p className="text-xs text-[#434655]/70">
+                        Введите номер телефона в международном формате (начинается с +)
+                      </p>
+                      <div className="flex gap-3">
+                        <input
+                          type="tel"
+                          placeholder="+7 999 123 4567"
+                          value={tgAccPhone}
+                          onChange={(e) => {
+                            let v = e.target.value.replace(/[^\d+\s()-]/g, "");
+                            if (v && !v.startsWith("+")) v = "+" + v;
+                            setTgAccPhone(v);
+                            setTgAccError("");
+                          }}
+                          className={`flex-1 rounded-lg border-none bg-[#eff4ff] px-4 py-3 text-sm placeholder-[#434655]/50 outline-none focus:ring-2 focus:ring-[#7c3aed]/20 ${tgAccError ? "ring-2 ring-red-300" : ""}`}
+                        />
+                        <button
+                          disabled={tgAccLoading || !tgAccPhone || tgAccPhone.replace(/\D/g, "").length < 10}
+                          onClick={async () => {
+                            const clean = tgAccPhone.replace(/[\s()-]/g, "");
+                            if (!clean.startsWith("+") || clean.replace(/\D/g, "").length < 10) {
+                              setTgAccError("Введите номер в формате +7XXXXXXXXXX");
+                              return;
+                            }
+                            setTgAccLoading(true);
+                            setTgAccError("");
+                            try {
+                              const res = await api.tgAccountSendCode(clean);
+                              setTgAccCodeHash(res.code_hash);
+                              setTgAccPhone(clean);
+                              setTgAccStep("code_sent");
+                            } catch (err) {
+                              const msg = err instanceof Error ? err.message : "";
+                              if (msg.includes("PHONE_NUMBER_INVALID") || msg.includes("400")) {
+                                setTgAccError("Неверный номер телефона. Проверьте формат.");
+                              } else if (msg.includes("PHONE_NUMBER_FLOOD")) {
+                                setTgAccError("Слишком много попыток. Подождите 10 минут.");
+                              } else {
+                                setTgAccError("Не удалось отправить код. Попробуйте позже.");
+                              }
+                            } finally {
+                              setTgAccLoading(false);
+                            }
+                          }}
+                          className="rounded-lg bg-[#7c3aed] px-6 py-3 text-sm font-bold text-white hover:brightness-110 disabled:opacity-50"
+                        >
+                          {tgAccLoading ? "..." : "Отправить код"}
+                        </button>
+                      </div>
+                      {tgAccError && <p className="text-xs text-red-500">{tgAccError}</p>}
                     </div>
                   )}
-                  {tgAccStep === "idle" && tgAccError && <p className="mt-2 text-xs text-red-500">{tgAccError}</p>}
                 </div>
 
                 <hr className="border-[#c3c6d7]/10" />

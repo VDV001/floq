@@ -269,7 +269,7 @@ export function FloatingActionButton() {
                 className={`mb-3 flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}
               >
                 <div
-                  className={`rounded-2xl px-4 py-2.5 text-sm leading-relaxed ${
+                  className={`rounded-2xl px-4 py-2.5 text-sm leading-relaxed overflow-hidden break-words ${
                     expanded ? "max-w-[85%]" : "max-w-[80%]"
                   } ${
                     msg.role === "user"
@@ -280,7 +280,7 @@ export function FloatingActionButton() {
                   {msg.role === "user" ? (
                     msg.content
                   ) : (
-                    <div className="prose prose-sm max-w-none prose-headings:text-[#0d1c2e] prose-headings:text-sm prose-headings:font-bold prose-p:my-1 prose-ul:my-1 prose-li:my-0 prose-table:text-xs prose-th:px-2 prose-th:py-1 prose-td:px-2 prose-td:py-1 prose-strong:text-[#0d1c2e]">
+                    <div className="prose prose-sm max-w-none overflow-x-auto prose-headings:text-[#0d1c2e] prose-headings:text-sm prose-headings:font-bold prose-p:my-1 prose-ul:my-1 prose-li:my-0 prose-table:text-xs prose-th:px-2 prose-th:py-1 prose-td:px-2 prose-td:py-1 prose-strong:text-[#0d1c2e]">
                       <ReactMarkdown>{msg.content}</ReactMarkdown>
                     </div>
                   )}

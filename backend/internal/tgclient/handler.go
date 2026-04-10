@@ -2,6 +2,7 @@ package tgclient
 
 import (
 	"encoding/json"
+	"log"
 	"net/http"
 
 	"github.com/daniil/floq/internal/httputil"
@@ -104,6 +105,7 @@ func (h *handler) verify(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.client.SignIn(r.Context(), req.Phone, req.Code, req.CodeHash); err != nil {
+		log.Printf("[tgclient] sign in error for %s: %v", req.Phone, err)
 		httputil.WriteError(w, http.StatusBadRequest, "sign in failed: "+err.Error())
 		return
 	}

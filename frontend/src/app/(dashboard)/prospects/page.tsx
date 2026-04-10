@@ -111,6 +111,8 @@ export default function ProspectsPage() {
   const [scrapeLoading, setScrapeLoading] = useState(false);
   const [scrapeResults, setScrapeResults] = useState<string[]>([]);
   const [scrapeError, setScrapeError] = useState("");
+  const [page, setPage] = useState(1);
+  const perPage = 15;
 
   const fetchProspects = async () => {
     setLoading(true);
@@ -169,6 +171,15 @@ export default function ProspectsPage() {
         );
       })
     : prospects;
+
+  const totalPages = Math.max(1, Math.ceil(filteredProspects.length / perPage));
+  const safePage = Math.min(page, totalPages);
+  const pagedProspects = filteredProspects.slice((safePage - 1) * perPage, safePage * perPage);
+  const rangeStart = (safePage - 1) * perPage + 1;
+  const rangeEnd = Math.min(safePage * perPage, filteredProspects.length);
+
+  // Reset page on search change
+  useEffect(() => { setPage(1); }, [searchQuery]);
 
   const handleScrape = async () => {
     setScrapeLoading(true);
@@ -305,7 +316,7 @@ export default function ProspectsPage() {
                       </td>
                     </tr>
                   )}
-                  {filteredProspects.map((p, idx) => (
+                  {pagedProspects.map((p, idx) => (
                     <tr
                       key={`${p.email || idx}-${idx}`}
                       className="transition-colors hover:bg-[#eff4ff]/30"
@@ -362,7 +373,7 @@ export default function ProspectsPage() {
                       </td>
                       <td className="px-6 py-4">
                         <span
-                          className={`rounded-full px-3 py-1 text-[11px] font-bold uppercase tracking-wide ${STATUS_STYLES[p.status]}`}
+                          className={`whitespace-nowrap rounded-full px-3 py-1 text-[11px] font-bold uppercase tracking-wide ${STATUS_STYLES[p.status]}`}
                         >
                           {p.status}
                         </span>
@@ -381,22 +392,39 @@ export default function ProspectsPage() {
             {/* Pagination */}
             <div className="flex items-center justify-between border-t border-[#c3c6d7]/10 bg-[#eff4ff]/30 px-6 py-4">
               <p className="text-xs font-medium text-[#434655]">
-                Показано {filteredProspects.length} из {prospects.length} проспектов
+                {rangeStart}–{rangeEnd} из {filteredProspects.length} проспектов
               </p>
-              <div className="flex gap-2">
-                <button className="flex size-8 items-center justify-center rounded border border-[#c3c6d7]/30 bg-white text-slate-400 shadow-sm transition-all hover:text-[#004ac6]">
-                  <ChevronLeft className="size-[18px]" />
-                </button>
-                <button className="flex size-8 items-center justify-center rounded bg-[#004ac6] text-xs font-bold text-white shadow-md">
-                  1
-                </button>
-                <button className="flex size-8 items-center justify-center rounded border border-[#c3c6d7]/30 bg-white text-xs font-bold text-slate-600 shadow-sm transition-all hover:bg-slate-50">
-                  2
-                </button>
-                <button className="flex size-8 items-center justify-center rounded border border-[#c3c6d7]/30 bg-white text-slate-400 shadow-sm transition-all hover:text-[#004ac6]">
-                  <ChevronRight className="size-[18px]" />
-                </button>
-              </div>
+              {totalPages > 1 && (
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => setPage((p) => Math.max(1, p - 1))}
+                    disabled={safePage <= 1}
+                    className="flex size-8 items-center justify-center rounded border border-[#c3c6d7]/30 bg-white text-slate-400 shadow-sm transition-all hover:text-[#004ac6] disabled:opacity-40"
+                  >
+                    <ChevronLeft className="size-[18px]" />
+                  </button>
+                  {Array.from({ length: totalPages }, (_, i) => i + 1).map((p) => (
+                    <button
+                      key={p}
+                      onClick={() => setPage(p)}
+                      className={`flex size-8 items-center justify-center rounded text-xs font-bold shadow-sm transition-all ${
+                        p === safePage
+                          ? "bg-[#004ac6] text-white shadow-md"
+                          : "border border-[#c3c6d7]/30 bg-white text-slate-600 hover:bg-slate-50"
+                      }`}
+                    >
+                      {p}
+                    </button>
+                  ))}
+                  <button
+                    onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+                    disabled={safePage >= totalPages}
+                    className="flex size-8 items-center justify-center rounded border border-[#c3c6d7]/30 bg-white text-slate-400 shadow-sm transition-all hover:text-[#004ac6] disabled:opacity-40"
+                  >
+                    <ChevronRight className="size-[18px]" />
+                  </button>
+                </div>
+              )}
             </div>
           </div>
 
