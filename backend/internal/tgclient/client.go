@@ -2,15 +2,17 @@ package tgclient
 
 import (
 	"context"
-	"crypto/rand"
 	"fmt"
 	"log"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/gotd/td/session"
 	"github.com/gotd/td/telegram"
 	"github.com/gotd/td/telegram/auth"
+	"github.com/gotd/td/telegram/message"
+	"github.com/gotd/td/telegram/message/peer"
 	"github.com/gotd/td/tg"
 	"github.com/gotd/td/tgerr"
 )
@@ -148,20 +150,28 @@ func (c *Client) IsAuthorized(ctx context.Context) bool {
 	return authorized
 }
 
-// SendMessage resolves a phone number to a Telegram peer and sends a text message.
+// SendMessage sends a text message to a Telegram user.
+// Accepts phone number (+7...) or username (@user).
+// Uses message.Sender fluent API (recommended by gotd/td).
 // Handles FloodWait errors by sleeping and retrying once.
-func (c *Client) SendMessage(ctx context.Context, phone, text string) error {
+func (c *Client) SendMessage(ctx context.Context, target, text string) error {
 	client := c.newTelegramClient()
 
 	return client.Run(ctx, func(ctx context.Context) error {
 		api := tg.NewClient(client)
+		sender := message.NewSender(api).WithResolver(peer.DefaultResolver(api))
 
-		return c.sendMessageWithRetry(ctx, api, phone, text)
+		return c.sendWithRetry(ctx, sender, target, text)
 	})
 }
 
-func (c *Client) sendMessageWithRetry(ctx context.Context, api *tg.Client, phone, text string) error {
-	err := c.doSendMessage(ctx, api, phone, text)
+// SendMessageByUsername sends a message to a user by their @username.
+func (c *Client) SendMessageByUsername(ctx context.Context, username, text string) error {
+	return c.SendMessage(ctx, "@"+username, text)
+}
+
+func (c *Client) sendWithRetry(ctx context.Context, sender *message.Sender, target, text string) error {
+	err := c.doSend(ctx, sender, target, text)
 	if err == nil {
 		return nil
 	}
@@ -176,60 +186,26 @@ func (c *Client) sendMessageWithRetry(ctx context.Context, api *tg.Client, phone
 		case <-ctx.Done():
 			return ctx.Err()
 		}
-		return c.doSendMessage(ctx, api, phone, text)
+		return c.doSend(ctx, sender, target, text)
 	}
 
 	return err
 }
 
-func (c *Client) doSendMessage(ctx context.Context, api *tg.Client, phone, text string) error {
-	resolved, err := api.ContactsResolvePhone(ctx, phone)
+func (c *Client) doSend(ctx context.Context, sender *message.Sender, target, text string) error {
+	var reqBuilder *message.RequestBuilder
+
+	if strings.HasPrefix(target, "@") {
+		// Resolve by username
+		reqBuilder = sender.Resolve(target)
+	} else {
+		// Resolve by phone number
+		reqBuilder = sender.ResolvePhone(target)
+	}
+
+	_, err := reqBuilder.Text(ctx, text)
 	if err != nil {
-		return fmt.Errorf("resolve phone %s: %w", phone, err)
+		return fmt.Errorf("send message to %s: %w", target, err)
 	}
-
-	if len(resolved.Users) == 0 {
-		return fmt.Errorf("no user found for phone %s", phone)
-	}
-
-	user, ok := resolved.Users[0].AsNotEmpty()
-	if !ok {
-		return fmt.Errorf("resolved user is empty for phone %s", phone)
-	}
-
-	accessHash, ok := user.GetAccessHash()
-	if !ok {
-		return fmt.Errorf("no access hash for user %d", user.ID)
-	}
-
-	peer := &tg.InputPeerUser{
-		UserID:     user.ID,
-		AccessHash: accessHash,
-	}
-
-	randomID, err := cryptoRandomInt64()
-	if err != nil {
-		return fmt.Errorf("generate random id: %w", err)
-	}
-
-	_, err = api.MessagesSendMessage(ctx, &tg.MessagesSendMessageRequest{
-		Peer:     peer,
-		Message:  text,
-		RandomID: randomID,
-	})
-	if err != nil {
-		return fmt.Errorf("send message to %s: %w", phone, err)
-	}
-
 	return nil
-}
-
-// cryptoRandomInt64 generates a cryptographically random int64 for message dedup.
-func cryptoRandomInt64() (int64, error) {
-	var b [8]byte
-	if _, err := rand.Read(b[:]); err != nil {
-		return 0, err
-	}
-	return int64(b[0]) | int64(b[1])<<8 | int64(b[2])<<16 | int64(b[3])<<24 |
-		int64(b[4])<<32 | int64(b[5])<<40 | int64(b[6])<<48 | int64(b[7])<<56, nil
 }

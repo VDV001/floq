@@ -247,8 +247,17 @@ func (s *Sender) handleTelegramMessage(ctx context.Context, msg seqdomain.Outbou
 		log.Printf("[outbound] error fetching prospect %s: %v", msg.ProspectID, err)
 		return
 	}
-	if prospect == nil || prospect.Phone == "" {
-		log.Printf("[outbound] prospect %s has no phone, skipping TG msg %s", msg.ProspectID, msg.ID)
+	if prospect == nil {
+		return
+	}
+
+	// Determine target: phone or @username
+	target := prospect.Phone
+	if target == "" && prospect.TelegramUsername != "" {
+		target = "@" + prospect.TelegramUsername
+	}
+	if target == "" {
+		log.Printf("[outbound] prospect %s has no phone or TG username, skipping msg %s", msg.ProspectID, msg.ID)
 		return
 	}
 
@@ -258,8 +267,8 @@ func (s *Sender) handleTelegramMessage(ctx context.Context, msg seqdomain.Outbou
 	sendCtx, cancel := context.WithTimeout(ctx, 60*time.Second)
 	defer cancel()
 
-	if err := tgClient.SendMessage(sendCtx, prospect.Phone, msg.Body); err != nil {
-		log.Printf("[outbound] telegram send failed to %s (msg %s): %v", prospect.Phone, msg.ID, err)
+	if err := tgClient.SendMessage(sendCtx, target, msg.Body); err != nil {
+		log.Printf("[outbound] telegram send failed to %s (msg %s): %v", target, msg.ID, err)
 		return
 	}
 
