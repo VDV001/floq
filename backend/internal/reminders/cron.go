@@ -5,27 +5,19 @@ import (
 	"fmt"
 	"log"
 	"time"
-
-	"github.com/jackc/pgx/v5/pgxpool"
-
-	"github.com/daniil/floq/internal/ai"
-	"github.com/daniil/floq/internal/leads"
-	"github.com/daniil/floq/internal/notify"
 )
 
 // Cron periodically checks for stale leads and creates follow-up reminders.
 type Cron struct {
-	pool      *pgxpool.Pool
-	repo      *leads.Repository
-	aiClient  *ai.AIClient
-	notifier  *notify.TelegramNotifier
+	repo      LeadRepository
+	aiClient  FollowupGenerator
+	notifier  Notifier
 	staleDays int
 }
 
 // NewCron creates a new Cron instance.
-func NewCron(pool *pgxpool.Pool, repo *leads.Repository, aiClient *ai.AIClient, notifier *notify.TelegramNotifier, staleDays int) *Cron {
+func NewCron(repo LeadRepository, aiClient FollowupGenerator, notifier Notifier, staleDays int) *Cron {
 	return &Cron{
-		pool:      pool,
 		repo:      repo,
 		aiClient:  aiClient,
 		notifier:  notifier,
@@ -86,7 +78,7 @@ func (c *Cron) check(ctx context.Context) {
 
 		// Send alert to the manager via Telegram.
 		if c.notifier != nil {
-			if err := c.notifier.SendAlert(lead.ContactName, lead.Company, body); err != nil {
+			if err := c.notifier.SendAlert(ctx, lead.ContactName, lead.Company, body); err != nil {
 				log.Printf("reminders cron: error sending alert for lead %s: %v", lead.ID, err)
 			}
 		}

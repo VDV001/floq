@@ -12,17 +12,14 @@ import (
 
 	resend "github.com/resendlabs/resend-go"
 
-	"github.com/daniil/floq/internal/prospects"
 	prospectsdomain "github.com/daniil/floq/internal/prospects/domain"
-	"github.com/daniil/floq/internal/sequences"
 	seqdomain "github.com/daniil/floq/internal/sequences/domain"
-	"github.com/daniil/floq/internal/settings"
-	"github.com/daniil/floq/internal/tgclient"
+	settingsdomain "github.com/daniil/floq/internal/settings/domain"
 	"github.com/google/uuid"
 )
 
 type Sender struct {
-	store        *settings.Store
+	store        ConfigStore
 	ownerID      uuid.UUID
 	fallbackKey  string
 	fromAddress  string
@@ -31,20 +28,22 @@ type Sender struct {
 	smtpPort     string
 	smtpUser     string
 	smtpPassword string
-	seqRepo      *sequences.Repository
-	prospectRepo *prospects.Repository
-	tgRepo       *tgclient.Repository
+	seqRepo      OutboundRepository
+	prospectRepo ProspectLookup
+	tgRepo       TelegramSessionStore
+	tgMessenger  TelegramMessenger
 
-	tgLastSent   time.Time
-	tgRateMu     sync.Mutex
+	tgLastSent time.Time
+	tgRateMu   sync.Mutex
 }
 
 func NewSender(
-	store *settings.Store, ownerID uuid.UUID,
+	store ConfigStore, ownerID uuid.UUID,
 	fallbackKey, fromAddress, appBaseURL string,
 	smtpHost, smtpPort, smtpUser, smtpPassword string,
-	seqRepo *sequences.Repository, prospectRepo *prospects.Repository,
-	tgRepo *tgclient.Repository,
+	seqRepo OutboundRepository, prospectRepo ProspectLookup,
+	tgRepo TelegramSessionStore,
+	tgMessenger TelegramMessenger,
 ) *Sender {
 	return &Sender{
 		store:        store,
@@ -59,6 +58,7 @@ func NewSender(
 		seqRepo:      seqRepo,
 		prospectRepo: prospectRepo,
 		tgRepo:       tgRepo,
+		tgMessenger:  tgMessenger,
 	}
 }
 
@@ -69,18 +69,10 @@ func (s *Sender) SendPending(ctx context.Context) error {
 	smtpHost, smtpPort, smtpUser, smtpPassword := s.smtpHost, s.smtpPort, s.smtpUser, s.smtpPassword
 	fromAddr := s.fromAddress
 	if cfg, err := s.store.GetConfig(ctx, s.ownerID); err == nil {
-		if cfg.SMTPHost != "" {
-			smtpHost = cfg.SMTPHost
-		}
-		if cfg.SMTPPort != "" {
-			smtpPort = cfg.SMTPPort
-		}
-		if cfg.SMTPUser != "" {
-			smtpUser = cfg.SMTPUser
-		}
-		if cfg.SMTPPassword != "" {
-			smtpPassword = cfg.SMTPPassword
-		}
+		smtpHost = settingsdomain.ResolveConfig(cfg.SMTPHost, smtpHost)
+		smtpPort = settingsdomain.ResolveConfig(cfg.SMTPPort, smtpPort)
+		smtpUser = settingsdomain.ResolveConfig(cfg.SMTPUser, smtpUser)
+		smtpPassword = settingsdomain.ResolveConfig(cfg.SMTPPassword, smtpPassword)
 		// Use SMTP user as from address if no explicit from set
 		if smtpUser != "" && fromAddr == "" {
 			fromAddr = smtpUser
@@ -264,15 +256,12 @@ func (s *Sender) handleTelegramMessage(ctx context.Context, msg seqdomain.Outbou
 		return
 	}
 
-	tgClient := tgclient.NewClient()
-	tgClient.LoadSession(sessionData)
-
 	sendCtx, cancel := context.WithTimeout(ctx, 60*time.Second)
 	defer cancel()
 
 	var lastErr error
 	for _, target := range targets {
-		if err := tgClient.SendMessage(sendCtx, target, msg.Body); err != nil {
+		if err := s.tgMessenger.SendMessage(sendCtx, sessionData, target, msg.Body); err != nil {
 			log.Printf("[outbound] telegram attempt %s failed (msg %s): %v", target, msg.ID, err)
 			lastErr = err
 			continue
@@ -301,8 +290,8 @@ func (s *Sender) handleTelegramMessage(ctx context.Context, msg seqdomain.Outbou
 // sendViaResend sends email through the Resend API.
 func (s *Sender) sendViaResend(ctx context.Context, to, subject, htmlBody string) error {
 	apiKey := s.fallbackKey
-	if cfg, err := s.store.GetConfig(ctx, s.ownerID); err == nil && cfg.ResendAPIKey != "" {
-		apiKey = cfg.ResendAPIKey
+	if cfg, err := s.store.GetConfig(ctx, s.ownerID); err == nil {
+		apiKey = settingsdomain.ResolveConfig(cfg.ResendAPIKey, apiKey)
 	}
 	if apiKey == "" {
 		return fmt.Errorf("no Resend API key configured")

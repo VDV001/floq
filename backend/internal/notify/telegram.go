@@ -1,6 +1,7 @@
 package notify
 
 import (
+	"context"
 	"fmt"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
@@ -22,7 +23,7 @@ func NewTelegramNotifier(token string, chatID int64) (*TelegramNotifier, error) 
 }
 
 // SendAlert sends a follow-up reminder notification to the manager's Telegram chat.
-func (n *TelegramNotifier) SendAlert(leadName, company, message string) error {
+func (n *TelegramNotifier) SendAlert(_ context.Context, leadName, company, message string) error {
 	text := fmt.Sprintf("Follow-up needed!\n\nLead: %s (%s)\n\n%s", leadName, company, message)
 	msg := tgbotapi.NewMessage(n.chatID, text)
 	msg.ParseMode = "Markdown"

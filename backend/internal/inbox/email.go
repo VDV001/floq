@@ -13,21 +13,18 @@ import (
 	"github.com/emersion/go-message/mail"
 	"github.com/google/uuid"
 
-	"github.com/daniil/floq/internal/ai"
-	"github.com/daniil/floq/internal/leads"
-	"github.com/daniil/floq/internal/leads/domain"
-	"github.com/daniil/floq/internal/prospects"
-	"github.com/daniil/floq/internal/sequences"
-	"github.com/daniil/floq/internal/settings"
+	leadsdomain "github.com/daniil/floq/internal/leads/domain"
+	prospectsdomain "github.com/daniil/floq/internal/prospects/domain"
+	settingsdomain "github.com/daniil/floq/internal/settings/domain"
 )
 
 // EmailPoller polls an IMAP mailbox for new emails and creates leads.
 type EmailPoller struct {
-	store        *settings.Store
-	repo         *leads.Repository
-	prospectRepo *prospects.Repository
-	seqRepo      *sequences.Repository
-	aiClient     *ai.AIClient
+	store        ConfigStore
+	repo         LeadRepository
+	prospectRepo ProspectRepository
+	seqRepo      SequenceRepository
+	aiClient     AIQualifier
 	ownerID      uuid.UUID
 
 	fallbackHost     string
@@ -36,7 +33,7 @@ type EmailPoller struct {
 	fallbackPassword string
 }
 
-func NewEmailPoller(store *settings.Store, ownerID uuid.UUID, fallbackHost, fallbackPort, fallbackUser, fallbackPassword string, repo *leads.Repository, prospectRepo *prospects.Repository, seqRepo *sequences.Repository, aiClient *ai.AIClient) *EmailPoller {
+func NewEmailPoller(store ConfigStore, ownerID uuid.UUID, fallbackHost, fallbackPort, fallbackUser, fallbackPassword string, repo LeadRepository, prospectRepo ProspectRepository, seqRepo SequenceRepository, aiClient AIQualifier) *EmailPoller {
 	return &EmailPoller{
 		store:            store,
 		repo:             repo,
@@ -73,18 +70,10 @@ func (e *EmailPoller) Start(ctx context.Context) {
 func (e *EmailPoller) resolveConfig(ctx context.Context) (host, port, user, password string) {
 	host, port, user, password = e.fallbackHost, e.fallbackPort, e.fallbackUser, e.fallbackPassword
 	if cfg, err := e.store.GetConfig(ctx, e.ownerID); err == nil {
-		if cfg.IMAPHost != "" {
-			host = cfg.IMAPHost
-		}
-		if cfg.IMAPPort != "" {
-			port = cfg.IMAPPort
-		}
-		if cfg.IMAPUser != "" {
-			user = cfg.IMAPUser
-		}
-		if cfg.IMAPPassword != "" {
-			password = cfg.IMAPPassword
-		}
+		host = settingsdomain.ResolveConfig(cfg.IMAPHost, host)
+		port = settingsdomain.ResolveConfig(cfg.IMAPPort, port)
+		user = settingsdomain.ResolveConfig(cfg.IMAPUser, user)
+		password = settingsdomain.ResolveConfig(cfg.IMAPPassword, password)
 	}
 	return
 }
@@ -270,11 +259,11 @@ func (e *EmailPoller) processEmail(ctx context.Context, fromName, fromEmail, bod
 	}
 
 	isNewLead := existing == nil
-	var lead *domain.Lead
+	var lead *leadsdomain.Lead
 
 	// Check if sender is a known prospect
 	prospect, prospectErr := e.prospectRepo.FindByEmail(ctx, e.ownerID, fromEmail)
-	hasProspectMatch := prospectErr == nil && prospect != nil && string(prospect.Status) != "converted"
+	hasProspectMatch := prospectErr == nil && prospect != nil && prospect.Status != prospectsdomain.ProspectStatusConverted
 
 	if isNewLead {
 		contactName := fromName
@@ -289,18 +278,7 @@ func (e *EmailPoller) processEmail(ctx context.Context, fromName, fromEmail, bod
 		}
 
 		emailAddr := fromEmail
-		lead = &domain.Lead{
-			ID:           uuid.New(),
-			UserID:       e.ownerID,
-			Channel:      domain.ChannelEmail,
-			ContactName:  contactName,
-			Company:      company,
-			FirstMessage: body,
-			Status:       domain.StatusNew,
-			EmailAddress: &emailAddr,
-			CreatedAt:    time.Now().UTC(),
-			UpdatedAt:    time.Now().UTC(),
-		}
+		lead = leadsdomain.NewLead(e.ownerID, leadsdomain.ChannelEmail, contactName, company, body, nil, &emailAddr)
 		if err := e.repo.CreateLead(ctx, lead); err != nil {
 			log.Printf("[email-poller] error creating lead: %v", err)
 			return
@@ -321,13 +299,7 @@ func (e *EmailPoller) processEmail(ctx context.Context, fromName, fromEmail, bod
 		lead = existing
 	}
 
-	message := &domain.Message{
-		ID:        uuid.New(),
-		LeadID:    lead.ID,
-		Direction: domain.DirectionInbound,
-		Body:      body,
-		SentAt:    time.Now().UTC(),
-	}
+	message := leadsdomain.NewMessage(lead.ID, leadsdomain.DirectionInbound, body)
 	if err := e.repo.CreateMessage(ctx, message); err != nil {
 		log.Printf("[email-poller] error creating message: %v", err)
 		return
@@ -343,7 +315,7 @@ func (e *EmailPoller) processEmail(ctx context.Context, fromName, fromEmail, bod
 				return
 			}
 
-			q := &domain.Qualification{
+			q := &leadsdomain.Qualification{
 				ID:                uuid.New(),
 				LeadID:            lead.ID,
 				IdentifiedNeed:    result.IdentifiedNeed,
@@ -359,7 +331,7 @@ func (e *EmailPoller) processEmail(ctx context.Context, fromName, fromEmail, bod
 				log.Printf("[email-poller] error saving qualification for lead %s: %v", lead.ID, err)
 				return
 			}
-			if err := e.repo.UpdateLeadStatus(qCtx, lead.ID, domain.StatusQualified); err != nil {
+			if err := e.repo.UpdateLeadStatus(qCtx, lead.ID, leadsdomain.StatusQualified); err != nil {
 				log.Printf("[email-poller] error updating lead status for %s: %v", lead.ID, err)
 				return
 			}
