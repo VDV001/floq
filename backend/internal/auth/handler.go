@@ -9,17 +9,16 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgxpool"
 	"golang.org/x/crypto/bcrypt"
 )
 
 type Handler struct {
-	pool      *pgxpool.Pool
+	repo      UserRepository
 	jwtSecret []byte
 }
 
-func NewHandler(pool *pgxpool.Pool, jwtSecret string) *Handler {
-	return &Handler{pool: pool, jwtSecret: []byte(jwtSecret)}
+func NewHandler(repo UserRepository, jwtSecret string) *Handler {
+	return &Handler{repo: repo, jwtSecret: []byte(jwtSecret)}
 }
 
 func RegisterRoutes(r chi.Router, h *Handler) {
@@ -57,11 +56,7 @@ func (h *Handler) Register(w http.ResponseWriter, r *http.Request) {
 
 	userID := uuid.New()
 	now := time.Now().UTC()
-	_, err = h.pool.Exec(r.Context(),
-		`INSERT INTO users (id, email, password_hash, full_name, created_at, updated_at)
-		 VALUES ($1, $2, $3, $4, $5, $6)`,
-		userID, req.Email, string(hash), req.FullName, now, now)
-	if err != nil {
+	if err = h.repo.CreateUser(r.Context(), userID, req.Email, string(hash), req.FullName, now); err != nil {
 		httputil.WriteError(w, http.StatusConflict, "user with this email already exists")
 		return
 	}
@@ -96,11 +91,7 @@ func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var userID uuid.UUID
-	var passwordHash string
-	err := h.pool.QueryRow(r.Context(),
-		`SELECT id, password_hash FROM users WHERE email = $1`, req.Email).
-		Scan(&userID, &passwordHash)
+	userID, passwordHash, err := h.repo.FindUserByEmail(r.Context(), req.Email)
 	if err != nil {
 		httputil.WriteError(w, http.StatusUnauthorized, "invalid credentials")
 		return

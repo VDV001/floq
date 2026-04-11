@@ -16,19 +16,26 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// --- Mock AI Provider ---
+// --- Mock AI Client ---
 
-type mockProvider struct {
+type mockAIClient struct {
 	response string
 	err      error
 }
 
-func (m *mockProvider) Complete(_ context.Context, _ ai.CompletionRequest) (string, error) {
+func (m *mockAIClient) Complete(_ context.Context, _ ai.CompletionRequest) (string, error) {
 	return m.response, m.err
 }
 
-func (m *mockProvider) Name() string {
-	return "mock"
+// --- Mock Stats Reader ---
+
+type mockStatsReader struct {
+	stats *userStats
+	err   error
+}
+
+func (m *mockStatsReader) FetchStats(_ context.Context, _ uuid.UUID) (*userStats, error) {
+	return m.stats, m.err
 }
 
 // --- buildSystemPrompt tests ---
@@ -117,16 +124,16 @@ func TestBuildSystemPrompt_NoRecentLeads(t *testing.T) {
 	assert.NotContains(t, prompt, "Последние лиды")
 }
 
-// --- Chat handler tests (input validation, no DB) ---
+// --- Chat handler tests ---
 
 func TestChat_MissingMessage(t *testing.T) {
-	provider := &mockProvider{response: "hi"}
-	client := ai.NewAIClient(provider, "", "", "", "", "")
-	h := NewHandler(nil, client)
+	h := NewHandler(
+		&mockStatsReader{stats: &userStats{StatusCounts: map[string]int{}}},
+		&mockAIClient{response: "hi"},
+	)
 
 	body, _ := json.Marshal(chatRequest{Message: "", History: nil})
 	req := httptest.NewRequest(http.MethodPost, "/api/chat", bytes.NewReader(body))
-	// Set user ID in context so we pass the auth check.
 	ctx := httputil.WithUserID(req.Context(), uuid.New())
 	req = req.WithContext(ctx)
 	rec := httptest.NewRecorder()
@@ -138,9 +145,10 @@ func TestChat_MissingMessage(t *testing.T) {
 }
 
 func TestChat_WhitespaceOnlyMessage(t *testing.T) {
-	provider := &mockProvider{response: "hi"}
-	client := ai.NewAIClient(provider, "", "", "", "", "")
-	h := NewHandler(nil, client)
+	h := NewHandler(
+		&mockStatsReader{stats: &userStats{StatusCounts: map[string]int{}}},
+		&mockAIClient{response: "hi"},
+	)
 
 	body, _ := json.Marshal(chatRequest{Message: "   \t\n  ", History: nil})
 	req := httptest.NewRequest(http.MethodPost, "/api/chat", bytes.NewReader(body))
@@ -155,9 +163,10 @@ func TestChat_WhitespaceOnlyMessage(t *testing.T) {
 }
 
 func TestChat_Unauthorized(t *testing.T) {
-	provider := &mockProvider{response: "hi"}
-	client := ai.NewAIClient(provider, "", "", "", "", "")
-	h := NewHandler(nil, client)
+	h := NewHandler(
+		&mockStatsReader{stats: &userStats{StatusCounts: map[string]int{}}},
+		&mockAIClient{response: "hi"},
+	)
 
 	body, _ := json.Marshal(chatRequest{Message: "hello"})
 	req := httptest.NewRequest(http.MethodPost, "/api/chat", bytes.NewReader(body))
@@ -171,9 +180,10 @@ func TestChat_Unauthorized(t *testing.T) {
 }
 
 func TestChat_InvalidJSON(t *testing.T) {
-	provider := &mockProvider{response: "hi"}
-	client := ai.NewAIClient(provider, "", "", "", "", "")
-	h := NewHandler(nil, client)
+	h := NewHandler(
+		&mockStatsReader{stats: &userStats{StatusCounts: map[string]int{}}},
+		&mockAIClient{response: "hi"},
+	)
 
 	req := httptest.NewRequest(http.MethodPost, "/api/chat", bytes.NewReader([]byte("not json")))
 	ctx := httputil.WithUserID(req.Context(), uuid.New())
@@ -186,18 +196,41 @@ func TestChat_InvalidJSON(t *testing.T) {
 	assert.Contains(t, rec.Body.String(), "invalid request body")
 }
 
+// --- Mock AI Client test ---
 
-// --- Mock provider test ---
+func TestMockAIClient(t *testing.T) {
+	provider := &mockAIClient{response: "test response", err: nil}
 
-func TestMockProvider(t *testing.T) {
-	provider := &mockProvider{response: "test response", err: nil}
-	client := ai.NewAIClient(provider, "https://book.me", "Дмитрий", "dev-bot.su", "", "")
-
-	resp, err := client.Complete(context.Background(), ai.CompletionRequest{
+	resp, err := provider.Complete(context.Background(), ai.CompletionRequest{
 		Messages:  []ai.Message{{Role: "user", Content: "hello"}},
 		MaxTokens: 100,
 	})
 	require.NoError(t, err)
 	assert.Equal(t, "test response", resp)
-	assert.Equal(t, "mock", client.ProviderName())
+}
+
+// --- Full Chat flow test ---
+
+func TestChat_Success(t *testing.T) {
+	h := NewHandler(
+		&mockStatsReader{stats: &userStats{
+			TotalLeads:   10,
+			MonthLeads:   3,
+			StatusCounts: map[string]int{"new": 5},
+		}},
+		&mockAIClient{response: "Вот ваш анализ воронки."},
+	)
+
+	body, _ := json.Marshal(chatRequest{Message: "Проанализируй воронку", History: nil})
+	req := httptest.NewRequest(http.MethodPost, "/api/chat", bytes.NewReader(body))
+	ctx := httputil.WithUserID(req.Context(), uuid.New())
+	req = req.WithContext(ctx)
+	rec := httptest.NewRecorder()
+
+	h.Chat(rec, req)
+
+	assert.Equal(t, http.StatusOK, rec.Code)
+	var resp chatResponse
+	require.NoError(t, json.NewDecoder(rec.Body).Decode(&resp))
+	assert.Equal(t, "Вот ваш анализ воронки.", resp.Reply)
 }

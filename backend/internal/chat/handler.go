@@ -1,7 +1,6 @@
 package chat
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -11,17 +10,15 @@ import (
 	"github.com/daniil/floq/internal/ai"
 	"github.com/daniil/floq/internal/httputil"
 	"github.com/go-chi/chi/v5"
-	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 type Handler struct {
-	pool     *pgxpool.Pool
-	aiClient *ai.AIClient
+	stats    StatsReader
+	aiClient AIClient
 }
 
-func NewHandler(pool *pgxpool.Pool, aiClient *ai.AIClient) *Handler {
-	return &Handler{pool: pool, aiClient: aiClient}
+func NewHandler(stats StatsReader, aiClient AIClient) *Handler {
+	return &Handler{stats: stats, aiClient: aiClient}
 }
 
 func RegisterRoutes(r chi.Router, h *Handler) {
@@ -78,7 +75,7 @@ func (h *Handler) Chat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	stats, err := h.fetchStats(r.Context(), userID)
+	stats, err := h.stats.FetchStats(r.Context(), userID)
 	if err != nil {
 		httputil.WriteError(w, http.StatusInternalServerError, "failed to fetch stats")
 		return
@@ -105,81 +102,6 @@ func (h *Handler) Chat(w http.ResponseWriter, r *http.Request) {
 	}
 
 	httputil.WriteJSON(w, http.StatusOK, chatResponse{Reply: reply})
-}
-
-func (h *Handler) fetchStats(ctx context.Context, userID uuid.UUID) (*userStats, error) {
-	s := &userStats{StatusCounts: make(map[string]int)}
-
-	// Total leads
-	err := h.pool.QueryRow(ctx,
-		`SELECT COUNT(*) FROM leads WHERE user_id = $1`, userID).Scan(&s.TotalLeads)
-	if err != nil {
-		return nil, fmt.Errorf("total leads: %w", err)
-	}
-
-	// Leads this month
-	err = h.pool.QueryRow(ctx,
-		`SELECT COUNT(*) FROM leads WHERE user_id = $1 AND created_at >= date_trunc('month', CURRENT_DATE)`,
-		userID).Scan(&s.MonthLeads)
-	if err != nil {
-		return nil, fmt.Errorf("month leads: %w", err)
-	}
-
-	// Leads by status
-	rows, err := h.pool.Query(ctx,
-		`SELECT status::text, COUNT(*) FROM leads WHERE user_id = $1 GROUP BY status`, userID)
-	if err != nil {
-		return nil, fmt.Errorf("status counts: %w", err)
-	}
-	defer rows.Close()
-	for rows.Next() {
-		var status string
-		var count int
-		if err := rows.Scan(&status, &count); err != nil {
-			return nil, fmt.Errorf("scan status: %w", err)
-		}
-		s.StatusCounts[status] = count
-	}
-
-	// Prospect count
-	err = h.pool.QueryRow(ctx,
-		`SELECT COUNT(*) FROM prospects WHERE user_id = $1`, userID).Scan(&s.ProspectCount)
-	if err != nil {
-		return nil, fmt.Errorf("prospects: %w", err)
-	}
-
-	// Sequence count
-	err = h.pool.QueryRow(ctx,
-		`SELECT COUNT(*) FROM sequences WHERE user_id = $1`, userID).Scan(&s.SequenceCount)
-	if err != nil {
-		return nil, fmt.Errorf("sequences: %w", err)
-	}
-
-	// Queued outbound messages (draft = awaiting approval)
-	err = h.pool.QueryRow(ctx,
-		`SELECT COUNT(*) FROM outbound_messages WHERE status = 'draft' AND sequence_id IN (SELECT id FROM sequences WHERE user_id = $1)`,
-		userID).Scan(&s.QueuedMsgs)
-	if err != nil {
-		s.QueuedMsgs = 0
-	}
-
-	// Recent leads (last 10)
-	recentRows, err := h.pool.Query(ctx,
-		`SELECT contact_name, COALESCE(company, ''), status::text, created_at FROM leads WHERE user_id = $1 ORDER BY created_at DESC LIMIT 10`,
-		userID)
-	if err != nil {
-		return nil, fmt.Errorf("recent leads: %w", err)
-	}
-	defer recentRows.Close()
-	for recentRows.Next() {
-		var l recentLead
-		if err := recentRows.Scan(&l.Name, &l.Company, &l.Status, &l.CreatedAt); err != nil {
-			return nil, fmt.Errorf("scan recent lead: %w", err)
-		}
-		s.RecentLeads = append(s.RecentLeads, l)
-	}
-
-	return s, nil
 }
 
 func buildSystemPrompt(s *userStats, extraContext string) string {

@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"log"
 	"net/http"
-	"encoding/base64"
 	"os"
 	"os/signal"
 	"strconv"
@@ -22,6 +21,7 @@ import (
 	"github.com/daniil/floq/internal/auth"
 	"github.com/daniil/floq/internal/chat"
 	"github.com/daniil/floq/internal/config"
+	"github.com/daniil/floq/internal/db"
 	"github.com/daniil/floq/internal/inbox"
 	"github.com/daniil/floq/internal/leads"
 	"github.com/daniil/floq/internal/notify"
@@ -79,7 +79,7 @@ func main() {
 	// 2. Settings store (reads user_settings from DB, used by services)
 	settingsStore := settings.NewStore(pool)
 	settingsRepo := settings.NewRepository(pool)
-	settingsUC := settings.NewUseCase(settingsRepo)
+	settingsUC := settings.NewUseCase(settingsRepo, &settings.HTTPTelegramValidator{})
 
 	ownerID, err := uuid.Parse(cfg.OwnerUserID)
 	if err != nil {
@@ -104,10 +104,11 @@ func main() {
 	// 5. Use cases
 	leadsUC := leads.NewUseCase(leadsRepo, leadsAI, nil) // sender set after bot init
 	prospectsUC := prospects.NewUseCase(prospectsRepo)
-	sequencesUC := sequences.NewUseCase(sequencesRepo, seqAI, prospectReader, leadCreatorAdapter)
+	txManager := db.NewTxManager(pool)
+	sequencesUC := sequences.NewUseCase(sequencesRepo, seqAI, prospectReader, leadCreatorAdapter, sequences.WithTxManager(txManager))
 
 	// 5. Auth
-	authHandler := auth.NewHandler(pool, cfg.JWTSecret)
+	authHandler := auth.NewHandler(auth.NewRepository(pool), cfg.JWTSecret)
 
 	// 6. Router
 	r := chi.NewRouter()
@@ -123,20 +124,7 @@ func main() {
 	})
 
 	// Tracking pixel (public, no auth — loaded by email clients)
-	r.Get("/api/track/open/{id}", func(w http.ResponseWriter, r *http.Request) {
-		idStr := chi.URLParam(r, "id")
-		msgID, err := uuid.Parse(idStr)
-		if err != nil {
-			w.WriteHeader(http.StatusNotFound)
-			return
-		}
-		_, _ = pool.Exec(r.Context(),
-			`UPDATE outbound_messages SET opened_at = COALESCE(opened_at, NOW()) WHERE id = $1`, msgID)
-		w.Header().Set("Content-Type", "image/gif")
-		w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
-		pixel, _ := base64.StdEncoding.DecodeString("R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7")
-		_, _ = w.Write(pixel)
-	})
+	sequences.RegisterPublicRoutes(r, sequencesUC)
 
 	// Auth (public)
 	auth.RegisterRoutes(r, authHandler)
@@ -149,8 +137,8 @@ func main() {
 		sequences.RegisterRoutes(r, sequencesUC)
 		verify.RegisterRoutes(r, prospectsRepo, nil) // TG bot passed as nil for now
 		parser.RegisterRoutes(r, cfg.TwoGISAPIKey)
-		settings.RegisterRoutes(r, settingsUC, buildAITester(cfg), buildUsageCounter(pool))
-		chat.RegisterRoutes(r, chat.NewHandler(pool, aiClient))
+		settings.RegisterRoutes(r, settingsUC, buildAITester(cfg), buildUsageCounter(leadsRepo))
+		chat.RegisterRoutes(r, chat.NewHandler(chat.NewRepository(pool), aiClient))
 		tgclient.RegisterRoutes(r, tgclient.NewClient(), tgclient.NewRepository(pool))
 	})
 
@@ -160,7 +148,7 @@ func main() {
 	// 7. Outbound email sender (cron every 30 seconds)
 	// Always starts — reads Resend API key from DB each tick (falls back to .env)
 	tgRepo := tgclient.NewRepository(pool)
-	emailSender := outbound.NewSender(settingsStore, ownerID, cfg.ResendAPIKey, cfg.SMTPFrom, cfg.AppBaseURL, cfg.SMTPHost, cfg.SMTPPort, cfg.SMTPUser, cfg.SMTPPassword, sequencesRepo, prospectsRepo, tgRepo)
+	emailSender := outbound.NewSender(settingsStore, ownerID, cfg.ResendAPIKey, cfg.SMTPFrom, cfg.AppBaseURL, cfg.SMTPHost, cfg.SMTPPort, cfg.SMTPUser, cfg.SMTPPassword, sequencesRepo, prospectsRepo, tgRepo, outbound.NewMTProtoMessenger())
 	go func() {
 		ticker := time.NewTicker(30 * time.Second)
 		defer ticker.Stop()
@@ -184,7 +172,7 @@ func main() {
 		tgToken = dbCfg.TelegramBotToken
 	}
 	if tgToken != "" {
-		tgBot, err := inbox.NewTelegramBot(tgToken, pool, leadsRepo, aiClient, ownerID, cfg.BookingLink)
+		tgBot, err := inbox.NewTelegramBot(tgToken, leadsRepo, aiClient, ownerID, cfg.BookingLink)
 		if err != nil {
 			log.Printf("telegram bot init failed: %v", err)
 		} else {
@@ -199,18 +187,20 @@ func main() {
 	go emailPoller.Start(ctx)
 
 	// 10. Reminders cron (hourly, checks for stale leads)
-	var notifier *notify.TelegramNotifier
+	var notifier reminders.Notifier
 	notifyChatIDStr := os.Getenv("NOTIFY_CHAT_ID")
 	if tgToken != "" && notifyChatIDStr != "" {
 		chatID, err := strconv.ParseInt(notifyChatIDStr, 10, 64)
 		if err == nil {
-			notifier, err = notify.NewTelegramNotifier(tgToken, chatID)
+			n, err := notify.NewTelegramNotifier(tgToken, chatID)
 			if err != nil {
 				log.Printf("telegram notifier init failed: %v", err)
+			} else {
+				notifier = n
 			}
 		}
 	}
-	remindersCron := reminders.NewCron(pool, leadsRepo, aiClient, notifier, cfg.StaleDays)
+	remindersCron := reminders.NewCron(leadsRepo, aiClient, notifier, cfg.StaleDays)
 	go remindersCron.Start(ctx)
 	log.Println("reminders cron started (hourly)")
 
@@ -239,25 +229,16 @@ func main() {
 	log.Println("server stopped")
 }
 
-func buildUsageCounter(pool *pgxpool.Pool) settings.UsageCounter {
+func buildUsageCounter(repo *leads.Repository) settings.UsageCounter {
 	return func(ctx context.Context, userID uuid.UUID) (int, int, error) {
-		var monthLeads, totalLeads int
-
-		// Leads created this month
-		err := pool.QueryRow(ctx,
-			`SELECT COUNT(*) FROM leads WHERE user_id = $1 AND created_at >= date_trunc('month', CURRENT_DATE)`,
-			userID).Scan(&monthLeads)
+		monthLeads, err := repo.CountMonthLeads(ctx, userID)
 		if err != nil {
 			return 0, 0, err
 		}
-
-		// Total leads
-		err = pool.QueryRow(ctx,
-			`SELECT COUNT(*) FROM leads WHERE user_id = $1`, userID).Scan(&totalLeads)
+		totalLeads, err := repo.CountTotalLeads(ctx, userID)
 		if err != nil {
 			return 0, 0, err
 		}
-
 		return monthLeads, totalLeads, nil
 	}
 }
