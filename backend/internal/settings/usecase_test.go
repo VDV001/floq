@@ -168,9 +168,8 @@ func TestDomainToDTO_FieldMapping(t *testing.T) {
 	assert.True(t, dto.AIActive)
 }
 
-func TestValidateTelegramToken_IsCallable(t *testing.T) {
-	// Just verify the function exists and has the expected signature.
-	// We don't call it with a real token since it makes an HTTP call.
-	var fn func(string) error = validateTelegramToken
-	assert.NotNil(t, fn)
+func TestHTTPTelegramValidator_IsCallable(t *testing.T) {
+	// Just verify the type exists and implements the interface.
+	v := &HTTPTelegramValidator{}
+	assert.NotNil(t, v)
 }

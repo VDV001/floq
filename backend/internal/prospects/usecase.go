@@ -33,6 +33,12 @@ func (uc *UseCase) FindByEmail(ctx context.Context, userID uuid.UUID, email stri
 }
 
 func (uc *UseCase) CreateProspect(ctx context.Context, prospect *domain.Prospect) error {
+	if prospect.Name == "" {
+		return fmt.Errorf("prospect name is required")
+	}
+	if !prospect.Status.IsValid() {
+		return fmt.Errorf("invalid prospect status: %q", prospect.Status)
+	}
 	return uc.repo.CreateProspect(ctx, prospect)
 }
 

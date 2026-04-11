@@ -35,7 +35,24 @@ func (uc *UseCase) GetLead(ctx context.Context, id uuid.UUID) (*domain.Lead, err
 }
 
 func (uc *UseCase) UpdateStatus(ctx context.Context, id uuid.UUID, status string) error {
-	return uc.repo.UpdateLeadStatus(ctx, id, domain.LeadStatus(status))
+	target := domain.LeadStatus(status)
+	if !target.IsValid() {
+		return fmt.Errorf("invalid status: %q", status)
+	}
+
+	lead, err := uc.repo.GetLead(ctx, id)
+	if err != nil {
+		return fmt.Errorf("get lead: %w", err)
+	}
+	if lead == nil {
+		return fmt.Errorf("lead not found")
+	}
+
+	if err := lead.TransitionTo(target); err != nil {
+		return err
+	}
+
+	return uc.repo.UpdateLeadStatus(ctx, id, target)
 }
 
 func (uc *UseCase) GetMessages(ctx context.Context, leadID uuid.UUID) ([]domain.Message, error) {
@@ -56,13 +73,7 @@ func (uc *UseCase) SendMessage(ctx context.Context, leadID uuid.UUID, body strin
 	}
 
 	// Save to DB
-	msg := &domain.Message{
-		ID:        uuid.New(),
-		LeadID:    leadID,
-		Direction: domain.DirectionOutbound,
-		Body:      body,
-		SentAt:    time.Now().UTC(),
-	}
+	msg := domain.NewMessage(leadID, domain.DirectionOutbound, body)
 	if err := uc.repo.CreateMessage(ctx, msg); err != nil {
 		return nil, err
 	}

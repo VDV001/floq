@@ -60,6 +60,7 @@ func (m *mockRepo) GetPendingSends(_ context.Context) ([]domain.OutboundMessage,
 }
 func (m *mockRepo) MarkSent(_ context.Context, _ uuid.UUID) error    { return nil }
 func (m *mockRepo) MarkBounced(_ context.Context, _ uuid.UUID) error { return nil }
+func (m *mockRepo) MarkOpened(_ context.Context, _ uuid.UUID) error  { return nil }
 func (m *mockRepo) GetStats(_ context.Context, _ uuid.UUID) (*domain.Stats, error) {
 	return nil, nil
 }

@@ -224,61 +224,12 @@ func (h *Handler) testIMAP() http.HandlerFunc {
 			return
 		}
 
-		// Try TLS connection to IMAP server
-		addr := net.JoinHostPort(body.Host, body.Port)
-		conn, err := tls.DialWithDialer(
-			&net.Dialer{Timeout: 10 * time.Second},
-			"tcp", addr,
-			&tls.Config{ServerName: body.Host},
-		)
-		if err != nil {
-			httputil.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "error": fmt.Sprintf("Не удалось подключиться: %v", err)})
+		tester := &IMAPTester{}
+		if err := tester.TestConnection(body.Host, body.Port, body.User, body.Password); err != nil {
+			httputil.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "error": err.Error()})
 			return
 		}
-		defer conn.Close()
-
-		// Read server greeting
-		buf := make([]byte, 1024)
-		_ = conn.SetReadDeadline(time.Now().Add(5 * time.Second))
-		n, err := conn.Read(buf)
-		if err != nil {
-			httputil.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "error": "Сервер не отвечает"})
-			return
-		}
-		greeting := string(buf[:n])
-
-		// Send LOGIN command with quoted strings
-		loginCmd := fmt.Sprintf("A1 LOGIN \"%s\" \"%s\"\r\n", body.User, body.Password)
-		_, err = conn.Write([]byte(loginCmd))
-		if err != nil {
-			httputil.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "error": "Ошибка отправки команды"})
-			return
-		}
-
-		// Read response (may be multiple lines)
-		var response string
-		for i := 0; i < 5; i++ {
-			_ = conn.SetReadDeadline(time.Now().Add(10 * time.Second))
-			n, err = conn.Read(buf)
-			if err != nil {
-				break
-			}
-			response += string(buf[:n])
-			if strings.Contains(response, "A1 OK") || strings.Contains(response, "A1 NO") || strings.Contains(response, "A1 BAD") {
-				break
-			}
-		}
-
-		// Send LOGOUT
-		_, _ = conn.Write([]byte("A2 LOGOUT\r\n"))
-
-		_ = greeting // used for connection check
-
-		if strings.Contains(response, "A1 OK") {
-			httputil.WriteJSON(w, http.StatusOK, map[string]any{"success": true, "message": "Подключение успешно!"})
-		} else {
-			httputil.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "error": "Неверный логин или пароль"})
-		}
+		httputil.WriteJSON(w, http.StatusOK, map[string]any{"success": true, "message": "Подключение успешно!"})
 	}
 }
 

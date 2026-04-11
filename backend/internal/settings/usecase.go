@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"net/http"
 
 	"github.com/daniil/floq/internal/settings/domain"
 	"github.com/google/uuid"
@@ -39,11 +38,12 @@ type settingsInput struct {
 }
 
 type UseCase struct {
-	repo *Repository
+	repo      domain.Repository
+	tgValidator domain.TelegramTokenValidator
 }
 
-func NewUseCase(repo *Repository) *UseCase {
-	return &UseCase{repo: repo}
+func NewUseCase(repo domain.Repository, tgValidator domain.TelegramTokenValidator) *UseCase {
+	return &UseCase{repo: repo, tgValidator: tgValidator}
 }
 
 func (uc *UseCase) GetSettings(ctx context.Context, userID uuid.UUID) (*domain.Settings, error) {
@@ -77,7 +77,7 @@ func (uc *UseCase) UpdateSettings(ctx context.Context, userID uuid.UUID, rawBody
 
 	// If telegram_bot_token is being set, validate it.
 	if _, ok := raw["telegram_bot_token"]; ok && input.TelegramBotToken != "" {
-		if err := validateTelegramToken(input.TelegramBotToken); err != nil {
+		if err := uc.tgValidator.Validate(input.TelegramBotToken); err != nil {
 			return nil, fmt.Errorf("invalid telegram bot token: %w", err)
 		}
 	}
@@ -205,28 +205,4 @@ func (uc *UseCase) GetStoredAISettings(ctx context.Context, userID uuid.UUID) (*
 		Model:    s.AIModel,
 		APIKey:   s.AIAPIKey,
 	}, nil
-}
-
-// validateTelegramToken calls the Telegram getMe API to verify the token is valid.
-func validateTelegramToken(token string) error {
-	resp, err := http.Get(fmt.Sprintf("https://api.telegram.org/bot%s/getMe", token))
-	if err != nil {
-		return fmt.Errorf("failed to reach Telegram API: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("Telegram API returned status %d", resp.StatusCode)
-	}
-
-	var result struct {
-		OK bool `json:"ok"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return fmt.Errorf("failed to decode Telegram response: %w", err)
-	}
-	if !result.OK {
-		return fmt.Errorf("Telegram API returned ok=false")
-	}
-	return nil
 }

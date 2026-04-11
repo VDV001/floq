@@ -4,12 +4,10 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
-	"time"
 
 	"github.com/daniil/floq/internal/httputil"
 	"github.com/daniil/floq/internal/prospects/domain"
 	"github.com/go-chi/chi/v5"
-	"github.com/google/uuid"
 )
 
 type Handler struct {
@@ -85,27 +83,13 @@ func (h *Handler) createProspect() http.HandlerFunc {
 			}
 		}
 
-		now := time.Now().UTC()
-		p := &domain.Prospect{
-			ID:               uuid.New(),
-			UserID:           userID,
-			Name:             body.Name,
-			Company:          body.Company,
-			Title:            body.Title,
-			Email:            body.Email,
-			Phone:            body.Phone,
-			WhatsApp:         body.WhatsApp,
-			TelegramUsername: body.TelegramUsername,
-			Industry:         body.Industry,
-			CompanySize:      body.CompanySize,
-			Context:          body.Context,
-			Source:           "manual",
-			Status:           domain.ProspectStatusNew,
-			VerifyStatus:     domain.VerifyStatusNotChecked,
-			VerifyDetails:    "{}",
-			CreatedAt:        now,
-			UpdatedAt:        now,
-		}
+		p := domain.NewProspect(userID, body.Name, body.Company, body.Title, body.Email, "manual")
+		p.Phone = body.Phone
+		p.WhatsApp = body.WhatsApp
+		p.TelegramUsername = body.TelegramUsername
+		p.Industry = body.Industry
+		p.CompanySize = body.CompanySize
+		p.Context = body.Context
 
 		if err := h.uc.CreateProspect(r.Context(), p); err != nil {
 			httputil.WriteError(w, http.StatusInternalServerError, "failed to create prospect")

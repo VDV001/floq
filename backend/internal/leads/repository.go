@@ -254,3 +254,24 @@ func (r *Repository) CreateReminder(ctx context.Context, leadID uuid.UUID, messa
 	}
 	return nil
 }
+
+func (r *Repository) CountMonthLeads(ctx context.Context, userID uuid.UUID) (int, error) {
+	var count int
+	err := r.pool.QueryRow(ctx,
+		`SELECT COUNT(*) FROM leads WHERE user_id = $1 AND created_at >= date_trunc('month', CURRENT_DATE)`,
+		userID).Scan(&count)
+	if err != nil {
+		return 0, fmt.Errorf("count month leads: %w", err)
+	}
+	return count, nil
+}
+
+func (r *Repository) CountTotalLeads(ctx context.Context, userID uuid.UUID) (int, error) {
+	var count int
+	err := r.pool.QueryRow(ctx,
+		`SELECT COUNT(*) FROM leads WHERE user_id = $1`, userID).Scan(&count)
+	if err != nil {
+		return 0, fmt.Errorf("count total leads: %w", err)
+	}
+	return count, nil
+}

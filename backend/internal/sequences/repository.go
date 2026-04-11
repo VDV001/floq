@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/daniil/floq/internal/db"
 	"github.com/daniil/floq/internal/sequences/domain"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -22,8 +23,13 @@ func NewRepository(pool *pgxpool.Pool) *Repository {
 	return &Repository{pool: pool}
 }
 
+// conn returns the transaction from context if present, otherwise the pool.
+func (r *Repository) conn(ctx context.Context) db.Querier {
+	return db.ConnFromCtx(ctx, r.pool)
+}
+
 func (r *Repository) ListSequences(ctx context.Context, userID uuid.UUID) ([]domain.Sequence, error) {
-	rows, err := r.pool.Query(ctx,
+	rows, err := r.conn(ctx).Query(ctx,
 		`SELECT id, user_id, name, is_active, created_at
 		 FROM sequences WHERE user_id = $1 ORDER BY created_at DESC`, userID)
 	if err != nil {
@@ -44,7 +50,7 @@ func (r *Repository) ListSequences(ctx context.Context, userID uuid.UUID) ([]dom
 
 func (r *Repository) GetSequence(ctx context.Context, id uuid.UUID) (*domain.Sequence, error) {
 	var s domain.Sequence
-	err := r.pool.QueryRow(ctx,
+	err := r.conn(ctx).QueryRow(ctx,
 		`SELECT id, user_id, name, is_active, created_at
 		 FROM sequences WHERE id = $1`, id).
 		Scan(&s.ID, &s.UserID, &s.Name, &s.IsActive, &s.CreatedAt)
@@ -58,7 +64,7 @@ func (r *Repository) GetSequence(ctx context.Context, id uuid.UUID) (*domain.Seq
 }
 
 func (r *Repository) CreateSequence(ctx context.Context, s *domain.Sequence) error {
-	_, err := r.pool.Exec(ctx,
+	_, err := r.conn(ctx).Exec(ctx,
 		`INSERT INTO sequences (id, user_id, name, is_active, created_at)
 		 VALUES ($1, $2, $3, $4, $5)`,
 		s.ID, s.UserID, s.Name, s.IsActive, s.CreatedAt)
@@ -69,7 +75,7 @@ func (r *Repository) CreateSequence(ctx context.Context, s *domain.Sequence) err
 }
 
 func (r *Repository) UpdateSequence(ctx context.Context, s *domain.Sequence) error {
-	_, err := r.pool.Exec(ctx,
+	_, err := r.conn(ctx).Exec(ctx,
 		`UPDATE sequences SET name = $1 WHERE id = $2`,
 		s.Name, s.ID)
 	if err != nil {
@@ -79,7 +85,7 @@ func (r *Repository) UpdateSequence(ctx context.Context, s *domain.Sequence) err
 }
 
 func (r *Repository) DeleteSequence(ctx context.Context, id uuid.UUID) error {
-	_, err := r.pool.Exec(ctx,
+	_, err := r.conn(ctx).Exec(ctx,
 		`DELETE FROM sequences WHERE id = $1`, id)
 	if err != nil {
 		return fmt.Errorf("delete sequence: %w", err)
@@ -88,7 +94,7 @@ func (r *Repository) DeleteSequence(ctx context.Context, id uuid.UUID) error {
 }
 
 func (r *Repository) ToggleActive(ctx context.Context, id uuid.UUID, active bool) error {
-	_, err := r.pool.Exec(ctx,
+	_, err := r.conn(ctx).Exec(ctx,
 		`UPDATE sequences SET is_active = $1 WHERE id = $2`,
 		active, id)
 	if err != nil {
@@ -98,7 +104,7 @@ func (r *Repository) ToggleActive(ctx context.Context, id uuid.UUID, active bool
 }
 
 func (r *Repository) ListSteps(ctx context.Context, sequenceID uuid.UUID) ([]domain.SequenceStep, error) {
-	rows, err := r.pool.Query(ctx,
+	rows, err := r.conn(ctx).Query(ctx,
 		`SELECT id, sequence_id, step_order, delay_days, prompt_hint, channel, created_at
 		 FROM sequence_steps WHERE sequence_id = $1 ORDER BY step_order`, sequenceID)
 	if err != nil {
@@ -118,7 +124,7 @@ func (r *Repository) ListSteps(ctx context.Context, sequenceID uuid.UUID) ([]dom
 }
 
 func (r *Repository) CreateStep(ctx context.Context, step *domain.SequenceStep) error {
-	_, err := r.pool.Exec(ctx,
+	_, err := r.conn(ctx).Exec(ctx,
 		`INSERT INTO sequence_steps (id, sequence_id, step_order, delay_days, prompt_hint, channel, created_at)
 		 VALUES ($1, $2, $3, $4, $5, $6, $7)`,
 		step.ID, step.SequenceID, step.StepOrder, step.DelayDays, step.PromptHint, step.Channel, step.CreatedAt)
@@ -129,7 +135,7 @@ func (r *Repository) CreateStep(ctx context.Context, step *domain.SequenceStep) 
 }
 
 func (r *Repository) DeleteStep(ctx context.Context, stepID uuid.UUID) error {
-	_, err := r.pool.Exec(ctx, `DELETE FROM sequence_steps WHERE id = $1`, stepID)
+	_, err := r.conn(ctx).Exec(ctx, `DELETE FROM sequence_steps WHERE id = $1`, stepID)
 	if err != nil {
 		return fmt.Errorf("delete step: %w", err)
 	}
@@ -137,7 +143,7 @@ func (r *Repository) DeleteStep(ctx context.Context, stepID uuid.UUID) error {
 }
 
 func (r *Repository) CreateOutboundMessage(ctx context.Context, msg *domain.OutboundMessage) error {
-	_, err := r.pool.Exec(ctx,
+	_, err := r.conn(ctx).Exec(ctx,
 		`INSERT INTO outbound_messages (id, prospect_id, sequence_id, step_order, channel, body, status, scheduled_at, sent_at, created_at)
 		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
 		msg.ID, msg.ProspectID, msg.SequenceID, msg.StepOrder, msg.Channel, msg.Body, msg.Status, msg.ScheduledAt, msg.SentAt, msg.CreatedAt)
@@ -148,7 +154,7 @@ func (r *Repository) CreateOutboundMessage(ctx context.Context, msg *domain.Outb
 }
 
 func (r *Repository) ListOutboundQueue(ctx context.Context, userID uuid.UUID) ([]domain.OutboundMessage, error) {
-	rows, err := r.pool.Query(ctx,
+	rows, err := r.conn(ctx).Query(ctx,
 		`SELECT om.id, om.prospect_id, om.sequence_id, om.step_order, om.channel, om.body, om.status, om.scheduled_at, om.sent_at, om.created_at
 		 FROM outbound_messages om
 		 JOIN prospects p ON p.id = om.prospect_id
@@ -171,7 +177,7 @@ func (r *Repository) ListOutboundQueue(ctx context.Context, userID uuid.UUID) ([
 }
 
 func (r *Repository) ListSentMessages(ctx context.Context, userID uuid.UUID) ([]domain.OutboundMessage, error) {
-	rows, err := r.pool.Query(ctx,
+	rows, err := r.conn(ctx).Query(ctx,
 		`SELECT om.id, om.prospect_id, om.sequence_id, om.step_order, om.channel, om.body, om.status, om.scheduled_at, om.sent_at, om.created_at
 		 FROM outbound_messages om
 		 JOIN prospects p ON p.id = om.prospect_id
@@ -195,7 +201,7 @@ func (r *Repository) ListSentMessages(ctx context.Context, userID uuid.UUID) ([]
 }
 
 func (r *Repository) UpdateOutboundStatus(ctx context.Context, id uuid.UUID, status domain.OutboundStatus) error {
-	_, err := r.pool.Exec(ctx,
+	_, err := r.conn(ctx).Exec(ctx,
 		`UPDATE outbound_messages SET status = $1 WHERE id = $2`,
 		status, id)
 	if err != nil {
@@ -205,7 +211,7 @@ func (r *Repository) UpdateOutboundStatus(ctx context.Context, id uuid.UUID, sta
 }
 
 func (r *Repository) UpdateOutboundBody(ctx context.Context, id uuid.UUID, body string) error {
-	_, err := r.pool.Exec(ctx,
+	_, err := r.conn(ctx).Exec(ctx,
 		`UPDATE outbound_messages SET body = $1 WHERE id = $2`,
 		body, id)
 	if err != nil {
@@ -215,7 +221,7 @@ func (r *Repository) UpdateOutboundBody(ctx context.Context, id uuid.UUID, body 
 }
 
 func (r *Repository) GetPendingSends(ctx context.Context) ([]domain.OutboundMessage, error) {
-	rows, err := r.pool.Query(ctx,
+	rows, err := r.conn(ctx).Query(ctx,
 		`SELECT om.id, om.prospect_id, om.sequence_id, om.step_order, om.channel, om.body, om.status, om.scheduled_at, om.sent_at, om.created_at
 		 FROM outbound_messages om
 		 JOIN sequences s ON s.id = om.sequence_id
@@ -237,7 +243,7 @@ func (r *Repository) GetPendingSends(ctx context.Context) ([]domain.OutboundMess
 }
 
 func (r *Repository) MarkSent(ctx context.Context, id uuid.UUID) error {
-	_, err := r.pool.Exec(ctx,
+	_, err := r.conn(ctx).Exec(ctx,
 		`UPDATE outbound_messages SET status = 'sent', sent_at = NOW() WHERE id = $1`, id)
 	if err != nil {
 		return fmt.Errorf("mark sent: %w", err)
@@ -246,7 +252,7 @@ func (r *Repository) MarkSent(ctx context.Context, id uuid.UUID) error {
 }
 
 func (r *Repository) MarkBounced(ctx context.Context, id uuid.UUID) error {
-	_, err := r.pool.Exec(ctx,
+	_, err := r.conn(ctx).Exec(ctx,
 		`UPDATE outbound_messages SET status = 'bounced' WHERE id = $1`, id)
 	if err != nil {
 		return fmt.Errorf("mark bounced: %w", err)
@@ -254,10 +260,19 @@ func (r *Repository) MarkBounced(ctx context.Context, id uuid.UUID) error {
 	return nil
 }
 
+func (r *Repository) MarkOpened(ctx context.Context, id uuid.UUID) error {
+	_, err := r.conn(ctx).Exec(ctx,
+		`UPDATE outbound_messages SET opened_at = COALESCE(opened_at, NOW()) WHERE id = $1`, id)
+	if err != nil {
+		return fmt.Errorf("mark opened: %w", err)
+	}
+	return nil
+}
+
 // MarkRepliedByProspect sets replied_at on all sent outbound messages for a prospect.
 // This is an extra method on the concrete type, not part of the domain interface.
 func (r *Repository) MarkRepliedByProspect(ctx context.Context, prospectID uuid.UUID) error {
-	_, err := r.pool.Exec(ctx,
+	_, err := r.conn(ctx).Exec(ctx,
 		`UPDATE outbound_messages SET replied_at = COALESCE(replied_at, NOW()) WHERE prospect_id = $1 AND status = 'sent'`,
 		prospectID)
 	if err != nil {
@@ -268,7 +283,7 @@ func (r *Repository) MarkRepliedByProspect(ctx context.Context, prospectID uuid.
 
 func (r *Repository) GetOutboundMessage(ctx context.Context, id uuid.UUID) (*domain.OutboundMessage, error) {
 	var m domain.OutboundMessage
-	err := r.pool.QueryRow(ctx,
+	err := r.conn(ctx).QueryRow(ctx,
 		`SELECT id, prospect_id, sequence_id, step_order, channel, body, status, scheduled_at, sent_at, created_at
 		 FROM outbound_messages WHERE id = $1`, id).
 		Scan(&m.ID, &m.ProspectID, &m.SequenceID, &m.StepOrder, &m.Channel, &m.Body, &m.Status, &m.ScheduledAt, &m.SentAt, &m.CreatedAt)
@@ -282,7 +297,7 @@ func (r *Repository) GetOutboundMessage(ctx context.Context, id uuid.UUID) (*dom
 }
 
 func (r *Repository) SavePromptFeedback(ctx context.Context, userID uuid.UUID, original, edited, prospectContext, channel string) error {
-	_, err := r.pool.Exec(ctx,
+	_, err := r.conn(ctx).Exec(ctx,
 		`INSERT INTO prompt_feedback (user_id, original_body, edited_body, prospect_context, channel)
 		 VALUES ($1, $2, $3, $4, $5)`,
 		userID, original, edited, prospectContext, channel)
@@ -293,7 +308,7 @@ func (r *Repository) SavePromptFeedback(ctx context.Context, userID uuid.UUID, o
 }
 
 func (r *Repository) GetRecentFeedback(ctx context.Context, userID uuid.UUID, limit int) ([]domain.PromptFeedback, error) {
-	rows, err := r.pool.Query(ctx,
+	rows, err := r.conn(ctx).Query(ctx,
 		`SELECT id, user_id, original_body, edited_body, prospect_context, channel, created_at
 		 FROM prompt_feedback WHERE user_id = $1 ORDER BY created_at DESC LIMIT $2`, userID, limit)
 	if err != nil {
@@ -313,7 +328,7 @@ func (r *Repository) GetRecentFeedback(ctx context.Context, userID uuid.UUID, li
 }
 
 func (r *Repository) GetConversationHistory(ctx context.Context, prospectID uuid.UUID) ([]domain.ConversationEntry, error) {
-	rows, err := r.pool.Query(ctx,
+	rows, err := r.conn(ctx).Query(ctx,
 		`SELECT body, status, sent_at
 		 FROM outbound_messages
 		 WHERE prospect_id = $1 AND status IN ('sent', 'approved')
@@ -340,7 +355,7 @@ func (r *Repository) GetConversationHistory(ctx context.Context, prospectID uuid
 
 func (r *Repository) GetStats(ctx context.Context, userID uuid.UUID) (*domain.Stats, error) {
 	var stats domain.Stats
-	err := r.pool.QueryRow(ctx,
+	err := r.conn(ctx).QueryRow(ctx,
 		`SELECT
 			COALESCE(SUM(CASE WHEN om.status = 'draft' THEN 1 ELSE 0 END), 0),
 			COALESCE(SUM(CASE WHEN om.status = 'approved' THEN 1 ELSE 0 END), 0),

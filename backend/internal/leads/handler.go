@@ -9,26 +9,31 @@ import (
 	"github.com/go-chi/chi/v5"
 )
 
-func RegisterRoutes(r chi.Router, uc *UseCase) {
-	r.Get("/api/leads", listLeads(uc))
-	r.Get("/api/leads/{id}", getLead(uc))
-	r.Patch("/api/leads/{id}/status", updateStatus(uc))
-	r.Get("/api/leads/{id}/messages", listMessages(uc))
-	r.Post("/api/leads/{id}/send", sendMessage(uc))
-	r.Get("/api/leads/{id}/qualification", getQualification(uc))
-	r.Post("/api/leads/{id}/qualify", qualifyLead(uc))
-	r.Get("/api/leads/{id}/draft", getDraft(uc))
-	r.Post("/api/leads/{id}/draft/regen", regenerateDraft(uc))
+type Handler struct {
+	uc *UseCase
 }
 
-func listLeads(uc *UseCase) http.HandlerFunc {
+func RegisterRoutes(r chi.Router, uc *UseCase) {
+	h := &Handler{uc: uc}
+	r.Get("/api/leads", h.listLeads())
+	r.Get("/api/leads/{id}", h.getLead())
+	r.Patch("/api/leads/{id}/status", h.updateStatus())
+	r.Get("/api/leads/{id}/messages", h.listMessages())
+	r.Post("/api/leads/{id}/send", h.sendMessage())
+	r.Get("/api/leads/{id}/qualification", h.getQualification())
+	r.Post("/api/leads/{id}/qualify", h.qualifyLead())
+	r.Get("/api/leads/{id}/draft", h.getDraft())
+	r.Post("/api/leads/{id}/draft/regen", h.regenerateDraft())
+}
+
+func (h *Handler) listLeads() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		userID, ok := httputil.UserIDFromContext(r.Context())
 		if !ok {
 			httputil.WriteError(w, http.StatusUnauthorized, "unauthorized")
 			return
 		}
-		leads, err := uc.ListLeads(r.Context(), userID)
+		leads, err := h.uc.ListLeads(r.Context(), userID)
 		if err != nil {
 			httputil.WriteError(w, http.StatusInternalServerError, "failed to list leads")
 			return
@@ -40,14 +45,14 @@ func listLeads(uc *UseCase) http.HandlerFunc {
 	}
 }
 
-func getLead(uc *UseCase) http.HandlerFunc {
+func (h *Handler) getLead() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		id, err := httputil.ParseIDParam(r, "id")
 		if err != nil {
 			httputil.WriteError(w, http.StatusBadRequest, "invalid lead id")
 			return
 		}
-		lead, err := uc.GetLead(r.Context(), id)
+		lead, err := h.uc.GetLead(r.Context(), id)
 		if err != nil {
 			httputil.WriteError(w, http.StatusInternalServerError, "failed to get lead")
 			return
@@ -60,7 +65,7 @@ func getLead(uc *UseCase) http.HandlerFunc {
 	}
 }
 
-func updateStatus(uc *UseCase) http.HandlerFunc {
+func (h *Handler) updateStatus() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		id, err := httputil.ParseIDParam(r, "id")
 		if err != nil {
@@ -80,22 +85,22 @@ func updateStatus(uc *UseCase) http.HandlerFunc {
 			return
 		}
 
-		if err := uc.UpdateStatus(r.Context(), id, body.Status); err != nil {
-			httputil.WriteError(w, http.StatusInternalServerError, "failed to update status")
+		if err := h.uc.UpdateStatus(r.Context(), id, body.Status); err != nil {
+			httputil.WriteError(w, http.StatusBadRequest, err.Error())
 			return
 		}
 		httputil.WriteJSON(w, http.StatusOK, map[string]string{"status": body.Status})
 	}
 }
 
-func listMessages(uc *UseCase) http.HandlerFunc {
+func (h *Handler) listMessages() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		id, err := httputil.ParseIDParam(r, "id")
 		if err != nil {
 			httputil.WriteError(w, http.StatusBadRequest, "invalid lead id")
 			return
 		}
-		msgs, err := uc.GetMessages(r.Context(), id)
+		msgs, err := h.uc.GetMessages(r.Context(), id)
 		if err != nil {
 			httputil.WriteError(w, http.StatusInternalServerError, "failed to list messages")
 			return
@@ -107,7 +112,7 @@ func listMessages(uc *UseCase) http.HandlerFunc {
 	}
 }
 
-func sendMessage(uc *UseCase) http.HandlerFunc {
+func (h *Handler) sendMessage() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		id, err := httputil.ParseIDParam(r, "id")
 		if err != nil {
@@ -127,7 +132,7 @@ func sendMessage(uc *UseCase) http.HandlerFunc {
 			return
 		}
 
-		msg, err := uc.SendMessage(r.Context(), id, body.Body)
+		msg, err := h.uc.SendMessage(r.Context(), id, body.Body)
 		if err != nil {
 			httputil.WriteError(w, http.StatusInternalServerError, "failed to send message")
 			return
@@ -136,14 +141,14 @@ func sendMessage(uc *UseCase) http.HandlerFunc {
 	}
 }
 
-func getQualification(uc *UseCase) http.HandlerFunc {
+func (h *Handler) getQualification() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		id, err := httputil.ParseIDParam(r, "id")
 		if err != nil {
 			httputil.WriteError(w, http.StatusBadRequest, "invalid lead id")
 			return
 		}
-		q, err := uc.GetQualification(r.Context(), id)
+		q, err := h.uc.GetQualification(r.Context(), id)
 		if err != nil {
 			httputil.WriteError(w, http.StatusInternalServerError, "failed to get qualification")
 			return
@@ -156,14 +161,14 @@ func getQualification(uc *UseCase) http.HandlerFunc {
 	}
 }
 
-func qualifyLead(uc *UseCase) http.HandlerFunc {
+func (h *Handler) qualifyLead() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		id, err := httputil.ParseIDParam(r, "id")
 		if err != nil {
 			httputil.WriteError(w, http.StatusBadRequest, "invalid lead id")
 			return
 		}
-		q, err := uc.QualifyLead(r.Context(), id)
+		q, err := h.uc.QualifyLead(r.Context(), id)
 		if err != nil {
 			httputil.WriteError(w, http.StatusInternalServerError, "failed to qualify lead")
 			return
@@ -172,14 +177,14 @@ func qualifyLead(uc *UseCase) http.HandlerFunc {
 	}
 }
 
-func getDraft(uc *UseCase) http.HandlerFunc {
+func (h *Handler) getDraft() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		id, err := httputil.ParseIDParam(r, "id")
 		if err != nil {
 			httputil.WriteError(w, http.StatusBadRequest, "invalid lead id")
 			return
 		}
-		d, err := uc.GetDraft(r.Context(), id)
+		d, err := h.uc.GetDraft(r.Context(), id)
 		if err != nil {
 			httputil.WriteError(w, http.StatusInternalServerError, "failed to get draft")
 			return
@@ -192,14 +197,14 @@ func getDraft(uc *UseCase) http.HandlerFunc {
 	}
 }
 
-func regenerateDraft(uc *UseCase) http.HandlerFunc {
+func (h *Handler) regenerateDraft() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		id, err := httputil.ParseIDParam(r, "id")
 		if err != nil {
 			httputil.WriteError(w, http.StatusBadRequest, "invalid lead id")
 			return
 		}
-		d, err := uc.RegenerateDraft(r.Context(), id)
+		d, err := h.uc.RegenerateDraft(r.Context(), id)
 		if err != nil {
 			httputil.WriteError(w, http.StatusInternalServerError, "failed to regenerate draft")
 			return

@@ -15,10 +15,23 @@ type UseCase struct {
 	aiGenerator domain.AIMessageGenerator
 	prospects   domain.ProspectReader
 	leadCreator domain.LeadCreator
+	tx          domain.TxManager
 }
 
-func NewUseCase(repo domain.Repository, aiGenerator domain.AIMessageGenerator, prospects domain.ProspectReader, leadCreator domain.LeadCreator) *UseCase {
-	return &UseCase{repo: repo, aiGenerator: aiGenerator, prospects: prospects, leadCreator: leadCreator}
+func NewUseCase(repo domain.Repository, aiGenerator domain.AIMessageGenerator, prospects domain.ProspectReader, leadCreator domain.LeadCreator, opts ...UseCaseOption) *UseCase {
+	uc := &UseCase{repo: repo, aiGenerator: aiGenerator, prospects: prospects, leadCreator: leadCreator}
+	for _, opt := range opts {
+		opt(uc)
+	}
+	return uc
+}
+
+// UseCaseOption configures the UseCase.
+type UseCaseOption func(*UseCase)
+
+// WithTxManager sets the transaction manager.
+func WithTxManager(tx domain.TxManager) UseCaseOption {
+	return func(uc *UseCase) { uc.tx = tx }
 }
 
 func (uc *UseCase) ListSequences(ctx context.Context, userID uuid.UUID) ([]domain.Sequence, error) {
@@ -54,6 +67,15 @@ func (uc *UseCase) CreateStep(ctx context.Context, step *domain.SequenceStep) er
 }
 
 func (uc *UseCase) Launch(ctx context.Context, sequenceID uuid.UUID, prospectIDs []uuid.UUID, sendNow ...bool) error {
+	if uc.tx != nil {
+		return uc.tx.WithTx(ctx, func(txCtx context.Context) error {
+			return uc.launchInner(txCtx, sequenceID, prospectIDs, sendNow...)
+		})
+	}
+	return uc.launchInner(ctx, sequenceID, prospectIDs, sendNow...)
+}
+
+func (uc *UseCase) launchInner(ctx context.Context, sequenceID uuid.UUID, prospectIDs []uuid.UUID, sendNow ...bool) error {
 	steps, err := uc.repo.ListSteps(ctx, sequenceID)
 	if err != nil {
 		return fmt.Errorf("launch: list steps: %w", err)
@@ -83,17 +105,7 @@ func (uc *UseCase) Launch(ctx context.Context, sequenceID uuid.UUID, prospectIDs
 			return fmt.Errorf("launch: prospect %s not found", pid)
 		}
 
-		// Deduplication checks
-		if prospect.Status == "converted" || prospect.Status == "opted_out" {
-			continue
-		}
-		if prospect.Status == "in_sequence" {
-			continue
-		}
-		if prospect.VerifyStatus == "invalid" {
-			continue
-		}
-		if prospect.VerifyStatus == "not_checked" && prospect.Email != "" {
+		if !prospect.CanReceiveSequence() {
 			continue
 		}
 
@@ -135,22 +147,11 @@ func (uc *UseCase) Launch(ctx context.Context, sequenceID uuid.UUID, prospectIDs
 				return fmt.Errorf("launch: generate message for prospect %s step %d: %w", pid, step.StepOrder, genErr)
 			}
 
-			msg := &domain.OutboundMessage{
-				ID:          uuid.New(),
-				ProspectID:  pid,
-				SequenceID:  sequenceID,
-				StepOrder:   step.StepOrder,
-				Channel:     step.Channel,
-				Body:        body,
-				Status:      domain.OutboundStatusDraft,
-				ScheduledAt: func() time.Time {
-					if immediate {
-						return now
-					}
-					return now.AddDate(0, 0, cumulativeDelay)
-				}(),
-				CreatedAt:   now,
+			scheduledAt := now.AddDate(0, 0, cumulativeDelay)
+			if immediate {
+				scheduledAt = now
 			}
+			msg := domain.NewOutboundMessage(pid, sequenceID, step.StepOrder, step.Channel, body, scheduledAt)
 			if err := uc.repo.CreateOutboundMessage(ctx, msg); err != nil {
 				return fmt.Errorf("launch: create outbound message: %w", err)
 			}
@@ -158,7 +159,7 @@ func (uc *UseCase) Launch(ctx context.Context, sequenceID uuid.UUID, prospectIDs
 			previousBody = body
 		}
 
-		if err := uc.prospects.UpdateStatus(ctx, pid, "in_sequence"); err != nil {
+		if err := uc.prospects.UpdateStatus(ctx, pid, domain.ProspectStatusInSequence); err != nil {
 			return fmt.Errorf("launch: update prospect status: %w", err)
 		}
 	}
@@ -202,7 +203,7 @@ func (uc *UseCase) EditMessage(ctx context.Context, id uuid.UUID, body string) e
 
 		channel := string(msg.Channel)
 		if channel == "" {
-			channel = "email"
+			channel = string(domain.StepChannelEmail)
 		}
 
 		_ = uc.repo.SavePromptFeedback(ctx, func() uuid.UUID {
@@ -214,6 +215,10 @@ func (uc *UseCase) EditMessage(ctx context.Context, id uuid.UUID, body string) e
 	}
 
 	return nil
+}
+
+func (uc *UseCase) MarkOpened(ctx context.Context, id uuid.UUID) error {
+	return uc.repo.MarkOpened(ctx, id)
 }
 
 func (uc *UseCase) DeleteStep(ctx context.Context, stepID uuid.UUID) error {
@@ -259,13 +264,11 @@ func (uc *UseCase) ConvertToLead(ctx context.Context, prospectID uuid.UUID) erro
 		return fmt.Errorf("convert: prospect not found")
 	}
 
-	leadID, err := uc.leadCreator.CreateLeadFromProspect(ctx, prospect, prospect.UserID)
-	if err != nil {
+	if _, err := uc.leadCreator.CreateLeadFromProspect(ctx, prospect, prospect.UserID); err != nil {
 		return fmt.Errorf("convert: create lead: %w", err)
 	}
-	_ = leadID
 
-	if err := uc.prospects.UpdateStatus(ctx, prospectID, "converted"); err != nil {
+	if err := uc.prospects.UpdateStatus(ctx, prospectID, domain.ProspectStatusConverted); err != nil {
 		return fmt.Errorf("convert: update prospect: %w", err)
 	}
 

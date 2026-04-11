@@ -3,27 +3,13 @@ package settings
 import (
 	"context"
 
+	"github.com/daniil/floq/internal/settings/domain"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// UserConfig holds runtime configuration read from user_settings table.
-type UserConfig struct {
-	ResendAPIKey     string
-	SMTPFrom         string
-	SMTPHost         string
-	SMTPPort         string
-	SMTPUser         string
-	SMTPPassword     string
-	AIProvider       string
-	AIModel          string
-	AIAPIKey         string
-	IMAPHost         string
-	IMAPPort         string
-	IMAPUser         string
-	IMAPPassword     string
-	TelegramBotToken string
-}
+// Compile-time check that Store implements domain.ConfigStore.
+var _ domain.ConfigStore = (*Store)(nil)
 
 // Store reads user settings from the database.
 type Store struct {
@@ -35,8 +21,8 @@ func NewStore(pool *pgxpool.Pool) *Store {
 }
 
 // GetConfig reads settings for the given user. Returns zero-value UserConfig if no row exists.
-func (s *Store) GetConfig(ctx context.Context, userID uuid.UUID) (*UserConfig, error) {
-	cfg := &UserConfig{}
+func (s *Store) GetConfig(ctx context.Context, userID uuid.UUID) (*domain.UserConfig, error) {
+	cfg := &domain.UserConfig{}
 	err := s.pool.QueryRow(ctx,
 		`SELECT COALESCE(resend_api_key, ''),
 		        COALESCE(smtp_host, ''), COALESCE(smtp_port, '465'), COALESCE(smtp_user, ''), COALESCE(smtp_password, ''),
@@ -53,7 +39,7 @@ func (s *Store) GetConfig(ctx context.Context, userID uuid.UUID) (*UserConfig, e
 	)
 	if err != nil {
 		// No row = empty config, not an error for callers
-		return &UserConfig{}, nil
+		return &domain.UserConfig{}, nil
 	}
 	return cfg, nil
 }

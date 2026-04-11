@@ -1,15 +1,20 @@
 package sequences
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"net/http"
-	"time"
 
 	"github.com/daniil/floq/internal/httputil"
 	"github.com/daniil/floq/internal/sequences/domain"
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 )
+
+// RegisterPublicRoutes registers routes that don't require authentication (e.g. tracking pixel).
+func RegisterPublicRoutes(router chi.Router, uc *UseCase) {
+	router.Get("/api/track/open/{id}", trackOpen(uc))
+}
 
 func RegisterRoutes(router chi.Router, uc *UseCase) {
 	router.Get("/api/sequences", listSequences(uc))
@@ -70,13 +75,7 @@ func createSequence(uc *UseCase) http.HandlerFunc {
 			return
 		}
 
-		s := &domain.Sequence{
-			ID:        uuid.New(),
-			UserID:    userID,
-			Name:      body.Name,
-			IsActive:  false,
-			CreatedAt: time.Now().UTC(),
-		}
+		s := domain.NewSequence(userID, body.Name)
 		if err := uc.CreateSequence(r.Context(), s); err != nil {
 			httputil.WriteError(w, http.StatusInternalServerError, "failed to create sequence")
 			return
@@ -186,15 +185,7 @@ func addStep(uc *UseCase) http.HandlerFunc {
 			channel = domain.StepChannelEmail
 		}
 
-		step := &domain.SequenceStep{
-			ID:         uuid.New(),
-			SequenceID: id,
-			StepOrder:  body.StepOrder,
-			DelayDays:  body.DelayDays,
-			PromptHint: body.PromptHint,
-			Channel:    channel,
-			CreatedAt:  time.Now().UTC(),
-		}
+		step := domain.NewSequenceStep(id, body.StepOrder, body.DelayDays, channel, body.PromptHint)
 		if err := uc.CreateStep(r.Context(), step); err != nil {
 			httputil.WriteError(w, http.StatusInternalServerError, "failed to create step")
 			return
@@ -404,6 +395,22 @@ func editMessage(uc *UseCase) http.HandlerFunc {
 			return
 		}
 		httputil.WriteJSON(w, http.StatusOK, map[string]string{"status": "updated"})
+	}
+}
+
+func trackOpen(uc *UseCase) http.HandlerFunc {
+	pixel, _ := base64.StdEncoding.DecodeString("R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7")
+	return func(w http.ResponseWriter, r *http.Request) {
+		idStr := chi.URLParam(r, "id")
+		msgID, err := uuid.Parse(idStr)
+		if err != nil {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		_ = uc.MarkOpened(r.Context(), msgID)
+		w.Header().Set("Content-Type", "image/gif")
+		w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
+		_, _ = w.Write(pixel)
 	}
 }
 

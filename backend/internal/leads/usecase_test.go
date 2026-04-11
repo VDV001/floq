@@ -109,6 +109,14 @@ func (m *mockRepo) CreateReminder(_ context.Context, _ uuid.UUID, _ string) erro
 	return nil
 }
 
+func (m *mockRepo) CountMonthLeads(_ context.Context, _ uuid.UUID) (int, error) {
+	return 0, nil
+}
+
+func (m *mockRepo) CountTotalLeads(_ context.Context, _ uuid.UUID) (int, error) {
+	return 0, nil
+}
+
 // --- Mock AIService ---
 
 type mockAI struct {
