@@ -1,6 +1,10 @@
 package domain
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/google/uuid"
+)
 
 func TestLeadStatus_IsValid(t *testing.T) {
 	valid := []LeadStatus{StatusNew, StatusQualified, StatusClosed, StatusWon}
@@ -86,5 +90,72 @@ func TestChannel_IsValid(t *testing.T) {
 		if c.IsValid() {
 			t.Errorf("expected %q to be invalid", c)
 		}
+	}
+}
+
+func TestNewLead(t *testing.T) {
+	userID := uuid.New()
+	chatID := int64(123)
+	lead := NewLead(userID, ChannelTelegram, "Ivan", "Acme", "Hello", &chatID, nil)
+
+	if lead.ID == uuid.Nil {
+		t.Error("expected non-nil ID")
+	}
+	if lead.UserID != userID {
+		t.Errorf("expected userID %s, got %s", userID, lead.UserID)
+	}
+	if lead.Status != StatusNew {
+		t.Errorf("expected status new, got %s", lead.Status)
+	}
+	if lead.Channel != ChannelTelegram {
+		t.Errorf("expected channel telegram, got %s", lead.Channel)
+	}
+	if lead.CreatedAt.IsZero() {
+		t.Error("expected non-zero CreatedAt")
+	}
+}
+
+func TestLead_TransitionTo_Valid(t *testing.T) {
+	lead := &Lead{Status: StatusNew}
+	if err := lead.TransitionTo(StatusQualified); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if lead.Status != StatusQualified {
+		t.Errorf("expected qualified, got %s", lead.Status)
+	}
+}
+
+func TestLead_TransitionTo_InvalidTarget(t *testing.T) {
+	lead := &Lead{Status: StatusNew}
+	if err := lead.TransitionTo(LeadStatus("bogus")); err == nil {
+		t.Error("expected error for invalid target status")
+	}
+}
+
+func TestLead_TransitionTo_DisallowedTransition(t *testing.T) {
+	lead := &Lead{Status: StatusNew}
+	if err := lead.TransitionTo(StatusWon); err == nil {
+		t.Error("expected error for disallowed transition new -> won")
+	}
+	if lead.Status != StatusNew {
+		t.Error("status should not change on failed transition")
+	}
+}
+
+func TestNewMessage(t *testing.T) {
+	leadID := uuid.New()
+	msg := NewMessage(leadID, DirectionOutbound, "hello")
+
+	if msg.ID == uuid.Nil {
+		t.Error("expected non-nil ID")
+	}
+	if msg.LeadID != leadID {
+		t.Error("wrong leadID")
+	}
+	if msg.Direction != DirectionOutbound {
+		t.Error("wrong direction")
+	}
+	if msg.SentAt.IsZero() {
+		t.Error("expected non-zero SentAt")
 	}
 }

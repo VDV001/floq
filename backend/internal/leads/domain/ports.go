@@ -27,6 +27,9 @@ type Repository interface {
 	CreateDraft(ctx context.Context, d *Draft) error
 
 	CreateReminder(ctx context.Context, leadID uuid.UUID, message string) error
+
+	CountMonthLeads(ctx context.Context, userID uuid.UUID) (int, error)
+	CountTotalLeads(ctx context.Context, userID uuid.UUID) (int, error)
 }
 
 // MessageSender sends messages to leads via their channel.

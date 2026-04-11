@@ -81,3 +81,26 @@ func TestVerifyStatus_String(t *testing.T) {
 		})
 	}
 }
+
+func TestProspect_CanLaunchSequence(t *testing.T) {
+	tests := []struct {
+		name   string
+		p      Prospect
+		expect bool
+	}{
+		{"new+valid", Prospect{Status: ProspectStatusNew, VerifyStatus: VerifyStatusValid}, true},
+		{"converted", Prospect{Status: ProspectStatusConverted, VerifyStatus: VerifyStatusValid}, false},
+		{"opted_out", Prospect{Status: ProspectStatusOptedOut, VerifyStatus: VerifyStatusValid}, false},
+		{"in_sequence", Prospect{Status: ProspectStatusInSequence, VerifyStatus: VerifyStatusValid}, false},
+		{"invalid verify", Prospect{Status: ProspectStatusNew, VerifyStatus: VerifyStatusInvalid}, false},
+		{"not_checked with email", Prospect{Status: ProspectStatusNew, VerifyStatus: VerifyStatusNotChecked, Email: "a@b.com"}, false},
+		{"not_checked no email", Prospect{Status: ProspectStatusNew, VerifyStatus: VerifyStatusNotChecked}, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := tt.p.CanLaunchSequence(); got != tt.expect {
+				t.Errorf("CanLaunchSequence() = %v, want %v", got, tt.expect)
+			}
+		})
+	}
+}

@@ -68,6 +68,17 @@ type Sequence struct {
 	CreatedAt time.Time
 }
 
+// NewSequence creates a new Sequence with generated ID and timestamp.
+func NewSequence(userID uuid.UUID, name string) *Sequence {
+	return &Sequence{
+		ID:        uuid.New(),
+		UserID:    userID,
+		Name:      name,
+		IsActive:  false,
+		CreatedAt: time.Now().UTC(),
+	}
+}
+
 type SequenceStep struct {
 	ID         uuid.UUID
 	SequenceID uuid.UUID
@@ -76,6 +87,19 @@ type SequenceStep struct {
 	PromptHint string
 	Channel    StepChannel
 	CreatedAt  time.Time
+}
+
+// NewSequenceStep creates a new SequenceStep with generated ID and timestamp.
+func NewSequenceStep(sequenceID uuid.UUID, stepOrder, delayDays int, channel StepChannel, hint string) *SequenceStep {
+	return &SequenceStep{
+		ID:         uuid.New(),
+		SequenceID: sequenceID,
+		StepOrder:  stepOrder,
+		DelayDays:  delayDays,
+		PromptHint: hint,
+		Channel:    channel,
+		CreatedAt:  time.Now().UTC(),
+	}
 }
 
 type OutboundMessage struct {
@@ -89,6 +113,21 @@ type OutboundMessage struct {
 	ScheduledAt time.Time
 	SentAt      *time.Time
 	CreatedAt   time.Time
+}
+
+// NewOutboundMessage creates a new OutboundMessage in draft status with generated ID.
+func NewOutboundMessage(prospectID, sequenceID uuid.UUID, stepOrder int, channel StepChannel, body string, scheduledAt time.Time) *OutboundMessage {
+	return &OutboundMessage{
+		ID:          uuid.New(),
+		ProspectID:  prospectID,
+		SequenceID:  sequenceID,
+		StepOrder:   stepOrder,
+		Channel:     channel,
+		Body:        body,
+		Status:      OutboundStatusDraft,
+		ScheduledAt: scheduledAt,
+		CreatedAt:   time.Now().UTC(),
+	}
 }
 
 type OutboundMessageWithProspect struct {

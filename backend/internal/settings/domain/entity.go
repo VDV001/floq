@@ -46,14 +46,20 @@ type Settings struct {
 }
 
 // UserConfig holds credentials and provider settings needed by background
-// services (AI, email sending, IMAP polling).
+// services (AI, email sending, IMAP polling, Telegram).
 type UserConfig struct {
-	AIProvider   string
-	AIModel      string
-	AIAPIKey     string
-	ResendAPIKey string
-	IMAPHost     string
-	IMAPPort     string
-	IMAPUser     string
-	IMAPPassword string
+	ResendAPIKey     string
+	SMTPFrom         string
+	SMTPHost         string
+	SMTPPort         string
+	SMTPUser         string
+	SMTPPassword     string
+	AIProvider       string
+	AIModel          string
+	AIAPIKey         string
+	IMAPHost         string
+	IMAPPort         string
+	IMAPUser         string
+	IMAPPassword     string
+	TelegramBotToken string
 }

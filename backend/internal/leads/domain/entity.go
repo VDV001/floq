@@ -1,31 +1,11 @@
 package domain
 
 import (
-	"strings"
+	"fmt"
 	"time"
 
 	"github.com/google/uuid"
 )
-
-// DetectCallAgreement checks if the message indicates the person agrees to a call/meeting.
-func DetectCallAgreement(text string) bool {
-	lower := strings.ToLower(text)
-	markers := []string{
-		"давайте созвон", "давай созвон", "готов созвон", "согласен на созвон",
-		"можно созвон", "давайте звонок", "давай звонок", "готов к звонку",
-		"давайте встреч", "давай встреч", "согласен на встреч", "готов встретить",
-		"можем созвон", "можем встретить", "давайте обсудим", "готов обсудить",
-		"да, давайте", "да давайте", "конечно, давайте", "с удовольствием",
-		"когда удобно", "выберу время", "забронир", "запишусь",
-		"да, можно", "да можно", "ок, давай", "ок давай",
-	}
-	for _, m := range markers {
-		if strings.Contains(lower, m) {
-			return true
-		}
-	}
-	return false
-}
 
 // --- LeadStatus value object ---
 
@@ -111,12 +91,54 @@ type Lead struct {
 	UpdatedAt      time.Time
 }
 
+// NewLead creates a new Lead with generated ID, status=new, and timestamps.
+func NewLead(userID uuid.UUID, channel Channel, contactName, company, firstMessage string, telegramChatID *int64, emailAddress *string) *Lead {
+	now := time.Now().UTC()
+	return &Lead{
+		ID:             uuid.New(),
+		UserID:         userID,
+		Channel:        channel,
+		ContactName:    contactName,
+		Company:        company,
+		FirstMessage:   firstMessage,
+		Status:         StatusNew,
+		TelegramChatID: telegramChatID,
+		EmailAddress:   emailAddress,
+		CreatedAt:      now,
+		UpdatedAt:      now,
+	}
+}
+
+// TransitionTo validates and applies a status transition.
+func (l *Lead) TransitionTo(target LeadStatus) error {
+	if !target.IsValid() {
+		return fmt.Errorf("invalid lead status: %q", target)
+	}
+	if !l.Status.CanTransitionTo(target) {
+		return fmt.Errorf("cannot transition lead from %q to %q", l.Status, target)
+	}
+	l.Status = target
+	l.UpdatedAt = time.Now().UTC()
+	return nil
+}
+
 type Message struct {
 	ID        uuid.UUID
 	LeadID    uuid.UUID
 	Direction MessageDirection
 	Body      string
 	SentAt    time.Time
+}
+
+// NewMessage creates a new Message with generated ID and timestamp.
+func NewMessage(leadID uuid.UUID, direction MessageDirection, body string) *Message {
+	return &Message{
+		ID:        uuid.New(),
+		LeadID:    leadID,
+		Direction: direction,
+		Body:      body,
+		SentAt:    time.Now().UTC(),
+	}
 }
 
 type Qualification struct {

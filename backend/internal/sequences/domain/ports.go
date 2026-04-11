@@ -7,22 +7,25 @@ import (
 	"github.com/google/uuid"
 )
 
-// Repository defines persistence operations for the sequences domain.
-type Repository interface {
-	// Sequences
+// SequenceRepo manages sequence CRUD.
+type SequenceRepo interface {
 	ListSequences(ctx context.Context, userID uuid.UUID) ([]Sequence, error)
 	GetSequence(ctx context.Context, id uuid.UUID) (*Sequence, error)
 	CreateSequence(ctx context.Context, s *Sequence) error
 	UpdateSequence(ctx context.Context, s *Sequence) error
 	DeleteSequence(ctx context.Context, id uuid.UUID) error
 	ToggleActive(ctx context.Context, id uuid.UUID, active bool) error
+}
 
-	// Steps
+// StepRepo manages sequence step CRUD.
+type StepRepo interface {
 	ListSteps(ctx context.Context, sequenceID uuid.UUID) ([]SequenceStep, error)
 	CreateStep(ctx context.Context, step *SequenceStep) error
 	DeleteStep(ctx context.Context, stepID uuid.UUID) error
+}
 
-	// Outbound messages
+// OutboundMessageRepo manages outbound message operations.
+type OutboundMessageRepo interface {
 	CreateOutboundMessage(ctx context.Context, msg *OutboundMessage) error
 	ListOutboundQueue(ctx context.Context, userID uuid.UUID) ([]OutboundMessage, error)
 	ListSentMessages(ctx context.Context, userID uuid.UUID) ([]OutboundMessage, error)
@@ -31,19 +34,19 @@ type Repository interface {
 	GetPendingSends(ctx context.Context) ([]OutboundMessage, error)
 	MarkSent(ctx context.Context, id uuid.UUID) error
 	MarkBounced(ctx context.Context, id uuid.UUID) error
-
-	// Stats
-	GetStats(ctx context.Context, userID uuid.UUID) (*Stats, error)
-
-	// Outbound message lookup
+	MarkOpened(ctx context.Context, id uuid.UUID) error
 	GetOutboundMessage(ctx context.Context, id uuid.UUID) (*OutboundMessage, error)
-
-	// Conversation history
+	GetStats(ctx context.Context, userID uuid.UUID) (*Stats, error)
 	GetConversationHistory(ctx context.Context, prospectID uuid.UUID) ([]ConversationEntry, error)
-
-	// Prompt feedback
 	SavePromptFeedback(ctx context.Context, userID uuid.UUID, original, edited, prospectContext, channel string) error
 	GetRecentFeedback(ctx context.Context, userID uuid.UUID, limit int) ([]PromptFeedback, error)
+}
+
+// Repository composes all sub-repositories for the sequences bounded context.
+type Repository interface {
+	SequenceRepo
+	StepRepo
+	OutboundMessageRepo
 }
 
 // AIMessageGenerator generates outbound messages using AI.
@@ -70,6 +73,30 @@ type ProspectView struct {
 	VerifyStatus     string
 	VerifiedAt       *time.Time
 }
+
+// CanReceiveSequence returns true if the prospect is eligible for sequence messages.
+func (p *ProspectView) CanReceiveSequence() bool {
+	if p.Status == ProspectStatusConverted || p.Status == ProspectStatusOptedOut || p.Status == ProspectStatusInSequence {
+		return false
+	}
+	if p.VerifyStatus == VerifyStatusInvalid {
+		return false
+	}
+	if p.VerifyStatus == VerifyStatusNotChecked && p.Email != "" {
+		return false
+	}
+	return true
+}
+
+// Prospect status values used by the sequences context.
+const (
+	ProspectStatusInSequence = "in_sequence"
+	ProspectStatusConverted  = "converted"
+	ProspectStatusOptedOut   = "opted_out"
+
+	VerifyStatusInvalid    = "invalid"
+	VerifyStatusNotChecked = "not_checked"
+)
 
 // ProspectReader provides read access to prospect data from the sequences context.
 type ProspectReader interface {

@@ -13,12 +13,13 @@ const (
 	ProspectStatusNew        ProspectStatus = "new"
 	ProspectStatusInSequence ProspectStatus = "in_sequence"
 	ProspectStatusConverted  ProspectStatus = "converted"
+	ProspectStatusOptedOut   ProspectStatus = "opted_out"
 )
 
 // IsValid returns true if the ProspectStatus is one of the known values.
 func (s ProspectStatus) IsValid() bool {
 	switch s {
-	case ProspectStatusNew, ProspectStatusInSequence, ProspectStatusConverted:
+	case ProspectStatusNew, ProspectStatusInSequence, ProspectStatusConverted, ProspectStatusOptedOut:
 		return true
 	default:
 		return false
@@ -78,4 +79,37 @@ type Prospect struct {
 	ConvertedLeadID  *uuid.UUID
 	CreatedAt        time.Time
 	UpdatedAt        time.Time
+}
+
+// NewProspect creates a new Prospect with generated ID, default statuses, and timestamps.
+func NewProspect(userID uuid.UUID, name, company, title, email, source string) *Prospect {
+	now := time.Now().UTC()
+	return &Prospect{
+		ID:            uuid.New(),
+		UserID:        userID,
+		Name:          name,
+		Company:       company,
+		Title:         title,
+		Email:         email,
+		Source:        source,
+		Status:        ProspectStatusNew,
+		VerifyStatus:  VerifyStatusNotChecked,
+		VerifyDetails: "{}",
+		CreatedAt:     now,
+		UpdatedAt:     now,
+	}
+}
+
+// CanLaunchSequence returns true if the prospect is eligible for a sequence launch.
+func (p *Prospect) CanLaunchSequence() bool {
+	if p.Status == ProspectStatusConverted || p.Status == ProspectStatusOptedOut || p.Status == ProspectStatusInSequence {
+		return false
+	}
+	if p.VerifyStatus == VerifyStatusInvalid {
+		return false
+	}
+	if p.VerifyStatus == VerifyStatusNotChecked && p.Email != "" {
+		return false
+	}
+	return true
 }
