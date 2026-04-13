@@ -130,6 +130,40 @@ func TestImportCSV_WithOptionalColumns(t *testing.T) {
 	assert.Equal(t, "SaaS", repo.batched[0].Industry)
 }
 
+func TestExportCSV(t *testing.T) {
+	repo := newMockRepo()
+	userID := uuid.New()
+	id := uuid.New()
+	repo.prospects[id] = &domain.Prospect{
+		ID:           id,
+		UserID:       userID,
+		Name:         "Alice",
+		Company:      "Acme",
+		Title:        "CEO",
+		Email:        "alice@acme.com",
+		Source:       "manual",
+		Status:       domain.ProspectStatusNew,
+		VerifyStatus: domain.VerifyStatusNotChecked,
+	}
+
+	uc := NewUseCase(repo)
+	data, err := uc.ExportCSV(context.Background(), userID)
+	require.NoError(t, err)
+
+	csv := string(data)
+	assert.Contains(t, csv, "name,company,title,email")
+	assert.Contains(t, csv, "Alice,Acme,CEO,alice@acme.com")
+}
+
+func TestExportCSV_Empty(t *testing.T) {
+	repo := newMockRepo()
+	uc := NewUseCase(repo)
+
+	data, err := uc.ExportCSV(context.Background(), uuid.New())
+	require.NoError(t, err)
+	assert.Contains(t, string(data), "name,company,title,email")
+}
+
 func TestListProspects(t *testing.T) {
 	repo := newMockRepo()
 	userID := uuid.New()

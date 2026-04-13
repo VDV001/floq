@@ -157,6 +157,67 @@ func (m *mockSender) SendMessage(_ context.Context, lead *domain.Lead, body stri
 
 // --- Tests ---
 
+func TestExportCSV(t *testing.T) {
+	repo := newMockRepo()
+	userID := uuid.New()
+	leadID := uuid.New()
+	email := "test@example.com"
+	repo.leads[leadID] = &domain.Lead{
+		ID:           leadID,
+		UserID:       userID,
+		Channel:      domain.ChannelEmail,
+		ContactName:  "Alice",
+		Company:      "Acme",
+		FirstMessage: "Hello",
+		Status:       domain.StatusNew,
+		EmailAddress: &email,
+	}
+
+	uc := NewUseCase(repo, &mockAI{}, nil)
+	data, err := uc.ExportCSV(context.Background(), userID)
+	require.NoError(t, err)
+
+	csv := string(data)
+	assert.Contains(t, csv, "contact_name,company,channel,email_address")
+	assert.Contains(t, csv, "Alice,Acme,email,test@example.com")
+}
+
+func TestImportCSV_HappyPath(t *testing.T) {
+	repo := newMockRepo()
+	uc := NewUseCase(repo, &mockAI{}, nil)
+	userID := uuid.New()
+
+	csv := []byte("contact_name,channel,company,email_address\nAlice,email,Acme,alice@example.com\nBob,telegram,,\n")
+
+	count, err := uc.ImportCSV(context.Background(), userID, csv)
+	require.NoError(t, err)
+	assert.Equal(t, 2, count)
+	assert.Len(t, repo.leads, 2)
+}
+
+func TestImportCSV_MissingRequiredColumn(t *testing.T) {
+	repo := newMockRepo()
+	uc := NewUseCase(repo, &mockAI{}, nil)
+
+	csv := []byte("name,email\nAlice,alice@example.com\n")
+
+	count, err := uc.ImportCSV(context.Background(), uuid.New(), csv)
+	assert.Error(t, err)
+	assert.Equal(t, 0, count)
+	assert.Contains(t, err.Error(), "contact_name")
+}
+
+func TestImportCSV_SkipsEmptyName(t *testing.T) {
+	repo := newMockRepo()
+	uc := NewUseCase(repo, &mockAI{}, nil)
+
+	csv := []byte("contact_name,channel\n,email\nBob,telegram\n")
+
+	count, err := uc.ImportCSV(context.Background(), uuid.New(), csv)
+	require.NoError(t, err)
+	assert.Equal(t, 1, count)
+}
+
 func TestQualifyLead_HappyPath(t *testing.T) {
 	repo := newMockRepo()
 	leadID := uuid.New()
