@@ -3,7 +3,6 @@ package sources
 import (
 	"context"
 	"fmt"
-	"time"
 
 	"github.com/daniil/floq/internal/sources/domain"
 	"github.com/google/uuid"
@@ -28,13 +27,7 @@ func (uc *UseCase) CreateCategory(ctx context.Context, userID uuid.UUID, name st
 	if name == "" {
 		return nil, fmt.Errorf("category name is required")
 	}
-	cat := &domain.Category{
-		ID:        uuid.New(),
-		UserID:    userID,
-		Name:      name,
-		SortOrder: 0,
-		CreatedAt: time.Now().UTC(),
-	}
+	cat := domain.NewCategory(userID, name)
 	if err := uc.repo.CreateCategory(ctx, cat); err != nil {
 		return nil, err
 	}
@@ -56,14 +49,7 @@ func (uc *UseCase) CreateSource(ctx context.Context, userID, categoryID uuid.UUI
 	if name == "" {
 		return nil, fmt.Errorf("source name is required")
 	}
-	src := &domain.Source{
-		ID:         uuid.New(),
-		UserID:     userID,
-		CategoryID: categoryID,
-		Name:       name,
-		SortOrder:  0,
-		CreatedAt:  time.Now().UTC(),
-	}
+	src := domain.NewSource(userID, categoryID, name)
 	if err := uc.repo.CreateSource(ctx, src); err != nil {
 		return nil, err
 	}

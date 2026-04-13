@@ -171,53 +171,20 @@ func (r *Repository) EnsureDefaults(ctx context.Context, userID uuid.UUID) error
 
 	now := time.Now().UTC()
 
-	defaults := []struct {
-		categoryName string
-		sources      []string
-	}{
-		{"Импорт", []string{"CSV файл"}},
-		{"Ручное добавление", []string{"Вручную"}},
-		{"Парсинг", []string{"2GIS"}},
-		{"Входящие", []string{"Telegram", "Email"}},
-	}
-
-	// sourceNameToID tracks created source IDs for prospect migration.
-	sourceNameToID := make(map[string]uuid.UUID)
-
-	for i, d := range defaults {
-		catID := uuid.New()
-		_, err := r.pool.Exec(ctx,
-			`INSERT INTO source_categories (id, user_id, name, sort_order, created_at)
-			 VALUES ($1, $2, $3, $4, $5)`,
-			catID, userID, d.categoryName, i, now)
-		if err != nil {
-			return fmt.Errorf("insert default category %q: %w", d.categoryName, err)
+	for i, seed := range domain.DefaultSeeds() {
+		cat := domain.NewCategory(userID, seed.CategoryName)
+		cat.SortOrder = i
+		cat.CreatedAt = now
+		if err := r.CreateCategory(ctx, cat); err != nil {
+			return fmt.Errorf("insert default category %q: %w", seed.CategoryName, err)
 		}
-
-		for j, srcName := range d.sources {
-			srcID := uuid.New()
-			_, err := r.pool.Exec(ctx,
-				`INSERT INTO lead_sources (id, user_id, category_id, name, sort_order, created_at)
-				 VALUES ($1, $2, $3, $4, $5, $6)`,
-				srcID, userID, catID, srcName, j, now)
-			if err != nil {
+		for j, srcName := range seed.SourceNames {
+			src := domain.NewSource(userID, cat.ID, srcName)
+			src.SortOrder = j
+			src.CreatedAt = now
+			if err := r.CreateSource(ctx, src); err != nil {
 				return fmt.Errorf("insert default source %q: %w", srcName, err)
 			}
-			sourceNameToID[srcName] = srcID
-		}
-	}
-
-	// Migrate existing prospects: map old text source to new source_id.
-	migrations := map[string]string{
-		"csv":    "CSV файл",
-		"manual": "Вручную",
-		"2gis":   "2GIS",
-	}
-	for oldSource, newName := range migrations {
-		if srcID, ok := sourceNameToID[newName]; ok {
-			_, _ = r.pool.Exec(ctx,
-				`UPDATE prospects SET source_id = $1 WHERE user_id = $2 AND source = $3 AND source_id IS NULL`,
-				srcID, userID, oldSource)
 		}
 	}
 
