@@ -2,12 +2,15 @@ package prospects
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
+	"time"
 
 	"github.com/daniil/floq/internal/httputil"
 	"github.com/daniil/floq/internal/prospects/domain"
 	"github.com/go-chi/chi/v5"
+	"github.com/google/uuid"
 )
 
 type Handler struct {
@@ -18,6 +21,7 @@ func RegisterRoutes(r chi.Router, uc *UseCase) {
 	h := &Handler{uc: uc}
 	r.Get("/api/prospects", h.listProspects())
 	r.Post("/api/prospects", h.createProspect())
+	r.Get("/api/prospects/export", h.exportCSV())
 	r.Post("/api/prospects/import", h.importCSV())
 	r.Get("/api/prospects/{id}", h.getProspect())
 	r.Delete("/api/prospects/{id}", h.deleteProspect())
@@ -60,7 +64,8 @@ func (h *Handler) createProspect() http.HandlerFunc {
 			TelegramUsername string `json:"telegram_username"`
 			Industry         string `json:"industry"`
 			CompanySize      string `json:"company_size"`
-			Context          string `json:"context"`
+			Context          string     `json:"context"`
+			SourceID         *uuid.UUID `json:"source_id"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			httputil.WriteError(w, http.StatusBadRequest, "invalid request body")
@@ -90,6 +95,7 @@ func (h *Handler) createProspect() http.HandlerFunc {
 		p.Industry = body.Industry
 		p.CompanySize = body.CompanySize
 		p.Context = body.Context
+		p.SourceID = body.SourceID
 
 		if err := h.uc.CreateProspect(r.Context(), p); err != nil {
 			httputil.WriteError(w, http.StatusInternalServerError, "failed to create prospect")
@@ -126,6 +132,26 @@ func (h *Handler) importCSV() http.HandlerFunc {
 		}
 
 		httputil.WriteJSON(w, http.StatusOK, map[string]int{"imported": count})
+	}
+}
+
+func (h *Handler) exportCSV() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		userID, ok := httputil.UserIDFromContext(r.Context())
+		if !ok {
+			httputil.WriteError(w, http.StatusUnauthorized, "unauthorized")
+			return
+		}
+		data, err := h.uc.ExportCSV(r.Context(), userID)
+		if err != nil {
+			httputil.WriteError(w, http.StatusInternalServerError, "failed to export prospects")
+			return
+		}
+		filename := fmt.Sprintf("floq-prospects-%s.csv", time.Now().UTC().Format("2006-01-02"))
+		w.Header().Set("Content-Type", "text/csv; charset=utf-8")
+		w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, filename))
+		w.WriteHeader(http.StatusOK)
+		w.Write(data)
 	}
 }
 

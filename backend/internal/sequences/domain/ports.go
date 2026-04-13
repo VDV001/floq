@@ -69,6 +69,7 @@ type ProspectView struct {
 	TelegramUsername string
 	Context          string
 	Source           string
+	SourceID         *uuid.UUID
 	Status           string
 	VerifyStatus     string
 	VerifiedAt       *time.Time

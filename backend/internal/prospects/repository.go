@@ -25,7 +25,7 @@ func NewRepository(pool *pgxpool.Pool) *Repository {
 func (r *Repository) ListProspects(ctx context.Context, userID uuid.UUID) ([]domain.Prospect, error) {
 	rows, err := r.pool.Query(ctx,
 		`SELECT id, user_id, name, company, title, email, phone, whatsapp, telegram_username, industry, company_size, context,
-		        source, status, verify_status, verify_score, verify_details, verified_at, converted_lead_id, created_at, updated_at
+		        source, source_id, status, verify_status, verify_score, verify_details, verified_at, converted_lead_id, created_at, updated_at
 		 FROM prospects WHERE user_id = $1 ORDER BY created_at DESC`, userID)
 	if err != nil {
 		return nil, fmt.Errorf("list prospects: %w", err)
@@ -36,7 +36,7 @@ func (r *Repository) ListProspects(ctx context.Context, userID uuid.UUID) ([]dom
 	for rows.Next() {
 		var p domain.Prospect
 		if err := rows.Scan(&p.ID, &p.UserID, &p.Name, &p.Company, &p.Title, &p.Email, &p.Phone, &p.WhatsApp, &p.TelegramUsername, &p.Industry, &p.CompanySize, &p.Context,
-			&p.Source, &p.Status, &p.VerifyStatus, &p.VerifyScore, &p.VerifyDetails, &p.VerifiedAt, &p.ConvertedLeadID, &p.CreatedAt, &p.UpdatedAt); err != nil {
+			&p.Source, &p.SourceID, &p.Status, &p.VerifyStatus, &p.VerifyScore, &p.VerifyDetails, &p.VerifiedAt, &p.ConvertedLeadID, &p.CreatedAt, &p.UpdatedAt); err != nil {
 			return nil, fmt.Errorf("scan prospect: %w", err)
 		}
 		prospects = append(prospects, p)
@@ -48,10 +48,10 @@ func (r *Repository) GetProspect(ctx context.Context, id uuid.UUID) (*domain.Pro
 	var p domain.Prospect
 	err := r.pool.QueryRow(ctx,
 		`SELECT id, user_id, name, company, title, email, phone, whatsapp, telegram_username, industry, company_size, context,
-		        source, status, verify_status, verify_score, verify_details, verified_at, converted_lead_id, created_at, updated_at
+		        source, source_id, status, verify_status, verify_score, verify_details, verified_at, converted_lead_id, created_at, updated_at
 		 FROM prospects WHERE id = $1`, id).
 		Scan(&p.ID, &p.UserID, &p.Name, &p.Company, &p.Title, &p.Email, &p.Phone, &p.WhatsApp, &p.TelegramUsername, &p.Industry, &p.CompanySize, &p.Context,
-			&p.Source, &p.Status, &p.VerifyStatus, &p.VerifyScore, &p.VerifyDetails, &p.VerifiedAt, &p.ConvertedLeadID, &p.CreatedAt, &p.UpdatedAt)
+			&p.Source, &p.SourceID, &p.Status, &p.VerifyStatus, &p.VerifyScore, &p.VerifyDetails, &p.VerifiedAt, &p.ConvertedLeadID, &p.CreatedAt, &p.UpdatedAt)
 	if err == pgx.ErrNoRows {
 		return nil, nil
 	}
@@ -65,10 +65,10 @@ func (r *Repository) FindByEmail(ctx context.Context, userID uuid.UUID, email st
 	var p domain.Prospect
 	err := r.pool.QueryRow(ctx,
 		`SELECT id, user_id, name, company, title, email, phone, whatsapp, telegram_username, industry, company_size, context,
-		        source, status, verify_status, verify_score, verify_details, verified_at, converted_lead_id, created_at, updated_at
+		        source, source_id, status, verify_status, verify_score, verify_details, verified_at, converted_lead_id, created_at, updated_at
 		 FROM prospects WHERE user_id = $1 AND LOWER(email) = LOWER($2) LIMIT 1`, userID, email).
 		Scan(&p.ID, &p.UserID, &p.Name, &p.Company, &p.Title, &p.Email, &p.Phone, &p.WhatsApp, &p.TelegramUsername, &p.Industry, &p.CompanySize, &p.Context,
-			&p.Source, &p.Status, &p.VerifyStatus, &p.VerifyScore, &p.VerifyDetails, &p.VerifiedAt, &p.ConvertedLeadID, &p.CreatedAt, &p.UpdatedAt)
+			&p.Source, &p.SourceID, &p.Status, &p.VerifyStatus, &p.VerifyScore, &p.VerifyDetails, &p.VerifiedAt, &p.ConvertedLeadID, &p.CreatedAt, &p.UpdatedAt)
 	if err == pgx.ErrNoRows {
 		return nil, nil
 	}
@@ -81,10 +81,10 @@ func (r *Repository) FindByEmail(ctx context.Context, userID uuid.UUID, email st
 func (r *Repository) CreateProspect(ctx context.Context, p *domain.Prospect) error {
 	_, err := r.pool.Exec(ctx,
 		`INSERT INTO prospects (id, user_id, name, company, title, email, phone, whatsapp, telegram_username, industry, company_size, context,
-		                        source, status, verify_status, verify_score, verify_details, verified_at, converted_lead_id, created_at, updated_at)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21)`,
+		                        source, source_id, status, verify_status, verify_score, verify_details, verified_at, converted_lead_id, created_at, updated_at)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22)`,
 		p.ID, p.UserID, p.Name, p.Company, p.Title, p.Email, p.Phone, p.WhatsApp, p.TelegramUsername, p.Industry, p.CompanySize, p.Context,
-		p.Source, p.Status, p.VerifyStatus, p.VerifyScore, p.VerifyDetails, p.VerifiedAt, p.ConvertedLeadID, p.CreatedAt, p.UpdatedAt)
+		p.Source, p.SourceID, p.Status, p.VerifyStatus, p.VerifyScore, p.VerifyDetails, p.VerifiedAt, p.ConvertedLeadID, p.CreatedAt, p.UpdatedAt)
 	if err != nil {
 		return fmt.Errorf("create prospect: %w", err)
 	}

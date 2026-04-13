@@ -24,7 +24,7 @@ func NewRepository(pool *pgxpool.Pool) *Repository {
 
 func (r *Repository) ListLeads(ctx context.Context, userID uuid.UUID) ([]domain.Lead, error) {
 	rows, err := r.pool.Query(ctx,
-		`SELECT id, user_id, channel, contact_name, company, first_message, status, telegram_chat_id, email_address, created_at, updated_at
+		`SELECT id, user_id, channel, contact_name, company, first_message, status, telegram_chat_id, email_address, source_id, created_at, updated_at
 		 FROM leads WHERE user_id = $1 ORDER BY created_at DESC`, userID)
 	if err != nil {
 		return nil, fmt.Errorf("list leads: %w", err)
@@ -34,7 +34,7 @@ func (r *Repository) ListLeads(ctx context.Context, userID uuid.UUID) ([]domain.
 	var leads []domain.Lead
 	for rows.Next() {
 		var l domain.Lead
-		if err := rows.Scan(&l.ID, &l.UserID, &l.Channel, &l.ContactName, &l.Company, &l.FirstMessage, &l.Status, &l.TelegramChatID, &l.EmailAddress, &l.CreatedAt, &l.UpdatedAt); err != nil {
+		if err := rows.Scan(&l.ID, &l.UserID, &l.Channel, &l.ContactName, &l.Company, &l.FirstMessage, &l.Status, &l.TelegramChatID, &l.EmailAddress, &l.SourceID, &l.CreatedAt, &l.UpdatedAt); err != nil {
 			return nil, fmt.Errorf("scan lead: %w", err)
 		}
 		leads = append(leads, l)
@@ -45,9 +45,9 @@ func (r *Repository) ListLeads(ctx context.Context, userID uuid.UUID) ([]domain.
 func (r *Repository) GetLead(ctx context.Context, id uuid.UUID) (*domain.Lead, error) {
 	var l domain.Lead
 	err := r.pool.QueryRow(ctx,
-		`SELECT id, user_id, channel, contact_name, company, first_message, status, telegram_chat_id, email_address, created_at, updated_at
+		`SELECT id, user_id, channel, contact_name, company, first_message, status, telegram_chat_id, email_address, source_id, created_at, updated_at
 		 FROM leads WHERE id = $1`, id).
-		Scan(&l.ID, &l.UserID, &l.Channel, &l.ContactName, &l.Company, &l.FirstMessage, &l.Status, &l.TelegramChatID, &l.EmailAddress, &l.CreatedAt, &l.UpdatedAt)
+		Scan(&l.ID, &l.UserID, &l.Channel, &l.ContactName, &l.Company, &l.FirstMessage, &l.Status, &l.TelegramChatID, &l.EmailAddress, &l.SourceID, &l.CreatedAt, &l.UpdatedAt)
 	if err == pgx.ErrNoRows {
 		return nil, nil
 	}
@@ -59,9 +59,9 @@ func (r *Repository) GetLead(ctx context.Context, id uuid.UUID) (*domain.Lead, e
 
 func (r *Repository) CreateLead(ctx context.Context, lead *domain.Lead) error {
 	_, err := r.pool.Exec(ctx,
-		`INSERT INTO leads (id, user_id, channel, contact_name, company, first_message, status, telegram_chat_id, email_address, created_at, updated_at)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
-		lead.ID, lead.UserID, lead.Channel, lead.ContactName, lead.Company, lead.FirstMessage, lead.Status, lead.TelegramChatID, lead.EmailAddress, lead.CreatedAt, lead.UpdatedAt)
+		`INSERT INTO leads (id, user_id, channel, contact_name, company, first_message, status, telegram_chat_id, email_address, source_id, created_at, updated_at)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
+		lead.ID, lead.UserID, lead.Channel, lead.ContactName, lead.Company, lead.FirstMessage, lead.Status, lead.TelegramChatID, lead.EmailAddress, lead.SourceID, lead.CreatedAt, lead.UpdatedAt)
 	if err != nil {
 		return fmt.Errorf("create lead: %w", err)
 	}
@@ -184,9 +184,9 @@ func (r *Repository) CreateDraft(ctx context.Context, d *domain.Draft) error {
 func (r *Repository) GetLeadByTelegramChatID(ctx context.Context, userID uuid.UUID, chatID int64) (*domain.Lead, error) {
 	var l domain.Lead
 	err := r.pool.QueryRow(ctx,
-		`SELECT id, user_id, channel, contact_name, company, first_message, status, telegram_chat_id, email_address, created_at, updated_at
+		`SELECT id, user_id, channel, contact_name, company, first_message, status, telegram_chat_id, email_address, source_id, created_at, updated_at
 		 FROM leads WHERE user_id = $1 AND telegram_chat_id = $2`, userID, chatID).
-		Scan(&l.ID, &l.UserID, &l.Channel, &l.ContactName, &l.Company, &l.FirstMessage, &l.Status, &l.TelegramChatID, &l.EmailAddress, &l.CreatedAt, &l.UpdatedAt)
+		Scan(&l.ID, &l.UserID, &l.Channel, &l.ContactName, &l.Company, &l.FirstMessage, &l.Status, &l.TelegramChatID, &l.EmailAddress, &l.SourceID, &l.CreatedAt, &l.UpdatedAt)
 	if err == pgx.ErrNoRows {
 		return nil, nil
 	}
@@ -200,9 +200,9 @@ func (r *Repository) GetLeadByTelegramChatID(ctx context.Context, userID uuid.UU
 func (r *Repository) GetLeadByEmailAddress(ctx context.Context, userID uuid.UUID, email string) (*domain.Lead, error) {
 	var l domain.Lead
 	err := r.pool.QueryRow(ctx,
-		`SELECT id, user_id, channel, contact_name, company, first_message, status, telegram_chat_id, email_address, created_at, updated_at
+		`SELECT id, user_id, channel, contact_name, company, first_message, status, telegram_chat_id, email_address, source_id, created_at, updated_at
 		 FROM leads WHERE user_id = $1 AND email_address = $2`, userID, email).
-		Scan(&l.ID, &l.UserID, &l.Channel, &l.ContactName, &l.Company, &l.FirstMessage, &l.Status, &l.TelegramChatID, &l.EmailAddress, &l.CreatedAt, &l.UpdatedAt)
+		Scan(&l.ID, &l.UserID, &l.Channel, &l.ContactName, &l.Company, &l.FirstMessage, &l.Status, &l.TelegramChatID, &l.EmailAddress, &l.SourceID, &l.CreatedAt, &l.UpdatedAt)
 	if err == pgx.ErrNoRows {
 		return nil, nil
 	}
@@ -234,7 +234,7 @@ func (r *Repository) StaleLeadsWithoutReminder(ctx context.Context, staleDays in
 	var leads []domain.Lead
 	for rows.Next() {
 		var l domain.Lead
-		if err := rows.Scan(&l.ID, &l.UserID, &l.Channel, &l.ContactName, &l.Company, &l.FirstMessage, &l.Status, &l.TelegramChatID, &l.EmailAddress, &l.CreatedAt, &l.UpdatedAt); err != nil {
+		if err := rows.Scan(&l.ID, &l.UserID, &l.Channel, &l.ContactName, &l.Company, &l.FirstMessage, &l.Status, &l.TelegramChatID, &l.EmailAddress, &l.SourceID, &l.CreatedAt, &l.UpdatedAt); err != nil {
 			return nil, fmt.Errorf("scan stale lead: %w", err)
 		}
 		leads = append(leads, l)

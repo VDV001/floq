@@ -87,6 +87,7 @@ type Lead struct {
 	Status         LeadStatus
 	TelegramChatID *int64
 	EmailAddress   *string
+	SourceID       *uuid.UUID
 	CreatedAt      time.Time
 	UpdatedAt      time.Time
 }

@@ -31,6 +31,7 @@ func (a *LeadCreatorAdapter) CreateLeadFromProspect(ctx context.Context, prospec
 		Company:      prospect.Company,
 		FirstMessage: "Ответ на outbound секвенцию",
 		Status:       leadsdomain.StatusNew,
+		SourceID:     prospect.SourceID,
 		CreatedAt:    now,
 		UpdatedAt:    now,
 	}

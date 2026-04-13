@@ -18,8 +18,10 @@ type LeadResponse struct {
 	FirstMessage   string    `json:"first_message"`
 	Status         string    `json:"status"`
 	TelegramChatID *int64    `json:"telegram_chat_id,omitempty"`
-	EmailAddress   *string   `json:"email_address,omitempty"`
-	CreatedAt      time.Time `json:"created_at"`
+	EmailAddress   *string    `json:"email_address,omitempty"`
+	SourceID       *uuid.UUID `json:"source_id,omitempty"`
+	SourceName     string     `json:"source_name,omitempty"`
+	CreatedAt      time.Time  `json:"created_at"`
 	UpdatedAt      time.Time `json:"updated_at"`
 }
 
@@ -64,6 +66,7 @@ func LeadToResponse(l *domain.Lead) LeadResponse {
 		Status:         string(l.Status),
 		TelegramChatID: l.TelegramChatID,
 		EmailAddress:   l.EmailAddress,
+		SourceID:       l.SourceID,
 		CreatedAt:      l.CreatedAt,
 		UpdatedAt:      l.UpdatedAt,
 	}

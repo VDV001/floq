@@ -23,6 +23,8 @@ type ProspectResponse struct {
 	CompanySize      string     `json:"company_size"`
 	Context          string     `json:"context"`
 	Source           string     `json:"source"`
+	SourceID         *uuid.UUID `json:"source_id,omitempty"`
+	SourceName       string     `json:"source_name,omitempty"`
 	Status           string     `json:"status"`
 	VerifyStatus     string     `json:"verify_status"`
 	VerifyScore      int        `json:"verify_score"`
@@ -50,6 +52,7 @@ func ProspectToResponse(p *domain.Prospect) ProspectResponse {
 		CompanySize:      p.CompanySize,
 		Context:          p.Context,
 		Source:           p.Source,
+		SourceID:         p.SourceID,
 		Status:           string(p.Status),
 		VerifyStatus:     string(p.VerifyStatus),
 		VerifyScore:      p.VerifyScore,

@@ -71,6 +71,7 @@ type Prospect struct {
 	CompanySize      string
 	Context          string
 	Source           string
+	SourceID         *uuid.UUID
 	Status           ProspectStatus
 	VerifyStatus     VerifyStatus
 	VerifyScore      int
