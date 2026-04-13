@@ -31,6 +31,7 @@ import (
 	"github.com/daniil/floq/internal/prospects"
 	"github.com/daniil/floq/internal/sequences"
 	"github.com/daniil/floq/internal/settings"
+	"github.com/daniil/floq/internal/sources"
 	"github.com/daniil/floq/internal/tgclient"
 	"github.com/daniil/floq/internal/verify"
 	"github.com/google/uuid"
@@ -93,6 +94,7 @@ func main() {
 	// 3. Repositories
 	leadsRepo := leads.NewRepository(pool)
 	prospectsRepo := prospects.NewRepository(pool)
+	sourcesRepo := sources.NewRepository(pool)
 	sequencesRepo := sequences.NewRepository(pool)
 
 	// 4. Adapters
@@ -104,6 +106,7 @@ func main() {
 	// 5. Use cases
 	leadsUC := leads.NewUseCase(leadsRepo, leadsAI, nil) // sender set after bot init
 	prospectsUC := prospects.NewUseCase(prospectsRepo)
+	sourcesUC := sources.NewUseCase(sourcesRepo)
 	txManager := db.NewTxManager(pool)
 	sequencesUC := sequences.NewUseCase(sequencesRepo, seqAI, prospectReader, leadCreatorAdapter, sequences.WithTxManager(txManager))
 
@@ -135,6 +138,7 @@ func main() {
 		leads.RegisterRoutes(r, leadsUC)
 		prospects.RegisterRoutes(r, prospectsUC)
 		sequences.RegisterRoutes(r, sequencesUC)
+		sources.RegisterRoutes(r, sourcesUC)
 		verify.RegisterRoutes(r, prospectsRepo, nil) // TG bot passed as nil for now
 		parser.RegisterRoutes(r, cfg.TwoGISAPIKey)
 		settings.RegisterRoutes(r, settingsUC, buildAITester(cfg), buildUsageCounter(leadsRepo))
