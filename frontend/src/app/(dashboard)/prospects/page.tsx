@@ -116,6 +116,13 @@ export default function ProspectsPage() {
   const [scrapeLoading, setScrapeLoading] = useState(false);
   const [scrapeResults, setScrapeResults] = useState<string[]>([]);
   const [scrapeError, setScrapeError] = useState("");
+  const [verifying, setVerifying] = useState(false);
+  const [toast, setToast] = useState<{ message: string; type: "success" | "error" } | null>(null);
+
+  const showToast = (message: string, type: "success" | "error") => {
+    setToast({ message, type });
+    setTimeout(() => setToast(null), 3500);
+  };
   const [page, setPage] = useState(1);
   const perPage = 15;
 
@@ -163,11 +170,19 @@ export default function ProspectsPage() {
   };
 
   const handleVerifyBatch = async () => {
+    setVerifying(true);
     try {
-      await api.verifyBatch();
+      const [result] = await Promise.all([
+        api.verifyBatch(),
+        new Promise((r) => setTimeout(r, 2500)),
+      ]);
       await fetchProspects();
+      const verified = (result as { verified?: number })?.verified ?? 0;
+      showToast(verified > 0 ? `Проверено ${verified} проспектов` : "Нет проспектов для проверки", verified > 0 ? "success" : "error");
     } catch {
-      alert("Ошибка проверки");
+      showToast("Ошибка проверки", "error");
+    } finally {
+      setVerifying(false);
     }
   };
 
@@ -208,7 +223,24 @@ export default function ProspectsPage() {
   };
 
   return (
-    <div className="min-h-full">
+    <div className="min-h-full relative">
+      {toast && (
+        <div className={`fixed top-6 right-6 z-50 flex items-center gap-3 rounded-xl px-5 py-3.5 shadow-lg transition-all animate-in fade-in slide-in-from-top-2 ${
+          toast.type === "success"
+            ? "bg-[#0d1c2e] text-white"
+            : "bg-[#ffdad6] text-[#93000a]"
+        }`}>
+          {toast.type === "success" ? (
+            <CheckCircle2 className="size-5 text-emerald-400" />
+          ) : (
+            <AlertTriangle className="size-5" />
+          )}
+          <span className="text-sm font-semibold">{toast.message}</span>
+          <button onClick={() => setToast(null)} className="ml-2 opacity-60 hover:opacity-100">
+            <XCircle className="size-4" />
+          </button>
+        </div>
+      )}
       {/* Top search bar */}
       <header className="flex h-16 items-center justify-between px-4 sm:px-6 lg:px-10">
         <div className="relative max-w-md flex-1">
@@ -238,10 +270,15 @@ export default function ProspectsPage() {
           <div className="flex items-center gap-3">
             <button
               onClick={handleVerifyBatch}
-              className="flex items-center gap-2 rounded-lg border border-[#c3c6d7]/30 bg-[#c3c6d7]/10 px-5 py-2.5 font-semibold text-[#0d1c2e] transition-all hover:bg-[#c3c6d7]/20"
+              disabled={verifying}
+              className="flex items-center gap-2 rounded-lg border border-[#c3c6d7]/30 bg-[#c3c6d7]/10 px-5 py-2.5 font-semibold text-[#0d1c2e] transition-all hover:bg-[#c3c6d7]/20 disabled:opacity-60"
             >
-              <ShieldCheck className="size-5" />
-              Проверить базу
+              {verifying ? (
+                <div className="size-5 animate-spin rounded-full border-2 border-[#004ac6] border-t-transparent" />
+              ) : (
+                <ShieldCheck className="size-5" />
+              )}
+              {verifying ? "Проверяю..." : "Проверить базу"}
             </button>
             <button
               onClick={() => api.exportProspectsCSV().catch(() => alert("Ошибка экспорта"))}
