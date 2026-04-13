@@ -103,7 +103,9 @@ cp .env.example .env
 JWT_SECRET=ваш-секрет-не-менее-32-символов
 AI_PROVIDER=claude
 ANTHROPIC_API_KEY=sk-ant-...
-OWNER_USER_ID=uuid-владельца
+
+# UUID демо-пользователя из миграции 012 (менять не нужно)
+OWNER_USER_ID=00000000-0000-0000-0000-000000000001
 ```
 
 ### 2. Запустить
@@ -114,7 +116,21 @@ docker compose up -d
 
 Это поднимет PostgreSQL, Redis, Ollama и backend. Миграции применятся автоматически.
 
-### 3. Фронтенд (для разработки)
+> **Ollama**: если планируешь использовать локальную модель, подтяни её:
+> ```bash
+> docker exec -it floq-ollama-1 ollama pull llama3.2
+> ```
+
+### 3. Войти в систему
+
+Миграция `012_seed_data` создаёт демо-пользователя:
+
+| Поле | Значение |
+|------|---------|
+| Email | `demo@floq.app` |
+| Пароль | `demo123` |
+
+### 4. Фронтенд (для разработки)
 
 ```bash
 cd frontend
@@ -124,14 +140,22 @@ npm run dev
 
 Откроется на `http://localhost:3000`, backend API на `http://localhost:8080`.
 
-### 4. Без Docker (локально)
+> Если фронтенд не видит API — проверь, что в `frontend/.env.local` есть:
+> ```
+> NEXT_PUBLIC_API_URL=http://localhost:8080
+> ```
+
+### 5. Без Docker (локально)
 
 ```bash
-# Терминал 1: backend
-cd backend
-go run cmd/server/main.go
+# Терминал 1: поднять инфру
+docker compose up -d postgres redis
 
-# Терминал 2: frontend
+# Терминал 2: backend
+cd backend
+go run ./cmd/server
+
+# Терминал 3: frontend
 cd frontend
 npm run dev
 ```
@@ -215,17 +239,28 @@ floq/
 | `OPENAI_MODEL` | Модель OpenAI (по умолчанию gpt-4o) | Нет |
 | `OLLAMA_BASE_URL` | URL Ollama (по умолчанию localhost:11434) | Если ollama |
 | `OLLAMA_MODEL` | Модель Ollama (по умолчанию llama3.2) | Если ollama |
-| `TELEGRAM_BOT_TOKEN` | Токен Telegram бота | Нет |
-| `RESEND_API_KEY` | API-ключ Resend для email | Нет |
+| `TELEGRAM_BOT_TOKEN` | Токен Telegram бота для входящих сообщений | Нет |
+| `NOTIFY_CHAT_ID` | Telegram chat ID для уведомлений о stale-лидах | Нет |
+| `RESEND_API_KEY` | API-ключ Resend для исходящей почты | Нет |
+| `SMTP_HOST` | SMTP-сервер (альтернатива Resend) | Нет |
+| `SMTP_PORT` | Порт SMTP (по умолчанию 465) | Нет |
+| `SMTP_USER` | Логин SMTP | Нет |
+| `SMTP_PASSWORD` | Пароль SMTP | Нет |
 | `SMTP_FROM` | Email отправителя | Нет |
-| `IMAP_HOST` | IMAP-сервер (imap.gmail.com) | Нет |
-| `IMAP_PORT` | Порт IMAP (993) | Нет |
+| `IMAP_HOST` | IMAP-сервер для входящей почты (imap.gmail.com) | Нет |
+| `IMAP_PORT` | Порт IMAP (по умолчанию 993) | Нет |
 | `IMAP_USER` | Логин IMAP | Нет |
-| `IMAP_PASSWORD` | Пароль IMAP | Нет |
-| `TWOGIS_API_KEY` | API-ключ 2GIS | Нет |
+| `IMAP_PASSWORD` | Пароль IMAP (для Gmail — App Password) | Нет |
+| `GROQ_API_KEY` | API-ключ Groq | Нет |
+| `GROQ_MODEL` | Модель Groq (по умолчанию openai/gpt-oss-120b) | Нет |
+| `TWOGIS_API_KEY` | API-ключ 2GIS для парсера | Нет |
 | `BOOKING_LINK` | Ссылка на Calendly/Cal.com | Нет |
-| `APP_BASE_URL` | Базовый URL приложения | Нет |
-| `NOTIFY_CHAT_ID` | Telegram chat ID для уведомлений | Нет |
+| `APP_BASE_URL` | Публичный URL бэкенда (нужен для tracking-пикселей) | Нет |
+| `SENDER_NAME` | Имя отправителя в outreach-сообщениях | Нет |
+| `SENDER_COMPANY` | Компания отправителя | Нет |
+| `SENDER_PHONE` | Телефон отправителя | Нет |
+| `SENDER_WEBSITE` | Сайт отправителя | Нет |
+| `STALE_DAYS` | Дней без ответа до напоминания (по умолчанию 2) | Нет |
 
 Полный шаблон: [.env.example](.env.example)
 
