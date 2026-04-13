@@ -76,18 +76,6 @@ func (h *Handler) createProspect() http.HandlerFunc {
 			return
 		}
 
-		if body.Email != "" {
-			existing, err := h.uc.FindByEmail(r.Context(), userID, body.Email)
-			if err != nil {
-				httputil.WriteError(w, http.StatusInternalServerError, "dedup check failed")
-				return
-			}
-			if existing != nil {
-				httputil.WriteError(w, http.StatusConflict, "проспект с таким email уже существует")
-				return
-			}
-		}
-
 		p := domain.NewProspect(userID, body.Name, body.Company, body.Title, body.Email, "manual")
 		p.Phone = body.Phone
 		p.WhatsApp = body.WhatsApp

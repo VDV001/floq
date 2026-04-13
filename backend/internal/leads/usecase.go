@@ -265,6 +265,13 @@ func (uc *UseCase) ImportCSV(ctx context.Context, userID uuid.UUID, csvData []by
 
 		var emailPtr *string
 		if emailAddr != "" {
+			existing, err := uc.repo.GetLeadByEmailAddress(ctx, userID, emailAddr)
+			if err != nil {
+				return 0, fmt.Errorf("dedup lead check: %w", err)
+			}
+			if existing != nil {
+				continue
+			}
 			emailPtr = &emailAddr
 		}
 

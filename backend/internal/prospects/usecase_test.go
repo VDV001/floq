@@ -46,6 +46,10 @@ func (m *mockRepo) FindByEmail(_ context.Context, _ uuid.UUID, _ string) (*domai
 	return nil, nil
 }
 
+func (m *mockRepo) FindByTelegramUsername(_ context.Context, _ uuid.UUID, _ string) (*domain.Prospect, error) {
+	return nil, nil
+}
+
 func (m *mockRepo) CreateProspect(_ context.Context, p *domain.Prospect) error {
 	m.prospects[p.ID] = p
 	return nil
@@ -79,11 +83,24 @@ func (m *mockRepo) UpdateVerification(_ context.Context, _ uuid.UUID, _ domain.V
 	return nil
 }
 
+// --- Mock LeadChecker ---
+
+type mockLeadChecker struct {
+	existingEmails map[string]bool
+}
+
+func (m *mockLeadChecker) LeadExistsByEmail(_ context.Context, _ uuid.UUID, email string) (bool, error) {
+	if m.existingEmails == nil {
+		return false, nil
+	}
+	return m.existingEmails[email], nil
+}
+
 // --- Tests ---
 
 func TestImportCSV_HappyPath(t *testing.T) {
 	repo := newMockRepo()
-	uc := NewUseCase(repo)
+	uc := NewUseCase(repo, WithLeadChecker(&mockLeadChecker{}))
 	userID := uuid.New()
 
 	csv := []byte("name,company,title,email\nAlice,Acme,CEO,alice@acme.com\nBob,Beta,CTO,bob@beta.com\n")
@@ -106,7 +123,7 @@ func TestImportCSV_HappyPath(t *testing.T) {
 
 func TestImportCSV_InvalidHeader(t *testing.T) {
 	repo := newMockRepo()
-	uc := NewUseCase(repo)
+	uc := NewUseCase(repo, WithLeadChecker(&mockLeadChecker{}))
 
 	csv := []byte("first_name,company,title,email\nAlice,Acme,CEO,alice@acme.com\n")
 
@@ -118,7 +135,7 @@ func TestImportCSV_InvalidHeader(t *testing.T) {
 
 func TestImportCSV_WithOptionalColumns(t *testing.T) {
 	repo := newMockRepo()
-	uc := NewUseCase(repo)
+	uc := NewUseCase(repo, WithLeadChecker(&mockLeadChecker{}))
 	userID := uuid.New()
 
 	csv := []byte("name,company,title,email,phone,industry\nAlice,Acme,CEO,alice@acme.com,+7999,SaaS\n")
@@ -128,6 +145,17 @@ func TestImportCSV_WithOptionalColumns(t *testing.T) {
 	assert.Equal(t, 1, count)
 	assert.Equal(t, "+7999", repo.batched[0].Phone)
 	assert.Equal(t, "SaaS", repo.batched[0].Industry)
+}
+
+func TestCreateProspect_RejectsExistingLead(t *testing.T) {
+	repo := newMockRepo()
+	lc := &mockLeadChecker{existingEmails: map[string]bool{"taken@example.com": true}}
+	uc := NewUseCase(repo, WithLeadChecker(lc))
+
+	p := domain.NewProspect(uuid.New(), "Alice", "Acme", "CEO", "taken@example.com", "manual")
+	err := uc.CreateProspect(context.Background(), p)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "лид с таким email уже существует")
 }
 
 func TestExportCSV(t *testing.T) {

@@ -12,12 +12,25 @@ import (
 	"github.com/google/uuid"
 )
 
-type UseCase struct {
-	repo domain.Repository
+type LeadChecker interface {
+	LeadExistsByEmail(ctx context.Context, userID uuid.UUID, email string) (bool, error)
 }
 
-func NewUseCase(repo domain.Repository) *UseCase {
-	return &UseCase{repo: repo}
+type UseCase struct {
+	repo        domain.Repository
+	leadChecker LeadChecker
+}
+
+func NewUseCase(repo domain.Repository, opts ...func(*UseCase)) *UseCase {
+	uc := &UseCase{repo: repo}
+	for _, opt := range opts {
+		opt(uc)
+	}
+	return uc
+}
+
+func WithLeadChecker(lc LeadChecker) func(*UseCase) {
+	return func(uc *UseCase) { uc.leadChecker = lc }
 }
 
 func (uc *UseCase) ListProspects(ctx context.Context, userID uuid.UUID) ([]domain.Prospect, error) {
@@ -38,6 +51,24 @@ func (uc *UseCase) CreateProspect(ctx context.Context, prospect *domain.Prospect
 	}
 	if !prospect.Status.IsValid() {
 		return fmt.Errorf("invalid prospect status: %q", prospect.Status)
+	}
+	if prospect.Email != "" {
+		existing, err := uc.repo.FindByEmail(ctx, prospect.UserID, prospect.Email)
+		if err != nil {
+			return fmt.Errorf("prospect dedup: %w", err)
+		}
+		if existing != nil {
+			return fmt.Errorf("проспект с таким email уже существует")
+		}
+	}
+	if prospect.Email != "" && uc.leadChecker != nil {
+		exists, err := uc.leadChecker.LeadExistsByEmail(ctx, prospect.UserID, prospect.Email)
+		if err != nil {
+			return fmt.Errorf("lead check: %w", err)
+		}
+		if exists {
+			return fmt.Errorf("лид с таким email уже существует")
+		}
 	}
 	return uc.repo.CreateProspect(ctx, prospect)
 }
@@ -82,13 +113,34 @@ func (uc *UseCase) ImportCSV(ctx context.Context, userID uuid.UUID, csvData []by
 			return 0, fmt.Errorf("read csv record: %w", err)
 		}
 
+		email := record[3]
+
+		if email != "" {
+			dup, err := uc.repo.FindByEmail(ctx, userID, email)
+			if err != nil {
+				return 0, fmt.Errorf("dedup prospect check: %w", err)
+			}
+			if dup != nil {
+				continue
+			}
+			if uc.leadChecker != nil {
+				exists, err := uc.leadChecker.LeadExistsByEmail(ctx, userID, email)
+				if err != nil {
+					return 0, fmt.Errorf("dedup lead check: %w", err)
+				}
+				if exists {
+					continue
+				}
+			}
+		}
+
 		prospects = append(prospects, domain.Prospect{
 			ID:               uuid.New(),
 			UserID:           userID,
 			Name:             record[0],
 			Company:          record[1],
 			Title:            record[2],
-			Email:            record[3],
+			Email:            email,
 			Phone:            getCol(record, "phone"),
 			WhatsApp:         getCol(record, "whatsapp"),
 			TelegramUsername: getCol(record, "telegram_username"),
