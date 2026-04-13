@@ -24,8 +24,10 @@ func NewRepository(pool *pgxpool.Pool) *Repository {
 
 func (r *Repository) ListLeads(ctx context.Context, userID uuid.UUID) ([]domain.Lead, error) {
 	rows, err := r.pool.Query(ctx,
-		`SELECT id, user_id, channel, contact_name, company, first_message, status, telegram_chat_id, email_address, source_id, created_at, updated_at
-		 FROM leads WHERE user_id = $1 ORDER BY created_at DESC`, userID)
+		`SELECT l.id, l.user_id, l.channel, l.contact_name, l.company, l.first_message, l.status, l.telegram_chat_id, l.email_address, l.source_id, COALESCE(ls.name, ''), l.created_at, l.updated_at
+		 FROM leads l
+		 LEFT JOIN lead_sources ls ON ls.id = l.source_id
+		 WHERE l.user_id = $1 ORDER BY l.created_at DESC`, userID)
 	if err != nil {
 		return nil, fmt.Errorf("list leads: %w", err)
 	}
@@ -34,7 +36,7 @@ func (r *Repository) ListLeads(ctx context.Context, userID uuid.UUID) ([]domain.
 	var leads []domain.Lead
 	for rows.Next() {
 		var l domain.Lead
-		if err := rows.Scan(&l.ID, &l.UserID, &l.Channel, &l.ContactName, &l.Company, &l.FirstMessage, &l.Status, &l.TelegramChatID, &l.EmailAddress, &l.SourceID, &l.CreatedAt, &l.UpdatedAt); err != nil {
+		if err := rows.Scan(&l.ID, &l.UserID, &l.Channel, &l.ContactName, &l.Company, &l.FirstMessage, &l.Status, &l.TelegramChatID, &l.EmailAddress, &l.SourceID, &l.SourceName, &l.CreatedAt, &l.UpdatedAt); err != nil {
 			return nil, fmt.Errorf("scan lead: %w", err)
 		}
 		leads = append(leads, l)
@@ -216,7 +218,7 @@ func (r *Repository) GetLeadByEmailAddress(ctx context.Context, userID uuid.UUID
 // staleDays, the lead is not closed, and there is no active (non-dismissed) reminder.
 func (r *Repository) StaleLeadsWithoutReminder(ctx context.Context, staleDays int) ([]domain.Lead, error) {
 	rows, err := r.pool.Query(ctx,
-		`SELECT l.id, l.user_id, l.channel, l.contact_name, l.company, l.first_message, l.status, l.telegram_chat_id, l.email_address, l.created_at, l.updated_at
+		`SELECT l.id, l.user_id, l.channel, l.contact_name, l.company, l.first_message, l.status, l.telegram_chat_id, l.email_address, l.source_id, l.created_at, l.updated_at
 		 FROM leads l
 		 WHERE l.status NOT IN ('closed')
 		   AND NOT EXISTS (

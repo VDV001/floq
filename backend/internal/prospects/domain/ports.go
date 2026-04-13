@@ -12,6 +12,7 @@ type Repository interface {
 	ListProspects(ctx context.Context, userID uuid.UUID) ([]Prospect, error)
 	GetProspect(ctx context.Context, id uuid.UUID) (*Prospect, error)
 	FindByEmail(ctx context.Context, userID uuid.UUID, email string) (*Prospect, error)
+	FindByTelegramUsername(ctx context.Context, userID uuid.UUID, username string) (*Prospect, error)
 	CreateProspect(ctx context.Context, p *Prospect) error
 	CreateProspectsBatch(ctx context.Context, prospects []Prospect) error
 	DeleteProspect(ctx context.Context, id uuid.UUID) error

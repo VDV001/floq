@@ -53,6 +53,7 @@ func ProspectToResponse(p *domain.Prospect) ProspectResponse {
 		Context:          p.Context,
 		Source:           p.Source,
 		SourceID:         p.SourceID,
+		SourceName:       p.SourceName,
 		Status:           string(p.Status),
 		VerifyStatus:     string(p.VerifyStatus),
 		VerifyScore:      p.VerifyScore,

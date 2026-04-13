@@ -67,6 +67,7 @@ func LeadToResponse(l *domain.Lead) LeadResponse {
 		TelegramChatID: l.TelegramChatID,
 		EmailAddress:   l.EmailAddress,
 		SourceID:       l.SourceID,
+		SourceName:     l.SourceName,
 		CreatedAt:      l.CreatedAt,
 		UpdatedAt:      l.UpdatedAt,
 	}

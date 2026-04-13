@@ -72,6 +72,7 @@ type Prospect struct {
 	Context          string
 	Source           string
 	SourceID         *uuid.UUID
+	SourceName       string
 	Status           ProspectStatus
 	VerifyStatus     VerifyStatus
 	VerifyScore      int

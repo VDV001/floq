@@ -88,6 +88,7 @@ type Lead struct {
 	TelegramChatID *int64
 	EmailAddress   *string
 	SourceID       *uuid.UUID
+	SourceName     string
 	CreatedAt      time.Time
 	UpdatedAt      time.Time
 }

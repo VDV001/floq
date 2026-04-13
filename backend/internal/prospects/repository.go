@@ -24,9 +24,11 @@ func NewRepository(pool *pgxpool.Pool) *Repository {
 
 func (r *Repository) ListProspects(ctx context.Context, userID uuid.UUID) ([]domain.Prospect, error) {
 	rows, err := r.pool.Query(ctx,
-		`SELECT id, user_id, name, company, title, email, phone, whatsapp, telegram_username, industry, company_size, context,
-		        source, source_id, status, verify_status, verify_score, verify_details, verified_at, converted_lead_id, created_at, updated_at
-		 FROM prospects WHERE user_id = $1 ORDER BY created_at DESC`, userID)
+		`SELECT p.id, p.user_id, p.name, p.company, p.title, p.email, p.phone, p.whatsapp, p.telegram_username, p.industry, p.company_size, p.context,
+		        p.source, p.source_id, COALESCE(ls.name, ''), p.status, p.verify_status, p.verify_score, p.verify_details, p.verified_at, p.converted_lead_id, p.created_at, p.updated_at
+		 FROM prospects p
+		 LEFT JOIN lead_sources ls ON ls.id = p.source_id
+		 WHERE p.user_id = $1 ORDER BY p.created_at DESC`, userID)
 	if err != nil {
 		return nil, fmt.Errorf("list prospects: %w", err)
 	}
@@ -36,7 +38,7 @@ func (r *Repository) ListProspects(ctx context.Context, userID uuid.UUID) ([]dom
 	for rows.Next() {
 		var p domain.Prospect
 		if err := rows.Scan(&p.ID, &p.UserID, &p.Name, &p.Company, &p.Title, &p.Email, &p.Phone, &p.WhatsApp, &p.TelegramUsername, &p.Industry, &p.CompanySize, &p.Context,
-			&p.Source, &p.SourceID, &p.Status, &p.VerifyStatus, &p.VerifyScore, &p.VerifyDetails, &p.VerifiedAt, &p.ConvertedLeadID, &p.CreatedAt, &p.UpdatedAt); err != nil {
+			&p.Source, &p.SourceID, &p.SourceName, &p.Status, &p.VerifyStatus, &p.VerifyScore, &p.VerifyDetails, &p.VerifiedAt, &p.ConvertedLeadID, &p.CreatedAt, &p.UpdatedAt); err != nil {
 			return nil, fmt.Errorf("scan prospect: %w", err)
 		}
 		prospects = append(prospects, p)
@@ -74,6 +76,23 @@ func (r *Repository) FindByEmail(ctx context.Context, userID uuid.UUID, email st
 	}
 	if err != nil {
 		return nil, fmt.Errorf("find prospect by email: %w", err)
+	}
+	return &p, nil
+}
+
+func (r *Repository) FindByTelegramUsername(ctx context.Context, userID uuid.UUID, username string) (*domain.Prospect, error) {
+	var p domain.Prospect
+	err := r.pool.QueryRow(ctx,
+		`SELECT id, user_id, name, company, title, email, phone, whatsapp, telegram_username, industry, company_size, context,
+		        source, source_id, status, verify_status, verify_score, verify_details, verified_at, converted_lead_id, created_at, updated_at
+		 FROM prospects WHERE user_id = $1 AND LOWER(telegram_username) = LOWER($2) LIMIT 1`, userID, username).
+		Scan(&p.ID, &p.UserID, &p.Name, &p.Company, &p.Title, &p.Email, &p.Phone, &p.WhatsApp, &p.TelegramUsername, &p.Industry, &p.CompanySize, &p.Context,
+			&p.Source, &p.SourceID, &p.Status, &p.VerifyStatus, &p.VerifyScore, &p.VerifyDetails, &p.VerifiedAt, &p.ConvertedLeadID, &p.CreatedAt, &p.UpdatedAt)
+	if err == pgx.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("find prospect by telegram username: %w", err)
 	}
 	return &p, nil
 }
