@@ -14,7 +14,6 @@ import (
 	"github.com/google/uuid"
 
 	leadsdomain "github.com/daniil/floq/internal/leads/domain"
-	prospectsdomain "github.com/daniil/floq/internal/prospects/domain"
 	settingsdomain "github.com/daniil/floq/internal/settings/domain"
 )
 
@@ -263,7 +262,7 @@ func (e *EmailPoller) processEmail(ctx context.Context, fromName, fromEmail, bod
 
 	// Check if sender is a known prospect
 	prospect, prospectErr := e.prospectRepo.FindByEmail(ctx, e.ownerID, fromEmail)
-	hasProspectMatch := prospectErr == nil && prospect != nil && prospect.Status != prospectsdomain.ProspectStatusConverted
+	hasProspectMatch := prospectErr == nil && prospect != nil && prospect.Status != ProspectStatusConverted
 
 	if isNewLead {
 		contactName := fromName

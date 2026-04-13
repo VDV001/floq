@@ -120,24 +120,68 @@ func (m *mockAIQualifier) ProviderName() string {
 // --- Helpers ---
 
 func newTestBot(repo LeadRepository, aiClient AIQualifier, ownerID uuid.UUID, bookingLink string) *TelegramBot {
+	return newTestBotWithProspects(repo, nil, aiClient, ownerID, bookingLink)
+}
+
+func newTestBotWithProspects(repo LeadRepository, prospectRepo ProspectRepository, aiClient AIQualifier, ownerID uuid.UUID, bookingLink string) *TelegramBot {
 	fakeBotAPI := &tgbotapi.BotAPI{
 		Token:  "test-token",
 		Client: &fakeHTTPClient{},
 	}
 	fakeBotAPI.SetAPIEndpoint("http://localhost/bot%s/%s")
 	return &TelegramBot{
-		bot:         fakeBotAPI,
-		repo:        repo,
-		aiClient:    aiClient,
-		ownerID:     ownerID,
-		bookingLink: bookingLink,
+		bot:          fakeBotAPI,
+		repo:         repo,
+		prospectRepo: prospectRepo,
+		aiClient:     aiClient,
+		ownerID:      ownerID,
+		bookingLink:  bookingLink,
 	}
+}
+
+// --- Mock ProspectRepository ---
+
+type mockProspectRepo struct {
+	mu        sync.Mutex
+	byTgUser  map[string]*ProspectMatch
+	converted []uuid.UUID
+}
+
+func newMockProspectRepo() *mockProspectRepo {
+	return &mockProspectRepo{
+		byTgUser: make(map[string]*ProspectMatch),
+	}
+}
+
+func (m *mockProspectRepo) FindByEmail(_ context.Context, _ uuid.UUID, _ string) (*ProspectMatch, error) {
+	return nil, nil
+}
+
+func (m *mockProspectRepo) FindByTelegramUsername(_ context.Context, _ uuid.UUID, username string) (*ProspectMatch, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.byTgUser[username], nil
+}
+
+func (m *mockProspectRepo) ConvertToLead(_ context.Context, prospectID, _ uuid.UUID) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.converted = append(m.converted, prospectID)
+	return nil
 }
 
 func makeTgMessage(chatID int64, firstName, lastName, text string) *tgbotapi.Message {
 	return &tgbotapi.Message{
 		Chat: &tgbotapi.Chat{ID: chatID},
 		From: &tgbotapi.User{FirstName: firstName, LastName: lastName},
+		Text: text,
+	}
+}
+
+func makeTgMessageWithUsername(chatID int64, firstName, lastName, username, text string) *tgbotapi.Message {
+	return &tgbotapi.Message{
+		Chat: &tgbotapi.Chat{ID: chatID},
+		From: &tgbotapi.User{FirstName: firstName, LastName: lastName, UserName: username},
 		Text: text,
 	}
 }
@@ -299,6 +343,74 @@ func TestHandleMessage_EmptyText(t *testing.T) {
 	// Nothing should happen for an empty message.
 	assert.Empty(t, repo.leads)
 	assert.Empty(t, repo.messages)
+}
+
+func TestHandleMessage_ProspectAutoConversion(t *testing.T) {
+	repo := newMockLeadRepo()
+	prospectRepo := newMockProspectRepo()
+	ownerID := uuid.New()
+
+	prospectID := uuid.New()
+	srcID := uuid.New()
+	prospectRepo.byTgUser["testuser"] = &ProspectMatch{
+		ID:       prospectID,
+		Name:     "Тест Проспект",
+		Company:  "TestCo",
+		SourceID: &srcID,
+		Status:   "new",
+	}
+
+	aiClient := &mockAIQualifier{result: &ai.QualificationResult{Score: 5}}
+	bot := newTestBotWithProspects(repo, prospectRepo, aiClient, ownerID, "")
+
+	msg := makeTgMessageWithUsername(99999, "Test", "User", "testuser", "Привет, хочу узнать о продукте")
+	bot.handleMessage(context.Background(), msg)
+
+	waitQualifyDone(t, repo)
+
+	repo.mu.Lock()
+	defer repo.mu.Unlock()
+
+	require.Len(t, repo.leads, 1)
+	lead := repo.leads[0]
+	assert.Equal(t, "Тест Проспект", lead.ContactName)
+	assert.Equal(t, "TestCo", lead.Company)
+	assert.Equal(t, &srcID, lead.SourceID)
+
+	prospectRepo.mu.Lock()
+	defer prospectRepo.mu.Unlock()
+	require.Len(t, prospectRepo.converted, 1)
+	assert.Equal(t, prospectID, prospectRepo.converted[0])
+}
+
+func TestHandleMessage_ProspectAlreadyConverted(t *testing.T) {
+	repo := newMockLeadRepo()
+	prospectRepo := newMockProspectRepo()
+	ownerID := uuid.New()
+
+	prospectRepo.byTgUser["converteduser"] = &ProspectMatch{
+		ID:     uuid.New(),
+		Name:   "Already Converted",
+		Status: "converted",
+	}
+
+	aiClient := &mockAIQualifier{result: &ai.QualificationResult{Score: 5}}
+	bot := newTestBotWithProspects(repo, prospectRepo, aiClient, ownerID, "")
+
+	msg := makeTgMessageWithUsername(88888, "Conv", "User", "converteduser", "Привет снова")
+	bot.handleMessage(context.Background(), msg)
+
+	waitQualifyDone(t, repo)
+
+	repo.mu.Lock()
+	defer repo.mu.Unlock()
+
+	require.Len(t, repo.leads, 1)
+	assert.Equal(t, "Conv User", repo.leads[0].ContactName)
+
+	prospectRepo.mu.Lock()
+	defer prospectRepo.mu.Unlock()
+	assert.Empty(t, prospectRepo.converted)
 }
 
 func ptrInt64(v int64) *int64 {

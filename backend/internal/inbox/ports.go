@@ -7,7 +7,6 @@ import (
 
 	"github.com/daniil/floq/internal/ai"
 	"github.com/daniil/floq/internal/leads/domain"
-	prospectsdomain "github.com/daniil/floq/internal/prospects/domain"
 	settingsdomain "github.com/daniil/floq/internal/settings/domain"
 )
 
@@ -22,9 +21,21 @@ type LeadRepository interface {
 	UpdateLeadStatus(ctx context.Context, id uuid.UUID, status domain.LeadStatus) error
 }
 
+// ProspectMatch is a port-level read model for prospect data used by inbox.
+type ProspectMatch struct {
+	ID       uuid.UUID
+	Name     string
+	Company  string
+	SourceID *uuid.UUID
+	Status   string
+}
+
+const ProspectStatusConverted = "converted"
+
 // ProspectRepository is the interface inbox needs from prospects.
 type ProspectRepository interface {
-	FindByEmail(ctx context.Context, userID uuid.UUID, email string) (*prospectsdomain.Prospect, error)
+	FindByEmail(ctx context.Context, userID uuid.UUID, email string) (*ProspectMatch, error)
+	FindByTelegramUsername(ctx context.Context, userID uuid.UUID, username string) (*ProspectMatch, error)
 	ConvertToLead(ctx context.Context, prospectID, leadID uuid.UUID) error
 }
 

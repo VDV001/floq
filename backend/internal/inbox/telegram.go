@@ -13,20 +13,21 @@ import (
 
 // TelegramBot listens for incoming Telegram messages and creates leads.
 type TelegramBot struct {
-	bot         *tgbotapi.BotAPI
-	repo        LeadRepository
-	aiClient    AIQualifier
-	ownerID     uuid.UUID // the manager's user ID who receives all leads
-	bookingLink string
+	bot          *tgbotapi.BotAPI
+	repo         LeadRepository
+	prospectRepo ProspectRepository
+	aiClient     AIQualifier
+	ownerID      uuid.UUID
+	bookingLink  string
 }
 
 // NewTelegramBot creates a new TelegramBot with the given token and dependencies.
-func NewTelegramBot(token string, repo LeadRepository, aiClient AIQualifier, ownerID uuid.UUID, bookingLink string) (*TelegramBot, error) {
+func NewTelegramBot(token string, repo LeadRepository, prospectRepo ProspectRepository, aiClient AIQualifier, ownerID uuid.UUID, bookingLink string) (*TelegramBot, error) {
 	bot, err := tgbotapi.NewBotAPI(token)
 	if err != nil {
 		return nil, err
 	}
-	return &TelegramBot{bot: bot, repo: repo, aiClient: aiClient, ownerID: ownerID, bookingLink: bookingLink}, nil
+	return &TelegramBot{bot: bot, repo: repo, prospectRepo: prospectRepo, aiClient: aiClient, ownerID: ownerID, bookingLink: bookingLink}, nil
 }
 
 // Bot returns the underlying BotAPI for sharing with other modules.
@@ -81,12 +82,37 @@ func (t *TelegramBot) handleMessage(ctx context.Context, msg *tgbotapi.Message) 
 	var lead *domain.Lead
 
 	if isNewLead {
-		lead = domain.NewLead(t.ownerID, domain.ChannelTelegram, contactName, "", text, &chatID, nil)
+		company := ""
+		var prospect *ProspectMatch
+		username := msg.From.UserName
+		if username != "" && t.prospectRepo != nil {
+			p, pErr := t.prospectRepo.FindByTelegramUsername(ctx, t.ownerID, username)
+			if pErr == nil && p != nil && p.Status != ProspectStatusConverted {
+				prospect = p
+				if p.Name != "" {
+					contactName = p.Name
+				}
+				company = p.Company
+			}
+		}
+
+		lead = domain.NewLead(t.ownerID, domain.ChannelTelegram, contactName, company, text, &chatID, nil)
+		if prospect != nil {
+			lead.SourceID = prospect.SourceID
+		}
 		if err := t.repo.CreateLead(ctx, lead); err != nil {
 			log.Printf("telegram inbox: error creating lead: %v", err)
 			return
 		}
 		log.Printf("telegram inbox: new lead created for chat %d (%s)", chatID, contactName)
+
+		if prospect != nil {
+			if convErr := t.prospectRepo.ConvertToLead(ctx, prospect.ID, lead.ID); convErr != nil {
+				log.Printf("telegram inbox: error converting prospect %s: %v", prospect.ID, convErr)
+			} else {
+				log.Printf("telegram inbox: prospect %s auto-converted to lead %s", prospect.ID, lead.ID)
+			}
+		}
 	} else {
 		lead = existing
 		// Update first_message if current one is trivial (/start, привет, etc.)
