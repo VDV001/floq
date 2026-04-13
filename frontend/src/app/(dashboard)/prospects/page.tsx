@@ -4,6 +4,7 @@ import { useState, useEffect } from "react";
 import {
   Search,
   Upload,
+  Download,
   ChevronLeft,
   ChevronRight,
   Sparkles,
@@ -21,6 +22,7 @@ import {
   MessageSquare,
 } from "lucide-react";
 import { api } from "@/lib/api";
+import { SourceCombobox } from "@/components/ui/source-combobox";
 
 /* ------------------------------------------------------------------ */
 /*  Types & data                                                       */
@@ -109,6 +111,7 @@ export default function ProspectsPage() {
   const [formPhone, setFormPhone] = useState("");
   const [formTgUsername, setFormTgUsername] = useState("");
   const [formWhatsApp, setFormWhatsApp] = useState("");
+  const [formSourceId, setFormSourceId] = useState<string | null>(null);
   const [scrapeUrl, setScrapeUrl] = useState("");
   const [scrapeLoading, setScrapeLoading] = useState(false);
   const [scrapeResults, setScrapeResults] = useState<string[]>([]);
@@ -143,6 +146,7 @@ export default function ProspectsPage() {
         phone: formPhone || undefined,
         telegram_username: formTgUsername || undefined,
         whatsapp: formWhatsApp || undefined,
+        source_id: formSourceId || undefined,
       });
       await fetchProspects();
       setFormName("");
@@ -152,6 +156,7 @@ export default function ProspectsPage() {
       setFormPhone("");
       setFormTgUsername("");
       setFormWhatsApp("");
+      setFormSourceId(null);
     } catch {
       alert("Ошибка добавления");
     }
@@ -238,6 +243,13 @@ export default function ProspectsPage() {
               <ShieldCheck className="size-5" />
               Проверить базу
             </button>
+            <button
+              onClick={() => api.exportProspectsCSV().catch(() => alert("Ошибка экспорта"))}
+              className="flex items-center gap-2 rounded-lg border border-[#c3c6d7]/30 bg-[#c3c6d7]/10 px-5 py-2.5 font-semibold text-[#0d1c2e] transition-all hover:bg-[#c3c6d7]/20"
+            >
+              <Download className="size-5" />
+              Экспорт CSV
+            </button>
             <label className="flex cursor-pointer items-center gap-2 rounded-lg border border-[#c3c6d7]/30 bg-[#c3c6d7]/10 px-5 py-2.5 font-semibold text-[#0d1c2e] transition-all hover:bg-[#c3c6d7]/20">
               <Upload className="size-5" />
               Импорт CSV
@@ -248,22 +260,10 @@ export default function ProspectsPage() {
                 onChange={async (e) => {
                   const file = e.target.files?.[0];
                   if (!file) return;
-                  const formData = new FormData();
-                  formData.append("file", file);
                   try {
-                    const token = localStorage.getItem("token");
-                    const res = await fetch("http://localhost:8080/api/prospects/import", {
-                      method: "POST",
-                      headers: { Authorization: `Bearer ${token}` },
-                      body: formData,
-                    });
-                    if (res.ok) {
-                      const data = await res.json();
-                      alert(`Импортировано ${data.imported} проспектов`);
-                      await fetchProspects();
-                    } else {
-                      alert("Ошибка импорта CSV");
-                    }
+                    const res = await api.importProspectsCSV(file);
+                    alert(`Импортировано ${res.imported} проспектов`);
+                    await fetchProspects();
                   } catch { alert("Ошибка импорта"); }
                   e.target.value = "";
                 }}
@@ -520,6 +520,12 @@ export default function ProspectsPage() {
                     value={formWhatsApp}
                     onChange={(e) => setFormWhatsApp(e.target.value)}
                   />
+                </div>
+                <div>
+                  <label className="mb-2 block text-xs font-bold uppercase tracking-wider text-[#434655]">
+                    Источник
+                  </label>
+                  <SourceCombobox value={formSourceId} onChange={setFormSourceId} />
                 </div>
                 <button
                   type="submit"

@@ -12,6 +12,8 @@ import {
   MessageCircle,
   RotateCcw,
   CircleCheck,
+  Upload,
+  Download,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -28,6 +30,7 @@ interface Lead {
   timeAgo: string;
   status: "Новый" | "Квалифицирован" | "В диалоге" | "Нужен фоллоуап" | "Закрыт";
   apiStatus: string;
+  sourceName?: string;
 }
 
 const STATUS_STYLES: Record<Lead["status"], string> = {
@@ -99,6 +102,7 @@ export default function InboxPage() {
             timeAgo: getTimeAgo(l.created_at),
             status: mapStatus(l.status),
             apiStatus: l.status,
+            sourceName: l.source_name,
           }));
           setLeads(mapped);
 
@@ -233,6 +237,34 @@ export default function InboxPage() {
                 <span className="font-bold">Новые лиды</span>
               </p>
             </div>
+            <div className="flex items-center gap-2 mr-4">
+              <button
+                onClick={() => api.exportLeadsCSV().catch(() => alert("Ошибка экспорта"))}
+                className="flex items-center gap-1.5 rounded-lg border border-[#c3c6d7]/30 bg-[#c3c6d7]/10 px-4 py-2 text-xs font-semibold text-[#0d1c2e] transition-all hover:bg-[#c3c6d7]/20"
+              >
+                <Download className="size-4" />
+                Экспорт
+              </button>
+              <label className="flex cursor-pointer items-center gap-1.5 rounded-lg border border-[#c3c6d7]/30 bg-[#c3c6d7]/10 px-4 py-2 text-xs font-semibold text-[#0d1c2e] transition-all hover:bg-[#c3c6d7]/20">
+                <Upload className="size-4" />
+                Импорт
+                <input
+                  type="file"
+                  accept=".csv"
+                  className="hidden"
+                  onChange={async (e) => {
+                    const file = e.target.files?.[0];
+                    if (!file) return;
+                    try {
+                      const res = await api.importLeadsCSV(file);
+                      alert(`Импортировано ${res.imported} лидов`);
+                      window.location.reload();
+                    } catch { alert("Ошибка импорта"); }
+                    e.target.value = "";
+                  }}
+                />
+              </label>
+            </div>
             <div className="flex items-center gap-1 rounded-lg bg-[#eff4ff] p-1">
               {FILTER_TABS.map((tab) => (
                 <button
@@ -296,7 +328,14 @@ export default function InboxPage() {
                         · {lead.contact}
                       </p>
                     </div>
-                    <p className="mt-2 line-clamp-2 text-sm leading-relaxed text-[#434655]">
+                    <div className="mt-2 flex items-center gap-2">
+                      {lead.sourceName && (
+                        <span className="rounded-full bg-[#eff4ff] px-2 py-0.5 text-[10px] font-semibold text-[#004ac6]">
+                          {lead.sourceName}
+                        </span>
+                      )}
+                    </div>
+                    <p className="mt-1 line-clamp-2 text-sm leading-relaxed text-[#434655]">
                       {lead.preview}
                     </p>
                   </div>

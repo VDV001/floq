@@ -54,6 +54,41 @@ async function apiFetch<T>(path: string, options?: RequestInit): Promise<T> {
   return res.json();
 }
 
+async function apiDownload(path: string): Promise<void> {
+  const token =
+    typeof window !== "undefined" ? localStorage.getItem("token") : null;
+  const res = await fetch(`${API_BASE}${path}`, {
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  });
+  if (!res.ok) throw new Error(`Download error: ${res.status}`);
+  const blob = await res.blob();
+  const disposition = res.headers.get("Content-Disposition") || "";
+  const match = disposition.match(/filename="?([^"]+)"?/);
+  const filename = match?.[1] || "export.csv";
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
+async function apiUploadFile<T>(path: string, file: File): Promise<T> {
+  const token =
+    typeof window !== "undefined" ? localStorage.getItem("token") : null;
+  const formData = new FormData();
+  formData.append("file", file);
+  const res = await fetch(`${API_BASE}${path}`, {
+    method: "POST",
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+    body: formData,
+  });
+  if (!res.ok) throw new Error(`Upload error: ${res.status}`);
+  return res.json();
+}
+
 export const api = {
   // Auth
   register: (email: string, password: string, fullName: string) =>
@@ -83,6 +118,10 @@ export const api = {
       body: JSON.stringify({ status }),
     }),
 
+  exportLeadsCSV: () => apiDownload("/api/leads/export"),
+  importLeadsCSV: (file: File) =>
+    apiUploadFile<{ imported: number }>("/api/leads/import", file),
+
   // Messages
   getMessages: (leadId: string) =>
     apiFetch<Message[]>(`/api/leads/${leadId}/messages`),
@@ -111,6 +150,19 @@ export const api = {
   dismissReminder: (id: string) =>
     apiFetch(`/api/reminders/${id}/dismiss`, { method: "POST" }),
 
+  // Sources
+  getSources: () => apiFetch<SourceCategory[]>("/api/sources"),
+  createSourceCategory: (name: string) =>
+    apiFetch<SourceCategory>("/api/sources/categories", {
+      method: "POST",
+      body: JSON.stringify({ name }),
+    }),
+  createSource: (categoryId: string, name: string) =>
+    apiFetch<SourceItem>("/api/sources", {
+      method: "POST",
+      body: JSON.stringify({ category_id: categoryId, name }),
+    }),
+
   // Prospects
   getProspects: () => apiFetch<Prospect[]>("/api/prospects"),
   createProspect: (data: CreateProspectBody) =>
@@ -120,6 +172,9 @@ export const api = {
     }),
   deleteProspect: (id: string) =>
     apiFetch(`/api/prospects/${id}`, { method: "DELETE" }),
+  exportProspectsCSV: () => apiDownload("/api/prospects/export"),
+  importProspectsCSV: (file: File) =>
+    apiUploadFile<{ imported: number }>("/api/prospects/import", file),
 
   // Verification
   verifyEmail: (email: string) =>
@@ -234,6 +289,22 @@ export const api = {
 };
 
 // Types
+export interface SourceItem {
+  id: string;
+  category_id: string;
+  name: string;
+  sort_order: number;
+  created_at: string;
+}
+
+export interface SourceCategory {
+  id: string;
+  name: string;
+  sort_order: number;
+  sources: SourceItem[];
+  created_at: string;
+}
+
 export interface Lead {
   id: string;
   user_id: string;
@@ -244,6 +315,8 @@ export interface Lead {
   status: "new" | "qualified" | "in_conversation" | "followup" | "closed";
   telegram_chat_id?: number;
   email_address?: string;
+  source_id?: string;
+  source_name?: string;
   created_at: string;
   updated_at: string;
 }
@@ -298,7 +371,9 @@ export interface Prospect {
   industry: string;
   company_size: string;
   context: string;
-  source: "manual" | "csv";
+  source: string;
+  source_id?: string;
+  source_name?: string;
   status: "new" | "in_sequence" | "replied" | "converted" | "opted_out";
   verify_status: "not_checked" | "valid" | "risky" | "invalid";
   verify_score: number;
@@ -320,6 +395,7 @@ export interface CreateProspectBody {
   industry?: string;
   company_size?: string;
   context?: string;
+  source_id?: string;
 }
 
 export interface EmailVerifyResult {
