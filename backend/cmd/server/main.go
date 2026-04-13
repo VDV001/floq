@@ -105,7 +105,7 @@ func main() {
 
 	// 5. Use cases
 	leadsUC := leads.NewUseCase(leadsRepo, leadsAI, nil) // sender set after bot init
-	prospectsUC := prospects.NewUseCase(prospectsRepo)
+	prospectsUC := prospects.NewUseCase(prospectsRepo, prospects.WithLeadChecker(prospects.NewLeadCheckerAdapter(leadsRepo)))
 	sourcesUC := sources.NewUseCase(sourcesRepo)
 	txManager := db.NewTxManager(pool)
 	sequencesUC := sequences.NewUseCase(sequencesRepo, seqAI, prospectReader, leadCreatorAdapter, sequences.WithTxManager(txManager))
@@ -171,12 +171,13 @@ func main() {
 
 	// 8. Optional: Telegram inbox bot
 	// Read token from DB first, fall back to .env
+	prospectAdapter := inbox.NewProspectRepoAdapter(prospectsRepo)
 	tgToken := cfg.TelegramBotToken
 	if dbCfg, err := settingsStore.GetConfig(context.Background(), ownerID); err == nil && dbCfg.TelegramBotToken != "" {
 		tgToken = dbCfg.TelegramBotToken
 	}
 	if tgToken != "" {
-		tgBot, err := inbox.NewTelegramBot(tgToken, leadsRepo, aiClient, ownerID, cfg.BookingLink)
+		tgBot, err := inbox.NewTelegramBot(tgToken, leadsRepo, prospectAdapter, aiClient, ownerID, cfg.BookingLink)
 		if err != nil {
 			log.Printf("telegram bot init failed: %v", err)
 		} else {
@@ -187,7 +188,7 @@ func main() {
 	}
 
 	// 9. Email IMAP poller (reads settings from DB, falls back to .env)
-	emailPoller := inbox.NewEmailPoller(settingsStore, ownerID, cfg.IMAPHost, cfg.IMAPPort, cfg.IMAPUser, cfg.IMAPPassword, leadsRepo, prospectsRepo, sequencesRepo, aiClient)
+	emailPoller := inbox.NewEmailPoller(settingsStore, ownerID, cfg.IMAPHost, cfg.IMAPPort, cfg.IMAPUser, cfg.IMAPPassword, leadsRepo, prospectAdapter, sequencesRepo, aiClient)
 	go emailPoller.Start(ctx)
 
 	// 10. Reminders cron (hourly, checks for stale leads)
