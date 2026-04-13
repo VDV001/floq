@@ -110,3 +110,46 @@ func (uc *UseCase) ImportCSV(ctx context.Context, userID uuid.UUID, csvData []by
 
 	return len(prospects), nil
 }
+
+func (uc *UseCase) ExportCSV(ctx context.Context, userID uuid.UUID) ([]byte, error) {
+	prospects, err := uc.repo.ListProspects(ctx, userID)
+	if err != nil {
+		return nil, fmt.Errorf("list prospects: %w", err)
+	}
+
+	var buf bytes.Buffer
+	// BOM for Excel compatibility
+	buf.Write([]byte{0xEF, 0xBB, 0xBF})
+
+	w := csv.NewWriter(&buf)
+	header := []string{"name", "company", "title", "email", "phone", "whatsapp", "telegram_username", "industry", "company_size", "context", "source", "status"}
+	if err := w.Write(header); err != nil {
+		return nil, fmt.Errorf("write csv header: %w", err)
+	}
+
+	for _, p := range prospects {
+		record := []string{
+			p.Name,
+			p.Company,
+			p.Title,
+			p.Email,
+			p.Phone,
+			p.WhatsApp,
+			p.TelegramUsername,
+			p.Industry,
+			p.CompanySize,
+			p.Context,
+			p.Source,
+			p.Status.String(),
+		}
+		if err := w.Write(record); err != nil {
+			return nil, fmt.Errorf("write csv record: %w", err)
+		}
+	}
+	w.Flush()
+	if err := w.Error(); err != nil {
+		return nil, fmt.Errorf("flush csv: %w", err)
+	}
+
+	return buf.Bytes(), nil
+}

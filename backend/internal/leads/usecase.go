@@ -1,9 +1,12 @@
 package leads
 
 import (
+	"bytes"
 	"context"
+	"encoding/csv"
 	"encoding/json"
 	"fmt"
+	"io"
 	"time"
 
 	"github.com/daniil/floq/internal/leads/domain"
@@ -162,4 +165,115 @@ func (uc *UseCase) RegenerateDraft(ctx context.Context, leadID uuid.UUID) (*doma
 	}
 
 	return d, nil
+}
+
+func (uc *UseCase) ExportCSV(ctx context.Context, userID uuid.UUID) ([]byte, error) {
+	leads, err := uc.repo.ListLeads(ctx, userID)
+	if err != nil {
+		return nil, fmt.Errorf("list leads: %w", err)
+	}
+
+	var buf bytes.Buffer
+	// BOM for Excel compatibility
+	buf.Write([]byte{0xEF, 0xBB, 0xBF})
+
+	w := csv.NewWriter(&buf)
+	header := []string{"contact_name", "company", "channel", "email_address", "status", "first_message", "created_at"}
+	if err := w.Write(header); err != nil {
+		return nil, fmt.Errorf("write csv header: %w", err)
+	}
+
+	for _, l := range leads {
+		emailAddr := ""
+		if l.EmailAddress != nil {
+			emailAddr = *l.EmailAddress
+		}
+		record := []string{
+			l.ContactName,
+			l.Company,
+			string(l.Channel),
+			emailAddr,
+			string(l.Status),
+			l.FirstMessage,
+			l.CreatedAt.Format(time.RFC3339),
+		}
+		if err := w.Write(record); err != nil {
+			return nil, fmt.Errorf("write csv record: %w", err)
+		}
+	}
+	w.Flush()
+	if err := w.Error(); err != nil {
+		return nil, fmt.Errorf("flush csv: %w", err)
+	}
+
+	return buf.Bytes(), nil
+}
+
+func (uc *UseCase) ImportCSV(ctx context.Context, userID uuid.UUID, csvData []byte) (int, error) {
+	reader := csv.NewReader(bytes.NewReader(csvData))
+
+	// Read and validate header
+	header, err := reader.Read()
+	if err != nil {
+		return 0, fmt.Errorf("read csv header: %w", err)
+	}
+
+	colIndex := make(map[string]int, len(header))
+	for i, name := range header {
+		colIndex[name] = i
+	}
+
+	// Validate required columns
+	if _, ok := colIndex["contact_name"]; !ok {
+		return 0, fmt.Errorf("missing required column: contact_name")
+	}
+	if _, ok := colIndex["channel"]; !ok {
+		return 0, fmt.Errorf("missing required column: channel")
+	}
+
+	getCol := func(record []string, name string) string {
+		if idx, ok := colIndex[name]; ok && idx < len(record) {
+			return record[idx]
+		}
+		return ""
+	}
+
+	var count int
+	for {
+		record, err := reader.Read()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return 0, fmt.Errorf("read csv record: %w", err)
+		}
+
+		contactName := getCol(record, "contact_name")
+		if contactName == "" {
+			continue
+		}
+
+		ch := getCol(record, "channel")
+		channel := domain.ChannelEmail
+		if ch == "telegram" {
+			channel = domain.ChannelTelegram
+		}
+
+		company := getCol(record, "company")
+		firstMessage := getCol(record, "first_message")
+		emailAddr := getCol(record, "email_address")
+
+		var emailPtr *string
+		if emailAddr != "" {
+			emailPtr = &emailAddr
+		}
+
+		lead := domain.NewLead(userID, channel, contactName, company, firstMessage, nil, emailPtr)
+		if err := uc.repo.CreateLead(ctx, lead); err != nil {
+			return 0, fmt.Errorf("create lead: %w", err)
+		}
+		count++
+	}
+
+	return count, nil
 }

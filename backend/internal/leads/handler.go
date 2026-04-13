@@ -2,7 +2,10 @@ package leads
 
 import (
 	"encoding/json"
+	"fmt"
+	"io"
 	"net/http"
+	"time"
 
 	"github.com/daniil/floq/internal/httputil"
 	"github.com/daniil/floq/internal/leads/domain"
@@ -16,6 +19,8 @@ type Handler struct {
 func RegisterRoutes(r chi.Router, uc *UseCase) {
 	h := &Handler{uc: uc}
 	r.Get("/api/leads", h.listLeads())
+	r.Get("/api/leads/export", h.exportCSV())
+	r.Post("/api/leads/import", h.importCSV())
 	r.Get("/api/leads/{id}", h.getLead())
 	r.Patch("/api/leads/{id}/status", h.updateStatus())
 	r.Get("/api/leads/{id}/messages", h.listMessages())
@@ -210,5 +215,55 @@ func (h *Handler) regenerateDraft() http.HandlerFunc {
 			return
 		}
 		httputil.WriteJSON(w, http.StatusOK, DraftToResponse(d))
+	}
+}
+
+func (h *Handler) exportCSV() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		userID, ok := httputil.UserIDFromContext(r.Context())
+		if !ok {
+			httputil.WriteError(w, http.StatusUnauthorized, "unauthorized")
+			return
+		}
+		data, err := h.uc.ExportCSV(r.Context(), userID)
+		if err != nil {
+			httputil.WriteError(w, http.StatusInternalServerError, "failed to export leads")
+			return
+		}
+		filename := fmt.Sprintf("floq-leads-%s.csv", time.Now().UTC().Format("2006-01-02"))
+		w.Header().Set("Content-Type", "text/csv; charset=utf-8")
+		w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, filename))
+		w.WriteHeader(http.StatusOK)
+		w.Write(data)
+	}
+}
+
+func (h *Handler) importCSV() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		file, _, err := r.FormFile("file")
+		if err != nil {
+			httputil.WriteError(w, http.StatusBadRequest, "missing file field")
+			return
+		}
+		defer file.Close()
+
+		data, err := io.ReadAll(file)
+		if err != nil {
+			httputil.WriteError(w, http.StatusBadRequest, "failed to read file")
+			return
+		}
+
+		userID, ok := httputil.UserIDFromContext(r.Context())
+		if !ok {
+			httputil.WriteError(w, http.StatusUnauthorized, "unauthorized")
+			return
+		}
+		count, err := h.uc.ImportCSV(r.Context(), userID, data)
+		if err != nil {
+			httputil.WriteError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+
+		httputil.WriteJSON(w, http.StatusOK, map[string]int{"imported": count})
 	}
 }
