@@ -88,13 +88,19 @@ type Lead struct {
 	TelegramChatID *int64
 	EmailAddress   *string
 	SourceID       *uuid.UUID
-	SourceName     string
+	SourceName     string // read-only, populated by repository JOINs
 	CreatedAt      time.Time
 	UpdatedAt      time.Time
 }
 
 // NewLead creates a new Lead with generated ID, status=new, and timestamps.
-func NewLead(userID uuid.UUID, channel Channel, contactName, company, firstMessage string, telegramChatID *int64, emailAddress *string) *Lead {
+func NewLead(userID uuid.UUID, channel Channel, contactName, company, firstMessage string, telegramChatID *int64, emailAddress *string) (*Lead, error) {
+	if !channel.IsValid() {
+		return nil, fmt.Errorf("invalid channel: %q", channel)
+	}
+	if contactName == "" {
+		return nil, fmt.Errorf("contact name is required")
+	}
 	now := time.Now().UTC()
 	return &Lead{
 		ID:             uuid.New(),
@@ -108,7 +114,7 @@ func NewLead(userID uuid.UUID, channel Channel, contactName, company, firstMessa
 		EmailAddress:   emailAddress,
 		CreatedAt:      now,
 		UpdatedAt:      now,
-	}
+	}, nil
 }
 
 // TransitionTo validates and applies a status transition.
@@ -156,11 +162,37 @@ type Qualification struct {
 	GeneratedAt       time.Time
 }
 
+// NewQualification creates a Qualification with generated ID and timestamp.
+func NewQualification(leadID uuid.UUID, need, budget, deadline string, score int, scoreReason, action, provider string) *Qualification {
+	return &Qualification{
+		ID:                uuid.New(),
+		LeadID:            leadID,
+		IdentifiedNeed:    need,
+		EstimatedBudget:   budget,
+		Deadline:          deadline,
+		Score:             score,
+		ScoreReason:       scoreReason,
+		RecommendedAction: action,
+		ProviderUsed:      provider,
+		GeneratedAt:       time.Now().UTC(),
+	}
+}
+
 type Draft struct {
 	ID        uuid.UUID
 	LeadID    uuid.UUID
 	Body      string
 	CreatedAt time.Time
+}
+
+// NewDraft creates a Draft with generated ID and timestamp.
+func NewDraft(leadID uuid.UUID, body string) *Draft {
+	return &Draft{
+		ID:        uuid.New(),
+		LeadID:    leadID,
+		Body:      body,
+		CreatedAt: time.Now().UTC(),
+	}
 }
 
 type Reminder struct {

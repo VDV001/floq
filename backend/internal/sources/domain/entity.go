@@ -1,6 +1,7 @@
 package domain
 
 import (
+	"fmt"
 	"time"
 
 	"github.com/google/uuid"
@@ -25,17 +26,31 @@ type Source struct {
 	CreatedAt  time.Time
 }
 
-func NewCategory(userID uuid.UUID, name string) *Category {
+func NewCategory(userID uuid.UUID, name string) (*Category, error) {
+	if name == "" {
+		return nil, fmt.Errorf("category name is required")
+	}
 	return &Category{
 		ID:        uuid.New(),
 		UserID:    userID,
 		Name:      name,
 		SortOrder: 0,
 		CreatedAt: time.Now().UTC(),
-	}
+	}, nil
 }
 
-func NewSource(userID, categoryID uuid.UUID, name string) *Source {
+func (c *Category) Rename(name string) error {
+	if name == "" {
+		return fmt.Errorf("category name is required")
+	}
+	c.Name = name
+	return nil
+}
+
+func NewSource(userID, categoryID uuid.UUID, name string) (*Source, error) {
+	if name == "" {
+		return nil, fmt.Errorf("source name is required")
+	}
 	return &Source{
 		ID:         uuid.New(),
 		UserID:     userID,
@@ -43,21 +58,15 @@ func NewSource(userID, categoryID uuid.UUID, name string) *Source {
 		Name:       name,
 		SortOrder:  0,
 		CreatedAt:  time.Now().UTC(),
-	}
+	}, nil
 }
 
-type DefaultSeed struct {
-	CategoryName string
-	SourceNames  []string
-}
-
-func DefaultSeeds() []DefaultSeed {
-	return []DefaultSeed{
-		{"Импорт", []string{"CSV файл"}},
-		{"Ручное добавление", []string{"Вручную"}},
-		{"Парсинг", []string{"2GIS"}},
-		{"Входящие", []string{"Telegram", "Email"}},
+func (s *Source) Rename(name string) error {
+	if name == "" {
+		return fmt.Errorf("source name is required")
 	}
+	s.Name = name
+	return nil
 }
 
 // CategoryWithSources groups a category with its nested sources.

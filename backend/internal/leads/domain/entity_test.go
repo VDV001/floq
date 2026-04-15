@@ -96,7 +96,10 @@ func TestChannel_IsValid(t *testing.T) {
 func TestNewLead(t *testing.T) {
 	userID := uuid.New()
 	chatID := int64(123)
-	lead := NewLead(userID, ChannelTelegram, "Ivan", "Acme", "Hello", &chatID, nil)
+	lead, err := NewLead(userID, ChannelTelegram, "Ivan", "Acme", "Hello", &chatID, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 
 	if lead.ID == uuid.Nil {
 		t.Error("expected non-nil ID")
