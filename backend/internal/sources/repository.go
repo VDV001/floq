@@ -181,7 +181,7 @@ func (r *Repository) GetSource(ctx context.Context, id uuid.UUID) (*domain.Sourc
 }
 
 // SourceStats implements StatsReader interface.
-func (r *Repository) SourceStats(ctx context.Context, userID uuid.UUID) ([]SourceStat, error) {
+func (r *Repository) SourceStats(ctx context.Context, userID uuid.UUID) ([]domain.SourceStat, error) {
 	rows, err := r.q.Query(ctx, `
 		SELECT ls.id, ls.name, COALESCE(sc.name, ''),
 		       COALESCE((SELECT COUNT(*) FROM prospects p WHERE p.source_id = ls.id), 0),
@@ -196,9 +196,9 @@ func (r *Repository) SourceStats(ctx context.Context, userID uuid.UUID) ([]Sourc
 	}
 	defer rows.Close()
 
-	var stats []SourceStat
+	var stats []domain.SourceStat
 	for rows.Next() {
-		var s SourceStat
+		var s domain.SourceStat
 		if err := rows.Scan(&s.SourceID, &s.SourceName, &s.CategoryName, &s.ProspectCount, &s.LeadCount, &s.ConvertedCount); err != nil {
 			return nil, fmt.Errorf("scan source stat: %w", err)
 		}

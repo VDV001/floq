@@ -104,7 +104,7 @@ func TestCategoriesToResponse_Empty(t *testing.T) {
 
 func TestStatsToResponse(t *testing.T) {
 	srcID := uuid.New()
-	stats := []SourceStat{
+	stats := []domain.SourceStat{
 		{
 			SourceID:       srcID,
 			SourceName:     "2GIS",
@@ -131,7 +131,7 @@ func TestStatsToResponse_Empty(t *testing.T) {
 }
 
 func TestStatsToResponse_Multiple(t *testing.T) {
-	stats := []SourceStat{
+	stats := []domain.SourceStat{
 		{SourceID: uuid.New(), SourceName: "A"},
 		{SourceID: uuid.New(), SourceName: "B"},
 		{SourceID: uuid.New(), SourceName: "C"},

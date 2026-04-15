@@ -60,7 +60,7 @@ type SourceStatResponse struct {
 	ConvertedCount int       `json:"converted_count"`
 }
 
-func StatsToResponse(stats []SourceStat) []SourceStatResponse {
+func StatsToResponse(stats []domain.SourceStat) []SourceStatResponse {
 	resp := make([]SourceStatResponse, len(stats))
 	for i, s := range stats {
 		resp[i] = SourceStatResponse{

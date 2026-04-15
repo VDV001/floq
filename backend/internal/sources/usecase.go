@@ -8,24 +8,9 @@ import (
 	"github.com/google/uuid"
 )
 
-// SourceStat is a read model for source analytics (not a domain entity).
-type SourceStat struct {
-	SourceID       uuid.UUID
-	SourceName     string
-	CategoryName   string
-	ProspectCount  int
-	LeadCount      int
-	ConvertedCount int
-}
-
-// StatsReader provides source statistics from the database.
-type StatsReader interface {
-	SourceStats(ctx context.Context, userID uuid.UUID) ([]SourceStat, error)
-}
-
 type UseCase struct {
 	repo        domain.Repository
-	statsReader StatsReader
+	statsReader domain.StatsReader
 }
 
 func NewUseCase(repo domain.Repository, opts ...func(*UseCase)) *UseCase {
@@ -36,7 +21,7 @@ func NewUseCase(repo domain.Repository, opts ...func(*UseCase)) *UseCase {
 	return uc
 }
 
-func WithStatsReader(sr StatsReader) func(*UseCase) {
+func WithStatsReader(sr domain.StatsReader) func(*UseCase) {
 	return func(uc *UseCase) { uc.statsReader = sr }
 }
 
@@ -105,7 +90,7 @@ func (uc *UseCase) DeleteSource(ctx context.Context, id uuid.UUID) error {
 	return uc.repo.DeleteSource(ctx, id)
 }
 
-func (uc *UseCase) Stats(ctx context.Context, userID uuid.UUID) ([]SourceStat, error) {
+func (uc *UseCase) Stats(ctx context.Context, userID uuid.UUID) ([]domain.SourceStat, error) {
 	if uc.statsReader == nil {
 		return nil, fmt.Errorf("stats reader not configured")
 	}

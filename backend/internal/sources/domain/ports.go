@@ -19,3 +19,18 @@ type Repository interface {
 	GetSource(ctx context.Context, id uuid.UUID) (*Source, error)
 	EnsureDefaults(ctx context.Context, userID uuid.UUID) error
 }
+
+// SourceStat is a read model for source analytics.
+type SourceStat struct {
+	SourceID       uuid.UUID
+	SourceName     string
+	CategoryName   string
+	ProspectCount  int
+	LeadCount      int
+	ConvertedCount int
+}
+
+// StatsReader provides source statistics from the database.
+type StatsReader interface {
+	SourceStats(ctx context.Context, userID uuid.UUID) ([]SourceStat, error)
+}

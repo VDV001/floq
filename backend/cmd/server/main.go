@@ -104,7 +104,7 @@ func main() {
 
 	// 5. Use cases
 	leadsUC := leads.NewUseCase(leadsRepo, leadsAI, nil) // sender set after bot init
-	prospectsUC := prospects.NewUseCase(prospectsRepo, prospects.WithLeadChecker(prospects.NewLeadCheckerAdapter(leadsRepo)))
+	prospectsUC := prospects.NewUseCase(prospectsRepo, prospects.WithLeadChecker(newLeadCheckerAdapter(leadsRepo)))
 	sourcesUC := sources.NewUseCase(sourcesRepo, sources.WithStatsReader(sourcesRepo))
 	txManager := db.NewTxManager(pool)
 	sequencesUC := sequences.NewUseCase(sequencesRepo, seqAI, prospectReader, leadCreatorAdapter, sequences.WithTxManager(txManager))
@@ -170,7 +170,7 @@ func main() {
 
 	// 8. Optional: Telegram inbox bot
 	// Read token from DB first, fall back to .env
-	prospectAdapter := inbox.NewProspectRepoAdapter(prospectsRepo)
+	prospectAdapter := newProspectRepoAdapter(prospectsRepo)
 	tgToken := cfg.TelegramBotToken
 	if dbCfg, err := settingsStore.GetConfig(context.Background(), ownerID); err == nil && dbCfg.TelegramBotToken != "" {
 		tgToken = dbCfg.TelegramBotToken

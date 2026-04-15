@@ -99,7 +99,7 @@ func (m *mockRepo) EnsureDefaults(_ context.Context, _ uuid.UUID) error {
 	return nil
 }
 
-func (m *mockRepo) SourceStats(_ context.Context, _ uuid.UUID) ([]SourceStat, error) {
+func (m *mockRepo) SourceStats(_ context.Context, _ uuid.UUID) ([]domain.SourceStat, error) {
 	return nil, nil
 }
 
@@ -221,7 +221,7 @@ func TestUpdateCategory_EmptyName(t *testing.T) {
 func TestStats_Success(t *testing.T) {
 	repo := newMockRepo()
 	sr := &mockStatsReader{
-		stats: []SourceStat{
+		stats: []domain.SourceStat{
 			{SourceID: uuid.New(), SourceName: "2GIS", ProspectCount: 10},
 		},
 	}
@@ -252,11 +252,11 @@ func TestStats_ReaderError(t *testing.T) {
 }
 
 type mockStatsReader struct {
-	stats []SourceStat
+	stats []domain.SourceStat
 	err   error
 }
 
-func (m *mockStatsReader) SourceStats(_ context.Context, _ uuid.UUID) ([]SourceStat, error) {
+func (m *mockStatsReader) SourceStats(_ context.Context, _ uuid.UUID) ([]domain.SourceStat, error) {
 	return m.stats, m.err
 }
 
