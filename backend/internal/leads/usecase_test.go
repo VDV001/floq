@@ -226,6 +226,7 @@ func TestQualifyLead_HappyPath(t *testing.T) {
 		ContactName:  "Ivan",
 		Channel:      domain.ChannelTelegram,
 		FirstMessage: "Need a CRM system",
+		Status:       domain.StatusNew,
 	}
 
 	aiSvc := &mockAI{

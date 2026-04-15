@@ -83,7 +83,11 @@ func (uc *UseCase) SendMessage(ctx context.Context, leadID uuid.UUID, body strin
 
 	// Auto-transition: qualified → in_conversation on first outbound message
 	if lead.Status == domain.StatusQualified {
-		_ = uc.repo.UpdateLeadStatus(ctx, leadID, domain.StatusInConversation)
+		if err := lead.TransitionTo(domain.StatusInConversation); err == nil {
+			if err := uc.repo.UpdateLeadStatus(ctx, leadID, domain.StatusInConversation); err != nil {
+				return nil, fmt.Errorf("auto-transition: %w", err)
+			}
+		}
 	}
 
 	return msg, nil
@@ -102,19 +106,19 @@ func (uc *UseCase) QualifyLead(ctx context.Context, leadID uuid.UUID) (*domain.Q
 		return nil, fmt.Errorf("lead not found")
 	}
 
-	q, err := uc.ai.Qualify(ctx, lead.ContactName, lead.Channel, lead.FirstMessage)
+	aiResult, err := uc.ai.Qualify(ctx, lead.ContactName, lead.Channel, lead.FirstMessage)
 	if err != nil {
 		return nil, err
 	}
 
-	q.ID = uuid.New()
-	q.LeadID = lead.ID
-	q.GeneratedAt = time.Now().UTC()
-
+	q := domain.NewQualification(lead.ID, aiResult.IdentifiedNeed, aiResult.EstimatedBudget, aiResult.Deadline, aiResult.Score, aiResult.ScoreReason, aiResult.RecommendedAction, aiResult.ProviderUsed)
 	if err := uc.repo.UpsertQualification(ctx, q); err != nil {
 		return nil, err
 	}
 
+	if err := lead.TransitionTo(domain.StatusQualified); err != nil {
+		return nil, err
+	}
 	if err := uc.repo.UpdateLeadStatus(ctx, leadID, domain.StatusQualified); err != nil {
 		return nil, err
 	}
@@ -153,12 +157,7 @@ func (uc *UseCase) RegenerateDraft(ctx context.Context, leadID uuid.UUID) (*doma
 		return nil, err
 	}
 
-	d := &domain.Draft{
-		ID:        uuid.New(),
-		LeadID:    lead.ID,
-		Body:      body,
-		CreatedAt: time.Now().UTC(),
-	}
+	d := domain.NewDraft(lead.ID, body)
 
 	if err := uc.repo.CreateDraft(ctx, d); err != nil {
 		return nil, err
@@ -275,7 +274,10 @@ func (uc *UseCase) ImportCSV(ctx context.Context, userID uuid.UUID, csvData []by
 			emailPtr = &emailAddr
 		}
 
-		lead := domain.NewLead(userID, channel, contactName, company, firstMessage, nil, emailPtr)
+		lead, err := domain.NewLead(userID, channel, contactName, company, firstMessage, nil, emailPtr)
+		if err != nil {
+			continue // skip invalid rows
+		}
 		if err := uc.repo.CreateLead(ctx, lead); err != nil {
 			return 0, fmt.Errorf("create lead: %w", err)
 		}
