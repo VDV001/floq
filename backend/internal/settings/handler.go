@@ -2,13 +2,10 @@ package settings
 
 import (
 	"context"
-	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"io"
-	"net"
 	"net/http"
-	smtpLib "net/smtp"
 	"strings"
 	"time"
 
@@ -73,6 +70,14 @@ type Settings struct {
 // Injected from main.go to avoid import cycles with ai/providers.
 type AITester func(ctx context.Context, provider, model, apiKey string) (providerName string, err error)
 
+// SMTPTester tests SMTP connection and authentication.
+// Injected from main.go to keep infrastructure logic out of the handler.
+type SMTPTester func(ctx context.Context, host, port, user, password string) error
+
+// ResendTester verifies a Resend API key.
+// Injected from main.go to keep infrastructure logic out of the handler.
+type ResendTester func(ctx context.Context, apiKey string) error
+
 // UsageCounter counts leads for usage stats.
 // Injected from main.go to avoid circular imports with leads package.
 type UsageCounter func(ctx context.Context, userID uuid.UUID) (monthLeads, totalLeads int, err error)
@@ -80,11 +85,13 @@ type UsageCounter func(ctx context.Context, userID uuid.UUID) (monthLeads, total
 type Handler struct {
 	uc           *UseCase
 	aiTester     AITester
+	smtpTester   SMTPTester
+	resendTester ResendTester
 	usageCounter UsageCounter
 }
 
-func RegisterRoutes(r chi.Router, uc *UseCase, aiTester AITester, usageCounter UsageCounter) {
-	h := &Handler{uc: uc, aiTester: aiTester, usageCounter: usageCounter}
+func RegisterRoutes(r chi.Router, uc *UseCase, aiTester AITester, smtpTester SMTPTester, resendTester ResendTester, usageCounter UsageCounter) {
+	h := &Handler{uc: uc, aiTester: aiTester, smtpTester: smtpTester, resendTester: resendTester, usageCounter: usageCounter}
 	r.Get("/api/settings", h.getSettings())
 	r.Put("/api/settings", h.updateSettings())
 	r.Post("/api/settings/test-imap", h.testIMAP())
@@ -176,7 +183,19 @@ func (h *Handler) updateSettings() http.HandlerFunc {
 			return
 		}
 
-		ds, err := h.uc.UpdateSettings(r.Context(), userID, body)
+		var raw map[string]json.RawMessage
+		if err := json.Unmarshal(body, &raw); err != nil {
+			httputil.WriteError(w, http.StatusBadRequest, "invalid JSON")
+			return
+		}
+
+		var input SettingsInput
+		if err := json.Unmarshal(body, &input); err != nil {
+			httputil.WriteError(w, http.StatusBadRequest, "invalid JSON")
+			return
+		}
+
+		ds, err := h.uc.UpdateSettings(r.Context(), userID, raw, input)
 		if err != nil {
 			msg := err.Error()
 			if strings.Contains(msg, "invalid") || strings.Contains(msg, "no fields") {
@@ -324,23 +343,20 @@ func (h *Handler) testResend() http.HandlerFunc {
 			return
 		}
 
-		// Verify Resend API key by calling GET /api-keys
-		req, _ := http.NewRequestWithContext(r.Context(), "GET", "https://api.resend.com/api-keys", nil)
-		req.Header.Set("Authorization", "Bearer "+body.APIKey)
-
-		client := &http.Client{Timeout: 10 * time.Second}
-		resp, err := client.Do(req)
-		if err != nil {
-			httputil.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "error": fmt.Sprintf("Ошибка запроса: %v", err)})
+		if h.resendTester == nil {
+			httputil.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "error": "Тест Resend недоступен"})
 			return
 		}
-		defer resp.Body.Close()
 
-		if resp.StatusCode == 200 {
-			httputil.WriteJSON(w, http.StatusOK, map[string]any{"success": true, "message": "Resend API подключен!"})
-		} else {
-			httputil.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "error": "Неверный API ключ Resend"})
+		ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+		defer cancel()
+
+		if err := h.resendTester(ctx, body.APIKey); err != nil {
+			httputil.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "error": err.Error()})
+			return
 		}
+
+		httputil.WriteJSON(w, http.StatusOK, map[string]any{"success": true, "message": "Resend API подключен!"})
 	}
 }
 
@@ -365,32 +381,18 @@ func (h *Handler) testSMTP() http.HandlerFunc {
 			body.Port = "465"
 		}
 
-		// Test TLS connection and auth
-		addr := net.JoinHostPort(body.Host, body.Port)
-		conn, err := tls.DialWithDialer(
-			&net.Dialer{Timeout: 10 * time.Second},
-			"tcp", addr,
-			&tls.Config{ServerName: body.Host},
-		)
-		if err != nil {
-			httputil.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "error": fmt.Sprintf("Не удалось подключиться: %v", err)})
+		if h.smtpTester == nil {
+			httputil.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "error": "Тест SMTP недоступен"})
 			return
 		}
-		defer conn.Close()
 
-		client, err := smtpLib.NewClient(conn, body.Host)
-		if err != nil {
-			httputil.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "error": "Ошибка создания SMTP-клиента"})
-			return
-		}
-		defer client.Close()
+		ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+		defer cancel()
 
-		auth := smtpLib.PlainAuth("", body.User, body.Password, body.Host)
-		if err := client.Auth(auth); err != nil {
-			httputil.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "error": "Неверный логин или пароль SMTP"})
+		if err := h.smtpTester(ctx, body.Host, body.Port, body.User, body.Password); err != nil {
+			httputil.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "error": err.Error()})
 			return
 		}
-		_ = client.Quit()
 
 		httputil.WriteJSON(w, http.StatusOK, map[string]any{"success": true, "message": "SMTP подключен!"})
 	}

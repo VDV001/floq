@@ -106,6 +106,7 @@ func main() {
 	leadsUC := leads.NewUseCase(leadsRepo, leadsAI, nil) // sender set after bot init
 	prospectsUC := prospects.NewUseCase(prospectsRepo, prospects.WithLeadChecker(newLeadCheckerAdapter(leadsRepo)))
 	sourcesUC := sources.NewUseCase(sourcesRepo, sources.WithStatsReader(sourcesRepo))
+	migrateOrphanProspects(pool, ownerID)
 	txManager := db.NewTxManager(pool)
 	sequencesUC := sequences.NewUseCase(sequencesRepo, seqAI, prospectReader, leadCreatorAdapter, sequences.WithTxManager(txManager))
 
@@ -140,7 +141,7 @@ func main() {
 		sources.RegisterRoutes(r, sourcesUC)
 		verify.RegisterRoutes(r, prospectsRepo, nil) // TG bot passed as nil for now
 		parser.RegisterRoutes(r, cfg.TwoGISAPIKey)
-		settings.RegisterRoutes(r, settingsUC, buildAITester(cfg), buildUsageCounter(leadsRepo))
+		settings.RegisterRoutes(r, settingsUC, buildAITester(cfg), buildSMTPTester(), buildResendTester(), buildUsageCounter(leadsRepo))
 		chat.RegisterRoutes(r, chat.NewHandler(chat.NewRepository(pool), aiClient))
 		tgclient.RegisterRoutes(r, tgclient.NewClient(), tgclient.NewRepository(pool))
 	})
@@ -171,12 +172,15 @@ func main() {
 	// 8. Optional: Telegram inbox bot
 	// Read token from DB first, fall back to .env
 	prospectAdapter := newProspectRepoAdapter(prospectsRepo)
+	inboxLeadAdapter := newInboxLeadRepoAdapter(leadsRepo)
+	inboxAI := newInboxAIAdapter(aiClient)
+	inboxCfg := newInboxConfigAdapter(settingsStore)
 	tgToken := cfg.TelegramBotToken
 	if dbCfg, err := settingsStore.GetConfig(context.Background(), ownerID); err == nil && dbCfg.TelegramBotToken != "" {
 		tgToken = dbCfg.TelegramBotToken
 	}
 	if tgToken != "" {
-		tgBot, err := inbox.NewTelegramBot(tgToken, leadsRepo, prospectAdapter, aiClient, ownerID, cfg.BookingLink)
+		tgBot, err := inbox.NewTelegramBot(tgToken, inboxLeadAdapter, prospectAdapter, inboxAI, ownerID, cfg.BookingLink)
 		if err != nil {
 			log.Printf("telegram bot init failed: %v", err)
 		} else {
@@ -187,7 +191,7 @@ func main() {
 	}
 
 	// 9. Email IMAP poller (reads settings from DB, falls back to .env)
-	emailPoller := inbox.NewEmailPoller(settingsStore, ownerID, cfg.IMAPHost, cfg.IMAPPort, cfg.IMAPUser, cfg.IMAPPassword, leadsRepo, prospectAdapter, sequencesRepo, aiClient)
+	emailPoller := inbox.NewEmailPoller(inboxCfg, ownerID, cfg.IMAPHost, cfg.IMAPPort, cfg.IMAPUser, cfg.IMAPPassword, inboxLeadAdapter, prospectAdapter, sequencesRepo, inboxAI)
 	go emailPoller.Start(ctx)
 
 	// 10. Reminders cron (hourly, checks for stale leads)

@@ -2,23 +2,109 @@ package inbox
 
 import (
 	"context"
+	"time"
 
 	"github.com/google/uuid"
-
-	"github.com/daniil/floq/internal/ai"
-	"github.com/daniil/floq/internal/leads/domain"
-	settingsdomain "github.com/daniil/floq/internal/settings/domain"
 )
+
+// --- Lead status (inbox-local) ---
+
+type LeadStatus string
+
+const (
+	StatusNew       LeadStatus = "new"
+	StatusQualified LeadStatus = "qualified"
+)
+
+// --- Channel (inbox-local) ---
+
+type Channel string
+
+const (
+	ChannelTelegram Channel = "telegram"
+	ChannelEmail    Channel = "email"
+)
+
+// --- Message direction (inbox-local) ---
+
+type MessageDirection string
+
+const (
+	DirectionInbound  MessageDirection = "inbound"
+	DirectionOutbound MessageDirection = "outbound"
+)
+
+// --- Read models ---
+
+// InboxLead is the inbox-local read model for a lead.
+type InboxLead struct {
+	ID             uuid.UUID
+	UserID         uuid.UUID
+	Channel        Channel
+	ContactName    string
+	Company        string
+	FirstMessage   string
+	Status         LeadStatus
+	TelegramChatID *int64
+	EmailAddress   *string
+	SourceID       *uuid.UUID
+	CreatedAt      time.Time
+	UpdatedAt      time.Time
+}
+
+// InboxMessage is the inbox-local read model for a message.
+type InboxMessage struct {
+	ID        uuid.UUID
+	LeadID    uuid.UUID
+	Direction MessageDirection
+	Body      string
+	SentAt    time.Time
+}
+
+// InboxQualification is the inbox-local read model for a qualification.
+type InboxQualification struct {
+	ID                uuid.UUID
+	LeadID            uuid.UUID
+	IdentifiedNeed    string
+	EstimatedBudget   string
+	Deadline          string
+	Score             int
+	ScoreReason       string
+	RecommendedAction string
+	ProviderUsed      string
+	GeneratedAt       time.Time
+}
+
+// QualificationResult is the inbox-local model for AI qualification output.
+type QualificationResult struct {
+	IdentifiedNeed    string
+	EstimatedBudget   string
+	Deadline          string
+	Score             int
+	ScoreReason       string
+	RecommendedAction string
+}
+
+// InboxConfig holds only the fields inbox needs from user configuration.
+type InboxConfig struct {
+	IMAPHost         string
+	IMAPPort         string
+	IMAPUser         string
+	IMAPPassword     string
+	TelegramBotToken string
+}
+
+// --- Ports ---
 
 // LeadRepository is the interface inbox needs from leads.
 type LeadRepository interface {
-	GetLeadByTelegramChatID(ctx context.Context, userID uuid.UUID, chatID int64) (*domain.Lead, error)
-	GetLeadByEmailAddress(ctx context.Context, userID uuid.UUID, email string) (*domain.Lead, error)
-	CreateLead(ctx context.Context, lead *domain.Lead) error
+	GetLeadByTelegramChatID(ctx context.Context, userID uuid.UUID, chatID int64) (*InboxLead, error)
+	GetLeadByEmailAddress(ctx context.Context, userID uuid.UUID, email string) (*InboxLead, error)
+	CreateLead(ctx context.Context, lead *InboxLead) error
 	UpdateFirstMessage(ctx context.Context, id uuid.UUID, message string) error
-	CreateMessage(ctx context.Context, msg *domain.Message) error
-	UpsertQualification(ctx context.Context, q *domain.Qualification) error
-	UpdateLeadStatus(ctx context.Context, id uuid.UUID, status domain.LeadStatus) error
+	CreateMessage(ctx context.Context, msg *InboxMessage) error
+	UpsertQualification(ctx context.Context, q *InboxQualification) error
+	UpdateLeadStatus(ctx context.Context, id uuid.UUID, status LeadStatus) error
 }
 
 // ProspectMatch is a port-level read model for prospect data used by inbox.
@@ -46,11 +132,11 @@ type SequenceRepository interface {
 
 // AIQualifier qualifies leads using AI.
 type AIQualifier interface {
-	Qualify(ctx context.Context, contactName, channel, firstMessage string) (*ai.QualificationResult, error)
+	Qualify(ctx context.Context, contactName, channel, firstMessage string) (*QualificationResult, error)
 	ProviderName() string
 }
 
 // ConfigStore reads user configuration.
 type ConfigStore interface {
-	GetConfig(ctx context.Context, userID uuid.UUID) (*settingsdomain.UserConfig, error)
+	GetConfig(ctx context.Context, userID uuid.UUID) (*InboxConfig, error)
 }

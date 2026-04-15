@@ -15,9 +15,6 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-
-	"github.com/daniil/floq/internal/ai"
-	"github.com/daniil/floq/internal/leads/domain"
 )
 
 // fakeHTTPClient returns a canned Telegram API response so BotAPI.Send doesn't panic.
@@ -35,25 +32,25 @@ func (f *fakeHTTPClient) Do(_ *http.Request) (*http.Response, error) {
 
 type mockLeadRepo struct {
 	mu                    sync.Mutex
-	leads                 []*domain.Lead
-	messages              []*domain.Message
-	qualifications        []*domain.Qualification
-	updatedStatuses       map[uuid.UUID]domain.LeadStatus
+	leads                 []*InboxLead
+	messages              []*InboxMessage
+	qualifications        []*InboxQualification
+	updatedStatuses       map[uuid.UUID]LeadStatus
 	updatedFirstMessages  map[uuid.UUID]string
-	existingLeadByChatID  map[int64]*domain.Lead // preset for GetLeadByTelegramChatID
+	existingLeadByChatID  map[int64]*InboxLead // preset for GetLeadByTelegramChatID
 	qualifyDone           chan struct{}
 }
 
 func newMockLeadRepo() *mockLeadRepo {
 	return &mockLeadRepo{
-		updatedStatuses:      make(map[uuid.UUID]domain.LeadStatus),
+		updatedStatuses:      make(map[uuid.UUID]LeadStatus),
 		updatedFirstMessages: make(map[uuid.UUID]string),
-		existingLeadByChatID: make(map[int64]*domain.Lead),
+		existingLeadByChatID: make(map[int64]*InboxLead),
 		qualifyDone:          make(chan struct{}, 1),
 	}
 }
 
-func (m *mockLeadRepo) GetLeadByTelegramChatID(_ context.Context, _ uuid.UUID, chatID int64) (*domain.Lead, error) {
+func (m *mockLeadRepo) GetLeadByTelegramChatID(_ context.Context, _ uuid.UUID, chatID int64) (*InboxLead, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if lead, ok := m.existingLeadByChatID[chatID]; ok {
@@ -62,11 +59,11 @@ func (m *mockLeadRepo) GetLeadByTelegramChatID(_ context.Context, _ uuid.UUID, c
 	return nil, nil
 }
 
-func (m *mockLeadRepo) GetLeadByEmailAddress(_ context.Context, _ uuid.UUID, _ string) (*domain.Lead, error) {
+func (m *mockLeadRepo) GetLeadByEmailAddress(_ context.Context, _ uuid.UUID, _ string) (*InboxLead, error) {
 	return nil, nil
 }
 
-func (m *mockLeadRepo) CreateLead(_ context.Context, lead *domain.Lead) error {
+func (m *mockLeadRepo) CreateLead(_ context.Context, lead *InboxLead) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.leads = append(m.leads, lead)
@@ -80,21 +77,21 @@ func (m *mockLeadRepo) UpdateFirstMessage(_ context.Context, id uuid.UUID, messa
 	return nil
 }
 
-func (m *mockLeadRepo) CreateMessage(_ context.Context, msg *domain.Message) error {
+func (m *mockLeadRepo) CreateMessage(_ context.Context, msg *InboxMessage) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.messages = append(m.messages, msg)
 	return nil
 }
 
-func (m *mockLeadRepo) UpsertQualification(_ context.Context, q *domain.Qualification) error {
+func (m *mockLeadRepo) UpsertQualification(_ context.Context, q *InboxQualification) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.qualifications = append(m.qualifications, q)
 	return nil
 }
 
-func (m *mockLeadRepo) UpdateLeadStatus(_ context.Context, id uuid.UUID, status domain.LeadStatus) error {
+func (m *mockLeadRepo) UpdateLeadStatus(_ context.Context, id uuid.UUID, status LeadStatus) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.updatedStatuses[id] = status
@@ -108,10 +105,10 @@ func (m *mockLeadRepo) UpdateLeadStatus(_ context.Context, id uuid.UUID, status 
 // --- Mock AIQualifier ---
 
 type mockAIQualifier struct {
-	result *ai.QualificationResult
+	result *QualificationResult
 }
 
-func (m *mockAIQualifier) Qualify(_ context.Context, _, _, _ string) (*ai.QualificationResult, error) {
+func (m *mockAIQualifier) Qualify(_ context.Context, _, _, _ string) (*QualificationResult, error) {
 	return m.result, nil
 }
 
@@ -204,7 +201,7 @@ func waitQualifyDone(t *testing.T, repo *mockLeadRepo) {
 func TestHandleMessage_NewLead(t *testing.T) {
 	repo := newMockLeadRepo()
 	aiClient := &mockAIQualifier{
-		result: &ai.QualificationResult{
+		result: &QualificationResult{
 			IdentifiedNeed: "CRM system",
 			Score:          7,
 		},
@@ -225,17 +222,17 @@ func TestHandleMessage_NewLead(t *testing.T) {
 	require.Len(t, repo.leads, 1)
 	lead := repo.leads[0]
 	assert.Equal(t, ownerID, lead.UserID)
-	assert.Equal(t, domain.ChannelTelegram, lead.Channel)
+	assert.Equal(t, ChannelTelegram, lead.Channel)
 	assert.Equal(t, "Ivan Petrov", lead.ContactName)
 	assert.Equal(t, "Hello, I need a CRM", lead.FirstMessage)
-	assert.Equal(t, domain.StatusNew, lead.Status)
+	assert.Equal(t, StatusNew, lead.Status)
 	require.NotNil(t, lead.TelegramChatID)
 	assert.Equal(t, int64(12345), *lead.TelegramChatID)
 
 	// An inbound message should have been created.
 	require.Len(t, repo.messages, 1)
 	assert.Equal(t, lead.ID, repo.messages[0].LeadID)
-	assert.Equal(t, domain.DirectionInbound, repo.messages[0].Direction)
+	assert.Equal(t, DirectionInbound, repo.messages[0].Direction)
 	assert.Equal(t, "Hello, I need a CRM", repo.messages[0].Body)
 
 	// Qualification should have run asynchronously.
@@ -246,22 +243,22 @@ func TestHandleMessage_NewLead(t *testing.T) {
 	assert.Equal(t, "mock", repo.qualifications[0].ProviderUsed)
 
 	// Lead status should have been updated to qualified.
-	assert.Equal(t, domain.StatusQualified, repo.updatedStatuses[lead.ID])
+	assert.Equal(t, StatusQualified, repo.updatedStatuses[lead.ID])
 }
 
 func TestHandleMessage_ExistingLead(t *testing.T) {
 	repo := newMockLeadRepo()
 	aiClient := &mockAIQualifier{
-		result: &ai.QualificationResult{Score: 5},
+		result: &QualificationResult{Score: 5},
 	}
 	ownerID := uuid.New()
-	existingLead := &domain.Lead{
+	existingLead := &InboxLead{
 		ID:             uuid.New(),
 		UserID:         ownerID,
-		Channel:        domain.ChannelTelegram,
+		Channel:        ChannelTelegram,
 		ContactName:    "Ivan Petrov",
 		FirstMessage:   "hi",
-		Status:         domain.StatusNew,
+		Status:         StatusNew,
 		TelegramChatID: ptrInt64(99999),
 	}
 	repo.existingLeadByChatID[99999] = existingLead
@@ -286,13 +283,13 @@ func TestHandleMessage_ExistingLead(t *testing.T) {
 	// An inbound message should still be created.
 	require.Len(t, repo.messages, 1)
 	assert.Equal(t, existingLead.ID, repo.messages[0].LeadID)
-	assert.Equal(t, domain.DirectionInbound, repo.messages[0].Direction)
+	assert.Equal(t, DirectionInbound, repo.messages[0].Direction)
 }
 
 func TestHandleMessage_CallAgreement(t *testing.T) {
 	repo := newMockLeadRepo()
 	aiClient := &mockAIQualifier{
-		result: &ai.QualificationResult{Score: 9},
+		result: &QualificationResult{Score: 9},
 	}
 	ownerID := uuid.New()
 	bookingLink := "https://cal.com/booking"
@@ -314,12 +311,12 @@ func TestHandleMessage_CallAgreement(t *testing.T) {
 	assert.Equal(t, "Anna", lead.ContactName)
 
 	// We expect the inbound message + an outbound booking link message.
-	var inbound, outbound []*domain.Message
+	var inbound, outbound []*InboxMessage
 	for _, m := range repo.messages {
 		switch m.Direction {
-		case domain.DirectionInbound:
+		case DirectionInbound:
 			inbound = append(inbound, m)
-		case domain.DirectionOutbound:
+		case DirectionOutbound:
 			outbound = append(outbound, m)
 		}
 	}
@@ -333,7 +330,7 @@ func TestHandleMessage_CallAgreement(t *testing.T) {
 
 func TestHandleMessage_EmptyText(t *testing.T) {
 	repo := newMockLeadRepo()
-	aiClient := &mockAIQualifier{result: &ai.QualificationResult{}}
+	aiClient := &mockAIQualifier{result: &QualificationResult{}}
 	bot := newTestBot(repo, aiClient, uuid.New(), "")
 
 	msg := makeTgMessage(11111, "Test", "", "")
@@ -362,7 +359,7 @@ func TestHandleMessage_ProspectAutoConversion(t *testing.T) {
 		Status:   "new",
 	}
 
-	aiClient := &mockAIQualifier{result: &ai.QualificationResult{Score: 5}}
+	aiClient := &mockAIQualifier{result: &QualificationResult{Score: 5}}
 	bot := newTestBotWithProspects(repo, prospectRepo, aiClient, ownerID, "")
 
 	msg := makeTgMessageWithUsername(99999, "Test", "User", "testuser", "Привет, хочу узнать о продукте")
@@ -396,7 +393,7 @@ func TestHandleMessage_ProspectAlreadyConverted(t *testing.T) {
 		Status: "converted",
 	}
 
-	aiClient := &mockAIQualifier{result: &ai.QualificationResult{Score: 5}}
+	aiClient := &mockAIQualifier{result: &QualificationResult{Score: 5}}
 	bot := newTestBotWithProspects(repo, prospectRepo, aiClient, ownerID, "")
 
 	msg := makeTgMessageWithUsername(88888, "Conv", "User", "converteduser", "Привет снова")
@@ -427,15 +424,15 @@ type errorMockLeadRepo struct {
 func newErrorMockLeadRepo() *errorMockLeadRepo {
 	return &errorMockLeadRepo{
 		mockLeadRepo: mockLeadRepo{
-			updatedStatuses:      make(map[uuid.UUID]domain.LeadStatus),
+			updatedStatuses:      make(map[uuid.UUID]LeadStatus),
 			updatedFirstMessages: make(map[uuid.UUID]string),
-			existingLeadByChatID: make(map[int64]*domain.Lead),
+			existingLeadByChatID: make(map[int64]*InboxLead),
 			qualifyDone:          make(chan struct{}, 1),
 		},
 	}
 }
 
-func (m *errorMockLeadRepo) GetLeadByTelegramChatID(_ context.Context, _ uuid.UUID, chatID int64) (*domain.Lead, error) {
+func (m *errorMockLeadRepo) GetLeadByTelegramChatID(_ context.Context, _ uuid.UUID, chatID int64) (*InboxLead, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.getLeadByChatIDErr != nil {
@@ -447,7 +444,7 @@ func (m *errorMockLeadRepo) GetLeadByTelegramChatID(_ context.Context, _ uuid.UU
 	return nil, nil
 }
 
-func (m *errorMockLeadRepo) CreateLead(_ context.Context, lead *domain.Lead) error {
+func (m *errorMockLeadRepo) CreateLead(_ context.Context, lead *InboxLead) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.createLeadErr != nil {
@@ -457,7 +454,7 @@ func (m *errorMockLeadRepo) CreateLead(_ context.Context, lead *domain.Lead) err
 	return nil
 }
 
-func (m *errorMockLeadRepo) CreateMessage(_ context.Context, msg *domain.Message) error {
+func (m *errorMockLeadRepo) CreateMessage(_ context.Context, msg *InboxMessage) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.createMessageErr != nil {
@@ -470,7 +467,7 @@ func (m *errorMockLeadRepo) CreateMessage(_ context.Context, msg *domain.Message
 func TestHandleMessage_GetLeadByChatIDError(t *testing.T) {
 	repo := newErrorMockLeadRepo()
 	repo.getLeadByChatIDErr = errors.New("db unavailable")
-	aiClient := &mockAIQualifier{result: &ai.QualificationResult{Score: 5}}
+	aiClient := &mockAIQualifier{result: &QualificationResult{Score: 5}}
 	bot := newTestBot(repo, aiClient, uuid.New(), "")
 
 	msg := makeTgMessage(11111, "Test", "", "Hello")
@@ -485,7 +482,7 @@ func TestHandleMessage_GetLeadByChatIDError(t *testing.T) {
 func TestHandleMessage_CreateLeadError(t *testing.T) {
 	repo := newErrorMockLeadRepo()
 	repo.createLeadErr = errors.New("insert failed")
-	aiClient := &mockAIQualifier{result: &ai.QualificationResult{Score: 5}}
+	aiClient := &mockAIQualifier{result: &QualificationResult{Score: 5}}
 	bot := newTestBot(repo, aiClient, uuid.New(), "")
 
 	msg := makeTgMessage(22222, "Test", "", "Hello")
@@ -500,7 +497,7 @@ func TestHandleMessage_CreateLeadError(t *testing.T) {
 func TestHandleMessage_CreateMessageError(t *testing.T) {
 	repo := newErrorMockLeadRepo()
 	repo.createMessageErr = errors.New("message insert failed")
-	aiClient := &mockAIQualifier{result: &ai.QualificationResult{Score: 5}}
+	aiClient := &mockAIQualifier{result: &QualificationResult{Score: 5}}
 	bot := newTestBot(repo, aiClient, uuid.New(), "")
 
 	msg := makeTgMessage(33333, "Test", "", "Hello")
@@ -517,7 +514,7 @@ func TestHandleMessage_CreateMessageError(t *testing.T) {
 
 type errorAIQualifier struct{}
 
-func (m *errorAIQualifier) Qualify(_ context.Context, _, _, _ string) (*ai.QualificationResult, error) {
+func (m *errorAIQualifier) Qualify(_ context.Context, _, _, _ string) (*QualificationResult, error) {
 	return nil, errors.New("ai unavailable")
 }
 
@@ -569,7 +566,7 @@ func TestHandleMessage_ProspectConvertError(t *testing.T) {
 			},
 		},
 	}
-	aiClient := &mockAIQualifier{result: &ai.QualificationResult{Score: 5}}
+	aiClient := &mockAIQualifier{result: &QualificationResult{Score: 5}}
 	ownerID := uuid.New()
 	bot := newTestBotWithProspects(repo, prospectRepo, aiClient, ownerID, "")
 
@@ -588,7 +585,7 @@ func TestHandleMessage_ProspectConvertError(t *testing.T) {
 
 func TestHandleMessage_OnlyFirstName(t *testing.T) {
 	repo := newMockLeadRepo()
-	aiClient := &mockAIQualifier{result: &ai.QualificationResult{Score: 3}}
+	aiClient := &mockAIQualifier{result: &QualificationResult{Score: 3}}
 	bot := newTestBot(repo, aiClient, uuid.New(), "")
 
 	msg := makeTgMessage(44444, "OnlyFirst", "", "Just a message")
@@ -608,7 +605,7 @@ type upsertErrorMockLeadRepo struct {
 	mockLeadRepo
 }
 
-func (m *upsertErrorMockLeadRepo) UpsertQualification(_ context.Context, _ *domain.Qualification) error {
+func (m *upsertErrorMockLeadRepo) UpsertQualification(_ context.Context, _ *InboxQualification) error {
 	// Signal done so test doesn't hang.
 	select {
 	case m.qualifyDone <- struct{}{}:
@@ -620,13 +617,13 @@ func (m *upsertErrorMockLeadRepo) UpsertQualification(_ context.Context, _ *doma
 func TestHandleMessage_UpsertQualificationError(t *testing.T) {
 	repo := &upsertErrorMockLeadRepo{
 		mockLeadRepo: mockLeadRepo{
-			updatedStatuses:      make(map[uuid.UUID]domain.LeadStatus),
+			updatedStatuses:      make(map[uuid.UUID]LeadStatus),
 			updatedFirstMessages: make(map[uuid.UUID]string),
-			existingLeadByChatID: make(map[int64]*domain.Lead),
+			existingLeadByChatID: make(map[int64]*InboxLead),
 			qualifyDone:          make(chan struct{}, 1),
 		},
 	}
-	aiClient := &mockAIQualifier{result: &ai.QualificationResult{Score: 5}}
+	aiClient := &mockAIQualifier{result: &QualificationResult{Score: 5}}
 	bot := newTestBot(repo, aiClient, uuid.New(), "")
 
 	msg := makeTgMessage(77770, "Test", "User", "Hello there")
@@ -647,7 +644,7 @@ type statusErrorMockLeadRepo struct {
 	mockLeadRepo
 }
 
-func (m *statusErrorMockLeadRepo) UpdateLeadStatus(_ context.Context, _ uuid.UUID, _ domain.LeadStatus) error {
+func (m *statusErrorMockLeadRepo) UpdateLeadStatus(_ context.Context, _ uuid.UUID, _ LeadStatus) error {
 	select {
 	case m.qualifyDone <- struct{}{}:
 	default:
@@ -658,13 +655,13 @@ func (m *statusErrorMockLeadRepo) UpdateLeadStatus(_ context.Context, _ uuid.UUI
 func TestHandleMessage_UpdateLeadStatusError(t *testing.T) {
 	repo := &statusErrorMockLeadRepo{
 		mockLeadRepo: mockLeadRepo{
-			updatedStatuses:      make(map[uuid.UUID]domain.LeadStatus),
+			updatedStatuses:      make(map[uuid.UUID]LeadStatus),
 			updatedFirstMessages: make(map[uuid.UUID]string),
-			existingLeadByChatID: make(map[int64]*domain.Lead),
+			existingLeadByChatID: make(map[int64]*InboxLead),
 			qualifyDone:          make(chan struct{}, 1),
 		},
 	}
-	aiClient := &mockAIQualifier{result: &ai.QualificationResult{Score: 5}}
+	aiClient := &mockAIQualifier{result: &QualificationResult{Score: 5}}
 	bot := newTestBot(repo, aiClient, uuid.New(), "")
 
 	msg := makeTgMessage(77771, "Test", "User", "Hello there")
@@ -741,7 +738,7 @@ func newTestBotWithErrorHTTP(repo LeadRepository, aiClient AIQualifier, ownerID 
 
 func TestHandleMessage_CallAgreement_SendError(t *testing.T) {
 	repo := newMockLeadRepo()
-	aiClient := &mockAIQualifier{result: &ai.QualificationResult{Score: 9}}
+	aiClient := &mockAIQualifier{result: &QualificationResult{Score: 9}}
 	ownerID := uuid.New()
 	bot := newTestBotWithErrorHTTP(repo, aiClient, ownerID, "https://cal.com/booking")
 
@@ -755,9 +752,9 @@ func TestHandleMessage_CallAgreement_SendError(t *testing.T) {
 
 	require.Len(t, repo.leads, 1)
 	// bot.Send fails, so no outbound message should be saved.
-	var outbound []*domain.Message
+	var outbound []*InboxMessage
 	for _, m := range repo.messages {
-		if m.Direction == domain.DirectionOutbound {
+		if m.Direction == DirectionOutbound {
 			outbound = append(outbound, m)
 		}
 	}
@@ -766,10 +763,10 @@ func TestHandleMessage_CallAgreement_SendError(t *testing.T) {
 
 func TestHandleMessage_NewLeadError_EmptyFirstName(t *testing.T) {
 	repo := newMockLeadRepo()
-	aiClient := &mockAIQualifier{result: &ai.QualificationResult{Score: 5}}
+	aiClient := &mockAIQualifier{result: &QualificationResult{Score: 5}}
 	bot := newTestBot(repo, aiClient, uuid.New(), "")
 
-	// Empty first name -> contactName is "" -> NewLead returns error.
+	// Empty first name -> contactName is "" -> NewInboxLead returns error.
 	msg := makeTgMessage(99990, "", "", "Some text")
 	bot.handleMessage(context.Background(), msg)
 

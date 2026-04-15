@@ -227,8 +227,6 @@ func (r *Repository) EnsureDefaults(ctx context.Context, userID uuid.UUID) error
 		return fmt.Errorf("count categories: %w", err)
 	}
 	if count > 0 {
-		// Even if defaults exist, migrate orphan prospects (source_id IS NULL)
-		r.migrateOrphanProspects(ctx, userID)
 		return nil
 	}
 
@@ -265,15 +263,4 @@ func (r *Repository) EnsureDefaults(ctx context.Context, userID uuid.UUID) error
 	}
 
 	return nil
-}
-
-// migrateOrphanProspects links prospects with source_id=NULL to existing sources by text name.
-func (r *Repository) migrateOrphanProspects(ctx context.Context, userID uuid.UUID) {
-	migrations := map[string]string{"csv": "CSV файл", "manual": "Вручную", "2gis": "2GIS"}
-	for oldSource, newName := range migrations {
-		_, _ = r.q.Exec(ctx,
-			`UPDATE prospects SET source_id = (SELECT id FROM lead_sources WHERE user_id = $1 AND name = $2 LIMIT 1)
-			 WHERE user_id = $1 AND source = $3 AND source_id IS NULL`,
-			userID, newName, oldSource)
-	}
 }

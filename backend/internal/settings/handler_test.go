@@ -71,8 +71,17 @@ func (v *mockTelegramValidator) Validate(_ string) error {
 func setupSettingsRouter(repo *mockSettingsRepo, validator *mockTelegramValidator) chi.Router {
 	uc := NewUseCase(repo, validator)
 	r := chi.NewRouter()
-	RegisterRoutes(r, uc, nil, nil)
+	RegisterRoutes(r, uc, nil, nil, nil, nil)
 	return r
+}
+
+// parseSettingsBody is a test helper that parses raw JSON into (map, SettingsInput) for UpdateSettings.
+func parseSettingsBody(raw []byte) (map[string]json.RawMessage, SettingsInput) {
+	var m map[string]json.RawMessage
+	_ = json.Unmarshal(raw, &m)
+	var inp SettingsInput
+	_ = json.Unmarshal(raw, &inp)
+	return m, inp
 }
 
 func withUserCtx(r *http.Request, userID uuid.UUID) *http.Request {
@@ -238,7 +247,8 @@ func TestUseCase_UpdateSettings_SingleField(t *testing.T) {
 	uc := NewUseCase(repo, &mockTelegramValidator{})
 
 	body := []byte(`{"auto_followup_days":7}`)
-	_, err := uc.UpdateSettings(context.Background(), uuid.New(), body)
+	raw, inp := parseSettingsBody(body)
+	_, err := uc.UpdateSettings(context.Background(), uuid.New(), raw, inp)
 	require.NoError(t, err)
 	assert.Equal(t, 7, repo.updated["auto_followup_days"])
 }
@@ -248,7 +258,8 @@ func TestUseCase_UpdateSettings_MultipleFields(t *testing.T) {
 	uc := NewUseCase(repo, &mockTelegramValidator{})
 
 	body := []byte(`{"auto_qualify":true,"auto_draft":true,"auto_send_delay_min":15}`)
-	_, err := uc.UpdateSettings(context.Background(), uuid.New(), body)
+	raw, inp := parseSettingsBody(body)
+	_, err := uc.UpdateSettings(context.Background(), uuid.New(), raw, inp)
 	require.NoError(t, err)
 	assert.True(t, repo.updated["auto_qualify"].(bool))
 	assert.True(t, repo.updated["auto_draft"].(bool))
@@ -260,7 +271,8 @@ func TestUseCase_UpdateSettings_TelegramToken_SetsActive(t *testing.T) {
 	uc := NewUseCase(repo, &mockTelegramValidator{})
 
 	body := []byte(`{"telegram_bot_token":"valid-token"}`)
-	_, err := uc.UpdateSettings(context.Background(), uuid.New(), body)
+	raw, inp := parseSettingsBody(body)
+	_, err := uc.UpdateSettings(context.Background(), uuid.New(), raw, inp)
 	require.NoError(t, err)
 	assert.Equal(t, "valid-token", repo.updated["telegram_bot_token"])
 	assert.True(t, repo.updated["telegram_bot_active"].(bool))
@@ -271,7 +283,8 @@ func TestUseCase_UpdateSettings_TelegramToken_EmptyClearsActive(t *testing.T) {
 	uc := NewUseCase(repo, &mockTelegramValidator{})
 
 	body := []byte(`{"telegram_bot_token":""}`)
-	_, err := uc.UpdateSettings(context.Background(), uuid.New(), body)
+	raw, inp := parseSettingsBody(body)
+	_, err := uc.UpdateSettings(context.Background(), uuid.New(), raw, inp)
 	require.NoError(t, err)
 	assert.False(t, repo.updated["telegram_bot_active"].(bool))
 }
@@ -281,7 +294,8 @@ func TestUseCase_UpdateSettings_NoFields(t *testing.T) {
 	uc := NewUseCase(repo, &mockTelegramValidator{})
 
 	body := []byte(`{}`)
-	_, err := uc.UpdateSettings(context.Background(), uuid.New(), body)
+	raw, inp := parseSettingsBody(body)
+	_, err := uc.UpdateSettings(context.Background(), uuid.New(), raw, inp)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "no fields")
 }
@@ -290,7 +304,8 @@ func TestUseCase_UpdateSettings_InvalidJSON(t *testing.T) {
 	repo := newMockSettingsRepo()
 	uc := NewUseCase(repo, &mockTelegramValidator{})
 
-	_, err := uc.UpdateSettings(context.Background(), uuid.New(), []byte("bad"))
+	raw, inp := parseSettingsBody([]byte("bad"))
+	_, err := uc.UpdateSettings(context.Background(), uuid.New(), raw, inp)
 	assert.Error(t, err)
 }
 
@@ -440,7 +455,7 @@ func TestHandler_TestAI_WithTester_Success(t *testing.T) {
 	tester := func(_ context.Context, provider, model, apiKey string) (string, error) {
 		return "OpenAI", nil
 	}
-	RegisterRoutes(r, uc, tester, nil)
+	RegisterRoutes(r, uc, tester, nil, nil, nil)
 
 	userID := uuid.New()
 	body := `{"provider":"openai","model":"gpt-4o","api_key":"sk-test"}`
@@ -463,7 +478,7 @@ func TestHandler_TestAI_WithTester_Error(t *testing.T) {
 	tester := func(_ context.Context, provider, model, apiKey string) (string, error) {
 		return "", fmt.Errorf("connection refused")
 	}
-	RegisterRoutes(r, uc, tester, nil)
+	RegisterRoutes(r, uc, tester, nil, nil, nil)
 
 	userID := uuid.New()
 	body := `{"provider":"openai","api_key":"sk-test"}`
@@ -597,7 +612,7 @@ func TestHandler_GetUsage_WithCounter(t *testing.T) {
 	counter := func(_ context.Context, _ uuid.UUID) (int, int, error) {
 		return 42, 100, nil
 	}
-	RegisterRoutes(r, uc, nil, counter)
+	RegisterRoutes(r, uc, nil, nil, nil, counter)
 
 	userID := uuid.New()
 	req := withUserCtx(httptest.NewRequest("GET", "/api/usage", nil), userID)
@@ -619,7 +634,7 @@ func TestHandler_GetUsage_CounterError(t *testing.T) {
 	counter := func(_ context.Context, _ uuid.UUID) (int, int, error) {
 		return 0, 0, fmt.Errorf("db error")
 	}
-	RegisterRoutes(r, uc, nil, counter)
+	RegisterRoutes(r, uc, nil, nil, nil, counter)
 
 	userID := uuid.New()
 	req := withUserCtx(httptest.NewRequest("GET", "/api/usage", nil), userID)
@@ -737,7 +752,8 @@ func TestUseCase_UpdateSettings_AllFields(t *testing.T) {
 		"auto_prospect_to_lead": true,
 		"auto_verify_import": false
 	}`)
-	_, err := uc.UpdateSettings(context.Background(), uuid.New(), body)
+	raw, inp := parseSettingsBody(body)
+	_, err := uc.UpdateSettings(context.Background(), uuid.New(), raw, inp)
 	require.NoError(t, err)
 
 	assert.Equal(t, "valid-token", repo.updated["telegram_bot_token"])
@@ -772,7 +788,8 @@ func TestUseCase_UpdateSettings_TelegramBotActiveOnly(t *testing.T) {
 
 	// Sending telegram_bot_active without token
 	body := []byte(`{"telegram_bot_active": false}`)
-	_, err := uc.UpdateSettings(context.Background(), uuid.New(), body)
+	raw, inp := parseSettingsBody(body)
+	_, err := uc.UpdateSettings(context.Background(), uuid.New(), raw, inp)
 	require.NoError(t, err)
 	assert.False(t, repo.updated["telegram_bot_active"].(bool))
 }
@@ -802,7 +819,7 @@ func TestHandler_UpdateSettings_RepoUpdateError(t *testing.T) {
 	}
 	uc := NewUseCase(repo, &mockTelegramValidator{})
 	r := chi.NewRouter()
-	RegisterRoutes(r, uc, nil, nil)
+	RegisterRoutes(r, uc, nil, nil, nil, nil)
 
 	userID := uuid.New()
 	body := `{"ai_provider":"openai"}`

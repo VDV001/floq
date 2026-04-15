@@ -10,10 +10,6 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-
-	"github.com/daniil/floq/internal/ai"
-	"github.com/daniil/floq/internal/leads/domain"
-	settingsdomain "github.com/daniil/floq/internal/settings/domain"
 )
 
 // --- Extended mock for email tests ---
@@ -21,7 +17,7 @@ import (
 // emailMockLeadRepo extends mockLeadRepo with email lookup support.
 type emailMockLeadRepo struct {
 	mockLeadRepo
-	existingLeadByEmail map[string]*domain.Lead
+	existingLeadByEmail map[string]*InboxLead
 	getLeadByEmailErr   error
 	createLeadErr       error
 	createMessageErr    error
@@ -30,16 +26,16 @@ type emailMockLeadRepo struct {
 func newEmailMockLeadRepo() *emailMockLeadRepo {
 	return &emailMockLeadRepo{
 		mockLeadRepo: mockLeadRepo{
-			updatedStatuses:      make(map[uuid.UUID]domain.LeadStatus),
+			updatedStatuses:      make(map[uuid.UUID]LeadStatus),
 			updatedFirstMessages: make(map[uuid.UUID]string),
-			existingLeadByChatID: make(map[int64]*domain.Lead),
+			existingLeadByChatID: make(map[int64]*InboxLead),
 			qualifyDone:          make(chan struct{}, 1),
 		},
-		existingLeadByEmail: make(map[string]*domain.Lead),
+		existingLeadByEmail: make(map[string]*InboxLead),
 	}
 }
 
-func (m *emailMockLeadRepo) GetLeadByEmailAddress(_ context.Context, _ uuid.UUID, email string) (*domain.Lead, error) {
+func (m *emailMockLeadRepo) GetLeadByEmailAddress(_ context.Context, _ uuid.UUID, email string) (*InboxLead, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.getLeadByEmailErr != nil {
@@ -51,7 +47,7 @@ func (m *emailMockLeadRepo) GetLeadByEmailAddress(_ context.Context, _ uuid.UUID
 	return nil, nil
 }
 
-func (m *emailMockLeadRepo) CreateLead(_ context.Context, lead *domain.Lead) error {
+func (m *emailMockLeadRepo) CreateLead(_ context.Context, lead *InboxLead) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.createLeadErr != nil {
@@ -61,7 +57,7 @@ func (m *emailMockLeadRepo) CreateLead(_ context.Context, lead *domain.Lead) err
 	return nil
 }
 
-func (m *emailMockLeadRepo) CreateMessage(_ context.Context, msg *domain.Message) error {
+func (m *emailMockLeadRepo) CreateMessage(_ context.Context, msg *InboxMessage) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.createMessageErr != nil {
@@ -109,7 +105,7 @@ func (m *emailMockProspectRepo) ConvertToLead(_ context.Context, prospectID, _ u
 // --- Mock SequenceRepository ---
 
 type mockSequenceRepo struct {
-	mu       sync.Mutex
+	mu          sync.Mutex
 	markReplied []uuid.UUID
 }
 
@@ -223,7 +219,7 @@ func TestProcessEmail_NewLead_NoProspect(t *testing.T) {
 	prospectRepo := newEmailMockProspectRepo()
 	seqRepo := newMockSequenceRepo()
 	aiClient := &mockAIQualifier{
-		result: &ai.QualificationResult{
+		result: &QualificationResult{
 			IdentifiedNeed: "Website development",
 			Score:          8,
 		},
@@ -243,7 +239,7 @@ func TestProcessEmail_NewLead_NoProspect(t *testing.T) {
 	require.Len(t, repo.leads, 1)
 	lead := repo.leads[0]
 	assert.Equal(t, ownerID, lead.UserID)
-	assert.Equal(t, domain.ChannelEmail, lead.Channel)
+	assert.Equal(t, ChannelEmail, lead.Channel)
 	assert.Equal(t, "John Doe", lead.ContactName)
 	assert.Equal(t, "I need a website built", lead.FirstMessage)
 	require.NotNil(t, lead.EmailAddress)
@@ -253,14 +249,14 @@ func TestProcessEmail_NewLead_NoProspect(t *testing.T) {
 	// Inbound message should be created.
 	require.Len(t, repo.messages, 1)
 	assert.Equal(t, lead.ID, repo.messages[0].LeadID)
-	assert.Equal(t, domain.DirectionInbound, repo.messages[0].Direction)
+	assert.Equal(t, DirectionInbound, repo.messages[0].Direction)
 	assert.Equal(t, "I need a website built", repo.messages[0].Body)
 
 	// Qualification should run.
 	require.Len(t, repo.qualifications, 1)
 	assert.Equal(t, lead.ID, repo.qualifications[0].LeadID)
 	assert.Equal(t, 8, repo.qualifications[0].Score)
-	assert.Equal(t, domain.StatusQualified, repo.updatedStatuses[lead.ID])
+	assert.Equal(t, StatusQualified, repo.updatedStatuses[lead.ID])
 
 	// No prospect conversion.
 	prospectRepo.mu.Lock()
@@ -278,7 +274,7 @@ func TestProcessEmail_NewLead_WithProspectMatch(t *testing.T) {
 	prospectRepo := newEmailMockProspectRepo()
 	seqRepo := newMockSequenceRepo()
 	aiClient := &mockAIQualifier{
-		result: &ai.QualificationResult{Score: 6},
+		result: &QualificationResult{Score: 6},
 	}
 	ownerID := uuid.New()
 
@@ -328,17 +324,17 @@ func TestProcessEmail_ExistingLead_AddsMessage(t *testing.T) {
 	prospectRepo := newEmailMockProspectRepo()
 	seqRepo := newMockSequenceRepo()
 	aiClient := &mockAIQualifier{
-		result: &ai.QualificationResult{Score: 5},
+		result: &QualificationResult{Score: 5},
 	}
 	ownerID := uuid.New()
 
-	existingLead := &domain.Lead{
+	existingLead := &InboxLead{
 		ID:           uuid.New(),
 		UserID:       ownerID,
-		Channel:      domain.ChannelEmail,
+		Channel:      ChannelEmail,
 		ContactName:  "Existing User",
 		FirstMessage: "Previous message",
-		Status:       domain.StatusQualified,
+		Status:       StatusQualified,
 		EmailAddress: ptrString("existing@example.com"),
 	}
 	repo.existingLeadByEmail["existing@example.com"] = existingLead
@@ -359,7 +355,7 @@ func TestProcessEmail_ExistingLead_AddsMessage(t *testing.T) {
 	// A message should be created for the existing lead.
 	require.Len(t, repo.messages, 1)
 	assert.Equal(t, existingLead.ID, repo.messages[0].LeadID)
-	assert.Equal(t, domain.DirectionInbound, repo.messages[0].Direction)
+	assert.Equal(t, DirectionInbound, repo.messages[0].Direction)
 	assert.Equal(t, "Follow-up message", repo.messages[0].Body)
 
 	// No qualification for existing leads.
@@ -376,7 +372,7 @@ func TestProcessEmail_ProspectAlreadyConverted_SkipsConversion(t *testing.T) {
 	prospectRepo := newEmailMockProspectRepo()
 	seqRepo := newMockSequenceRepo()
 	aiClient := &mockAIQualifier{
-		result: &ai.QualificationResult{Score: 5},
+		result: &QualificationResult{Score: 5},
 	}
 	ownerID := uuid.New()
 
@@ -416,7 +412,7 @@ func TestProcessEmail_NewLead_ProspectNameNotOverriddenWhenFromNameDiffers(t *te
 	prospectRepo := newEmailMockProspectRepo()
 	seqRepo := newMockSequenceRepo()
 	aiClient := &mockAIQualifier{
-		result: &ai.QualificationResult{Score: 5},
+		result: &QualificationResult{Score: 5},
 	}
 	ownerID := uuid.New()
 
@@ -449,7 +445,7 @@ func TestProcessEmail_GetLeadByEmailError(t *testing.T) {
 	repo.getLeadByEmailErr = errors.New("db error")
 	prospectRepo := newEmailMockProspectRepo()
 	seqRepo := newMockSequenceRepo()
-	aiClient := &mockAIQualifier{result: &ai.QualificationResult{Score: 5}}
+	aiClient := &mockAIQualifier{result: &QualificationResult{Score: 5}}
 	ownerID := uuid.New()
 
 	poller := newTestEmailPoller(repo, prospectRepo, seqRepo, aiClient, ownerID)
@@ -469,7 +465,7 @@ func TestProcessEmail_CreateLeadError(t *testing.T) {
 	repo.createLeadErr = errors.New("insert failed")
 	prospectRepo := newEmailMockProspectRepo()
 	seqRepo := newMockSequenceRepo()
-	aiClient := &mockAIQualifier{result: &ai.QualificationResult{Score: 5}}
+	aiClient := &mockAIQualifier{result: &QualificationResult{Score: 5}}
 	ownerID := uuid.New()
 
 	poller := newTestEmailPoller(repo, prospectRepo, seqRepo, aiClient, ownerID)
@@ -488,17 +484,17 @@ func TestProcessEmail_CreateMessageError(t *testing.T) {
 	repo.createMessageErr = errors.New("message insert failed")
 	prospectRepo := newEmailMockProspectRepo()
 	seqRepo := newMockSequenceRepo()
-	aiClient := &mockAIQualifier{result: &ai.QualificationResult{Score: 5}}
+	aiClient := &mockAIQualifier{result: &QualificationResult{Score: 5}}
 	ownerID := uuid.New()
 
 	// Existing lead — skips qualification, only creates message.
-	existingLead := &domain.Lead{
+	existingLead := &InboxLead{
 		ID:           uuid.New(),
 		UserID:       ownerID,
-		Channel:      domain.ChannelEmail,
+		Channel:      ChannelEmail,
 		ContactName:  "Existing",
 		FirstMessage: "Old",
-		Status:       domain.StatusQualified,
+		Status:       StatusQualified,
 		EmailAddress: ptrString("err@example.com"),
 	}
 	repo.existingLeadByEmail["err@example.com"] = existingLead
@@ -552,7 +548,7 @@ func TestProcessEmail_ProspectConvertError(t *testing.T) {
 		},
 	}
 	seqRepo := newMockSequenceRepo()
-	aiClient := &mockAIQualifier{result: &ai.QualificationResult{Score: 5}}
+	aiClient := &mockAIQualifier{result: &QualificationResult{Score: 5}}
 	ownerID := uuid.New()
 
 	poller := newTestEmailPoller(repo, prospectRepo, seqRepo, aiClient, ownerID)
@@ -584,7 +580,7 @@ type emailUpsertErrorRepo struct {
 	emailMockLeadRepo
 }
 
-func (m *emailUpsertErrorRepo) UpsertQualification(_ context.Context, _ *domain.Qualification) error {
+func (m *emailUpsertErrorRepo) UpsertQualification(_ context.Context, _ *InboxQualification) error {
 	select {
 	case m.qualifyDone <- struct{}{}:
 	default:
@@ -596,12 +592,12 @@ func TestProcessEmail_NewLeadError_EmptyName(t *testing.T) {
 	repo := newEmailMockLeadRepo()
 	prospectRepo := newEmailMockProspectRepo()
 	seqRepo := newMockSequenceRepo()
-	aiClient := &mockAIQualifier{result: &ai.QualificationResult{Score: 5}}
+	aiClient := &mockAIQualifier{result: &QualificationResult{Score: 5}}
 	ownerID := uuid.New()
 
 	poller := newTestEmailPoller(repo, prospectRepo, seqRepo, aiClient, ownerID)
 
-	// Empty fromName triggers NewLead error (contactName required).
+	// Empty fromName triggers NewInboxLead error (contactName required).
 	poller.processEmail(context.Background(), "", "empty@example.com", "Hello")
 
 	repo.mu.Lock()
@@ -615,7 +611,7 @@ func TestProcessEmail_UpsertQualificationError(t *testing.T) {
 	repo := &emailUpsertErrorRepo{emailMockLeadRepo: *inner}
 	prospectRepo := newEmailMockProspectRepo()
 	seqRepo := newMockSequenceRepo()
-	aiClient := &mockAIQualifier{result: &ai.QualificationResult{Score: 5}}
+	aiClient := &mockAIQualifier{result: &QualificationResult{Score: 5}}
 	ownerID := uuid.New()
 
 	poller := newTestEmailPoller(repo, prospectRepo, seqRepo, aiClient, ownerID)
@@ -634,7 +630,7 @@ type emailStatusErrorRepo struct {
 	emailMockLeadRepo
 }
 
-func (m *emailStatusErrorRepo) UpdateLeadStatus(_ context.Context, _ uuid.UUID, _ domain.LeadStatus) error {
+func (m *emailStatusErrorRepo) UpdateLeadStatus(_ context.Context, _ uuid.UUID, _ LeadStatus) error {
 	select {
 	case m.qualifyDone <- struct{}{}:
 	default:
@@ -647,7 +643,7 @@ func TestProcessEmail_UpdateLeadStatusError(t *testing.T) {
 	repo := &emailStatusErrorRepo{emailMockLeadRepo: *inner}
 	prospectRepo := newEmailMockProspectRepo()
 	seqRepo := newMockSequenceRepo()
-	aiClient := &mockAIQualifier{result: &ai.QualificationResult{Score: 5}}
+	aiClient := &mockAIQualifier{result: &QualificationResult{Score: 5}}
 	ownerID := uuid.New()
 
 	poller := newTestEmailPoller(repo, prospectRepo, seqRepo, aiClient, ownerID)
@@ -666,7 +662,7 @@ func TestNewEmailPoller(t *testing.T) {
 	repo := newEmailMockLeadRepo()
 	prospectRepo := newEmailMockProspectRepo()
 	seqRepo := newMockSequenceRepo()
-	aiClient := &mockAIQualifier{result: &ai.QualificationResult{}}
+	aiClient := &mockAIQualifier{result: &QualificationResult{}}
 	ownerID := uuid.New()
 
 	poller := NewEmailPoller(
@@ -687,25 +683,25 @@ func TestNewEmailPoller(t *testing.T) {
 // --- Mock ConfigStore ---
 
 type mockConfigStore struct {
-	cfg *settingsdomain.UserConfig
+	cfg *InboxConfig
 	err error
 }
 
-func (m *mockConfigStore) GetConfig(_ context.Context, _ uuid.UUID) (*settingsdomain.UserConfig, error) {
+func (m *mockConfigStore) GetConfig(_ context.Context, _ uuid.UUID) (*InboxConfig, error) {
 	if m.err != nil {
 		return nil, m.err
 	}
 	if m.cfg != nil {
 		return m.cfg, nil
 	}
-	return &settingsdomain.UserConfig{}, nil
+	return &InboxConfig{}, nil
 }
 
 func TestResolveConfig_Fallback(t *testing.T) {
 	repo := newEmailMockLeadRepo()
 	prospectRepo := newEmailMockProspectRepo()
 	seqRepo := newMockSequenceRepo()
-	aiClient := &mockAIQualifier{result: &ai.QualificationResult{}}
+	aiClient := &mockAIQualifier{result: &QualificationResult{}}
 
 	store := &mockConfigStore{err: errors.New("no config")}
 	poller := &EmailPoller{
@@ -730,7 +726,7 @@ func TestResolveConfig_Fallback(t *testing.T) {
 
 func TestResolveConfig_WithUserConfig(t *testing.T) {
 	store := &mockConfigStore{
-		cfg: &settingsdomain.UserConfig{
+		cfg: &InboxConfig{
 			IMAPHost:     "custom.host",
 			IMAPPort:     "465",
 			IMAPUser:     "custom@user.com",

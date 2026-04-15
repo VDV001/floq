@@ -76,6 +76,7 @@ type ProspectView struct {
 }
 
 // CanReceiveSequence returns true if the prospect is eligible for sequence messages.
+// SYNC: mirrors prospects.domain.Prospect.CanLaunchSequence — keep in sync
 func (p *ProspectView) CanReceiveSequence() bool {
 	if p.Status == ProspectStatusConverted || p.Status == ProspectStatusOptedOut || p.Status == ProspectStatusInSequence || p.Status == ProspectStatusReplied {
 		return false
