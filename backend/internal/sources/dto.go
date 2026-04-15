@@ -51,6 +51,30 @@ func CategoryWithSourcesToResponse(cws *domain.CategoryWithSources) CategoryResp
 	}
 }
 
+type SourceStatResponse struct {
+	SourceID       uuid.UUID `json:"source_id"`
+	SourceName     string    `json:"source_name"`
+	CategoryName   string    `json:"category_name"`
+	ProspectCount  int       `json:"prospect_count"`
+	LeadCount      int       `json:"lead_count"`
+	ConvertedCount int       `json:"converted_count"`
+}
+
+func StatsToResponse(stats []SourceStat) []SourceStatResponse {
+	resp := make([]SourceStatResponse, len(stats))
+	for i, s := range stats {
+		resp[i] = SourceStatResponse{
+			SourceID:       s.SourceID,
+			SourceName:     s.SourceName,
+			CategoryName:   s.CategoryName,
+			ProspectCount:  s.ProspectCount,
+			LeadCount:      s.LeadCount,
+			ConvertedCount: s.ConvertedCount,
+		}
+	}
+	return resp
+}
+
 func CategoriesToResponse(cats []domain.CategoryWithSources) []CategoryResponse {
 	resp := make([]CategoryResponse, len(cats))
 	for i := range cats {

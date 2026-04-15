@@ -88,6 +88,10 @@ func (m *mockRepo) EnsureDefaults(_ context.Context, _ uuid.UUID) error {
 	return nil
 }
 
+func (m *mockRepo) SourceStats(_ context.Context, _ uuid.UUID) ([]SourceStat, error) {
+	return nil, nil
+}
+
 func TestCreateCategory(t *testing.T) {
 	repo := newMockRepo()
 	uc := NewUseCase(repo)

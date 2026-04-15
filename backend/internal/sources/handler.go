@@ -17,6 +17,7 @@ type Handler struct {
 func RegisterRoutes(r chi.Router, uc *UseCase) {
 	h := &Handler{uc: uc}
 	r.Get("/api/sources", h.listCategories())
+	r.Get("/api/sources/stats", h.stats())
 	r.Post("/api/sources/categories", h.createCategory())
 	r.Put("/api/sources/categories/{id}", h.updateCategory())
 	r.Delete("/api/sources/categories/{id}", h.deleteCategory())
@@ -103,6 +104,22 @@ func (h *Handler) deleteCategory() http.HandlerFunc {
 			return
 		}
 		w.WriteHeader(http.StatusNoContent)
+	}
+}
+
+func (h *Handler) stats() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		userID, ok := httputil.UserIDFromContext(r.Context())
+		if !ok {
+			httputil.WriteError(w, http.StatusUnauthorized, "unauthorized")
+			return
+		}
+		stats, err := h.uc.Stats(r.Context(), userID)
+		if err != nil {
+			httputil.WriteError(w, http.StatusInternalServerError, "failed to get source stats")
+			return
+		}
+		httputil.WriteJSON(w, http.StatusOK, StatsToResponse(stats))
 	}
 }
 

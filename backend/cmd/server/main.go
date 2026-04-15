@@ -106,7 +106,7 @@ func main() {
 	// 5. Use cases
 	leadsUC := leads.NewUseCase(leadsRepo, leadsAI, nil) // sender set after bot init
 	prospectsUC := prospects.NewUseCase(prospectsRepo, prospects.WithLeadChecker(prospects.NewLeadCheckerAdapter(leadsRepo)))
-	sourcesUC := sources.NewUseCase(sourcesRepo)
+	sourcesUC := sources.NewUseCase(sourcesRepo, sources.WithStatsReader(sourcesRepo))
 	txManager := db.NewTxManager(pool)
 	sequencesUC := sequences.NewUseCase(sequencesRepo, seqAI, prospectReader, leadCreatorAdapter, sequences.WithTxManager(txManager))
 

@@ -8,12 +8,36 @@ import (
 	"github.com/google/uuid"
 )
 
-type UseCase struct {
-	repo domain.Repository
+// SourceStat is a read model for source analytics (not a domain entity).
+type SourceStat struct {
+	SourceID       uuid.UUID
+	SourceName     string
+	CategoryName   string
+	ProspectCount  int
+	LeadCount      int
+	ConvertedCount int
 }
 
-func NewUseCase(repo domain.Repository) *UseCase {
-	return &UseCase{repo: repo}
+// StatsReader provides source statistics from the database.
+type StatsReader interface {
+	SourceStats(ctx context.Context, userID uuid.UUID) ([]SourceStat, error)
+}
+
+type UseCase struct {
+	repo        domain.Repository
+	statsReader StatsReader
+}
+
+func NewUseCase(repo domain.Repository, opts ...func(*UseCase)) *UseCase {
+	uc := &UseCase{repo: repo}
+	for _, opt := range opts {
+		opt(uc)
+	}
+	return uc
+}
+
+func WithStatsReader(sr StatsReader) func(*UseCase) {
+	return func(uc *UseCase) { uc.statsReader = sr }
 }
 
 func (uc *UseCase) ListCategories(ctx context.Context, userID uuid.UUID) ([]domain.CategoryWithSources, error) {
@@ -24,10 +48,10 @@ func (uc *UseCase) ListCategories(ctx context.Context, userID uuid.UUID) ([]doma
 }
 
 func (uc *UseCase) CreateCategory(ctx context.Context, userID uuid.UUID, name string) (*domain.Category, error) {
-	if name == "" {
-		return nil, fmt.Errorf("category name is required")
+	cat, err := domain.NewCategory(userID, name)
+	if err != nil {
+		return nil, err
 	}
-	cat := domain.NewCategory(userID, name)
 	if err := uc.repo.CreateCategory(ctx, cat); err != nil {
 		return nil, err
 	}
@@ -35,8 +59,10 @@ func (uc *UseCase) CreateCategory(ctx context.Context, userID uuid.UUID, name st
 }
 
 func (uc *UseCase) UpdateCategory(ctx context.Context, id uuid.UUID, name string) error {
-	if name == "" {
-		return fmt.Errorf("category name is required")
+	// Validate via domain method
+	c := &domain.Category{}
+	if err := c.Rename(name); err != nil {
+		return err
 	}
 	return uc.repo.UpdateCategory(ctx, id, name)
 }
@@ -46,10 +72,10 @@ func (uc *UseCase) DeleteCategory(ctx context.Context, id uuid.UUID) error {
 }
 
 func (uc *UseCase) CreateSource(ctx context.Context, userID, categoryID uuid.UUID, name string) (*domain.Source, error) {
-	if name == "" {
-		return nil, fmt.Errorf("source name is required")
+	src, err := domain.NewSource(userID, categoryID, name)
+	if err != nil {
+		return nil, err
 	}
-	src := domain.NewSource(userID, categoryID, name)
 	if err := uc.repo.CreateSource(ctx, src); err != nil {
 		return nil, err
 	}
@@ -57,12 +83,20 @@ func (uc *UseCase) CreateSource(ctx context.Context, userID, categoryID uuid.UUI
 }
 
 func (uc *UseCase) UpdateSource(ctx context.Context, id uuid.UUID, name string) error {
-	if name == "" {
-		return fmt.Errorf("source name is required")
+	s := &domain.Source{}
+	if err := s.Rename(name); err != nil {
+		return err
 	}
 	return uc.repo.UpdateSource(ctx, id, name)
 }
 
 func (uc *UseCase) DeleteSource(ctx context.Context, id uuid.UUID) error {
 	return uc.repo.DeleteSource(ctx, id)
+}
+
+func (uc *UseCase) Stats(ctx context.Context, userID uuid.UUID) ([]SourceStat, error) {
+	if uc.statsReader == nil {
+		return nil, fmt.Errorf("stats reader not configured")
+	}
+	return uc.statsReader.SourceStats(ctx, userID)
 }

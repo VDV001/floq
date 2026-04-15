@@ -158,6 +158,45 @@ func (r *Repository) GetSource(ctx context.Context, id uuid.UUID) (*domain.Sourc
 	return &s, nil
 }
 
+// SourceStats implements StatsReader interface.
+func (r *Repository) SourceStats(ctx context.Context, userID uuid.UUID) ([]SourceStat, error) {
+	rows, err := r.pool.Query(ctx, `
+		SELECT ls.id, ls.name, COALESCE(sc.name, ''),
+		       COALESCE((SELECT COUNT(*) FROM prospects p WHERE p.source_id = ls.id), 0),
+		       COALESCE((SELECT COUNT(*) FROM leads l WHERE l.source_id = ls.id), 0),
+		       COALESCE((SELECT COUNT(*) FROM prospects p WHERE p.source_id = ls.id AND p.status = 'converted'), 0)
+		FROM lead_sources ls
+		LEFT JOIN source_categories sc ON sc.id = ls.category_id
+		WHERE ls.user_id = $1
+		ORDER BY sc.sort_order, ls.sort_order`, userID)
+	if err != nil {
+		return nil, fmt.Errorf("source stats: %w", err)
+	}
+	defer rows.Close()
+
+	var stats []SourceStat
+	for rows.Next() {
+		var s SourceStat
+		if err := rows.Scan(&s.SourceID, &s.SourceName, &s.CategoryName, &s.ProspectCount, &s.LeadCount, &s.ConvertedCount); err != nil {
+			return nil, fmt.Errorf("scan source stat: %w", err)
+		}
+		stats = append(stats, s)
+	}
+	return stats, rows.Err()
+}
+
+type defaultSeed struct {
+	categoryName string
+	sourceNames  []string
+}
+
+var defaultSeeds = []defaultSeed{
+	{"Импорт", []string{"CSV файл"}},
+	{"Ручное добавление", []string{"Вручную"}},
+	{"Парсинг", []string{"2GIS"}},
+	{"Входящие", []string{"Telegram", "Email"}},
+}
+
 func (r *Repository) EnsureDefaults(ctx context.Context, userID uuid.UUID) error {
 	var count int
 	err := r.pool.QueryRow(ctx,
@@ -171,15 +210,15 @@ func (r *Repository) EnsureDefaults(ctx context.Context, userID uuid.UUID) error
 
 	now := time.Now().UTC()
 
-	for i, seed := range domain.DefaultSeeds() {
-		cat := domain.NewCategory(userID, seed.CategoryName)
+	for i, seed := range defaultSeeds {
+		cat, _ := domain.NewCategory(userID, seed.categoryName) // seed names are always valid
 		cat.SortOrder = i
 		cat.CreatedAt = now
 		if err := r.CreateCategory(ctx, cat); err != nil {
-			return fmt.Errorf("insert default category %q: %w", seed.CategoryName, err)
+			return fmt.Errorf("insert default category %q: %w", seed.categoryName, err)
 		}
-		for j, srcName := range seed.SourceNames {
-			src := domain.NewSource(userID, cat.ID, srcName)
+		for j, srcName := range seed.sourceNames {
+			src, _ := domain.NewSource(userID, cat.ID, srcName) // seed names are always valid
 			src.SortOrder = j
 			src.CreatedAt = now
 			if err := r.CreateSource(ctx, src); err != nil {
