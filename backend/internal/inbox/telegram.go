@@ -96,7 +96,12 @@ func (t *TelegramBot) handleMessage(ctx context.Context, msg *tgbotapi.Message) 
 			}
 		}
 
-		lead = domain.NewLead(t.ownerID, domain.ChannelTelegram, contactName, company, text, &chatID, nil)
+		newLead, err := domain.NewLead(t.ownerID, domain.ChannelTelegram, contactName, company, text, &chatID, nil)
+		if err != nil {
+			log.Printf("telegram inbox: error creating lead entity: %v", err)
+			return
+		}
+		lead = newLead
 		if prospect != nil {
 			lead.SourceID = prospect.SourceID
 		}

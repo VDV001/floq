@@ -277,7 +277,15 @@ func (e *EmailPoller) processEmail(ctx context.Context, fromName, fromEmail, bod
 		}
 
 		emailAddr := fromEmail
-		lead = leadsdomain.NewLead(e.ownerID, leadsdomain.ChannelEmail, contactName, company, body, nil, &emailAddr)
+		newLead, err := leadsdomain.NewLead(e.ownerID, leadsdomain.ChannelEmail, contactName, company, body, nil, &emailAddr)
+		if err != nil {
+			log.Printf("[email-poller] error creating lead entity: %v", err)
+			return
+		}
+		lead = newLead
+		if hasProspectMatch {
+			lead.SourceID = prospect.SourceID
+		}
 		if err := e.repo.CreateLead(ctx, lead); err != nil {
 			log.Printf("[email-poller] error creating lead: %v", err)
 			return
