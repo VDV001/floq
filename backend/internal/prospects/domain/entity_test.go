@@ -1,6 +1,12 @@
 package domain
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/google/uuid"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
 
 func TestProspectStatus_IsValid(t *testing.T) {
 	tests := []struct {
@@ -103,4 +109,30 @@ func TestProspect_CanLaunchSequence(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestNewProspect(t *testing.T) {
+	userID := uuid.New()
+	name := "John Doe"
+	company := "Acme Inc"
+	title := "CTO"
+	email := "john@acme.com"
+	source := "linkedin"
+
+	p := NewProspect(userID, name, company, title, email, source)
+	require.NotNil(t, p)
+
+	assert.NotEqual(t, uuid.Nil, p.ID)
+	assert.Equal(t, userID, p.UserID)
+	assert.Equal(t, name, p.Name)
+	assert.Equal(t, company, p.Company)
+	assert.Equal(t, title, p.Title)
+	assert.Equal(t, email, p.Email)
+	assert.Equal(t, source, p.Source)
+	assert.Equal(t, ProspectStatusNew, p.Status)
+	assert.Equal(t, VerifyStatusNotChecked, p.VerifyStatus)
+	assert.Equal(t, "{}", p.VerifyDetails)
+	assert.False(t, p.CreatedAt.IsZero())
+	assert.False(t, p.UpdatedAt.IsZero())
+	assert.Equal(t, p.CreatedAt, p.UpdatedAt)
 }

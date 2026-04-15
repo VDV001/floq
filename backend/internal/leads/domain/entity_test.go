@@ -4,6 +4,8 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestLeadStatus_IsValid(t *testing.T) {
@@ -161,4 +163,68 @@ func TestNewMessage(t *testing.T) {
 	if msg.SentAt.IsZero() {
 		t.Error("expected non-zero SentAt")
 	}
+}
+
+func TestDetectCallAgreement_Positive(t *testing.T) {
+	positives := []string{
+		"давайте созвонимся",
+		"Да, давайте обсудим",
+		"готов к звонку завтра",
+		"Когда удобно?",
+	}
+	for _, text := range positives {
+		assert.True(t, DetectCallAgreement(text), "expected true for %q", text)
+	}
+}
+
+func TestDetectCallAgreement_Negative(t *testing.T) {
+	negatives := []string{
+		"нет спасибо",
+		"не интересно",
+		"привет",
+		"",
+	}
+	for _, text := range negatives {
+		assert.False(t, DetectCallAgreement(text), "expected false for %q", text)
+	}
+}
+
+func TestNewLead_InvalidChannel(t *testing.T) {
+	userID := uuid.New()
+	_, err := NewLead(userID, Channel("whatsapp"), "Ivan", "Acme", "Hello", nil, nil)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "invalid channel")
+}
+
+func TestNewLead_EmptyContactName(t *testing.T) {
+	userID := uuid.New()
+	_, err := NewLead(userID, ChannelTelegram, "", "Acme", "Hello", nil, nil)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "contact name")
+}
+
+func TestNewQualification_HappyPath(t *testing.T) {
+	leadID := uuid.New()
+	q := NewQualification(leadID, "CRM integration", "$10k", "Q3 2026", 85, "strong fit", "schedule demo", "openai")
+
+	assert.NotEqual(t, uuid.Nil, q.ID)
+	assert.Equal(t, leadID, q.LeadID)
+	assert.Equal(t, "CRM integration", q.IdentifiedNeed)
+	assert.Equal(t, "$10k", q.EstimatedBudget)
+	assert.Equal(t, "Q3 2026", q.Deadline)
+	assert.Equal(t, 85, q.Score)
+	assert.Equal(t, "strong fit", q.ScoreReason)
+	assert.Equal(t, "schedule demo", q.RecommendedAction)
+	assert.Equal(t, "openai", q.ProviderUsed)
+	assert.False(t, q.GeneratedAt.IsZero())
+}
+
+func TestNewDraft_HappyPath(t *testing.T) {
+	leadID := uuid.New()
+	d := NewDraft(leadID, "Hello, let's discuss your project")
+
+	assert.NotEqual(t, uuid.Nil, d.ID)
+	assert.Equal(t, leadID, d.LeadID)
+	assert.Equal(t, "Hello, let's discuss your project", d.Body)
+	assert.False(t, d.CreatedAt.IsZero())
 }
