@@ -86,6 +86,12 @@ const STATUS_CONFIG: Record<
     dotColor: "#10b981",
     badgeStyle: "border border-green-300 bg-green-50 text-green-700",
   },
+  won: {
+    key: "won",
+    title: "Выигран",
+    dotColor: "#059669",
+    badgeStyle: "border border-emerald-400 bg-emerald-50 text-emerald-800",
+  },
 };
 
 const COLUMN_ORDER: Lead["status"][] = [
@@ -93,6 +99,7 @@ const COLUMN_ORDER: Lead["status"][] = [
   "qualified",
   "in_conversation",
   "followup",
+  "won",
   "closed",
 ];
 

@@ -45,6 +45,7 @@ interface UIProspect {
   phone: string;
   whatsapp: string;
   telegramUsername: string;
+  sourceName: string;
   status: ProspectStatus;
   verifyStatus: "not_checked" | "valid" | "risky" | "invalid";
   verifyScore: number;
@@ -61,7 +62,7 @@ function mapProspectStatus(s: string): ProspectStatus {
   return m[s] || "Новый";
 }
 
-function mapProspects(data: { name: string; company: string; title: string; email: string; phone: string; whatsapp: string; telegram_username: string; status: string; verify_status: string; verify_score: number }[]): UIProspect[] {
+function mapProspects(data: { name: string; company: string; title: string; email: string; phone: string; whatsapp: string; telegram_username: string; source_name?: string; status: string; verify_status: string; verify_score: number }[]): UIProspect[] {
   return data.map((p) => ({
     initials: p.name.split(" ").map((w) => w[0]).join("").toUpperCase().slice(0, 2),
     avatarColor: "bg-[#d8e3fb]",
@@ -72,6 +73,7 @@ function mapProspects(data: { name: string; company: string; title: string; emai
     phone: p.phone || "",
     whatsapp: p.whatsapp || "",
     telegramUsername: p.telegram_username || "",
+    sourceName: p.source_name || "",
     status: mapProspectStatus(p.status),
     verifyStatus: p.verify_status as UIProspect["verifyStatus"],
     verifyScore: p.verify_score,
@@ -103,6 +105,7 @@ const VERIFY_STYLES: Record<
 export default function ProspectsPage() {
   const [prospects, setProspects] = useState<UIProspect[]>([]);
   const [searchQuery, setSearchQuery] = useState("");
+  const [sourceFilter, setSourceFilter] = useState("");
   const [loading, setLoading] = useState(false);
   const [formName, setFormName] = useState("");
   const [formCompany, setFormCompany] = useState("");
@@ -186,17 +189,21 @@ export default function ProspectsPage() {
     }
   };
 
-  const filteredProspects = searchQuery
-    ? prospects.filter((p) => {
-        const q = searchQuery.toLowerCase();
-        return (
-          p.name.toLowerCase().includes(q) ||
-          p.company.toLowerCase().includes(q) ||
-          p.email.toLowerCase().includes(q) ||
-          p.position.toLowerCase().includes(q)
-        );
-      })
-    : prospects;
+  const sourceNames = [...new Set(prospects.map((p) => p.sourceName).filter(Boolean))].sort();
+
+  const filteredProspects = prospects.filter((p) => {
+    if (sourceFilter && p.sourceName !== sourceFilter) return false;
+    if (searchQuery) {
+      const q = searchQuery.toLowerCase();
+      return (
+        p.name.toLowerCase().includes(q) ||
+        p.company.toLowerCase().includes(q) ||
+        p.email.toLowerCase().includes(q) ||
+        p.position.toLowerCase().includes(q)
+      );
+    }
+    return true;
+  });
 
   const totalPages = Math.max(1, Math.ceil(filteredProspects.length / perPage));
   const safePage = Math.min(page, totalPages);
@@ -205,7 +212,7 @@ export default function ProspectsPage() {
   const rangeEnd = Math.min(safePage * perPage, filteredProspects.length);
 
   // Reset page on search change
-  useEffect(() => { setPage(1); }, [searchQuery]);
+  useEffect(() => { setPage(1); }, [searchQuery, sourceFilter]);
 
   const handleScrape = async () => {
     setScrapeLoading(true);
@@ -242,7 +249,7 @@ export default function ProspectsPage() {
         </div>
       )}
       {/* Top search bar */}
-      <header className="flex h-16 items-center justify-between px-4 sm:px-6 lg:px-10">
+      <header className="flex h-16 items-center gap-3 px-4 sm:px-6 lg:px-10">
         <div className="relative max-w-md flex-1">
           <Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-slate-400" />
           <input
@@ -253,6 +260,18 @@ export default function ProspectsPage() {
             className="w-full rounded-full border-none bg-[#eff4ff] py-2 pl-10 pr-4 text-sm placeholder-slate-400 outline-none transition-all focus:ring-2 focus:ring-[#004ac6]/20"
           />
         </div>
+        {sourceNames.length > 0 && (
+          <select
+            value={sourceFilter}
+            onChange={(e) => setSourceFilter(e.target.value)}
+            className="rounded-lg border-none bg-[#eff4ff] px-3 py-2 text-sm text-[#0d1c2e] outline-none focus:ring-2 focus:ring-[#004ac6]/20"
+          >
+            <option value="">Все источники</option>
+            {sourceNames.map((s) => (
+              <option key={s} value={s}>{s}</option>
+            ))}
+          </select>
+        )}
       </header>
 
       {/* Page content */}

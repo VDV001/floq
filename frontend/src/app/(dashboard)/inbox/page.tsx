@@ -28,7 +28,7 @@ interface Lead {
   channel: "email" | "telegram";
   preview: string;
   timeAgo: string;
-  status: "Новый" | "Квалифицирован" | "В диалоге" | "Нужен фоллоуап" | "Закрыт";
+  status: "Новый" | "Квалифицирован" | "В диалоге" | "Нужен фоллоуап" | "Закрыт" | "Выигран";
   apiStatus: string;
   sourceName?: string;
 }
@@ -39,6 +39,7 @@ const STATUS_STYLES: Record<Lead["status"], string> = {
   "В диалоге": "bg-[#fef3c7] text-[#92400e]",
   "Нужен фоллоуап": "bg-[#fee2e2] text-[#dc2626]",
   "Закрыт": "bg-[#d1fae5] text-[#065f46]",
+  "Выигран": "bg-[#bbf7d0] text-[#14532d]",
 };
 
 /* ------------------------------------------------------------------ */
@@ -73,6 +74,7 @@ function mapStatus(status: string): Lead["status"] {
     case "in_conversation": return "В диалоге";
     case "followup": return "Нужен фоллоуап";
     case "closed": return "Закрыт";
+    case "won": return "Выигран";
     default: return "Новый";
   }
 }
@@ -87,6 +89,7 @@ export default function InboxPage() {
   const [loading, setLoading] = useState(true);
   const [leads, setLeads] = useState<Lead[]>([]);
   const [statusCounts, setStatusCounts] = useState<Record<string, number>>({});
+  const [sourceFilter, setSourceFilter] = useState("");
 
   useEffect(() => {
     const fetchLeads = () => {
@@ -197,6 +200,29 @@ export default function InboxPage() {
           </div>
         </section>
 
+        {/* Source filter */}
+        {(() => {
+          const sources = [...new Set(leads.map((l) => l.sourceName).filter(Boolean))].sort();
+          if (sources.length === 0) return null;
+          return (
+            <section>
+              <h3 className="mb-4 px-2 text-[0.7rem] font-bold uppercase tracking-widest text-[#737686]">
+                Источник
+              </h3>
+              <select
+                value={sourceFilter}
+                onChange={(e) => setSourceFilter(e.target.value)}
+                className="w-full rounded-lg border border-[#c3c6d7]/10 bg-white px-3 py-2 text-xs font-medium outline-none focus:ring-2 focus:ring-[#004ac6]/20"
+              >
+                <option value="">Все источники</option>
+                {sources.map((s) => (
+                  <option key={s} value={s}>{s}</option>
+                ))}
+              </select>
+            </section>
+          );
+        })()}
+
         {/* AI Summary — dynamic */}
         <div className="relative overflow-hidden rounded-2xl border border-[#c0c1ff]/30 bg-[#e1e0ff]/40 p-5">
           <div className="absolute -right-4 -top-4 size-16 rounded-full bg-[#585be6]/10 blur-2xl" />
@@ -295,7 +321,9 @@ export default function InboxPage() {
             )}
             {leads.filter((lead) => {
               const stageConfig = PIPELINE_STAGES_CONFIG.find((s) => s.id === activeStage);
-              return stageConfig ? lead.apiStatus === stageConfig.apiStatus : true;
+              if (stageConfig && lead.apiStatus !== stageConfig.apiStatus) return false;
+              if (sourceFilter && lead.sourceName !== sourceFilter) return false;
+              return true;
             }).map((lead) => (
               <Link
                 key={lead.id}

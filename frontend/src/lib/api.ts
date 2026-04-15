@@ -162,6 +162,7 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ category_id: categoryId, name }),
     }),
+  getSourceStats: () => apiFetch<SourceStatItem[]>("/api/sources/stats"),
 
   // Prospects
   getProspects: () => apiFetch<Prospect[]>("/api/prospects"),
@@ -305,6 +306,15 @@ export interface SourceCategory {
   created_at: string;
 }
 
+export interface SourceStatItem {
+  source_id: string;
+  source_name: string;
+  category_name: string;
+  prospect_count: number;
+  lead_count: number;
+  converted_count: number;
+}
+
 export interface Lead {
   id: string;
   user_id: string;
@@ -312,7 +322,7 @@ export interface Lead {
   contact_name: string;
   company: string;
   first_message: string;
-  status: "new" | "qualified" | "in_conversation" | "followup" | "closed";
+  status: "new" | "qualified" | "in_conversation" | "followup" | "closed" | "won";
   telegram_chat_id?: number;
   email_address?: string;
   source_id?: string;
