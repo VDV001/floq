@@ -88,7 +88,8 @@ func (r *Repository) ListCategories(ctx context.Context, userID uuid.UUID) ([]do
 func (r *Repository) CreateCategory(ctx context.Context, cat *domain.Category) error {
 	_, err := r.pool.Exec(ctx,
 		`INSERT INTO source_categories (id, user_id, name, sort_order, created_at)
-		 VALUES ($1, $2, $3, $4, $5)`,
+		 VALUES ($1, $2, $3, $4, $5)
+		 ON CONFLICT (user_id, name) DO NOTHING`,
 		cat.ID, cat.UserID, cat.Name, cat.SortOrder, cat.CreatedAt)
 	if err != nil {
 		return fmt.Errorf("create category: %w", err)
@@ -117,7 +118,8 @@ func (r *Repository) DeleteCategory(ctx context.Context, id uuid.UUID) error {
 func (r *Repository) CreateSource(ctx context.Context, src *domain.Source) error {
 	_, err := r.pool.Exec(ctx,
 		`INSERT INTO lead_sources (id, user_id, category_id, name, sort_order, created_at)
-		 VALUES ($1, $2, $3, $4, $5, $6)`,
+		 VALUES ($1, $2, $3, $4, $5, $6)
+		 ON CONFLICT (category_id, name) DO NOTHING`,
 		src.ID, src.UserID, src.CategoryID, src.Name, src.SortOrder, src.CreatedAt)
 	if err != nil {
 		return fmt.Errorf("create source: %w", err)
