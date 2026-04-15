@@ -2,6 +2,7 @@ package prospects
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -42,7 +43,12 @@ func (m *mockRepo) GetProspect(_ context.Context, id uuid.UUID) (*domain.Prospec
 	return p, nil
 }
 
-func (m *mockRepo) FindByEmail(_ context.Context, _ uuid.UUID, _ string) (*domain.Prospect, error) {
+func (m *mockRepo) FindByEmail(_ context.Context, userID uuid.UUID, email string) (*domain.Prospect, error) {
+	for _, p := range m.prospects {
+		if p.UserID == userID && p.Email == email {
+			return p, nil
+		}
+	}
 	return nil, nil
 }
 
@@ -94,6 +100,70 @@ func (m *mockLeadChecker) LeadExistsByEmail(_ context.Context, _ uuid.UUID, emai
 		return false, nil
 	}
 	return m.existingEmails[email], nil
+}
+
+// --- Error-producing mock repo ---
+
+type mockErrorRepo struct {
+	mockRepo
+	listErr   error
+	getErr    error
+	createErr error
+	deleteErr error
+	findErr   error
+	batchErr  error
+}
+
+func (m *mockErrorRepo) ListProspects(_ context.Context, _ uuid.UUID) ([]domain.Prospect, error) {
+	if m.listErr != nil {
+		return nil, m.listErr
+	}
+	return m.mockRepo.ListProspects(context.Background(), uuid.Nil)
+}
+
+func (m *mockErrorRepo) GetProspect(_ context.Context, _ uuid.UUID) (*domain.Prospect, error) {
+	if m.getErr != nil {
+		return nil, m.getErr
+	}
+	return nil, nil
+}
+
+func (m *mockErrorRepo) CreateProspect(_ context.Context, p *domain.Prospect) error {
+	if m.createErr != nil {
+		return m.createErr
+	}
+	return nil
+}
+
+func (m *mockErrorRepo) DeleteProspect(_ context.Context, _ uuid.UUID) error {
+	if m.deleteErr != nil {
+		return m.deleteErr
+	}
+	return nil
+}
+
+func (m *mockErrorRepo) FindByEmail(_ context.Context, _ uuid.UUID, _ string) (*domain.Prospect, error) {
+	if m.findErr != nil {
+		return nil, m.findErr
+	}
+	return nil, nil
+}
+
+func (m *mockErrorRepo) CreateProspectsBatch(_ context.Context, _ []domain.Prospect) error {
+	if m.batchErr != nil {
+		return m.batchErr
+	}
+	return nil
+}
+
+// --- Error-producing lead checker ---
+
+type mockErrorLeadChecker struct {
+	err error
+}
+
+func (m *mockErrorLeadChecker) LeadExistsByEmail(_ context.Context, _ uuid.UUID, _ string) (bool, error) {
+	return false, m.err
 }
 
 // --- Tests ---
@@ -203,4 +273,227 @@ func TestListProspects(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, result, 1)
 	assert.Equal(t, "Test", result[0].Name)
+}
+
+func TestListProspects_Empty(t *testing.T) {
+	repo := newMockRepo()
+	uc := NewUseCase(repo)
+	result, err := uc.ListProspects(context.Background(), uuid.New())
+	require.NoError(t, err)
+	assert.Empty(t, result)
+}
+
+func TestCreateProspect_HappyPath(t *testing.T) {
+	repo := newMockRepo()
+	uc := NewUseCase(repo, WithLeadChecker(&mockLeadChecker{}))
+
+	p := domain.NewProspect(uuid.New(), "Alice", "Acme", "CEO", "alice@acme.com", "manual")
+	err := uc.CreateProspect(context.Background(), p)
+	require.NoError(t, err)
+	assert.Contains(t, repo.prospects, p.ID)
+}
+
+func TestCreateProspect_EmptyName(t *testing.T) {
+	repo := newMockRepo()
+	uc := NewUseCase(repo)
+
+	p := domain.NewProspect(uuid.New(), "", "Acme", "CEO", "a@b.com", "manual")
+	err := uc.CreateProspect(context.Background(), p)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "prospect name is required")
+}
+
+func TestCreateProspect_InvalidStatus(t *testing.T) {
+	repo := newMockRepo()
+	uc := NewUseCase(repo)
+
+	p := domain.NewProspect(uuid.New(), "Alice", "Acme", "CEO", "a@b.com", "manual")
+	p.Status = "garbage"
+	err := uc.CreateProspect(context.Background(), p)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "invalid prospect status")
+}
+
+func TestCreateProspect_DedupByEmail(t *testing.T) {
+	repo := newMockRepo()
+	userID := uuid.New()
+	uc := NewUseCase(repo, WithLeadChecker(&mockLeadChecker{}))
+
+	p1 := domain.NewProspect(userID, "Alice", "Acme", "CEO", "dup@acme.com", "manual")
+	require.NoError(t, uc.CreateProspect(context.Background(), p1))
+
+	p2 := domain.NewProspect(userID, "Bob", "Beta", "CTO", "dup@acme.com", "manual")
+	err := uc.CreateProspect(context.Background(), p2)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "проспект с таким email уже существует")
+}
+
+func TestCreateProspect_NoEmailSkipsDedup(t *testing.T) {
+	repo := newMockRepo()
+	uc := NewUseCase(repo, WithLeadChecker(&mockLeadChecker{}))
+
+	p := domain.NewProspect(uuid.New(), "Alice", "Acme", "CEO", "", "manual")
+	err := uc.CreateProspect(context.Background(), p)
+	require.NoError(t, err)
+	assert.Contains(t, repo.prospects, p.ID)
+}
+
+func TestCreateProspect_NoLeadChecker(t *testing.T) {
+	repo := newMockRepo()
+	uc := NewUseCase(repo) // no lead checker
+
+	p := domain.NewProspect(uuid.New(), "Alice", "Acme", "CEO", "alice@acme.com", "manual")
+	err := uc.CreateProspect(context.Background(), p)
+	require.NoError(t, err)
+}
+
+func TestGetProspect_Found(t *testing.T) {
+	repo := newMockRepo()
+	id := uuid.New()
+	repo.prospects[id] = &domain.Prospect{ID: id, Name: "Alice"}
+
+	uc := NewUseCase(repo)
+	p, err := uc.GetProspect(context.Background(), id)
+	require.NoError(t, err)
+	require.NotNil(t, p)
+	assert.Equal(t, "Alice", p.Name)
+}
+
+func TestGetProspect_NotFound(t *testing.T) {
+	repo := newMockRepo()
+	uc := NewUseCase(repo)
+	p, err := uc.GetProspect(context.Background(), uuid.New())
+	require.NoError(t, err)
+	assert.Nil(t, p)
+}
+
+func TestDeleteProspect(t *testing.T) {
+	repo := newMockRepo()
+	id := uuid.New()
+	repo.prospects[id] = &domain.Prospect{ID: id, Name: "Alice"}
+
+	uc := NewUseCase(repo)
+	err := uc.DeleteProspect(context.Background(), id)
+	require.NoError(t, err)
+	assert.NotContains(t, repo.prospects, id)
+}
+
+func TestFindByEmail_Found(t *testing.T) {
+	repo := newMockRepo()
+	userID := uuid.New()
+	id := uuid.New()
+	repo.prospects[id] = &domain.Prospect{ID: id, UserID: userID, Email: "alice@acme.com"}
+
+	uc := NewUseCase(repo)
+	p, err := uc.FindByEmail(context.Background(), userID, "alice@acme.com")
+	require.NoError(t, err)
+	require.NotNil(t, p)
+	assert.Equal(t, "alice@acme.com", p.Email)
+}
+
+func TestFindByEmail_NotFound(t *testing.T) {
+	repo := newMockRepo()
+	uc := NewUseCase(repo)
+	p, err := uc.FindByEmail(context.Background(), uuid.New(), "nope@nope.com")
+	require.NoError(t, err)
+	assert.Nil(t, p)
+}
+
+func TestCreateProspect_FindByEmailError(t *testing.T) {
+	repo := &mockErrorRepo{findErr: fmt.Errorf("db down")}
+	uc := NewUseCase(repo)
+	p := domain.NewProspect(uuid.New(), "Alice", "Acme", "CEO", "a@b.com", "manual")
+	err := uc.CreateProspect(context.Background(), p)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "prospect dedup")
+}
+
+func TestCreateProspect_LeadCheckerError(t *testing.T) {
+	repo := newMockRepo()
+	lc := &mockErrorLeadChecker{err: fmt.Errorf("lead svc down")}
+	uc := NewUseCase(repo, WithLeadChecker(lc))
+	p := domain.NewProspect(uuid.New(), "Alice", "Acme", "CEO", "a@b.com", "manual")
+	err := uc.CreateProspect(context.Background(), p)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "lead check")
+}
+
+func TestImportCSV_DedupSkipsExistingProspect(t *testing.T) {
+	repo := newMockRepo()
+	userID := uuid.New()
+	// Pre-seed prospect with same email
+	existing := domain.NewProspect(userID, "Existing", "Co", "CTO", "dup@test.com", "manual")
+	repo.prospects[existing.ID] = existing
+
+	uc := NewUseCase(repo, WithLeadChecker(&mockLeadChecker{}))
+	csv := []byte("name,company,title,email\nAlice,Acme,CEO,dup@test.com\nBob,Beta,CTO,fresh@test.com\n")
+	count, err := uc.ImportCSV(context.Background(), userID, csv)
+	require.NoError(t, err)
+	assert.Equal(t, 1, count) // only Bob imported
+}
+
+func TestImportCSV_DedupSkipsExistingLead(t *testing.T) {
+	repo := newMockRepo()
+	lc := &mockLeadChecker{existingEmails: map[string]bool{"lead@test.com": true}}
+	uc := NewUseCase(repo, WithLeadChecker(lc))
+	userID := uuid.New()
+
+	csv := []byte("name,company,title,email\nAlice,Acme,CEO,lead@test.com\nBob,Beta,CTO,fresh@test.com\n")
+	count, err := uc.ImportCSV(context.Background(), userID, csv)
+	require.NoError(t, err)
+	assert.Equal(t, 1, count) // only Bob
+}
+
+func TestImportCSV_FindByEmailError(t *testing.T) {
+	repo := &mockErrorRepo{findErr: fmt.Errorf("db error")}
+	uc := NewUseCase(repo)
+	csv := []byte("name,company,title,email\nAlice,Acme,CEO,a@b.com\n")
+	_, err := uc.ImportCSV(context.Background(), uuid.New(), csv)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "dedup prospect check")
+}
+
+func TestImportCSV_LeadCheckerError(t *testing.T) {
+	repo := newMockRepo()
+	lc := &mockErrorLeadChecker{err: fmt.Errorf("lead svc down")}
+	uc := NewUseCase(repo, WithLeadChecker(lc))
+	csv := []byte("name,company,title,email\nAlice,Acme,CEO,a@b.com\n")
+	_, err := uc.ImportCSV(context.Background(), uuid.New(), csv)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "dedup lead check")
+}
+
+func TestImportCSV_BatchError(t *testing.T) {
+	repo := &mockErrorRepo{batchErr: fmt.Errorf("batch fail")}
+	uc := NewUseCase(repo)
+	csv := []byte("name,company,title,email\nAlice,Acme,CEO,\n") // empty email to skip dedup
+	_, err := uc.ImportCSV(context.Background(), uuid.New(), csv)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "batch fail")
+}
+
+func TestImportCSV_EmptyCSV(t *testing.T) {
+	repo := newMockRepo()
+	uc := NewUseCase(repo)
+	_, err := uc.ImportCSV(context.Background(), uuid.New(), []byte(""))
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "read csv header")
+}
+
+func TestImportCSV_MalformedRecord(t *testing.T) {
+	repo := newMockRepo()
+	uc := NewUseCase(repo)
+	// Quoted field not closed → csv parse error
+	csvData := []byte("name,company,title,email\n\"unclosed,Acme,CEO,a@b.com\n")
+	_, err := uc.ImportCSV(context.Background(), uuid.New(), csvData)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "read csv record")
+}
+
+func TestExportCSV_ListError(t *testing.T) {
+	repo := &mockErrorRepo{listErr: fmt.Errorf("db down")}
+	uc := NewUseCase(repo)
+	_, err := uc.ExportCSV(context.Background(), uuid.New())
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "list prospects")
 }

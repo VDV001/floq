@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -11,6 +12,7 @@ import (
 
 	"github.com/daniil/floq/internal/ai"
 	"github.com/daniil/floq/internal/httputil"
+	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -211,6 +213,74 @@ func TestMockAIClient(t *testing.T) {
 
 // --- Full Chat flow test ---
 
+func TestChat_StatsError(t *testing.T) {
+	h := NewHandler(
+		&mockStatsReader{err: fmt.Errorf("db down")},
+		&mockAIClient{response: "hi"},
+	)
+
+	body, _ := json.Marshal(chatRequest{Message: "hello"})
+	req := httptest.NewRequest(http.MethodPost, "/api/chat", bytes.NewReader(body))
+	ctx := httputil.WithUserID(req.Context(), uuid.New())
+	req = req.WithContext(ctx)
+	rec := httptest.NewRecorder()
+
+	h.Chat(rec, req)
+
+	assert.Equal(t, http.StatusInternalServerError, rec.Code)
+	assert.Contains(t, rec.Body.String(), "failed to fetch stats")
+}
+
+func TestChat_AIError(t *testing.T) {
+	h := NewHandler(
+		&mockStatsReader{stats: &userStats{StatusCounts: map[string]int{}}},
+		&mockAIClient{err: fmt.Errorf("AI provider unavailable")},
+	)
+
+	body, _ := json.Marshal(chatRequest{Message: "hello"})
+	req := httptest.NewRequest(http.MethodPost, "/api/chat", bytes.NewReader(body))
+	ctx := httputil.WithUserID(req.Context(), uuid.New())
+	req = req.WithContext(ctx)
+	rec := httptest.NewRecorder()
+
+	h.Chat(rec, req)
+
+	assert.Equal(t, http.StatusInternalServerError, rec.Code)
+	assert.Contains(t, rec.Body.String(), "AI provider error")
+}
+
+func TestChat_SuccessWithHistory(t *testing.T) {
+	h := NewHandler(
+		&mockStatsReader{stats: &userStats{
+			TotalLeads:   5,
+			MonthLeads:   2,
+			StatusCounts: map[string]int{"new": 3},
+		}},
+		&mockAIClient{response: "Ответ с учётом контекста"},
+	)
+
+	body, _ := json.Marshal(chatRequest{
+		Message: "Продолжим",
+		History: []chatMessage{
+			{Role: "user", Content: "Привет"},
+			{Role: "assistant", Content: "Здравствуйте!"},
+			{Role: "system", Content: "should be filtered out"},
+		},
+		Context: "Фокус на B2B",
+	})
+	req := httptest.NewRequest(http.MethodPost, "/api/chat", bytes.NewReader(body))
+	ctx := httputil.WithUserID(req.Context(), uuid.New())
+	req = req.WithContext(ctx)
+	rec := httptest.NewRecorder()
+
+	h.Chat(rec, req)
+
+	assert.Equal(t, http.StatusOK, rec.Code)
+	var resp chatResponse
+	require.NoError(t, json.NewDecoder(rec.Body).Decode(&resp))
+	assert.Equal(t, "Ответ с учётом контекста", resp.Reply)
+}
+
 func TestChat_Success(t *testing.T) {
 	h := NewHandler(
 		&mockStatsReader{stats: &userStats{
@@ -233,4 +303,32 @@ func TestChat_Success(t *testing.T) {
 	var resp chatResponse
 	require.NoError(t, json.NewDecoder(rec.Body).Decode(&resp))
 	assert.Equal(t, "Вот ваш анализ воронки.", resp.Reply)
+}
+
+// --- RegisterRoutes test ---
+
+func TestRegisterRoutes(t *testing.T) {
+	h := NewHandler(
+		&mockStatsReader{stats: &userStats{
+			TotalLeads:   1,
+			StatusCounts: map[string]int{},
+		}},
+		&mockAIClient{response: "routed"},
+	)
+
+	r := chi.NewRouter()
+	RegisterRoutes(r, h)
+
+	body, _ := json.Marshal(chatRequest{Message: "test"})
+	req := httptest.NewRequest(http.MethodPost, "/api/chat", bytes.NewReader(body))
+	ctx := httputil.WithUserID(req.Context(), uuid.New())
+	req = req.WithContext(ctx)
+	rec := httptest.NewRecorder()
+
+	r.ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusOK, rec.Code)
+	var resp chatResponse
+	require.NoError(t, json.NewDecoder(rec.Body).Decode(&resp))
+	assert.Equal(t, "routed", resp.Reply)
 }

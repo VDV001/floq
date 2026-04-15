@@ -1,26 +1,33 @@
 package verify
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"time"
 
 	"github.com/daniil/floq/internal/httputil"
-	"github.com/daniil/floq/internal/prospects"
 	"github.com/daniil/floq/internal/prospects/domain"
 	"github.com/go-chi/chi/v5"
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
+	"github.com/google/uuid"
 )
 
+// ProspectRepository defines the prospect operations needed by the verify handler.
+type ProspectRepository interface {
+	ListProspects(ctx context.Context, userID uuid.UUID) ([]domain.Prospect, error)
+	GetProspect(ctx context.Context, id uuid.UUID) (*domain.Prospect, error)
+	UpdateVerification(ctx context.Context, id uuid.UUID, status domain.VerifyStatus, score int, details string, verifiedAt time.Time) error
+}
 
 // Handler exposes verification endpoints.
 type Handler struct {
-	prospectRepo *prospects.Repository
+	prospectRepo ProspectRepository
 	bot          *tgbotapi.BotAPI // can be nil if not configured
 }
 
 // RegisterRoutes wires the verification endpoints into the given router.
-func RegisterRoutes(r chi.Router, prospectRepo *prospects.Repository, bot *tgbotapi.BotAPI) {
+func RegisterRoutes(r chi.Router, prospectRepo ProspectRepository, bot *tgbotapi.BotAPI) {
 	h := &Handler{prospectRepo: prospectRepo, bot: bot}
 	r.Post("/api/verify/email", h.verifyEmailSingle())
 	r.Post("/api/verify/batch", h.verifyBatch())

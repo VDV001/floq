@@ -46,7 +46,8 @@ var cityIDs = map[string]int{
 
 // TwoGISClient wraps 2GIS API calls with a configurable API key.
 type TwoGISClient struct {
-	APIKey string
+	APIKey  string
+	baseURL string // override for testing; empty = production URL
 }
 
 // NewTwoGISClient creates a new client with the given API key.
@@ -62,9 +63,13 @@ func (c *TwoGISClient) Search(ctx context.Context, query, city string) ([]TwoGIS
 		regionID = 32 // default to Moscow
 	}
 
+	base := c.baseURL
+	if base == "" {
+		base = "https://catalog.api.2gis.ru"
+	}
 	apiURL := fmt.Sprintf(
-		"https://catalog.api.2gis.ru/3.0/items?q=%s&region_id=%d&page=1&page_size=50&fields=items.contact_groups,items.address&key=%s",
-		url.QueryEscape(query), regionID, c.APIKey,
+		"%s/3.0/items?q=%s&region_id=%d&page=1&page_size=50&fields=items.contact_groups,items.address&key=%s",
+		base, url.QueryEscape(query), regionID, c.APIKey,
 	)
 
 	req, err := http.NewRequestWithContext(ctx, "GET", apiURL, nil)

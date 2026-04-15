@@ -12,10 +12,16 @@ import (
 var _ domain.TelegramTokenValidator = (*HTTPTelegramValidator)(nil)
 
 // HTTPTelegramValidator validates Telegram bot tokens via the Telegram API.
-type HTTPTelegramValidator struct{}
+type HTTPTelegramValidator struct {
+	baseURL string // override for testing; empty = production URL
+}
 
 func (v *HTTPTelegramValidator) Validate(token string) error {
-	resp, err := http.Get(fmt.Sprintf("https://api.telegram.org/bot%s/getMe", token))
+	base := v.baseURL
+	if base == "" {
+		base = "https://api.telegram.org"
+	}
+	resp, err := http.Get(fmt.Sprintf("%s/bot%s/getMe", base, token))
 	if err != nil {
 		return fmt.Errorf("failed to reach Telegram API: %w", err)
 	}

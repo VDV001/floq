@@ -172,6 +172,52 @@ func TestAuthMiddleware_InvalidAuthScheme(t *testing.T) {
 	assert.Contains(t, rec.Body.String(), "invalid authorization header")
 }
 
+func TestAuthMiddleware_InvalidUserIDInToken(t *testing.T) {
+	token := makeToken(t, jwt.MapClaims{
+		"user_id": "not-a-uuid",
+		"type":    "access",
+		"iat":     time.Now().Unix(),
+		"exp":     time.Now().Add(time.Hour).Unix(),
+	}, testSecret)
+
+	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Fatal("handler should not be called")
+	})
+
+	mw := AuthMiddleware(testSecret)(next)
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	rec := httptest.NewRecorder()
+
+	mw.ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusUnauthorized, rec.Code)
+	assert.Contains(t, rec.Body.String(), "invalid token claims")
+}
+
+func TestAuthMiddleware_MissingTypeInToken(t *testing.T) {
+	token := makeToken(t, jwt.MapClaims{
+		"user_id": uuid.New().String(),
+		// no "type" field
+		"iat": time.Now().Unix(),
+		"exp": time.Now().Add(time.Hour).Unix(),
+	}, testSecret)
+
+	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Fatal("handler should not be called")
+	})
+
+	mw := AuthMiddleware(testSecret)(next)
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	rec := httptest.NewRecorder()
+
+	mw.ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusUnauthorized, rec.Code)
+	assert.Contains(t, rec.Body.String(), "invalid token type")
+}
+
 // Helper to parse JSON error responses.
 func parseErrorResponse(t *testing.T, body []byte) map[string]string {
 	t.Helper()
