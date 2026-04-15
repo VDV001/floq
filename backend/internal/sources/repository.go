@@ -205,10 +205,15 @@ func (r *Repository) EnsureDefaults(ctx context.Context, userID uuid.UUID) error
 		return fmt.Errorf("count categories: %w", err)
 	}
 	if count > 0 {
+		// Even if defaults exist, migrate orphan prospects (source_id IS NULL)
+		r.migrateOrphanProspects(ctx, userID)
 		return nil
 	}
 
 	now := time.Now().UTC()
+
+	// Track created source IDs for prospect migration
+	sourceNameToID := make(map[string]uuid.UUID)
 
 	for i, seed := range defaultSeeds {
 		cat, _ := domain.NewCategory(userID, seed.categoryName) // seed names are always valid
@@ -224,8 +229,29 @@ func (r *Repository) EnsureDefaults(ctx context.Context, userID uuid.UUID) error
 			if err := r.CreateSource(ctx, src); err != nil {
 				return fmt.Errorf("insert default source %q: %w", srcName, err)
 			}
+			sourceNameToID[srcName] = src.ID
+		}
+	}
+
+	// Migrate existing prospects with old text source to new source_id
+	for oldSource, newName := range map[string]string{"csv": "CSV файл", "manual": "Вручную", "2gis": "2GIS"} {
+		if srcID, ok := sourceNameToID[newName]; ok {
+			_, _ = r.pool.Exec(ctx,
+				`UPDATE prospects SET source_id = $1 WHERE user_id = $2 AND source = $3 AND source_id IS NULL`,
+				srcID, userID, oldSource)
 		}
 	}
 
 	return nil
+}
+
+// migrateOrphanProspects links prospects with source_id=NULL to existing sources by text name.
+func (r *Repository) migrateOrphanProspects(ctx context.Context, userID uuid.UUID) {
+	migrations := map[string]string{"csv": "CSV файл", "manual": "Вручную", "2gis": "2GIS"}
+	for oldSource, newName := range migrations {
+		_, _ = r.pool.Exec(ctx,
+			`UPDATE prospects SET source_id = (SELECT id FROM lead_sources WHERE user_id = $1 AND name = $2 LIMIT 1)
+			 WHERE user_id = $1 AND source = $3 AND source_id IS NULL`,
+			userID, newName, oldSource)
+	}
 }
