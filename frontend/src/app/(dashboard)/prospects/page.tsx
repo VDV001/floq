@@ -20,8 +20,9 @@ import {
   Phone,
   MessageCircle,
   MessageSquare,
+  BarChart3,
 } from "lucide-react";
-import { api } from "@/lib/api";
+import { api, type SourceStatItem } from "@/lib/api";
 import { SourceCombobox } from "@/components/ui/source-combobox";
 
 /* ------------------------------------------------------------------ */
@@ -126,6 +127,7 @@ export default function ProspectsPage() {
     setToast({ message, type });
     setTimeout(() => setToast(null), 3500);
   };
+  const [sourceStats, setSourceStats] = useState<SourceStatItem[]>([]);
   const [page, setPage] = useState(1);
   const perPage = 15;
 
@@ -143,6 +145,7 @@ export default function ProspectsPage() {
 
   useEffect(() => {
     fetchProspects();
+    api.getSourceStats().then(setSourceStats).catch(() => {});
   }, []);
 
   const handleAddProspect = async () => {
@@ -650,6 +653,44 @@ export default function ProspectsPage() {
                 <ArrowRight className="size-3.5" />
               </button>
             </div>
+
+            {/* Source analytics */}
+            {sourceStats.length > 0 && (
+              <div className="rounded-xl border border-[#c3c6d7]/10 bg-white p-6 shadow-sm">
+                <h4 className="mb-4 flex items-center gap-2 text-sm font-bold text-[#0d1c2e]">
+                  <BarChart3 className="size-4" />
+                  Конверсия по источникам
+                </h4>
+                <div className="space-y-3">
+                  {sourceStats.filter(s => s.prospect_count > 0 || s.lead_count > 0).map((s) => {
+                    const total = s.prospect_count + s.lead_count;
+                    const convRate = total > 0 ? Math.round((s.converted_count / total) * 100) : 0;
+                    return (
+                      <div key={s.source_id}>
+                        <div className="mb-1 flex items-center justify-between">
+                          <span className="text-xs font-semibold text-[#0d1c2e]">{s.source_name}</span>
+                          <span className="text-[10px] font-medium text-[#737686]">{s.category_name}</span>
+                        </div>
+                        <div className="flex items-center gap-3">
+                          <div className="h-2 flex-1 overflow-hidden rounded-full bg-[#eff4ff]">
+                            <div
+                              className="h-full rounded-full bg-[#004ac6] transition-all"
+                              style={{ width: `${Math.min(100, convRate)}%` }}
+                            />
+                          </div>
+                          <span className="w-8 text-right text-[10px] font-bold text-[#004ac6]">{convRate}%</span>
+                        </div>
+                        <div className="mt-0.5 flex gap-3 text-[10px] text-[#737686]">
+                          <span>{s.prospect_count} просп.</span>
+                          <span>{s.lead_count} лидов</span>
+                          <span>{s.converted_count} конв.</span>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
           </div>
         </div>
       </section>
