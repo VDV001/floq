@@ -140,8 +140,8 @@ func (r *Repository) UpdateStatus(ctx context.Context, id uuid.UUID, status doma
 
 func (r *Repository) ConvertToLead(ctx context.Context, prospectID, leadID uuid.UUID) error {
 	_, err := r.pool.Exec(ctx,
-		`UPDATE prospects SET status = 'converted', converted_lead_id = $2, updated_at = $3 WHERE id = $1`,
-		prospectID, leadID, time.Now().UTC())
+		`UPDATE prospects SET status = $2, converted_lead_id = $3, updated_at = $4 WHERE id = $1`,
+		prospectID, domain.ProspectStatusConverted, leadID, time.Now().UTC())
 	if err != nil {
 		return fmt.Errorf("convert prospect to lead: %w", err)
 	}

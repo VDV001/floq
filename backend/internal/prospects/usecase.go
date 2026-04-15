@@ -6,7 +6,6 @@ import (
 	"encoding/csv"
 	"fmt"
 	"io"
-	"time"
 
 	"github.com/daniil/floq/internal/prospects/domain"
 	"github.com/google/uuid"
@@ -102,7 +101,6 @@ func (uc *UseCase) ImportCSV(ctx context.Context, userID uuid.UUID, csvData []by
 		return ""
 	}
 
-	now := time.Now().UTC()
 	var prospects []domain.Prospect
 	for {
 		record, err := reader.Read()
@@ -134,26 +132,14 @@ func (uc *UseCase) ImportCSV(ctx context.Context, userID uuid.UUID, csvData []by
 			}
 		}
 
-		prospects = append(prospects, domain.Prospect{
-			ID:               uuid.New(),
-			UserID:           userID,
-			Name:             record[0],
-			Company:          record[1],
-			Title:            record[2],
-			Email:            email,
-			Phone:            getCol(record, "phone"),
-			WhatsApp:         getCol(record, "whatsapp"),
-			TelegramUsername: getCol(record, "telegram_username"),
-			Industry:         getCol(record, "industry"),
-			CompanySize:      getCol(record, "company_size"),
-			Context:          getCol(record, "context"),
-			Source:           "csv",
-			Status:           domain.ProspectStatusNew,
-			VerifyStatus:     domain.VerifyStatusNotChecked,
-			VerifyDetails:    "{}",
-			CreatedAt:        now,
-			UpdatedAt:        now,
-		})
+		p := domain.NewProspect(userID, record[0], record[1], record[2], email, "csv")
+		p.Phone = getCol(record, "phone")
+		p.WhatsApp = getCol(record, "whatsapp")
+		p.TelegramUsername = getCol(record, "telegram_username")
+		p.Industry = getCol(record, "industry")
+		p.CompanySize = getCol(record, "company_size")
+		p.Context = getCol(record, "context")
+		prospects = append(prospects, *p)
 	}
 
 	if err := uc.repo.CreateProspectsBatch(ctx, prospects); err != nil {

@@ -72,7 +72,7 @@ type Prospect struct {
 	Context          string
 	Source           string
 	SourceID         *uuid.UUID
-	SourceName       string
+	SourceName       string // read-only, populated by repository JOINs
 	Status           ProspectStatus
 	VerifyStatus     VerifyStatus
 	VerifyScore      int
