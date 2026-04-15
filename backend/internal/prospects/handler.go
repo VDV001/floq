@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/daniil/floq/internal/httputil"
-	"github.com/daniil/floq/internal/prospects/domain"
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 )
@@ -39,9 +38,6 @@ func (h *Handler) listProspects() http.HandlerFunc {
 			httputil.WriteError(w, http.StatusInternalServerError, "failed to list prospects")
 			return
 		}
-		if prospects == nil {
-			prospects = []domain.Prospect{}
-		}
 		httputil.WriteJSON(w, http.StatusOK, ProspectsToResponse(prospects))
 	}
 }
@@ -71,22 +67,22 @@ func (h *Handler) createProspect() http.HandlerFunc {
 			httputil.WriteError(w, http.StatusBadRequest, "invalid request body")
 			return
 		}
-		if body.Name == "" {
-			httputil.WriteError(w, http.StatusBadRequest, "name is required")
-			return
-		}
-
-		p := domain.NewProspect(userID, body.Name, body.Company, body.Title, body.Email, "manual")
-		p.Phone = body.Phone
-		p.WhatsApp = body.WhatsApp
-		p.TelegramUsername = body.TelegramUsername
-		p.Industry = body.Industry
-		p.CompanySize = body.CompanySize
-		p.Context = body.Context
-		p.SourceID = body.SourceID
-
-		if err := h.uc.CreateProspect(r.Context(), p); err != nil {
-			httputil.WriteError(w, http.StatusInternalServerError, "failed to create prospect")
+		p, err := h.uc.CreateProspect(r.Context(), CreateProspectInput{
+			UserID:           userID,
+			Name:             body.Name,
+			Company:          body.Company,
+			Title:            body.Title,
+			Email:            body.Email,
+			Phone:            body.Phone,
+			WhatsApp:         body.WhatsApp,
+			TelegramUsername: body.TelegramUsername,
+			Industry:         body.Industry,
+			CompanySize:      body.CompanySize,
+			Context:          body.Context,
+			SourceID:         body.SourceID,
+		})
+		if err != nil {
+			httputil.WriteError(w, http.StatusBadRequest, err.Error())
 			return
 		}
 		httputil.WriteJSON(w, http.StatusCreated, ProspectToResponse(p))

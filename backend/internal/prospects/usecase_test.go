@@ -222,8 +222,8 @@ func TestCreateProspect_RejectsExistingLead(t *testing.T) {
 	lc := &mockLeadChecker{existingEmails: map[string]bool{"taken@example.com": true}}
 	uc := NewUseCase(repo, WithLeadChecker(lc))
 
-	p := domain.NewProspect(uuid.New(), "Alice", "Acme", "CEO", "taken@example.com", "manual")
-	err := uc.CreateProspect(context.Background(), p)
+	input := CreateProspectInput{UserID: uuid.New(), Name: "Alice", Company: "Acme", Title: "CEO", Email: "taken@example.com"}
+	_, err := uc.CreateProspect(context.Background(), input)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "лид с таким email уже существует")
 }
@@ -287,8 +287,8 @@ func TestCreateProspect_HappyPath(t *testing.T) {
 	repo := newMockRepo()
 	uc := NewUseCase(repo, WithLeadChecker(&mockLeadChecker{}))
 
-	p := domain.NewProspect(uuid.New(), "Alice", "Acme", "CEO", "alice@acme.com", "manual")
-	err := uc.CreateProspect(context.Background(), p)
+	input := CreateProspectInput{UserID: uuid.New(), Name: "Alice", Company: "Acme", Title: "CEO", Email: "alice@acme.com"}
+	p, err := uc.CreateProspect(context.Background(), input)
 	require.NoError(t, err)
 	assert.Contains(t, repo.prospects, p.ID)
 }
@@ -297,21 +297,10 @@ func TestCreateProspect_EmptyName(t *testing.T) {
 	repo := newMockRepo()
 	uc := NewUseCase(repo)
 
-	p := domain.NewProspect(uuid.New(), "", "Acme", "CEO", "a@b.com", "manual")
-	err := uc.CreateProspect(context.Background(), p)
+	input := CreateProspectInput{UserID: uuid.New(), Name: "", Company: "Acme", Title: "CEO", Email: "a@b.com"}
+	_, err := uc.CreateProspect(context.Background(), input)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "prospect name is required")
-}
-
-func TestCreateProspect_InvalidStatus(t *testing.T) {
-	repo := newMockRepo()
-	uc := NewUseCase(repo)
-
-	p := domain.NewProspect(uuid.New(), "Alice", "Acme", "CEO", "a@b.com", "manual")
-	p.Status = "garbage"
-	err := uc.CreateProspect(context.Background(), p)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "invalid prospect status")
 }
 
 func TestCreateProspect_DedupByEmail(t *testing.T) {
@@ -319,11 +308,12 @@ func TestCreateProspect_DedupByEmail(t *testing.T) {
 	userID := uuid.New()
 	uc := NewUseCase(repo, WithLeadChecker(&mockLeadChecker{}))
 
-	p1 := domain.NewProspect(userID, "Alice", "Acme", "CEO", "dup@acme.com", "manual")
-	require.NoError(t, uc.CreateProspect(context.Background(), p1))
+	input1 := CreateProspectInput{UserID: userID, Name: "Alice", Company: "Acme", Title: "CEO", Email: "dup@acme.com"}
+	_, err := uc.CreateProspect(context.Background(), input1)
+	require.NoError(t, err)
 
-	p2 := domain.NewProspect(userID, "Bob", "Beta", "CTO", "dup@acme.com", "manual")
-	err := uc.CreateProspect(context.Background(), p2)
+	input2 := CreateProspectInput{UserID: userID, Name: "Bob", Company: "Beta", Title: "CTO", Email: "dup@acme.com"}
+	_, err = uc.CreateProspect(context.Background(), input2)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "проспект с таким email уже существует")
 }
@@ -332,8 +322,8 @@ func TestCreateProspect_NoEmailSkipsDedup(t *testing.T) {
 	repo := newMockRepo()
 	uc := NewUseCase(repo, WithLeadChecker(&mockLeadChecker{}))
 
-	p := domain.NewProspect(uuid.New(), "Alice", "Acme", "CEO", "", "manual")
-	err := uc.CreateProspect(context.Background(), p)
+	input := CreateProspectInput{UserID: uuid.New(), Name: "Alice", Company: "Acme", Title: "CEO", Email: ""}
+	p, err := uc.CreateProspect(context.Background(), input)
 	require.NoError(t, err)
 	assert.Contains(t, repo.prospects, p.ID)
 }
@@ -342,8 +332,8 @@ func TestCreateProspect_NoLeadChecker(t *testing.T) {
 	repo := newMockRepo()
 	uc := NewUseCase(repo) // no lead checker
 
-	p := domain.NewProspect(uuid.New(), "Alice", "Acme", "CEO", "alice@acme.com", "manual")
-	err := uc.CreateProspect(context.Background(), p)
+	input := CreateProspectInput{UserID: uuid.New(), Name: "Alice", Company: "Acme", Title: "CEO", Email: "alice@acme.com"}
+	_, err := uc.CreateProspect(context.Background(), input)
 	require.NoError(t, err)
 }
 
@@ -402,8 +392,8 @@ func TestFindByEmail_NotFound(t *testing.T) {
 func TestCreateProspect_FindByEmailError(t *testing.T) {
 	repo := &mockErrorRepo{findErr: fmt.Errorf("db down")}
 	uc := NewUseCase(repo)
-	p := domain.NewProspect(uuid.New(), "Alice", "Acme", "CEO", "a@b.com", "manual")
-	err := uc.CreateProspect(context.Background(), p)
+	input := CreateProspectInput{UserID: uuid.New(), Name: "Alice", Company: "Acme", Title: "CEO", Email: "a@b.com"}
+	_, err := uc.CreateProspect(context.Background(), input)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "prospect dedup")
 }
@@ -412,8 +402,8 @@ func TestCreateProspect_LeadCheckerError(t *testing.T) {
 	repo := newMockRepo()
 	lc := &mockErrorLeadChecker{err: fmt.Errorf("lead svc down")}
 	uc := NewUseCase(repo, WithLeadChecker(lc))
-	p := domain.NewProspect(uuid.New(), "Alice", "Acme", "CEO", "a@b.com", "manual")
-	err := uc.CreateProspect(context.Background(), p)
+	input := CreateProspectInput{UserID: uuid.New(), Name: "Alice", Company: "Acme", Title: "CEO", Email: "a@b.com"}
+	_, err := uc.CreateProspect(context.Background(), input)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "lead check")
 }

@@ -77,7 +77,7 @@ type ProspectView struct {
 
 // CanReceiveSequence returns true if the prospect is eligible for sequence messages.
 func (p *ProspectView) CanReceiveSequence() bool {
-	if p.Status == ProspectStatusConverted || p.Status == ProspectStatusOptedOut || p.Status == ProspectStatusInSequence {
+	if p.Status == ProspectStatusConverted || p.Status == ProspectStatusOptedOut || p.Status == ProspectStatusInSequence || p.Status == ProspectStatusReplied {
 		return false
 	}
 	if p.VerifyStatus == VerifyStatusInvalid {
@@ -92,6 +92,7 @@ func (p *ProspectView) CanReceiveSequence() bool {
 // Prospect status values used by the sequences context.
 const (
 	ProspectStatusInSequence = "in_sequence"
+	ProspectStatusReplied    = "replied"
 	ProspectStatusConverted  = "converted"
 	ProspectStatusOptedOut   = "opted_out"
 

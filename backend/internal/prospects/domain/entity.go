@@ -12,6 +12,7 @@ type ProspectStatus string
 const (
 	ProspectStatusNew        ProspectStatus = "new"
 	ProspectStatusInSequence ProspectStatus = "in_sequence"
+	ProspectStatusReplied    ProspectStatus = "replied"
 	ProspectStatusConverted  ProspectStatus = "converted"
 	ProspectStatusOptedOut   ProspectStatus = "opted_out"
 )
@@ -19,7 +20,7 @@ const (
 // IsValid returns true if the ProspectStatus is one of the known values.
 func (s ProspectStatus) IsValid() bool {
 	switch s {
-	case ProspectStatusNew, ProspectStatusInSequence, ProspectStatusConverted, ProspectStatusOptedOut:
+	case ProspectStatusNew, ProspectStatusInSequence, ProspectStatusReplied, ProspectStatusConverted, ProspectStatusOptedOut:
 		return true
 	default:
 		return false
@@ -104,7 +105,7 @@ func NewProspect(userID uuid.UUID, name, company, title, email, source string) *
 
 // CanLaunchSequence returns true if the prospect is eligible for a sequence launch.
 func (p *Prospect) CanLaunchSequence() bool {
-	if p.Status == ProspectStatusConverted || p.Status == ProspectStatusOptedOut || p.Status == ProspectStatusInSequence {
+	if p.Status == ProspectStatusConverted || p.Status == ProspectStatusOptedOut || p.Status == ProspectStatusInSequence || p.Status == ProspectStatusReplied {
 		return false
 	}
 	if p.VerifyStatus == VerifyStatusInvalid {

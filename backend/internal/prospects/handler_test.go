@@ -356,7 +356,7 @@ func TestHandler_CreateProspect_UseCaseError(t *testing.T) {
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, req)
 
-	assert.Equal(t, http.StatusInternalServerError, w.Code)
+	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
 func TestHandler_GetProspect_Error(t *testing.T) {

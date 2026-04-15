@@ -27,6 +27,16 @@ func (m *mockRepo) ListCategories(_ context.Context, _ uuid.UUID) ([]domain.Cate
 	return m.categories, nil
 }
 
+func (m *mockRepo) GetCategory(_ context.Context, id uuid.UUID) (*domain.Category, error) {
+	for _, c := range m.categories {
+		if c.ID == id {
+			cat := c.Category
+			return &cat, nil
+		}
+	}
+	return nil, nil
+}
+
 func (m *mockRepo) CreateCategory(_ context.Context, cat *domain.Category) error {
 	m.categories = append(m.categories, domain.CategoryWithSources{
 		Category: *cat,

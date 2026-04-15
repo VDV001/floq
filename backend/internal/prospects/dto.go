@@ -66,6 +66,9 @@ func ProspectToResponse(p *domain.Prospect) ProspectResponse {
 }
 
 func ProspectsToResponse(prospects []domain.Prospect) []ProspectResponse {
+	if prospects == nil {
+		return []ProspectResponse{}
+	}
 	resp := make([]ProspectResponse, len(prospects))
 	for i := range prospects {
 		resp[i] = ProspectToResponse(&prospects[i])

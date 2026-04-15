@@ -44,32 +44,56 @@ func (uc *UseCase) FindByEmail(ctx context.Context, userID uuid.UUID, email stri
 	return uc.repo.FindByEmail(ctx, userID, email)
 }
 
-func (uc *UseCase) CreateProspect(ctx context.Context, prospect *domain.Prospect) error {
-	if prospect.Name == "" {
-		return fmt.Errorf("prospect name is required")
+// CreateProspectInput holds the data needed to create a prospect.
+type CreateProspectInput struct {
+	UserID           uuid.UUID
+	Name             string
+	Company          string
+	Title            string
+	Email            string
+	Phone            string
+	WhatsApp         string
+	TelegramUsername string
+	Industry         string
+	CompanySize      string
+	Context          string
+	SourceID         *uuid.UUID
+}
+
+func (uc *UseCase) CreateProspect(ctx context.Context, input CreateProspectInput) (*domain.Prospect, error) {
+	if input.Name == "" {
+		return nil, fmt.Errorf("prospect name is required")
 	}
-	if !prospect.Status.IsValid() {
-		return fmt.Errorf("invalid prospect status: %q", prospect.Status)
-	}
-	if prospect.Email != "" {
-		existing, err := uc.repo.FindByEmail(ctx, prospect.UserID, prospect.Email)
+	if input.Email != "" {
+		existing, err := uc.repo.FindByEmail(ctx, input.UserID, input.Email)
 		if err != nil {
-			return fmt.Errorf("prospect dedup: %w", err)
+			return nil, fmt.Errorf("prospect dedup: %w", err)
 		}
 		if existing != nil {
-			return fmt.Errorf("проспект с таким email уже существует")
+			return nil, fmt.Errorf("проспект с таким email уже существует")
 		}
 	}
-	if prospect.Email != "" && uc.leadChecker != nil {
-		exists, err := uc.leadChecker.LeadExistsByEmail(ctx, prospect.UserID, prospect.Email)
+	if input.Email != "" && uc.leadChecker != nil {
+		exists, err := uc.leadChecker.LeadExistsByEmail(ctx, input.UserID, input.Email)
 		if err != nil {
-			return fmt.Errorf("lead check: %w", err)
+			return nil, fmt.Errorf("lead check: %w", err)
 		}
 		if exists {
-			return fmt.Errorf("лид с таким email уже существует")
+			return nil, fmt.Errorf("лид с таким email уже существует")
 		}
 	}
-	return uc.repo.CreateProspect(ctx, prospect)
+	p := domain.NewProspect(input.UserID, input.Name, input.Company, input.Title, input.Email, "manual")
+	p.Phone = input.Phone
+	p.WhatsApp = input.WhatsApp
+	p.TelegramUsername = input.TelegramUsername
+	p.Industry = input.Industry
+	p.CompanySize = input.CompanySize
+	p.Context = input.Context
+	p.SourceID = input.SourceID
+	if err := uc.repo.CreateProspect(ctx, p); err != nil {
+		return nil, err
+	}
+	return p, nil
 }
 
 func (uc *UseCase) DeleteProspect(ctx context.Context, id uuid.UUID) error {

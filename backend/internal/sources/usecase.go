@@ -59,12 +59,17 @@ func (uc *UseCase) CreateCategory(ctx context.Context, userID uuid.UUID, name st
 }
 
 func (uc *UseCase) UpdateCategory(ctx context.Context, id uuid.UUID, name string) error {
-	// Validate via domain method
-	c := &domain.Category{}
-	if err := c.Rename(name); err != nil {
+	cat, err := uc.repo.GetCategory(ctx, id)
+	if err != nil {
 		return err
 	}
-	return uc.repo.UpdateCategory(ctx, id, name)
+	if cat == nil {
+		return fmt.Errorf("category not found")
+	}
+	if err := cat.Rename(name); err != nil {
+		return err
+	}
+	return uc.repo.UpdateCategory(ctx, id, cat.Name)
 }
 
 func (uc *UseCase) DeleteCategory(ctx context.Context, id uuid.UUID) error {
@@ -83,11 +88,17 @@ func (uc *UseCase) CreateSource(ctx context.Context, userID, categoryID uuid.UUI
 }
 
 func (uc *UseCase) UpdateSource(ctx context.Context, id uuid.UUID, name string) error {
-	s := &domain.Source{}
-	if err := s.Rename(name); err != nil {
+	src, err := uc.repo.GetSource(ctx, id)
+	if err != nil {
 		return err
 	}
-	return uc.repo.UpdateSource(ctx, id, name)
+	if src == nil {
+		return fmt.Errorf("source not found")
+	}
+	if err := src.Rename(name); err != nil {
+		return err
+	}
+	return uc.repo.UpdateSource(ctx, id, src.Name)
 }
 
 func (uc *UseCase) DeleteSource(ctx context.Context, id uuid.UUID) error {

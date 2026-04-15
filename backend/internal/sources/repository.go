@@ -103,6 +103,20 @@ func (r *Repository) CreateCategory(ctx context.Context, cat *domain.Category) e
 	return nil
 }
 
+func (r *Repository) GetCategory(ctx context.Context, id uuid.UUID) (*domain.Category, error) {
+	var c domain.Category
+	err := r.q.QueryRow(ctx,
+		`SELECT id, user_id, name, sort_order, created_at FROM source_categories WHERE id = $1`, id).
+		Scan(&c.ID, &c.UserID, &c.Name, &c.SortOrder, &c.CreatedAt)
+	if err == pgx.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("get category: %w", err)
+	}
+	return &c, nil
+}
+
 func (r *Repository) UpdateCategory(ctx context.Context, id uuid.UUID, name string) error {
 	_, err := r.q.Exec(ctx,
 		`UPDATE source_categories SET name = $2 WHERE id = $1`, id, name)
