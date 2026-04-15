@@ -7,7 +7,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/daniil/floq/internal/ai"
 	"github.com/daniil/floq/internal/httputil"
 	"github.com/go-chi/chi/v5"
 )
@@ -84,15 +83,15 @@ func (h *Handler) Chat(w http.ResponseWriter, r *http.Request) {
 	systemPrompt := buildSystemPrompt(stats, req.Context)
 
 	// Build messages for the AI provider.
-	messages := []ai.Message{{Role: "system", Content: systemPrompt}}
+	messages := []ChatMessage{{Role: "system", Content: systemPrompt}}
 	for _, m := range req.History {
 		if m.Role == "user" || m.Role == "assistant" {
-			messages = append(messages, ai.Message{Role: m.Role, Content: m.Content})
+			messages = append(messages, ChatMessage{Role: m.Role, Content: m.Content})
 		}
 	}
-	messages = append(messages, ai.Message{Role: "user", Content: req.Message})
+	messages = append(messages, ChatMessage{Role: "user", Content: req.Message})
 
-	reply, err := h.aiClient.Complete(r.Context(), ai.CompletionRequest{
+	reply, err := h.aiClient.Complete(r.Context(), ChatCompletionRequest{
 		Messages:  messages,
 		MaxTokens: 4096,
 	})

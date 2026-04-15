@@ -142,7 +142,7 @@ func main() {
 		verify.RegisterRoutes(r, prospectsRepo, nil) // TG bot passed as nil for now
 		parser.RegisterRoutes(r, cfg.TwoGISAPIKey)
 		settings.RegisterRoutes(r, settingsUC, buildAITester(cfg), buildSMTPTester(), buildResendTester(), buildUsageCounter(leadsRepo))
-		chat.RegisterRoutes(r, chat.NewHandler(chat.NewRepository(pool), aiClient))
+		chat.RegisterRoutes(r, chat.NewHandler(chat.NewRepository(pool), newChatAIAdapter(aiClient)))
 		tgclient.RegisterRoutes(r, tgclient.NewClient(), tgclient.NewRepository(pool))
 	})
 

@@ -46,7 +46,15 @@ func (uc *UseCase) CreateSequence(ctx context.Context, s *domain.Sequence) error
 	return uc.repo.CreateSequence(ctx, s)
 }
 
-func (uc *UseCase) UpdateSequence(ctx context.Context, s *domain.Sequence) error {
+func (uc *UseCase) UpdateSequence(ctx context.Context, id uuid.UUID, name string) error {
+	s, err := uc.repo.GetSequence(ctx, id)
+	if err != nil {
+		return err
+	}
+	if s == nil {
+		return fmt.Errorf("sequence not found")
+	}
+	s.Name = name
 	return uc.repo.UpdateSequence(ctx, s)
 }
 

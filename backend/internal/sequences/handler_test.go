@@ -173,7 +173,8 @@ func TestHandler_GetSequence_InvalidID(t *testing.T) {
 
 func TestHandler_UpdateSequence(t *testing.T) {
 	seqID := uuid.New()
-	uc := NewUseCase(&mockRepo{}, &mockAI{}, newMockProspectReader(), &mockLeadCreator{})
+	repo := &mockRepo{sequences: []domain.Sequence{{ID: seqID, Name: "Old"}}}
+	uc := NewUseCase(repo, &mockAI{}, newMockProspectReader(), &mockLeadCreator{})
 	router := setupRouter(uc, uuid.New())
 
 	rr := doRequest(router, http.MethodPut, "/api/sequences/"+seqID.String(), map[string]string{"name": "Updated"})
@@ -655,7 +656,7 @@ func TestHandler_GetSequence_RepoError(t *testing.T) {
 
 func TestHandler_UpdateSequence_RepoError(t *testing.T) {
 	seqID := uuid.New()
-	repo := &mockRepo{updateSeqErr: errors.New("db error")}
+	repo := &mockRepo{sequences: []domain.Sequence{{ID: seqID, Name: "Old"}}, updateSeqErr: errors.New("db error")}
 	uc := NewUseCase(repo, &mockAI{}, newMockProspectReader(), &mockLeadCreator{})
 	router := setupRouter(uc, uuid.New())
 

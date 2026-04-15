@@ -917,18 +917,29 @@ func TestToggleActive_Error(t *testing.T) {
 }
 
 func TestUpdateSequence(t *testing.T) {
-	repo := &mockRepo{}
+	id := uuid.New()
+	repo := &mockRepo{sequences: []domain.Sequence{{ID: id, Name: "Old"}}}
 	uc := NewUseCase(repo, &mockAI{}, newMockProspectReader(), &mockLeadCreator{})
 
-	err := uc.UpdateSequence(context.Background(), &domain.Sequence{ID: uuid.New(), Name: "Updated"})
+	err := uc.UpdateSequence(context.Background(), id, "Updated")
 	require.NoError(t, err)
 }
 
-func TestUpdateSequence_Error(t *testing.T) {
-	repo := &mockRepo{updateSeqErr: errors.New("update failed")}
+func TestUpdateSequence_NotFound(t *testing.T) {
+	repo := &mockRepo{}
 	uc := NewUseCase(repo, &mockAI{}, newMockProspectReader(), &mockLeadCreator{})
 
-	err := uc.UpdateSequence(context.Background(), &domain.Sequence{ID: uuid.New(), Name: "Updated"})
+	err := uc.UpdateSequence(context.Background(), uuid.New(), "Updated")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "not found")
+}
+
+func TestUpdateSequence_Error(t *testing.T) {
+	id := uuid.New()
+	repo := &mockRepo{sequences: []domain.Sequence{{ID: id, Name: "Old"}}, updateSeqErr: errors.New("update failed")}
+	uc := NewUseCase(repo, &mockAI{}, newMockProspectReader(), &mockLeadCreator{})
+
+	err := uc.UpdateSequence(context.Background(), id, "Updated")
 	require.Error(t, err)
 }
 

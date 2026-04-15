@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/daniil/floq/internal/ai"
+	"github.com/daniil/floq/internal/chat"
 	"github.com/daniil/floq/internal/inbox"
 	leadsdomain "github.com/daniil/floq/internal/leads/domain"
 	"github.com/daniil/floq/internal/prospects"
@@ -250,5 +251,30 @@ func fromInboxQualification(q *inbox.InboxQualification) *leadsdomain.Qualificat
 		ProviderUsed:      q.ProviderUsed,
 		GeneratedAt:       q.GeneratedAt,
 	}
+}
+
+// --- Chat AI adapter (chat → ai boundary) ---
+
+type chatAIAdapter struct {
+	client *ai.AIClient
+}
+
+func newChatAIAdapter(client *ai.AIClient) chat.AIClient {
+	return &chatAIAdapter{client: client}
+}
+
+func (a *chatAIAdapter) Complete(ctx context.Context, req chat.ChatCompletionRequest) (string, error) {
+	msgs := make([]ai.Message, len(req.Messages))
+	for i, m := range req.Messages {
+		msgs[i] = ai.Message{Role: m.Role, Content: m.Content}
+	}
+	return a.client.Complete(ctx, ai.CompletionRequest{
+		Messages:  msgs,
+		MaxTokens: req.MaxTokens,
+	})
+}
+
+func (a *chatAIAdapter) ProviderName() string {
+	return a.client.ProviderName()
 }
 

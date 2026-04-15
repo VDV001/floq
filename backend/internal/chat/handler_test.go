@@ -10,7 +10,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/daniil/floq/internal/ai"
 	"github.com/daniil/floq/internal/httputil"
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
@@ -25,8 +24,12 @@ type mockAIClient struct {
 	err      error
 }
 
-func (m *mockAIClient) Complete(_ context.Context, _ ai.CompletionRequest) (string, error) {
+func (m *mockAIClient) Complete(_ context.Context, _ ChatCompletionRequest) (string, error) {
 	return m.response, m.err
+}
+
+func (m *mockAIClient) ProviderName() string {
+	return "test"
 }
 
 // --- Mock Stats Reader ---
@@ -203,8 +206,8 @@ func TestChat_InvalidJSON(t *testing.T) {
 func TestMockAIClient(t *testing.T) {
 	provider := &mockAIClient{response: "test response", err: nil}
 
-	resp, err := provider.Complete(context.Background(), ai.CompletionRequest{
-		Messages:  []ai.Message{{Role: "user", Content: "hello"}},
+	resp, err := provider.Complete(context.Background(), ChatCompletionRequest{
+		Messages:  []ChatMessage{{Role: "user", Content: "hello"}},
 		MaxTokens: 100,
 	})
 	require.NoError(t, err)

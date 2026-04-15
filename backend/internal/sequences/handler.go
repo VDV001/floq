@@ -137,8 +137,7 @@ func updateSequence(uc *UseCase) http.HandlerFunc {
 			return
 		}
 
-		s := &domain.Sequence{ID: id, Name: body.Name}
-		if err := uc.UpdateSequence(r.Context(), s); err != nil {
+		if err := uc.UpdateSequence(r.Context(), id, body.Name); err != nil {
 			httputil.WriteError(w, http.StatusInternalServerError, "failed to update sequence")
 			return
 		}

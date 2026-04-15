@@ -3,13 +3,25 @@ package chat
 import (
 	"context"
 
-	"github.com/daniil/floq/internal/ai"
 	"github.com/google/uuid"
 )
 
-// AIClient abstracts AI completion so the handler doesn't depend on *ai.AIClient.
+// ChatMessage represents a single message in a chat completion request.
+type ChatMessage struct {
+	Role    string
+	Content string
+}
+
+// ChatCompletionRequest is a chat-local request for AI completion.
+type ChatCompletionRequest struct {
+	Messages  []ChatMessage
+	MaxTokens int
+}
+
+// AIClient abstracts AI completion so the handler doesn't depend on infrastructure.
 type AIClient interface {
-	Complete(ctx context.Context, req ai.CompletionRequest) (string, error)
+	Complete(ctx context.Context, req ChatCompletionRequest) (string, error)
+	ProviderName() string
 }
 
 // StatsReader provides aggregated CRM statistics for the chat system prompt.
