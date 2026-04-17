@@ -24,7 +24,7 @@ func TestCreateAndGetSequence(t *testing.T) {
 	repo := sequences.NewRepository(pool)
 	ctx := context.Background()
 
-	seq := domain.NewSequence(userID, "Test Sequence")
+	seq, _ := domain.NewSequence(userID, "Test Sequence")
 
 	err := repo.CreateSequence(ctx, seq)
 	require.NoError(t, err)
@@ -52,7 +52,7 @@ func TestListSequences(t *testing.T) {
 	ctx := context.Background()
 
 	for i := 0; i < 3; i++ {
-		s := domain.NewSequence(userID, "Seq-"+uuid.New().String()[:8])
+		s, _ := domain.NewSequence(userID, "Seq-"+uuid.New().String()[:8])
 		require.NoError(t, repo.CreateSequence(ctx, s))
 	}
 
@@ -67,7 +67,7 @@ func TestUpdateSequence(t *testing.T) {
 	repo := sequences.NewRepository(pool)
 	ctx := context.Background()
 
-	seq := domain.NewSequence(userID, "Original")
+	seq, _ := domain.NewSequence(userID, "Original")
 	require.NoError(t, repo.CreateSequence(ctx, seq))
 
 	seq.Name = "Updated"
@@ -84,7 +84,7 @@ func TestDeleteSequence(t *testing.T) {
 	repo := sequences.NewRepository(pool)
 	ctx := context.Background()
 
-	seq := domain.NewSequence(userID, "ToDelete")
+	seq, _ := domain.NewSequence(userID, "ToDelete")
 	require.NoError(t, repo.CreateSequence(ctx, seq))
 
 	require.NoError(t, repo.DeleteSequence(ctx, seq.ID))
@@ -94,21 +94,25 @@ func TestDeleteSequence(t *testing.T) {
 	assert.Nil(t, got)
 }
 
-func TestToggleActive(t *testing.T) {
+func TestToggleActiveViaUpdateSequence(t *testing.T) {
 	pool := testutil.TestDB(t)
 	userID := testutil.SeedUser(t, pool)
 	repo := sequences.NewRepository(pool)
 	ctx := context.Background()
 
-	seq := domain.NewSequence(userID, "Toggle")
+	seq, _ := domain.NewSequence(userID, "Toggle")
 	require.NoError(t, repo.CreateSequence(ctx, seq))
 
-	require.NoError(t, repo.ToggleActive(ctx, seq.ID, true))
+	// Activate via domain method + UpdateSequence (the production path
+	// since ToggleActive was removed from the port).
+	seq.Activate()
+	require.NoError(t, repo.UpdateSequence(ctx, seq))
 	got, err := repo.GetSequence(ctx, seq.ID)
 	require.NoError(t, err)
 	assert.True(t, got.IsActive)
 
-	require.NoError(t, repo.ToggleActive(ctx, seq.ID, false))
+	seq.Deactivate()
+	require.NoError(t, repo.UpdateSequence(ctx, seq))
 	got, err = repo.GetSequence(ctx, seq.ID)
 	require.NoError(t, err)
 	assert.False(t, got.IsActive)
@@ -120,7 +124,7 @@ func TestCreateAndListSteps(t *testing.T) {
 	repo := sequences.NewRepository(pool)
 	ctx := context.Background()
 
-	seq := domain.NewSequence(userID, "WithSteps")
+	seq, _ := domain.NewSequence(userID, "WithSteps")
 	require.NoError(t, repo.CreateSequence(ctx, seq))
 
 	step1 := domain.NewSequenceStep(seq.ID, 1, 0, domain.StepChannelEmail, "intro")
@@ -142,7 +146,7 @@ func TestDeleteStep(t *testing.T) {
 	repo := sequences.NewRepository(pool)
 	ctx := context.Background()
 
-	seq := domain.NewSequence(userID, "DelStep")
+	seq, _ := domain.NewSequence(userID, "DelStep")
 	require.NoError(t, repo.CreateSequence(ctx, seq))
 
 	step := domain.NewSequenceStep(seq.ID, 1, 0, domain.StepChannelEmail, "to delete")
@@ -159,7 +163,7 @@ func TestDeleteStep(t *testing.T) {
 func seedProspect(t *testing.T, pool *pgxpool.Pool, userID uuid.UUID) uuid.UUID {
 	t.Helper()
 	ctx := context.Background()
-	p := pdomain.NewProspect(userID, "Test Prospect", "Co", "CTO", "p@example.com", "manual")
+	p, _ := pdomain.NewProspect(userID, "Test Prospect", "Co", "CTO", "p@example.com", "manual")
 	_, err := pool.Exec(ctx,
 		`INSERT INTO prospects (id, user_id, name, company, title, email, phone, whatsapp, telegram_username, industry, company_size, context,
 		                        source, source_id, status, verify_status, verify_score, verify_details, verified_at, converted_lead_id, created_at, updated_at)
@@ -176,7 +180,7 @@ func TestCreateOutboundAndListQueue(t *testing.T) {
 	repo := sequences.NewRepository(pool)
 	ctx := context.Background()
 
-	seq := domain.NewSequence(userID, "Outbound Seq")
+	seq, _ := domain.NewSequence(userID, "Outbound Seq")
 	require.NoError(t, repo.CreateSequence(ctx, seq))
 
 	prospectID := seedProspect(t, pool, userID)
@@ -204,7 +208,7 @@ func TestApproveAndListSent(t *testing.T) {
 	repo := sequences.NewRepository(pool)
 	ctx := context.Background()
 
-	seq := domain.NewSequence(userID, "ApproveSeq")
+	seq, _ := domain.NewSequence(userID, "ApproveSeq")
 	require.NoError(t, repo.CreateSequence(ctx, seq))
 	prospectID := seedProspect(t, pool, userID)
 
@@ -232,7 +236,7 @@ func TestUpdateOutboundBody(t *testing.T) {
 	repo := sequences.NewRepository(pool)
 	ctx := context.Background()
 
-	seq := domain.NewSequence(userID, "BodyUpd")
+	seq, _ := domain.NewSequence(userID, "BodyUpd")
 	require.NoError(t, repo.CreateSequence(ctx, seq))
 	prospectID := seedProspect(t, pool, userID)
 
@@ -261,9 +265,10 @@ func TestMarkSentAndOpened(t *testing.T) {
 	repo := sequences.NewRepository(pool)
 	ctx := context.Background()
 
-	seq := domain.NewSequence(userID, "MarkSeq")
+	seq, _ := domain.NewSequence(userID, "MarkSeq")
 	require.NoError(t, repo.CreateSequence(ctx, seq))
-	require.NoError(t, repo.ToggleActive(ctx, seq.ID, true))
+	seq.Activate()
+	require.NoError(t, repo.UpdateSequence(ctx, seq))
 	prospectID := seedProspect(t, pool, userID)
 
 	msg := domain.NewOutboundMessage(prospectID, seq.ID, 1, domain.StepChannelEmail, "body", time.Now().UTC().Add(-time.Hour))
@@ -281,12 +286,15 @@ func TestMarkSentAndOpened(t *testing.T) {
 	}
 	assert.True(t, found, "expected message in pending sends")
 
-	// MarkSent
-	require.NoError(t, repo.MarkSent(ctx, msg.ID))
+	// MarkSent — persists the caller-supplied sent_at verbatim (no NOW()).
+	sentAt := time.Now().UTC().Add(-30 * time.Minute).Truncate(time.Microsecond)
+	require.NoError(t, repo.MarkSent(ctx, msg.ID, sentAt))
 	got, err := repo.GetOutboundMessage(ctx, msg.ID)
 	require.NoError(t, err)
 	assert.Equal(t, domain.OutboundStatusSent, got.Status)
-	assert.NotNil(t, got.SentAt)
+	require.NotNil(t, got.SentAt)
+	// The timestamp in the row MUST equal what we passed — not DB NOW().
+	assert.Equal(t, sentAt, got.SentAt.UTC().Truncate(time.Microsecond))
 
 	// MarkOpened
 	require.NoError(t, repo.MarkOpened(ctx, msg.ID))
@@ -298,14 +306,14 @@ func TestMarkBounced(t *testing.T) {
 	repo := sequences.NewRepository(pool)
 	ctx := context.Background()
 
-	seq := domain.NewSequence(userID, "BounceSeq")
+	seq, _ := domain.NewSequence(userID, "BounceSeq")
 	require.NoError(t, repo.CreateSequence(ctx, seq))
 	prospectID := seedProspect(t, pool, userID)
 
 	msg := domain.NewOutboundMessage(prospectID, seq.ID, 1, domain.StepChannelEmail, "body", time.Now().UTC())
 	require.NoError(t, repo.CreateOutboundMessage(ctx, msg))
 
-	require.NoError(t, repo.MarkBounced(ctx, msg.ID))
+	require.NoError(t, repo.MarkBounced(ctx, msg.ID, time.Now().UTC()))
 
 	got, err := repo.GetOutboundMessage(ctx, msg.ID)
 	require.NoError(t, err)
@@ -318,13 +326,13 @@ func TestMarkRepliedByProspect(t *testing.T) {
 	repo := sequences.NewRepository(pool)
 	ctx := context.Background()
 
-	seq := domain.NewSequence(userID, "ReplySeq")
+	seq, _ := domain.NewSequence(userID, "ReplySeq")
 	require.NoError(t, repo.CreateSequence(ctx, seq))
 	prospectID := seedProspect(t, pool, userID)
 
 	msg := domain.NewOutboundMessage(prospectID, seq.ID, 1, domain.StepChannelEmail, "body", time.Now().UTC())
 	require.NoError(t, repo.CreateOutboundMessage(ctx, msg))
-	require.NoError(t, repo.MarkSent(ctx, msg.ID))
+	require.NoError(t, repo.MarkSent(ctx, msg.ID, time.Now().UTC()))
 
 	require.NoError(t, repo.MarkRepliedByProspect(ctx, prospectID))
 }
@@ -349,13 +357,13 @@ func TestGetConversationHistory(t *testing.T) {
 	repo := sequences.NewRepository(pool)
 	ctx := context.Background()
 
-	seq := domain.NewSequence(userID, "ConvSeq")
+	seq, _ := domain.NewSequence(userID, "ConvSeq")
 	require.NoError(t, repo.CreateSequence(ctx, seq))
 	prospectID := seedProspect(t, pool, userID)
 
 	msg := domain.NewOutboundMessage(prospectID, seq.ID, 1, domain.StepChannelEmail, "conv body", time.Now().UTC())
 	require.NoError(t, repo.CreateOutboundMessage(ctx, msg))
-	require.NoError(t, repo.MarkSent(ctx, msg.ID))
+	require.NoError(t, repo.MarkSent(ctx, msg.ID, time.Now().UTC()))
 
 	entries, err := repo.GetConversationHistory(ctx, prospectID)
 	require.NoError(t, err)
@@ -369,7 +377,7 @@ func TestGetStats(t *testing.T) {
 	repo := sequences.NewRepository(pool)
 	ctx := context.Background()
 
-	seq := domain.NewSequence(userID, "StatsSeq")
+	seq, _ := domain.NewSequence(userID, "StatsSeq")
 	require.NoError(t, repo.CreateSequence(ctx, seq))
 	prospectID := seedProspect(t, pool, userID)
 
@@ -378,7 +386,7 @@ func TestGetStats(t *testing.T) {
 	m2 := domain.NewOutboundMessage(prospectID, seq.ID, 2, domain.StepChannelEmail, "sent", time.Now().UTC())
 	require.NoError(t, repo.CreateOutboundMessage(ctx, m1))
 	require.NoError(t, repo.CreateOutboundMessage(ctx, m2))
-	require.NoError(t, repo.MarkSent(ctx, m2.ID))
+	require.NoError(t, repo.MarkSent(ctx, m2.ID, time.Now().UTC()))
 
 	stats, err := repo.GetStats(ctx, userID)
 	require.NoError(t, err)

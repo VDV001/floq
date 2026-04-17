@@ -103,11 +103,12 @@ func main() {
 	leadCreatorAdapter := sequences.NewLeadCreatorAdapter(leadsRepo)
 
 	// 5. Use cases
-	leadsUC := leads.NewUseCase(leadsRepo, leadsAI, nil) // sender set after bot init
+	txManager := db.NewTxManager(pool)
+	suggestionFinder := newProspectSuggestionFinderAdapter(txManager, leadsRepo, prospectsRepo)
+	leadsUC := leads.NewUseCase(leadsRepo, leadsAI, nil, leads.WithSuggestionFinder(suggestionFinder)) // sender set after bot init
 	prospectsUC := prospects.NewUseCase(prospectsRepo, prospects.WithLeadChecker(newLeadCheckerAdapter(leadsRepo)))
 	sourcesUC := sources.NewUseCase(sourcesRepo, sources.WithStatsReader(sourcesRepo))
 	migrateOrphanProspects(pool, ownerID)
-	txManager := db.NewTxManager(pool)
 	sequencesUC := sequences.NewUseCase(sequencesRepo, seqAI, prospectReader, leadCreatorAdapter, sequences.WithTxManager(txManager))
 
 	// 5. Auth
@@ -171,7 +172,7 @@ func main() {
 
 	// 8. Optional: Telegram inbox bot
 	// Read token from DB first, fall back to .env
-	prospectAdapter := newProspectRepoAdapter(prospectsRepo)
+	prospectAdapter := newProspectRepoAdapter(prospectsRepo, txManager)
 	inboxLeadAdapter := newInboxLeadRepoAdapter(leadsRepo)
 	inboxAI := newInboxAIAdapter(aiClient)
 	inboxCfg := newInboxConfigAdapter(settingsStore)

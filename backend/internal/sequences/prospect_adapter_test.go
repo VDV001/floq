@@ -20,11 +20,14 @@ type mockProspectsRepo struct {
 	updateErr error
 }
 
-func (m *mockProspectsRepo) ListProspects(_ context.Context, _ uuid.UUID) ([]prospectsdomain.Prospect, error) {
+func (m *mockProspectsRepo) ListProspects(_ context.Context, _ uuid.UUID) ([]prospectsdomain.ProspectWithSource, error) {
 	return nil, nil
 }
 func (m *mockProspectsRepo) GetProspect(_ context.Context, _ uuid.UUID) (*prospectsdomain.Prospect, error) {
 	return m.prospect, m.getErr
+}
+func (m *mockProspectsRepo) GetProspectForUser(_ context.Context, _ uuid.UUID, _ uuid.UUID) (*prospectsdomain.Prospect, error) {
+	return nil, nil
 }
 func (m *mockProspectsRepo) FindByEmail(_ context.Context, _ uuid.UUID, _ string) (*prospectsdomain.Prospect, error) {
 	return nil, nil
@@ -113,18 +116,39 @@ func TestProspectReaderAdapter_GetProspect_Error(t *testing.T) {
 	assert.Nil(t, view)
 }
 
-func TestProspectReaderAdapter_UpdateStatus(t *testing.T) {
-	repo := &mockProspectsRepo{}
+func TestProspectReaderAdapter_MarkInSequence(t *testing.T) {
+	// UpdateStatus now routes through Prospect.TransitionTo (see adapter
+	// comment), so it must find a prospect to transition. Seed a draft one.
+	p, _ := prospectsdomain.NewProspect(uuid.New(), "X", "Y", "", "", "manual")
+	repo := &mockProspectsRepo{prospect: p}
 	adapter := NewProspectReaderAdapter(repo)
 
-	err := adapter.UpdateStatus(context.Background(), uuid.New(), "in_sequence")
+	err := adapter.MarkInSequence(context.Background(), p.ID)
 	require.NoError(t, err)
 }
 
-func TestProspectReaderAdapter_UpdateStatus_Error(t *testing.T) {
-	repo := &mockProspectsRepo{updateErr: errors.New("update failed")}
+func TestProspectReaderAdapter_MarkInSequence_IllegalTransition(t *testing.T) {
+	p, _ := prospectsdomain.NewProspect(uuid.New(), "X", "Y", "", "", "manual")
+	p.Status = prospectsdomain.ProspectStatusConverted // terminal
+	repo := &mockProspectsRepo{prospect: p}
 	adapter := NewProspectReaderAdapter(repo)
 
-	err := adapter.UpdateStatus(context.Background(), uuid.New(), "in_sequence")
+	err := adapter.MarkInSequence(context.Background(), p.ID)
+	require.Error(t, err)
+}
+
+func TestProspectReaderAdapter_MarkInSequence_NotFound(t *testing.T) {
+	repo := &mockProspectsRepo{}
+	adapter := NewProspectReaderAdapter(repo)
+	err := adapter.MarkInSequence(context.Background(), uuid.New())
+	require.Error(t, err)
+}
+
+func TestProspectReaderAdapter_MarkInSequence_PersistError(t *testing.T) {
+	p, _ := prospectsdomain.NewProspect(uuid.New(), "X", "Y", "", "", "manual")
+	repo := &mockProspectsRepo{prospect: p, updateErr: errors.New("update failed")}
+	adapter := NewProspectReaderAdapter(repo)
+
+	err := adapter.MarkInSequence(context.Background(), p.ID)
 	require.Error(t, err)
 }

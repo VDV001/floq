@@ -125,7 +125,15 @@ func (s *Sender) SendPending(ctx context.Context) error {
 			errStr := sendErr.Error()
 			if strings.Contains(errStr, "bounce") || strings.Contains(errStr, "invalid") || strings.Contains(errStr, "rejected") || strings.Contains(errStr, "mailbox") || strings.Contains(errStr, "550") || strings.Contains(errStr, "553") {
 				log.Printf("[outbound] bounce for %s (msg %s): %v", prospect.Email, msg.ID, sendErr)
-				_ = s.seqRepo.MarkBounced(ctx, msg.ID)
+				// Domain entity owns the clock symmetrically with MarkSent —
+				// if the state machine rejects the transition, nothing is
+				// persisted. The bouncedAt we pass to the repo is what the
+				// entity just recorded.
+				if err := msg.MarkBounced(time.Now().UTC()); err != nil {
+					log.Printf("[outbound] refusing to mark %s bounced: %v", msg.ID, err)
+					continue
+				}
+				_ = s.seqRepo.MarkBounced(ctx, msg.ID, *msg.BouncedAt)
 				_ = s.prospectRepo.UpdateVerification(ctx, msg.ProspectID, prospectsdomain.VerifyStatusInvalid, 0, `{"bounce":true}`, time.Now().UTC())
 				continue
 			}
@@ -133,8 +141,14 @@ func (s *Sender) SendPending(ctx context.Context) error {
 			continue
 		}
 
-		if err := s.seqRepo.MarkSent(ctx, msg.ID); err != nil {
-			log.Printf("[outbound] failed to mark %s as sent: %v", msg.ID, err)
+		// Validate approved→sent via the domain; the entity owns the clock
+		// and SentAt becomes the source of truth the repo persists.
+		if err := msg.MarkSent(time.Now().UTC()); err != nil {
+			log.Printf("[outbound] refusing to mark %s sent: %v", msg.ID, err)
+			continue
+		}
+		if err := s.seqRepo.MarkSent(ctx, msg.ID, *msg.SentAt); err != nil {
+			log.Printf("[outbound] failed to persist %s as sent: %v", msg.ID, err)
 			continue
 		}
 
@@ -279,8 +293,12 @@ func (s *Sender) handleTelegramMessage(ctx context.Context, msg seqdomain.Outbou
 	s.tgLastSent = time.Now()
 	s.tgRateMu.Unlock()
 
-	if err := s.seqRepo.MarkSent(ctx, msg.ID); err != nil {
-		log.Printf("[outbound] failed to mark %s as sent: %v", msg.ID, err)
+	if err := msg.MarkSent(time.Now().UTC()); err != nil {
+		log.Printf("[outbound] refusing to mark telegram %s sent: %v", msg.ID, err)
+		return
+	}
+	if err := s.seqRepo.MarkSent(ctx, msg.ID, *msg.SentAt); err != nil {
+		log.Printf("[outbound] failed to persist telegram %s as sent: %v", msg.ID, err)
 		return
 	}
 

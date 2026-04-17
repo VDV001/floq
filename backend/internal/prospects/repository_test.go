@@ -16,7 +16,7 @@ import (
 )
 
 func newTestProspect(userID uuid.UUID) *domain.Prospect {
-	p := domain.NewProspect(userID, "Test "+uuid.New().String()[:8], "ACME", "CTO", "test-"+uuid.New().String()[:8]+"@example.com", "manual")
+	p, _ := domain.NewProspect(userID, "Test "+uuid.New().String()[:8], "ACME", "CTO", "test-"+uuid.New().String()[:8]+"@example.com", "manual")
 	p.TelegramUsername = "tg_" + uuid.New().String()[:8]
 	return p
 }

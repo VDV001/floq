@@ -22,6 +22,7 @@ type mockRepo struct {
 	createdMessages       []*domain.Message
 	upsertedQualification *domain.Qualification
 	updatedStatuses       map[uuid.UUID]domain.LeadStatus
+	updatedSourceIDs      map[uuid.UUID]*uuid.UUID
 	createdDrafts         []*domain.Draft
 }
 
@@ -35,12 +36,20 @@ func newMockRepo() *mockRepo {
 	}
 }
 
-func (m *mockRepo) ListLeads(_ context.Context, _ uuid.UUID) ([]domain.Lead, error) {
-	var result []domain.Lead
+func (m *mockRepo) ListLeads(_ context.Context, _ uuid.UUID) ([]domain.LeadWithSource, error) {
+	var result []domain.LeadWithSource
 	for _, l := range m.leads {
-		result = append(result, *l)
+		result = append(result, domain.LeadWithSource{Lead: *l})
 	}
 	return result, nil
+}
+
+func (m *mockRepo) GetLeadForUser(_ context.Context, userID, leadID uuid.UUID) (*domain.Lead, error) {
+	l, ok := m.leads[leadID]
+	if !ok || l.UserID != userID {
+		return nil, nil
+	}
+	return l, nil
 }
 
 func (m *mockRepo) GetLead(_ context.Context, id uuid.UUID) (*domain.Lead, error) {
@@ -62,6 +71,14 @@ func (m *mockRepo) UpdateFirstMessage(_ context.Context, _ uuid.UUID, _ string) 
 
 func (m *mockRepo) UpdateLeadStatus(_ context.Context, id uuid.UUID, status domain.LeadStatus) error {
 	m.updatedStatuses[id] = status
+	return nil
+}
+
+func (m *mockRepo) UpdateSourceID(_ context.Context, id uuid.UUID, sourceID *uuid.UUID) error {
+	if m.updatedSourceIDs == nil {
+		m.updatedSourceIDs = make(map[uuid.UUID]*uuid.UUID)
+	}
+	m.updatedSourceIDs[id] = sourceID
 	return nil
 }
 
@@ -1028,7 +1045,7 @@ type mockRepoWithListErr struct {
 	err error
 }
 
-func (m *mockRepoWithListErr) ListLeads(_ context.Context, _ uuid.UUID) ([]domain.Lead, error) {
+func (m *mockRepoWithListErr) ListLeads(_ context.Context, _ uuid.UUID) ([]domain.LeadWithSource, error) {
 	return nil, m.err
 }
 

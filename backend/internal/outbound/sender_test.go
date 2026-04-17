@@ -33,6 +33,7 @@ type mockOutboundRepository struct {
 	pending    []seqdomain.OutboundMessage
 	pendingErr error
 	sentIDs    []uuid.UUID
+	sentAts    []time.Time
 	sentErr    error
 	bouncedIDs []uuid.UUID
 	bouncedErr error
@@ -42,12 +43,13 @@ func (m *mockOutboundRepository) GetPendingSends(_ context.Context) ([]seqdomain
 	return m.pending, m.pendingErr
 }
 
-func (m *mockOutboundRepository) MarkSent(_ context.Context, id uuid.UUID) error {
+func (m *mockOutboundRepository) MarkSent(_ context.Context, id uuid.UUID, sentAt time.Time) error {
 	m.sentIDs = append(m.sentIDs, id)
+	m.sentAts = append(m.sentAts, sentAt)
 	return m.sentErr
 }
 
-func (m *mockOutboundRepository) MarkBounced(_ context.Context, id uuid.UUID) error {
+func (m *mockOutboundRepository) MarkBounced(_ context.Context, id uuid.UUID, _ time.Time) error {
 	m.bouncedIDs = append(m.bouncedIDs, id)
 	return m.bouncedErr
 }
@@ -171,8 +173,8 @@ func TestSendPending_EmailHappyPath(t *testing.T) {
 				ID:         msgID,
 				ProspectID: prospectID,
 				Channel:    seqdomain.StepChannelEmail,
-				Body:       "<p>Hello!</p>",
 				Status:     seqdomain.OutboundStatusApproved,
+				Body:       "<p>Hello!</p>",
 			},
 		},
 	}
@@ -257,6 +259,7 @@ func TestSendPending_BounceDetection(t *testing.T) {
 				ID:         msgID,
 				ProspectID: prospectID,
 				Channel:    seqdomain.StepChannelEmail,
+				Status:     seqdomain.OutboundStatusApproved,
 				Body:       "hi",
 			},
 		},
@@ -303,6 +306,7 @@ func TestSendPending_TelegramHappyPath(t *testing.T) {
 				ID:         msgID,
 				ProspectID: prospectID,
 				Channel:    seqdomain.StepChannelTelegram,
+				Status:     seqdomain.OutboundStatusApproved,
 				Body:       "Hello via TG!",
 			},
 		},
@@ -367,12 +371,14 @@ func TestSendPending_TelegramRateLimit(t *testing.T) {
 				ID:         msgID1,
 				ProspectID: prospectID1,
 				Channel:    seqdomain.StepChannelTelegram,
+				Status:     seqdomain.OutboundStatusApproved,
 				Body:       "First TG message",
 			},
 			{
 				ID:         msgID2,
 				ProspectID: prospectID2,
 				Channel:    seqdomain.StepChannelTelegram,
+				Status:     seqdomain.OutboundStatusApproved,
 				Body:       "Second TG message",
 			},
 		},
@@ -432,6 +438,7 @@ func TestSendPending_SkipNoEmail(t *testing.T) {
 				ID:         msgID,
 				ProspectID: prospectID,
 				Channel:    seqdomain.StepChannelEmail,
+				Status:     seqdomain.OutboundStatusApproved,
 				Body:       "hi",
 			},
 		},
@@ -489,6 +496,7 @@ func TestSendPending_TelegramNoSession(t *testing.T) {
 				ID:         msgID,
 				ProspectID: prospectID,
 				Channel:    seqdomain.StepChannelTelegram,
+				Status:     seqdomain.OutboundStatusApproved,
 				Body:       "TG msg",
 			},
 		},
@@ -522,6 +530,7 @@ func TestSendPending_TelegramSendFailure(t *testing.T) {
 				ID:         msgID,
 				ProspectID: prospectID,
 				Channel:    seqdomain.StepChannelTelegram,
+				Status:     seqdomain.OutboundStatusApproved,
 				Body:       "TG msg",
 			},
 		},
@@ -626,6 +635,7 @@ func TestSendPending_ConfigStoreOverridesSMTP(t *testing.T) {
 				ID:         msgID,
 				ProspectID: prospectID,
 				Channel:    seqdomain.StepChannelEmail,
+				Status:     seqdomain.OutboundStatusApproved,
 				Body:       "hello",
 			},
 		},
@@ -679,6 +689,7 @@ func TestSendPending_SubjectWithoutCompany(t *testing.T) {
 				ID:         msgID,
 				ProspectID: prospectID,
 				Channel:    seqdomain.StepChannelEmail,
+				Status:     seqdomain.OutboundStatusApproved,
 				Body:       "hi",
 			},
 		},
@@ -721,6 +732,7 @@ func TestSendPending_TelegramPhoneFallback(t *testing.T) {
 				ID:         msgID,
 				ProspectID: prospectID,
 				Channel:    seqdomain.StepChannelTelegram,
+				Status:     seqdomain.OutboundStatusApproved,
 				Body:       "Phone fallback msg",
 			},
 		},
@@ -770,6 +782,7 @@ func TestSendPending_ProspectLookupError(t *testing.T) {
 				ID:         msgID,
 				ProspectID: prospectID,
 				Channel:    seqdomain.StepChannelEmail,
+				Status:     seqdomain.OutboundStatusApproved,
 				Body:       "hi",
 			},
 		},
@@ -806,6 +819,7 @@ func TestSendPending_NilProspect(t *testing.T) {
 				ID:         msgID,
 				ProspectID: prospectID,
 				Channel:    seqdomain.StepChannelEmail,
+				Status:     seqdomain.OutboundStatusApproved,
 				Body:       "hi",
 			},
 		},
@@ -840,6 +854,7 @@ func TestSendPending_WithTrackingPixel(t *testing.T) {
 				ID:         msgID,
 				ProspectID: prospectID,
 				Channel:    seqdomain.StepChannelEmail,
+				Status:     seqdomain.OutboundStatusApproved,
 				Body:       "<p>Hello!</p>",
 			},
 		},
@@ -877,6 +892,7 @@ func TestSendPending_ConfigStoreError(t *testing.T) {
 				ID:         msgID,
 				ProspectID: prospectID,
 				Channel:    seqdomain.StepChannelEmail,
+				Status:     seqdomain.OutboundStatusApproved,
 				Body:       "hi",
 			},
 		},
@@ -913,6 +929,7 @@ func TestSendPending_TelegramProspectLookupError(t *testing.T) {
 				ID:         msgID,
 				ProspectID: prospectID,
 				Channel:    seqdomain.StepChannelTelegram,
+				Status:     seqdomain.OutboundStatusApproved,
 				Body:       "TG msg",
 			},
 		},
@@ -950,6 +967,7 @@ func TestSendPending_TelegramSessionError(t *testing.T) {
 				ID:         msgID,
 				ProspectID: prospectID,
 				Channel:    seqdomain.StepChannelTelegram,
+				Status:     seqdomain.OutboundStatusApproved,
 				Body:       "TG msg",
 			},
 		},
@@ -983,6 +1001,7 @@ func TestSendPending_TelegramNilProspect(t *testing.T) {
 				ID:         msgID,
 				ProspectID: prospectID,
 				Channel:    seqdomain.StepChannelTelegram,
+				Status:     seqdomain.OutboundStatusApproved,
 				Body:       "TG msg",
 			},
 		},
@@ -1022,6 +1041,7 @@ func TestSendPending_TelegramNoPhoneNoUsername(t *testing.T) {
 				ID:         msgID,
 				ProspectID: prospectID,
 				Channel:    seqdomain.StepChannelTelegram,
+				Status:     seqdomain.OutboundStatusApproved,
 				Body:       "no target",
 			},
 		},
@@ -1065,6 +1085,7 @@ func TestSendPending_BounceKeywords(t *testing.T) {
 				ID:         msgID,
 				ProspectID: prospectID,
 				Channel:    seqdomain.StepChannelEmail,
+				Status:     seqdomain.OutboundStatusApproved,
 				Body:       "hi",
 			},
 		},
@@ -1104,6 +1125,7 @@ func TestSendPending_SMTPFromAddrFallback(t *testing.T) {
 				ID:         msgID,
 				ProspectID: prospectID,
 				Channel:    seqdomain.StepChannelEmail,
+				Status:     seqdomain.OutboundStatusApproved,
 				Body:       "hi",
 			},
 		},
@@ -1147,6 +1169,7 @@ func TestSendPending_TelegramMarkSentError(t *testing.T) {
 				ID:         msgID,
 				ProspectID: prospectID,
 				Channel:    seqdomain.StepChannelTelegram,
+				Status:     seqdomain.OutboundStatusApproved,
 				Body:       "TG msg",
 			},
 		},

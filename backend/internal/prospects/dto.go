@@ -37,6 +37,9 @@ type ProspectResponse struct {
 
 // --- Mapping functions ---
 
+// ProspectToResponse maps the plain Prospect entity to a response; the list
+// projection ProspectWithSourceToResponse adds source_name from the read
+// model assembled by the repository.
 func ProspectToResponse(p *domain.Prospect) ProspectResponse {
 	return ProspectResponse{
 		ID:               p.ID,
@@ -53,7 +56,6 @@ func ProspectToResponse(p *domain.Prospect) ProspectResponse {
 		Context:          p.Context,
 		Source:           p.Source,
 		SourceID:         p.SourceID,
-		SourceName:       p.SourceName,
 		Status:           string(p.Status),
 		VerifyStatus:     string(p.VerifyStatus),
 		VerifyScore:      p.VerifyScore,
@@ -65,13 +67,19 @@ func ProspectToResponse(p *domain.Prospect) ProspectResponse {
 	}
 }
 
-func ProspectsToResponse(prospects []domain.Prospect) []ProspectResponse {
+func ProspectWithSourceToResponse(p *domain.ProspectWithSource) ProspectResponse {
+	resp := ProspectToResponse(&p.Prospect)
+	resp.SourceName = p.SourceName
+	return resp
+}
+
+func ProspectsToResponse(prospects []domain.ProspectWithSource) []ProspectResponse {
 	if prospects == nil {
 		return []ProspectResponse{}
 	}
 	resp := make([]ProspectResponse, len(prospects))
 	for i := range prospects {
-		resp[i] = ProspectToResponse(&prospects[i])
+		resp[i] = ProspectWithSourceToResponse(&prospects[i])
 	}
 	return resp
 }

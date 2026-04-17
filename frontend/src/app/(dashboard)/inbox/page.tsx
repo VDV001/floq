@@ -14,6 +14,7 @@ import {
   CircleCheck,
   Upload,
   Download,
+  Link2,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -90,6 +91,9 @@ export default function InboxPage() {
   const [leads, setLeads] = useState<Lead[]>([]);
   const [statusCounts, setStatusCounts] = useState<Record<string, number>>({});
   const [sourceFilter, setSourceFilter] = useState("");
+  // Cross-channel prospect-suggestion counts per lead id (issue #6).
+  // Separate lightweight endpoint so the lead list stays fast.
+  const [suggestionCounts, setSuggestionCounts] = useState<Record<string, number>>({});
 
   useEffect(() => {
     const fetchLeads = () => {
@@ -132,7 +136,17 @@ export default function InboxPage() {
         .finally(() => setLoading(false));
     };
     fetchLeads();
-    const interval = setInterval(fetchLeads, 30000);
+    const fetchSuggestionCounts = () => {
+      api
+        .getSuggestionCounts()
+        .then(setSuggestionCounts)
+        .catch(() => {});
+    };
+    fetchSuggestionCounts();
+    const interval = setInterval(() => {
+      fetchLeads();
+      fetchSuggestionCounts();
+    }, 30000);
     return () => clearInterval(interval);
   }, []);
 
@@ -382,6 +396,15 @@ export default function InboxPage() {
                   >
                     {lead.status}
                   </span>
+                  {suggestionCounts[lead.id] > 0 && (
+                    <span
+                      className="inline-flex items-center gap-1 rounded-full bg-[#fff3cd] px-2 py-0.5 text-[10px] font-semibold text-[#8a5a00]"
+                      title={`${suggestionCounts[lead.id]} возможных совпадений с проспектом`}
+                    >
+                      <Link2 className="size-3" />
+                      {suggestionCounts[lead.id]}
+                    </span>
+                  )}
                 </div>
 
               </Link>

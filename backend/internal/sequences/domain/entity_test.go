@@ -6,6 +6,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestOutboundStatus_IsValid(t *testing.T) {
@@ -66,11 +67,38 @@ func TestStepChannel_String(t *testing.T) {
 	assert.Equal(t, "phone_call", StepChannelPhoneCall.String())
 }
 
+func TestNewSequence_RejectsInvalidInput(t *testing.T) {
+	_, err := NewSequence(uuid.Nil, "Fine Name")
+	require.Error(t, err, "zero userID must be rejected")
+	_, err = NewSequence(uuid.New(), "")
+	require.Error(t, err, "empty name must be rejected")
+	_, err = NewSequence(uuid.New(), "   ")
+	require.Error(t, err, "blank name must be rejected")
+}
+
+func TestSequence_Rename(t *testing.T) {
+	s, err := NewSequence(uuid.New(), "Original")
+	require.NoError(t, err)
+	require.NoError(t, s.Rename("Renamed"))
+	assert.Equal(t, "Renamed", s.Name)
+	require.Error(t, s.Rename(""), "blank rename must be rejected")
+	require.Error(t, s.Rename("\t"), "whitespace rename must be rejected")
+}
+
+func TestSequence_ActivateDeactivate(t *testing.T) {
+	s, _ := NewSequence(uuid.New(), "x")
+	assert.False(t, s.IsActive, "new sequences start inactive")
+	s.Activate()
+	assert.True(t, s.IsActive)
+	s.Deactivate()
+	assert.False(t, s.IsActive)
+}
+
 func TestNewSequence(t *testing.T) {
 	userID := uuid.New()
 	name := "Test Sequence"
 
-	s := NewSequence(userID, name)
+	s, _ := NewSequence(userID, name)
 
 	assert.NotEqual(t, uuid.Nil, s.ID)
 	assert.Equal(t, userID, s.UserID)
@@ -97,6 +125,112 @@ func TestNewSequenceStep(t *testing.T) {
 	assert.False(t, step.CreatedAt.IsZero())
 }
 
+func TestOutboundStatus_CanTransitionTo(t *testing.T) {
+	legal := map[OutboundStatus][]OutboundStatus{
+		OutboundStatusDraft:    {OutboundStatusApproved, OutboundStatusRejected},
+		OutboundStatusApproved: {OutboundStatusSent, OutboundStatusRejected, OutboundStatusBounced},
+		OutboundStatusSent:     {OutboundStatusBounced},
+	}
+	// Terminal: rejected, bounced
+	for _, term := range []OutboundStatus{OutboundStatusRejected, OutboundStatusBounced} {
+		for _, target := range []OutboundStatus{OutboundStatusDraft, OutboundStatusApproved, OutboundStatusSent, OutboundStatusRejected, OutboundStatusBounced} {
+			if term.CanTransitionTo(target) {
+				t.Errorf("terminal %q must not transition to %q", term, target)
+			}
+		}
+	}
+	for from, targets := range legal {
+		allowed := map[OutboundStatus]bool{}
+		for _, s := range targets {
+			allowed[s] = true
+		}
+		for _, target := range []OutboundStatus{OutboundStatusDraft, OutboundStatusApproved, OutboundStatusSent, OutboundStatusRejected, OutboundStatusBounced} {
+			got := from.CanTransitionTo(target)
+			want := allowed[target]
+			if got != want {
+				t.Errorf("%q→%q: got %v, want %v", from, target, got, want)
+			}
+		}
+	}
+}
+
+func TestOutboundMessage_TransitionTo_Happy(t *testing.T) {
+	m := NewOutboundMessage(uuid.New(), uuid.New(), 1, StepChannelEmail, "hi", time.Now())
+	if err := m.TransitionTo(OutboundStatusApproved); err != nil {
+		t.Fatalf("approve: %v", err)
+	}
+	if m.Status != OutboundStatusApproved {
+		t.Fatalf("got %q", m.Status)
+	}
+}
+
+func TestOutboundMessage_TransitionTo_Illegal(t *testing.T) {
+	m := NewOutboundMessage(uuid.New(), uuid.New(), 1, StepChannelEmail, "hi", time.Now())
+	if err := m.TransitionTo(OutboundStatusSent); err == nil {
+		t.Fatal("draft→sent must error (skipped approval)")
+	}
+	if err := m.TransitionTo("wat"); err == nil {
+		t.Fatal("invalid status must error")
+	}
+}
+
+func TestOutboundMessage_MarkBounced_FromApproved(t *testing.T) {
+	m := NewOutboundMessage(uuid.New(), uuid.New(), 1, StepChannelEmail, "hi", time.Now())
+	_ = m.TransitionTo(OutboundStatusApproved)
+	bouncedAt := time.Now().UTC()
+	require.NoError(t, m.MarkBounced(bouncedAt))
+	assert.Equal(t, OutboundStatusBounced, m.Status)
+	require.NotNil(t, m.BouncedAt)
+	assert.Equal(t, bouncedAt, *m.BouncedAt)
+}
+
+func TestOutboundMessage_MarkBounced_FromSent(t *testing.T) {
+	m := NewOutboundMessage(uuid.New(), uuid.New(), 1, StepChannelEmail, "hi", time.Now())
+	_ = m.TransitionTo(OutboundStatusApproved)
+	_ = m.MarkSent(time.Now().UTC())
+	require.NoError(t, m.MarkBounced(time.Now().UTC()))
+	assert.Equal(t, OutboundStatusBounced, m.Status)
+	assert.NotNil(t, m.BouncedAt)
+}
+
+func TestOutboundMessage_MarkBounced_FromDraft_Rejected(t *testing.T) {
+	m := NewOutboundMessage(uuid.New(), uuid.New(), 1, StepChannelEmail, "hi", time.Now())
+	// Draft → Bounced must be rejected by the state machine (you can't bounce
+	// a message that was never sent or approved).
+	require.Error(t, m.MarkBounced(time.Now().UTC()))
+	assert.Equal(t, OutboundStatusDraft, m.Status)
+	assert.Nil(t, m.BouncedAt)
+}
+
+func TestOutboundMessage_MarkBounced_AlreadyBounced_Rejected(t *testing.T) {
+	m := NewOutboundMessage(uuid.New(), uuid.New(), 1, StepChannelEmail, "hi", time.Now())
+	_ = m.TransitionTo(OutboundStatusApproved)
+	_ = m.MarkBounced(time.Now().UTC())
+	firstBouncedAt := m.BouncedAt
+	// Re-bouncing a terminal-state message must fail; the BouncedAt must
+	// not be mutated (domain refuses, doesn't silently overwrite).
+	require.Error(t, m.MarkBounced(time.Now().UTC()))
+	assert.Equal(t, firstBouncedAt, m.BouncedAt)
+}
+
+func TestOutboundMessage_MarkSent(t *testing.T) {
+	m := NewOutboundMessage(uuid.New(), uuid.New(), 1, StepChannelEmail, "hi", time.Now())
+	_ = m.TransitionTo(OutboundStatusApproved)
+	sentAt := time.Now().UTC()
+	if err := m.MarkSent(sentAt); err != nil {
+		t.Fatalf("mark sent: %v", err)
+	}
+	if m.Status != OutboundStatusSent || m.SentAt == nil || !m.SentAt.Equal(sentAt) {
+		t.Fatalf("unexpected state after MarkSent: status=%q sent_at=%v", m.Status, m.SentAt)
+	}
+
+	// Cannot mark a draft as sent directly.
+	draft := NewOutboundMessage(uuid.New(), uuid.New(), 1, StepChannelEmail, "hi", time.Now())
+	if err := draft.MarkSent(sentAt); err == nil {
+		t.Fatal("MarkSent on draft must error")
+	}
+}
+
 func TestNewOutboundMessage(t *testing.T) {
 	prospectID := uuid.New()
 	sequenceID := uuid.New()
@@ -118,52 +252,8 @@ func TestNewOutboundMessage(t *testing.T) {
 	assert.False(t, msg.CreatedAt.IsZero())
 }
 
-func TestProspectView_CanReceiveSequence(t *testing.T) {
-	tests := []struct {
-		name   string
-		view   ProspectView
-		expect bool
-	}{
-		{
-			name:   "status converted returns false",
-			view:   ProspectView{Status: ProspectStatusConverted, VerifyStatus: "valid"},
-			expect: false,
-		},
-		{
-			name:   "status opted_out returns false",
-			view:   ProspectView{Status: ProspectStatusOptedOut, VerifyStatus: "valid"},
-			expect: false,
-		},
-		{
-			name:   "status in_sequence returns false",
-			view:   ProspectView{Status: ProspectStatusInSequence, VerifyStatus: "valid"},
-			expect: false,
-		},
-		{
-			name:   "verify_status invalid returns false",
-			view:   ProspectView{Status: "new", VerifyStatus: VerifyStatusInvalid},
-			expect: false,
-		},
-		{
-			name:   "verify_status not_checked with email returns false",
-			view:   ProspectView{Status: "new", VerifyStatus: VerifyStatusNotChecked, Email: "test@example.com"},
-			expect: false,
-		},
-		{
-			name:   "verify_status not_checked without email returns true",
-			view:   ProspectView{Status: "new", VerifyStatus: VerifyStatusNotChecked, Email: ""},
-			expect: true,
-		},
-		{
-			name:   "verify_status valid with status new returns true",
-			view:   ProspectView{Status: "new", VerifyStatus: "valid", Email: "test@example.com"},
-			expect: true,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			assert.Equal(t, tt.expect, tt.view.CanReceiveSequence())
-		})
-	}
-}
+// Note: the eligibility predicate that previously lived on ProspectView
+// (`CanReceiveSequence`) has been moved back to its sole owner in the
+// prospects context. ProspectView now carries a pre-computed
+// IsEligibleForSequence boolean populated by the adapter — see
+// prospects.domain.Prospect.CanLaunchSequence and its tests.

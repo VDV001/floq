@@ -19,10 +19,13 @@ type mockLeadsRepo struct {
 	createErr   error
 }
 
-func (m *mockLeadsRepo) ListLeads(_ context.Context, _ uuid.UUID) ([]leadsdomain.Lead, error) {
+func (m *mockLeadsRepo) ListLeads(_ context.Context, _ uuid.UUID) ([]leadsdomain.LeadWithSource, error) {
 	return nil, nil
 }
 func (m *mockLeadsRepo) GetLead(_ context.Context, _ uuid.UUID) (*leadsdomain.Lead, error) {
+	return nil, nil
+}
+func (m *mockLeadsRepo) GetLeadForUser(_ context.Context, _ uuid.UUID, _ uuid.UUID) (*leadsdomain.Lead, error) {
 	return nil, nil
 }
 func (m *mockLeadsRepo) CreateLead(_ context.Context, lead *leadsdomain.Lead) error {
@@ -33,6 +36,9 @@ func (m *mockLeadsRepo) UpdateFirstMessage(_ context.Context, _ uuid.UUID, _ str
 	return nil
 }
 func (m *mockLeadsRepo) UpdateLeadStatus(_ context.Context, _ uuid.UUID, _ leadsdomain.LeadStatus) error {
+	return nil
+}
+func (m *mockLeadsRepo) UpdateSourceID(_ context.Context, _ uuid.UUID, _ *uuid.UUID) error {
 	return nil
 }
 func (m *mockLeadsRepo) GetLeadByTelegramChatID(_ context.Context, _ uuid.UUID, _ int64) (*leadsdomain.Lead, error) {

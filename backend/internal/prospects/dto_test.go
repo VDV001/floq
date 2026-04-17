@@ -9,40 +9,42 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-func TestProspectToResponse(t *testing.T) {
+func TestProspectWithSourceToResponse(t *testing.T) {
 	now := time.Now().UTC()
 	sourceID := uuid.New()
 	leadID := uuid.New()
-	p := &domain.Prospect{
-		ID:               uuid.New(),
-		UserID:           uuid.New(),
-		Name:             "Alice",
-		Company:          "Acme",
-		Title:            "CEO",
-		Email:            "alice@acme.com",
-		Phone:            "+7999",
-		WhatsApp:         "+7999wa",
-		TelegramUsername: "@alice",
-		Industry:         "SaaS",
-		CompanySize:      "10-50",
-		Context:          "met at conf",
-		Source:           "manual",
-		SourceID:         &sourceID,
-		SourceName:       "LinkedIn",
-		Status:           domain.ProspectStatusNew,
-		VerifyStatus:     domain.VerifyStatusValid,
-		VerifyScore:      95,
-		VerifyDetails:    `{"ok":true}`,
-		VerifiedAt:       &now,
-		ConvertedLeadID:  &leadID,
-		CreatedAt:        now,
-		UpdatedAt:        now,
+	item := &domain.ProspectWithSource{
+		Prospect: domain.Prospect{
+			ID:               uuid.New(),
+			UserID:           uuid.New(),
+			Name:             "Alice",
+			Company:          "Acme",
+			Title:            "CEO",
+			Email:            "alice@acme.com",
+			Phone:            "+7999",
+			WhatsApp:         "+7999wa",
+			TelegramUsername: "@alice",
+			Industry:         "SaaS",
+			CompanySize:      "10-50",
+			Context:          "met at conf",
+			Source:           "manual",
+			SourceID:         &sourceID,
+			Status:           domain.ProspectStatusNew,
+			VerifyStatus:     domain.VerifyStatusValid,
+			VerifyScore:      95,
+			VerifyDetails:    `{"ok":true}`,
+			VerifiedAt:       &now,
+			ConvertedLeadID:  &leadID,
+			CreatedAt:        now,
+			UpdatedAt:        now,
+		},
+		SourceName: "LinkedIn",
 	}
 
-	resp := ProspectToResponse(p)
+	resp := ProspectWithSourceToResponse(item)
 
-	assert.Equal(t, p.ID, resp.ID)
-	assert.Equal(t, p.UserID, resp.UserID)
+	assert.Equal(t, item.ID, resp.ID)
+	assert.Equal(t, item.UserID, resp.UserID)
 	assert.Equal(t, "Alice", resp.Name)
 	assert.Equal(t, "Acme", resp.Company)
 	assert.Equal(t, "CEO", resp.Title)
@@ -67,9 +69,9 @@ func TestProspectToResponse(t *testing.T) {
 }
 
 func TestProspectsToResponse(t *testing.T) {
-	prospects := []domain.Prospect{
-		{ID: uuid.New(), Name: "Alice", Status: domain.ProspectStatusNew, VerifyStatus: domain.VerifyStatusNotChecked},
-		{ID: uuid.New(), Name: "Bob", Status: domain.ProspectStatusConverted, VerifyStatus: domain.VerifyStatusValid},
+	prospects := []domain.ProspectWithSource{
+		{Prospect: domain.Prospect{ID: uuid.New(), Name: "Alice", Status: domain.ProspectStatusNew, VerifyStatus: domain.VerifyStatusNotChecked}},
+		{Prospect: domain.Prospect{ID: uuid.New(), Name: "Bob", Status: domain.ProspectStatusConverted, VerifyStatus: domain.VerifyStatusValid}},
 	}
 
 	resp := ProspectsToResponse(prospects)
@@ -82,6 +84,6 @@ func TestProspectsToResponse(t *testing.T) {
 }
 
 func TestProspectsToResponse_Empty(t *testing.T) {
-	resp := ProspectsToResponse([]domain.Prospect{})
+	resp := ProspectsToResponse([]domain.ProspectWithSource{})
 	assert.Empty(t, resp)
 }

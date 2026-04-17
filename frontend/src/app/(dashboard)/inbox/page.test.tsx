@@ -21,6 +21,7 @@ const mockGetLeads = vi.fn();
 const mockGetQualification = vi.fn();
 const mockExportLeadsCSV = vi.fn();
 const mockImportLeadsCSV = vi.fn();
+const mockGetSuggestionCounts = vi.fn();
 
 vi.mock("@/lib/api", () => ({
   api: {
@@ -28,6 +29,7 @@ vi.mock("@/lib/api", () => ({
     getQualification: (...args: any[]) => mockGetQualification(...args),
     exportLeadsCSV: (...args: any[]) => mockExportLeadsCSV(...args),
     importLeadsCSV: (...args: any[]) => mockImportLeadsCSV(...args),
+    getSuggestionCounts: (...args: any[]) => mockGetSuggestionCounts(...args),
   },
 }));
 
@@ -69,6 +71,7 @@ describe("InboxPage", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockGetQualification.mockResolvedValue(null);
+    mockGetSuggestionCounts.mockResolvedValue({});
   });
 
   it("renders empty state when no leads", async () => {

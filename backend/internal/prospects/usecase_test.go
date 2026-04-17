@@ -25,11 +25,11 @@ func newMockRepo() *mockRepo {
 	}
 }
 
-func (m *mockRepo) ListProspects(_ context.Context, userID uuid.UUID) ([]domain.Prospect, error) {
-	var result []domain.Prospect
+func (m *mockRepo) ListProspects(_ context.Context, userID uuid.UUID) ([]domain.ProspectWithSource, error) {
+	var result []domain.ProspectWithSource
 	for _, p := range m.prospects {
 		if p.UserID == userID {
-			result = append(result, *p)
+			result = append(result, domain.ProspectWithSource{Prospect: *p})
 		}
 	}
 	return result, nil
@@ -50,6 +50,14 @@ func (m *mockRepo) FindByEmail(_ context.Context, userID uuid.UUID, email string
 		}
 	}
 	return nil, nil
+}
+
+func (m *mockRepo) GetProspectForUser(_ context.Context, userID, prospectID uuid.UUID) (*domain.Prospect, error) {
+	p, ok := m.prospects[prospectID]
+	if !ok || p.UserID != userID {
+		return nil, nil
+	}
+	return p, nil
 }
 
 func (m *mockRepo) FindByTelegramUsername(_ context.Context, _ uuid.UUID, _ string) (*domain.Prospect, error) {
@@ -114,7 +122,7 @@ type mockErrorRepo struct {
 	batchErr  error
 }
 
-func (m *mockErrorRepo) ListProspects(_ context.Context, _ uuid.UUID) ([]domain.Prospect, error) {
+func (m *mockErrorRepo) ListProspects(_ context.Context, _ uuid.UUID) ([]domain.ProspectWithSource, error) {
 	if m.listErr != nil {
 		return nil, m.listErr
 	}
@@ -412,7 +420,7 @@ func TestImportCSV_DedupSkipsExistingProspect(t *testing.T) {
 	repo := newMockRepo()
 	userID := uuid.New()
 	// Pre-seed prospect with same email
-	existing := domain.NewProspect(userID, "Existing", "Co", "CTO", "dup@test.com", "manual")
+	existing, _ := domain.NewProspect(userID, "Existing", "Co", "CTO", "dup@test.com", "manual")
 	repo.prospects[existing.ID] = existing
 
 	uc := NewUseCase(repo, WithLeadChecker(&mockLeadChecker{}))

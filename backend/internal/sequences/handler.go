@@ -75,7 +75,11 @@ func createSequence(uc *UseCase) http.HandlerFunc {
 			return
 		}
 
-		s := domain.NewSequence(userID, body.Name)
+		s, err := domain.NewSequence(userID, body.Name)
+		if err != nil {
+			httputil.WriteError(w, http.StatusBadRequest, err.Error())
+			return
+		}
 		if err := uc.CreateSequence(r.Context(), s); err != nil {
 			httputil.WriteError(w, http.StatusInternalServerError, "failed to create sequence")
 			return

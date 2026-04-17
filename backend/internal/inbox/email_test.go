@@ -577,7 +577,7 @@ func (m *errorConvertEmailProspectRepo) ConvertToLead(_ context.Context, _, _ uu
 // --- Upsert/Status error repos for email ---
 
 type emailUpsertErrorRepo struct {
-	emailMockLeadRepo
+	*emailMockLeadRepo
 }
 
 func (m *emailUpsertErrorRepo) UpsertQualification(_ context.Context, _ *InboxQualification) error {
@@ -608,7 +608,7 @@ func TestProcessEmail_NewLeadError_EmptyName(t *testing.T) {
 
 func TestProcessEmail_UpsertQualificationError(t *testing.T) {
 	inner := newEmailMockLeadRepo()
-	repo := &emailUpsertErrorRepo{emailMockLeadRepo: *inner}
+	repo := &emailUpsertErrorRepo{emailMockLeadRepo: inner}
 	prospectRepo := newEmailMockProspectRepo()
 	seqRepo := newMockSequenceRepo()
 	aiClient := &mockAIQualifier{result: &QualificationResult{Score: 5}}
@@ -627,7 +627,7 @@ func TestProcessEmail_UpsertQualificationError(t *testing.T) {
 }
 
 type emailStatusErrorRepo struct {
-	emailMockLeadRepo
+	*emailMockLeadRepo
 }
 
 func (m *emailStatusErrorRepo) UpdateLeadStatus(_ context.Context, _ uuid.UUID, _ LeadStatus) error {
@@ -640,7 +640,7 @@ func (m *emailStatusErrorRepo) UpdateLeadStatus(_ context.Context, _ uuid.UUID, 
 
 func TestProcessEmail_UpdateLeadStatusError(t *testing.T) {
 	inner := newEmailMockLeadRepo()
-	repo := &emailStatusErrorRepo{emailMockLeadRepo: *inner}
+	repo := &emailStatusErrorRepo{emailMockLeadRepo: inner}
 	prospectRepo := newEmailMockProspectRepo()
 	seqRepo := newMockSequenceRepo()
 	aiClient := &mockAIQualifier{result: &QualificationResult{Score: 5}}

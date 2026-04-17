@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"testing"
+	"time"
 
 	"github.com/daniil/floq/internal/sequences/domain"
 	"github.com/google/uuid"
@@ -68,9 +69,6 @@ func (m *mockRepo) UpdateSequence(_ context.Context, _ *domain.Sequence) error {
 	return m.updateSeqErr
 }
 func (m *mockRepo) DeleteSequence(_ context.Context, _ uuid.UUID) error { return m.deleteSeqErr }
-func (m *mockRepo) ToggleActive(_ context.Context, _ uuid.UUID, _ bool) error {
-	return m.toggleErr
-}
 func (m *mockRepo) ListSteps(_ context.Context, _ uuid.UUID) ([]domain.SequenceStep, error) {
 	return m.steps, m.stepErr
 }
@@ -102,8 +100,8 @@ func (m *mockRepo) UpdateOutboundBody(_ context.Context, _ uuid.UUID, _ string) 
 func (m *mockRepo) GetPendingSends(_ context.Context) ([]domain.OutboundMessage, error) {
 	return nil, nil
 }
-func (m *mockRepo) MarkSent(_ context.Context, _ uuid.UUID) error    { return nil }
-func (m *mockRepo) MarkBounced(_ context.Context, _ uuid.UUID) error { return nil }
+func (m *mockRepo) MarkSent(_ context.Context, _ uuid.UUID, _ time.Time) error { return nil }
+func (m *mockRepo) MarkBounced(_ context.Context, _ uuid.UUID, _ time.Time) error { return nil }
 func (m *mockRepo) MarkOpened(_ context.Context, _ uuid.UUID) error  { return m.openedErr }
 func (m *mockRepo) GetStats(_ context.Context, _ uuid.UUID) (*domain.Stats, error) {
 	return m.statsVal, m.statsErr
@@ -177,11 +175,19 @@ func (m *mockProspectReader) GetProspect(_ context.Context, id uuid.UUID) (*doma
 	return p, nil
 }
 
-func (m *mockProspectReader) UpdateStatus(_ context.Context, id uuid.UUID, status string) error {
+func (m *mockProspectReader) MarkInSequence(_ context.Context, id uuid.UUID) error {
 	if m.updateErr != nil {
 		return m.updateErr
 	}
-	m.statusUpdates[id] = status
+	m.statusUpdates[id] = "in_sequence"
+	return nil
+}
+
+func (m *mockProspectReader) MarkConverted(_ context.Context, id uuid.UUID) error {
+	if m.updateErr != nil {
+		return m.updateErr
+	}
+	m.statusUpdates[id] = "converted"
 	return nil
 }
 
@@ -222,7 +228,7 @@ func TestLaunch_HappyPath(t *testing.T) {
 		Title:        "CEO",
 		Email:        "alice@acme.com",
 		Status:       "new",
-		VerifyStatus: "valid",
+		VerifyStatus: "valid", IsEligibleForSequence: true,
 	}
 
 	uc := NewUseCase(repo, ai, pr, &mockLeadCreator{})
@@ -264,9 +270,10 @@ func TestLaunch_SkipConverted(t *testing.T) {
 
 	pr := newMockProspectReader()
 	pr.prospects[pid] = &domain.ProspectView{
-		ID:           pid,
-		Status:       "converted",
-		VerifyStatus: "valid",
+		ID:                    pid,
+		Status:                "converted",
+		VerifyStatus:          "valid",
+		IsEligibleForSequence: false, // converted → terminal, never eligible
 	}
 
 	uc := NewUseCase(repo, &mockAI{coldBody: "hi"}, pr, &mockLeadCreator{})
@@ -291,9 +298,10 @@ func TestLaunch_SkipOptedOut(t *testing.T) {
 
 	pr := newMockProspectReader()
 	pr.prospects[pid] = &domain.ProspectView{
-		ID:           pid,
-		Status:       "opted_out",
-		VerifyStatus: "valid",
+		ID:                    pid,
+		Status:                "opted_out",
+		VerifyStatus:          "valid",
+		IsEligibleForSequence: false, // opted_out → terminal
 	}
 
 	uc := NewUseCase(repo, &mockAI{coldBody: "hi"}, pr, &mockLeadCreator{})
@@ -316,9 +324,10 @@ func TestLaunch_SkipInSequence(t *testing.T) {
 
 	pr := newMockProspectReader()
 	pr.prospects[pid] = &domain.ProspectView{
-		ID:           pid,
-		Status:       "in_sequence",
-		VerifyStatus: "valid",
+		ID:                    pid,
+		Status:                "in_sequence",
+		VerifyStatus:          "valid",
+		IsEligibleForSequence: false, // already running → don't re-launch
 	}
 
 	uc := NewUseCase(repo, &mockAI{coldBody: "hi"}, pr, &mockLeadCreator{})
@@ -392,12 +401,13 @@ func TestLaunch_AllowNotCheckedWithoutEmail(t *testing.T) {
 
 	pr := newMockProspectReader()
 	pr.prospects[pid] = &domain.ProspectView{
-		ID:           pid,
-		UserID:       uuid.New(),
-		Name:         "Bob",
-		Status:       "new",
-		Email:        "", // no email
-		VerifyStatus: "not_checked",
+		ID:                    pid,
+		UserID:                uuid.New(),
+		Name:                  "Bob",
+		Status:                "new",
+		Email:                 "", // no email
+		VerifyStatus:          "not_checked",
+		IsEligibleForSequence: true, // not_checked + no email is allowed
 	}
 
 	ai := &mockAI{coldBody: "Hey Bob"}
@@ -463,7 +473,7 @@ func TestLaunch_AIGeneratorError(t *testing.T) {
 	pr.prospects[pid] = &domain.ProspectView{
 		ID:           pid,
 		Status:       "new",
-		VerifyStatus: "valid",
+		VerifyStatus: "valid", IsEligibleForSequence: true,
 	}
 
 	ai := &mockAI{err: errors.New("openai timeout")}
@@ -490,7 +500,7 @@ func TestLaunch_PhoneCallChannel(t *testing.T) {
 		UserID:       uuid.New(),
 		Name:         "Charlie",
 		Status:       "new",
-		VerifyStatus: "valid",
+		VerifyStatus: "valid", IsEligibleForSequence: true,
 	}
 
 	ai := &mockAI{callBody: "Call brief for Charlie"}
@@ -518,10 +528,10 @@ func TestLaunch_MultipleProspects_MixedStatuses(t *testing.T) {
 
 	pr := newMockProspectReader()
 	pr.prospects[pidOK] = &domain.ProspectView{
-		ID: pidOK, Name: "Good", Status: "new", VerifyStatus: "valid",
+		ID: pidOK, Name: "Good", Status: "new", VerifyStatus: "valid", IsEligibleForSequence: true,
 	}
 	pr.prospects[pidConverted] = &domain.ProspectView{
-		ID: pidConverted, Name: "Conv", Status: "converted", VerifyStatus: "valid",
+		ID: pidConverted, Name: "Conv", Status: "converted", VerifyStatus: "valid", IsEligibleForSequence: false,
 	}
 	pr.prospects[pidInvalid] = &domain.ProspectView{
 		ID: pidInvalid, Name: "Bad", Status: "new", VerifyStatus: "invalid",
@@ -559,7 +569,7 @@ func TestLaunch_CumulativeDelay(t *testing.T) {
 
 	pr := newMockProspectReader()
 	pr.prospects[pid] = &domain.ProspectView{
-		ID: pid, Name: "Alice", Status: "new", VerifyStatus: "valid",
+		ID: pid, Name: "Alice", Status: "new", VerifyStatus: "valid", IsEligibleForSequence: true,
 	}
 
 	ai := &mockAI{coldBody: "msg"}
@@ -706,7 +716,7 @@ func TestCreateSequence(t *testing.T) {
 	repo := &mockRepo{}
 	uc := NewUseCase(repo, &mockAI{}, newMockProspectReader(), &mockLeadCreator{})
 
-	s := domain.NewSequence(uuid.New(), "New Seq")
+	s, _ := domain.NewSequence(uuid.New(), "New Seq")
 	err := uc.CreateSequence(context.Background(), s)
 	require.NoError(t, err)
 }
@@ -715,7 +725,7 @@ func TestCreateSequence_Error(t *testing.T) {
 	repo := &mockRepo{createSeqErr: errors.New("create failed")}
 	uc := NewUseCase(repo, &mockAI{}, newMockProspectReader(), &mockLeadCreator{})
 
-	s := domain.NewSequence(uuid.New(), "New Seq")
+	s, _ := domain.NewSequence(uuid.New(), "New Seq")
 	err := uc.CreateSequence(context.Background(), s)
 	require.Error(t, err)
 }
@@ -766,36 +776,83 @@ func TestDeleteStep_Error(t *testing.T) {
 }
 
 // --- ApproveMessage / RejectMessage Tests ---
+//
+// These exercise the domain-enforced state machine via the use case: load ->
+// msg.TransitionTo -> persist. A missing message or an illegal transition
+// must return an error BEFORE any persistence call is made.
 
-func TestApproveMessage(t *testing.T) {
-	repo := &mockRepo{}
-	uc := NewUseCase(repo, &mockAI{}, newMockProspectReader(), &mockLeadCreator{})
-
-	err := uc.ApproveMessage(context.Background(), uuid.New())
-	require.NoError(t, err)
+func seedDraftMessage(repo *mockRepo) *domain.OutboundMessage {
+	msg := domain.NewOutboundMessage(uuid.New(), uuid.New(), 1, domain.StepChannelEmail, "hi", time.Now())
+	repo.messages = append(repo.messages, msg)
+	return msg
 }
 
-func TestApproveMessage_Error(t *testing.T) {
-	repo := &mockRepo{statusUpdateErr: errors.New("update failed")}
+func TestApproveMessage_DraftTransitionsToApproved(t *testing.T) {
+	repo := &mockRepo{}
+	msg := seedDraftMessage(repo)
 	uc := NewUseCase(repo, &mockAI{}, newMockProspectReader(), &mockLeadCreator{})
 
+	err := uc.ApproveMessage(context.Background(), msg.ID)
+	require.NoError(t, err)
+	assert.Equal(t, domain.OutboundStatusApproved, msg.Status)
+}
+
+func TestApproveMessage_NotFound(t *testing.T) {
+	repo := &mockRepo{}
+	uc := NewUseCase(repo, &mockAI{}, newMockProspectReader(), &mockLeadCreator{})
 	err := uc.ApproveMessage(context.Background(), uuid.New())
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "not found")
+}
+
+func TestApproveMessage_IllegalTransition_FromSent(t *testing.T) {
+	repo := &mockRepo{}
+	msg := seedDraftMessage(repo)
+	msg.Status = domain.OutboundStatusSent // simulate prior send
+	uc := NewUseCase(repo, &mockAI{}, newMockProspectReader(), &mockLeadCreator{})
+
+	err := uc.ApproveMessage(context.Background(), msg.ID)
+	require.Error(t, err)
+	// Status must not be silently rewritten.
+	assert.Equal(t, domain.OutboundStatusSent, msg.Status)
+}
+
+func TestApproveMessage_PersistError(t *testing.T) {
+	repo := &mockRepo{statusUpdateErr: errors.New("update failed")}
+	msg := seedDraftMessage(repo)
+	uc := NewUseCase(repo, &mockAI{}, newMockProspectReader(), &mockLeadCreator{})
+
+	err := uc.ApproveMessage(context.Background(), msg.ID)
 	require.Error(t, err)
 }
 
-func TestRejectMessage(t *testing.T) {
+func TestRejectMessage_DraftTransitionsToRejected(t *testing.T) {
 	repo := &mockRepo{}
+	msg := seedDraftMessage(repo)
 	uc := NewUseCase(repo, &mockAI{}, newMockProspectReader(), &mockLeadCreator{})
 
-	err := uc.RejectMessage(context.Background(), uuid.New())
+	err := uc.RejectMessage(context.Background(), msg.ID)
 	require.NoError(t, err)
+	assert.Equal(t, domain.OutboundStatusRejected, msg.Status)
 }
 
-func TestRejectMessage_Error(t *testing.T) {
-	repo := &mockRepo{statusUpdateErr: errors.New("update failed")}
+func TestRejectMessage_IllegalTransition_FromBounced(t *testing.T) {
+	repo := &mockRepo{}
+	msg := seedDraftMessage(repo)
+	msg.Status = domain.OutboundStatusBounced // terminal
 	uc := NewUseCase(repo, &mockAI{}, newMockProspectReader(), &mockLeadCreator{})
 
-	err := uc.RejectMessage(context.Background(), uuid.New())
+	err := uc.RejectMessage(context.Background(), msg.ID)
+	require.Error(t, err)
+	assert.Equal(t, domain.OutboundStatusBounced, msg.Status)
+}
+
+func TestRejectMessage_PersistError(t *testing.T) {
+	repo := &mockRepo{statusUpdateErr: errors.New("update failed")}
+	msg := seedDraftMessage(repo)
+	uc := NewUseCase(repo, &mockAI{}, newMockProspectReader(), &mockLeadCreator{})
+
+	err := uc.RejectMessage(context.Background(), msg.ID)
 	require.Error(t, err)
 }
 
@@ -900,18 +957,25 @@ func TestGetStats_Error(t *testing.T) {
 
 // --- ToggleActive / UpdateSequence Tests ---
 
-func TestToggleActive(t *testing.T) {
-	repo := &mockRepo{}
+func TestToggleActive_LoadsAndPersistsViaDomain(t *testing.T) {
+	id := uuid.New()
+	repo := &mockRepo{sequences: []domain.Sequence{{ID: id, UserID: uuid.New(), Name: "x"}}}
 	uc := NewUseCase(repo, &mockAI{}, newMockProspectReader(), &mockLeadCreator{})
 
-	err := uc.ToggleActive(context.Background(), uuid.New(), true)
-	require.NoError(t, err)
+	// Activate — should load, call entity.Activate, persist via UpdateSequence.
+	require.NoError(t, uc.ToggleActive(context.Background(), id, true))
+	got := repo.sequences[0]
+	assert.True(t, got.IsActive, "Activate should set IsActive=true")
+
+	// Deactivate.
+	require.NoError(t, uc.ToggleActive(context.Background(), id, false))
+	got = repo.sequences[0]
+	assert.False(t, got.IsActive, "Deactivate should set IsActive=false")
 }
 
-func TestToggleActive_Error(t *testing.T) {
-	repo := &mockRepo{toggleErr: errors.New("toggle failed")}
+func TestToggleActive_NotFound(t *testing.T) {
+	repo := &mockRepo{}
 	uc := NewUseCase(repo, &mockAI{}, newMockProspectReader(), &mockLeadCreator{})
-
 	err := uc.ToggleActive(context.Background(), uuid.New(), true)
 	require.Error(t, err)
 }
@@ -968,7 +1032,7 @@ func TestLaunch_SendNow(t *testing.T) {
 
 	pr := newMockProspectReader()
 	pr.prospects[pid] = &domain.ProspectView{
-		ID: pid, UserID: uuid.New(), Name: "Alice", Status: "new", VerifyStatus: "valid",
+		ID: pid, UserID: uuid.New(), Name: "Alice", Status: "new", VerifyStatus: "valid", IsEligibleForSequence: true,
 	}
 
 	ai := &mockAI{coldBody: "msg"}
@@ -1000,7 +1064,7 @@ func TestLaunch_WithConversationHistory(t *testing.T) {
 
 	pr := newMockProspectReader()
 	pr.prospects[pid] = &domain.ProspectView{
-		ID: pid, UserID: uuid.New(), Name: "Alice", Status: "new", VerifyStatus: "valid",
+		ID: pid, UserID: uuid.New(), Name: "Alice", Status: "new", VerifyStatus: "valid", IsEligibleForSequence: true,
 	}
 
 	ai := &mockAI{coldBody: "follow up"}
@@ -1028,7 +1092,7 @@ func TestLaunch_WithFeedbackExamples(t *testing.T) {
 
 	pr := newMockProspectReader()
 	pr.prospects[pid] = &domain.ProspectView{
-		ID: pid, UserID: uuid.New(), Name: "Alice", Status: "new", VerifyStatus: "valid",
+		ID: pid, UserID: uuid.New(), Name: "Alice", Status: "new", VerifyStatus: "valid", IsEligibleForSequence: true,
 	}
 
 	ai := &mockAI{coldBody: "msg"}
@@ -1066,7 +1130,7 @@ func TestLaunch_WithTxManager(t *testing.T) {
 
 	pr := newMockProspectReader()
 	pr.prospects[pid] = &domain.ProspectView{
-		ID: pid, UserID: uuid.New(), Name: "Alice", Status: "new", VerifyStatus: "valid",
+		ID: pid, UserID: uuid.New(), Name: "Alice", Status: "new", VerifyStatus: "valid", IsEligibleForSequence: true,
 	}
 
 	txMgr := &mockTxManager{}
@@ -1139,7 +1203,7 @@ func TestLaunch_CreateOutboundMessageError(t *testing.T) {
 
 	pr := newMockProspectReader()
 	pr.prospects[pid] = &domain.ProspectView{
-		ID: pid, UserID: uuid.New(), Name: "Alice", Status: "new", VerifyStatus: "valid",
+		ID: pid, UserID: uuid.New(), Name: "Alice", Status: "new", VerifyStatus: "valid", IsEligibleForSequence: true,
 	}
 
 	uc := NewUseCase(repo, &mockAI{coldBody: "msg"}, pr, &mockLeadCreator{})
@@ -1160,7 +1224,7 @@ func TestLaunch_UpdateProspectStatusError(t *testing.T) {
 
 	pr := newMockProspectReader()
 	pr.prospects[pid] = &domain.ProspectView{
-		ID: pid, UserID: uuid.New(), Name: "Alice", Status: "new", VerifyStatus: "valid",
+		ID: pid, UserID: uuid.New(), Name: "Alice", Status: "new", VerifyStatus: "valid", IsEligibleForSequence: true,
 	}
 	pr.updateErr = errors.New("status update failed")
 
@@ -1182,7 +1246,7 @@ func TestLaunch_TelegramAIError(t *testing.T) {
 
 	pr := newMockProspectReader()
 	pr.prospects[pid] = &domain.ProspectView{
-		ID: pid, UserID: uuid.New(), Status: "new", VerifyStatus: "valid",
+		ID: pid, UserID: uuid.New(), Status: "new", VerifyStatus: "valid", IsEligibleForSequence: true,
 	}
 
 	ai := &mockAI{err: errors.New("telegram gen error")}
@@ -1205,7 +1269,7 @@ func TestLaunch_PhoneCallAIError(t *testing.T) {
 
 	pr := newMockProspectReader()
 	pr.prospects[pid] = &domain.ProspectView{
-		ID: pid, UserID: uuid.New(), Status: "new", VerifyStatus: "valid",
+		ID: pid, UserID: uuid.New(), Status: "new", VerifyStatus: "valid", IsEligibleForSequence: true,
 	}
 
 	ai := &mockAI{err: errors.New("call gen error")}
@@ -1276,7 +1340,10 @@ type mockProspectReaderWithErr struct {
 func (m *mockProspectReaderWithErr) GetProspect(_ context.Context, _ uuid.UUID) (*domain.ProspectView, error) {
 	return nil, m.getErr
 }
-func (m *mockProspectReaderWithErr) UpdateStatus(_ context.Context, _ uuid.UUID, _ string) error {
+func (m *mockProspectReaderWithErr) MarkInSequence(_ context.Context, _ uuid.UUID) error {
+	return m.updateErr
+}
+func (m *mockProspectReaderWithErr) MarkConverted(_ context.Context, _ uuid.UUID) error {
 	return m.updateErr
 }
 

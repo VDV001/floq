@@ -332,7 +332,8 @@ func TestHandler_LaunchSequence_InvalidID(t *testing.T) {
 
 func TestHandler_ToggleActive(t *testing.T) {
 	seqID := uuid.New()
-	uc := NewUseCase(&mockRepo{}, &mockAI{}, newMockProspectReader(), &mockLeadCreator{})
+	repo := &mockRepo{sequences: []domain.Sequence{{ID: seqID, UserID: uuid.New(), Name: "x"}}}
+	uc := NewUseCase(repo, &mockAI{}, newMockProspectReader(), &mockLeadCreator{})
 	router := setupRouter(uc, uuid.New())
 
 	rr := doRequest(router, http.MethodPatch, "/api/sequences/"+seqID.String()+"/toggle", map[string]bool{"is_active": true})
@@ -400,11 +401,12 @@ func TestHandler_GetSent_Unauthorized(t *testing.T) {
 // --- ApproveMessage Handler ---
 
 func TestHandler_ApproveMessage(t *testing.T) {
-	msgID := uuid.New()
-	uc := NewUseCase(&mockRepo{}, &mockAI{}, newMockProspectReader(), &mockLeadCreator{})
+	repo := &mockRepo{}
+	msg := seedDraftMessage(repo)
+	uc := NewUseCase(repo, &mockAI{}, newMockProspectReader(), &mockLeadCreator{})
 	router := setupRouter(uc, uuid.New())
 
-	rr := doRequest(router, http.MethodPost, "/api/outbound/"+msgID.String()+"/approve", nil)
+	rr := doRequest(router, http.MethodPost, "/api/outbound/"+msg.ID.String()+"/approve", nil)
 	assert.Equal(t, http.StatusOK, rr.Code)
 }
 
@@ -419,11 +421,12 @@ func TestHandler_ApproveMessage_InvalidID(t *testing.T) {
 // --- RejectMessage Handler ---
 
 func TestHandler_RejectMessage(t *testing.T) {
-	msgID := uuid.New()
-	uc := NewUseCase(&mockRepo{}, &mockAI{}, newMockProspectReader(), &mockLeadCreator{})
+	repo := &mockRepo{}
+	msg := seedDraftMessage(repo)
+	uc := NewUseCase(repo, &mockAI{}, newMockProspectReader(), &mockLeadCreator{})
 	router := setupRouter(uc, uuid.New())
 
-	rr := doRequest(router, http.MethodPost, "/api/outbound/"+msgID.String()+"/reject", nil)
+	rr := doRequest(router, http.MethodPost, "/api/outbound/"+msg.ID.String()+"/reject", nil)
 	assert.Equal(t, http.StatusOK, rr.Code)
 }
 
@@ -748,7 +751,11 @@ func TestHandler_LaunchSequence_InvalidBody(t *testing.T) {
 
 func TestHandler_ToggleActive_RepoError(t *testing.T) {
 	seqID := uuid.New()
-	repo := &mockRepo{toggleErr: errors.New("db error")}
+	// updateSeqErr triggers on UpdateSequence (the persist path after entity toggle).
+	repo := &mockRepo{
+		sequences:    []domain.Sequence{{ID: seqID, UserID: uuid.New(), Name: "x"}},
+		updateSeqErr: errors.New("db error"),
+	}
 	uc := NewUseCase(repo, &mockAI{}, newMockProspectReader(), &mockLeadCreator{})
 	router := setupRouter(uc, uuid.New())
 

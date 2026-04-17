@@ -14,26 +14,28 @@ func TestLeadToResponse(t *testing.T) {
 	chatID := int64(123)
 	sourceID := uuid.New()
 	now := time.Now().UTC()
-	lead := &domain.Lead{
-		ID:             uuid.New(),
-		UserID:         uuid.New(),
-		Channel:        domain.ChannelTelegram,
-		ContactName:    "Alice",
-		Company:        "Acme",
-		FirstMessage:   "Hello",
-		Status:         domain.StatusNew,
-		TelegramChatID: &chatID,
-		EmailAddress:   &email,
-		SourceID:       &sourceID,
-		SourceName:     "Website",
-		CreatedAt:      now,
-		UpdatedAt:      now,
+	item := domain.LeadWithSource{
+		Lead: domain.Lead{
+			ID:             uuid.New(),
+			UserID:         uuid.New(),
+			Channel:        domain.ChannelTelegram,
+			ContactName:    "Alice",
+			Company:        "Acme",
+			FirstMessage:   "Hello",
+			Status:         domain.StatusNew,
+			TelegramChatID: &chatID,
+			EmailAddress:   &email,
+			SourceID:       &sourceID,
+			CreatedAt:      now,
+			UpdatedAt:      now,
+		},
+		SourceName: "Website",
 	}
 
-	resp := LeadToResponse(lead)
+	resp := LeadWithSourceToResponse(&item)
 
-	assert.Equal(t, lead.ID, resp.ID)
-	assert.Equal(t, lead.UserID, resp.UserID)
+	assert.Equal(t, item.ID, resp.ID)
+	assert.Equal(t, item.UserID, resp.UserID)
 	assert.Equal(t, "telegram", resp.Channel)
 	assert.Equal(t, "Alice", resp.ContactName)
 	assert.Equal(t, "Acme", resp.Company)
@@ -63,9 +65,9 @@ func TestLeadToResponse_NilOptionals(t *testing.T) {
 }
 
 func TestLeadsToResponse(t *testing.T) {
-	leads := []domain.Lead{
-		{ID: uuid.New(), ContactName: "A", Channel: domain.ChannelEmail, Status: domain.StatusNew},
-		{ID: uuid.New(), ContactName: "B", Channel: domain.ChannelTelegram, Status: domain.StatusClosed},
+	leads := []domain.LeadWithSource{
+		{Lead: domain.Lead{ID: uuid.New(), ContactName: "A", Channel: domain.ChannelEmail, Status: domain.StatusNew}},
+		{Lead: domain.Lead{ID: uuid.New(), ContactName: "B", Channel: domain.ChannelTelegram, Status: domain.StatusClosed}},
 	}
 
 	resp := LeadsToResponse(leads)
@@ -75,7 +77,7 @@ func TestLeadsToResponse(t *testing.T) {
 }
 
 func TestLeadsToResponse_Empty(t *testing.T) {
-	resp := LeadsToResponse([]domain.Lead{})
+	resp := LeadsToResponse([]domain.LeadWithSource{})
 	assert.Len(t, resp, 0)
 }
 

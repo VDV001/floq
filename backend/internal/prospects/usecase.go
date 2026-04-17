@@ -32,7 +32,7 @@ func WithLeadChecker(lc LeadChecker) func(*UseCase) {
 	return func(uc *UseCase) { uc.leadChecker = lc }
 }
 
-func (uc *UseCase) ListProspects(ctx context.Context, userID uuid.UUID) ([]domain.Prospect, error) {
+func (uc *UseCase) ListProspects(ctx context.Context, userID uuid.UUID) ([]domain.ProspectWithSource, error) {
 	return uc.repo.ListProspects(ctx, userID)
 }
 
@@ -82,7 +82,10 @@ func (uc *UseCase) CreateProspect(ctx context.Context, input CreateProspectInput
 			return nil, fmt.Errorf("лид с таким email уже существует")
 		}
 	}
-	p := domain.NewProspect(input.UserID, input.Name, input.Company, input.Title, input.Email, "manual")
+	p, err := domain.NewProspect(input.UserID, input.Name, input.Company, input.Title, input.Email, "manual")
+	if err != nil {
+		return nil, fmt.Errorf("construct prospect: %w", err)
+	}
 	p.Phone = input.Phone
 	p.WhatsApp = input.WhatsApp
 	p.TelegramUsername = input.TelegramUsername
@@ -156,7 +159,12 @@ func (uc *UseCase) ImportCSV(ctx context.Context, userID uuid.UUID, csvData []by
 			}
 		}
 
-		p := domain.NewProspect(userID, record[0], record[1], record[2], email, "csv")
+		p, err := domain.NewProspect(userID, record[0], record[1], record[2], email, "csv")
+		if err != nil {
+			// Skip rows with invalid name/userID — CSV import shouldn't
+			// abort on a single malformed row, but we must not persist one.
+			continue
+		}
 		p.Phone = getCol(record, "phone")
 		p.WhatsApp = getCol(record, "whatsapp")
 		p.TelegramUsername = getCol(record, "telegram_username")

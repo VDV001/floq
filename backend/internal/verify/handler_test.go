@@ -21,7 +21,7 @@ import (
 // --- Mock ProspectRepository ---
 
 type mockProspectRepo struct {
-	prospects       []domain.Prospect
+	prospects       []domain.ProspectWithSource
 	prospect        *domain.Prospect
 	listErr         error
 	getErr          error
@@ -29,7 +29,7 @@ type mockProspectRepo struct {
 	updatedIDs      []uuid.UUID
 }
 
-func (m *mockProspectRepo) ListProspects(_ context.Context, _ uuid.UUID) ([]domain.Prospect, error) {
+func (m *mockProspectRepo) ListProspects(_ context.Context, _ uuid.UUID) ([]domain.ProspectWithSource, error) {
 	return m.prospects, m.listErr
 }
 
@@ -216,8 +216,8 @@ func TestHandler_VerifyBatch_NoProspects(t *testing.T) {
 
 func TestHandler_VerifyBatch_AlreadyChecked(t *testing.T) {
 	repo := &mockProspectRepo{
-		prospects: []domain.Prospect{
-			{ID: uuid.New(), Email: "a@b.com", VerifyStatus: domain.VerifyStatusValid},
+		prospects: []domain.ProspectWithSource{
+			{Prospect: domain.Prospect{ID: uuid.New(), Email: "a@b.com", VerifyStatus: domain.VerifyStatusValid}},
 		},
 	}
 	r := setupVerifyRouterWithRepo(repo)
@@ -237,8 +237,8 @@ func TestHandler_VerifyBatch_AlreadyChecked(t *testing.T) {
 func TestHandler_VerifyBatch_VerifiesNotChecked(t *testing.T) {
 	pID := uuid.New()
 	repo := &mockProspectRepo{
-		prospects: []domain.Prospect{
-			{ID: pID, Email: "test@gmail.com", VerifyStatus: domain.VerifyStatusNotChecked},
+		prospects: []domain.ProspectWithSource{
+			{Prospect: domain.Prospect{ID: pID, Email: "test@gmail.com", VerifyStatus: domain.VerifyStatusNotChecked}},
 		},
 	}
 	r := setupVerifyRouterWithRepo(repo)
@@ -259,8 +259,8 @@ func TestHandler_VerifyBatch_VerifiesNotChecked(t *testing.T) {
 func TestHandler_VerifyBatch_UpdateVerifyError(t *testing.T) {
 	pID := uuid.New()
 	repo := &mockProspectRepo{
-		prospects: []domain.Prospect{
-			{ID: pID, Email: "test@gmail.com", VerifyStatus: domain.VerifyStatusNotChecked},
+		prospects: []domain.ProspectWithSource{
+			{Prospect: domain.Prospect{ID: pID, Email: "test@gmail.com", VerifyStatus: domain.VerifyStatusNotChecked}},
 		},
 		updateVerifyErr: fmt.Errorf("update error"),
 	}

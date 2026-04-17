@@ -14,8 +14,11 @@ import (
 )
 
 // ProspectRepository defines the prospect operations needed by the verify handler.
+// ListProspects returns the read-model projection (Prospect + SourceName); the
+// verify flow only reads the embedded Prospect fields, but we keep the
+// signature aligned with the repository's canonical list interface.
 type ProspectRepository interface {
-	ListProspects(ctx context.Context, userID uuid.UUID) ([]domain.Prospect, error)
+	ListProspects(ctx context.Context, userID uuid.UUID) ([]domain.ProspectWithSource, error)
 	GetProspect(ctx context.Context, id uuid.UUID) (*domain.Prospect, error)
 	UpdateVerification(ctx context.Context, id uuid.UUID, status domain.VerifyStatus, score int, details string, verifiedAt time.Time) error
 }

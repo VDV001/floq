@@ -2,11 +2,84 @@ package domain
 
 import (
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+func TestLead_InheritsSourceFrom(t *testing.T) {
+	leadSource := uuid.New()
+	prospectSource := uuid.New()
+
+	tests := []struct {
+		name             string
+		leadSourceID     *uuid.UUID
+		prospectSourceID *uuid.UUID
+		wantSource       *uuid.UUID
+		wantChanged      bool
+	}{
+		{"lead has source — kept; prospect source ignored", &leadSource, &prospectSource, &leadSource, false},
+		{"lead has source — kept; prospect has none", &leadSource, nil, &leadSource, false},
+		{"lead has no source — inherits from prospect", nil, &prospectSource, &prospectSource, true},
+		{"both empty — stays nil, not changed", nil, nil, nil, false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			lead := &Lead{SourceID: tt.leadSourceID}
+			gotSource, gotChanged := lead.InheritsSourceFrom(tt.prospectSourceID)
+			assert.Equal(t, tt.wantSource, gotSource)
+			assert.Equal(t, tt.wantChanged, gotChanged)
+		})
+	}
+}
+
+func TestLead_SetSource(t *testing.T) {
+	newSource := uuid.New()
+	lead := &Lead{}
+	before := lead.UpdatedAt
+	lead.SetSource(&newSource)
+	assert.Equal(t, &newSource, lead.SourceID)
+	assert.True(t, lead.UpdatedAt.After(before), "SetSource should bump updated_at")
+
+	// nil clears
+	lead.SetSource(nil)
+	assert.Nil(t, lead.SourceID)
+}
+
+func TestLead_OnOutboundSent_QualifiedAdvances(t *testing.T) {
+	lead := &Lead{Status: StatusQualified}
+	changed := lead.OnOutboundSent()
+	assert.True(t, changed)
+	assert.Equal(t, StatusInConversation, lead.Status)
+}
+
+func TestLead_OnOutboundSent_NonQualifiedNoChange(t *testing.T) {
+	for _, s := range []LeadStatus{StatusNew, StatusInConversation, StatusFollowup, StatusClosed, StatusWon} {
+		lead := &Lead{Status: s}
+		changed := lead.OnOutboundSent()
+		assert.False(t, changed, "status %q must not transition on outbound send", s)
+		assert.Equal(t, s, lead.Status)
+	}
+}
+
+func TestSuggestionConfidence_IsValid(t *testing.T) {
+	valid := []SuggestionConfidence{ConfidenceHigh, ConfidenceMedium, ConfidenceLow}
+	for _, c := range valid {
+		if !c.IsValid() {
+			t.Errorf("expected %q to be valid", c)
+		}
+	}
+
+	invalid := []SuggestionConfidence{"", "unknown", "HIGH"}
+	for _, c := range invalid {
+		if c.IsValid() {
+			t.Errorf("expected %q to be invalid", c)
+		}
+	}
+}
 
 func TestLeadStatus_IsValid(t *testing.T) {
 	valid := []LeadStatus{StatusNew, StatusQualified, StatusClosed, StatusWon}
@@ -221,10 +294,86 @@ func TestNewQualification_HappyPath(t *testing.T) {
 
 func TestNewDraft_HappyPath(t *testing.T) {
 	leadID := uuid.New()
-	d := NewDraft(leadID, "Hello, let's discuss your project")
+	d, err := NewDraft(leadID, "Hello, let's discuss your project")
+	require.NoError(t, err)
 
 	assert.NotEqual(t, uuid.Nil, d.ID)
 	assert.Equal(t, leadID, d.LeadID)
 	assert.Equal(t, "Hello, let's discuss your project", d.Body)
 	assert.False(t, d.CreatedAt.IsZero())
+	assert.False(t, d.IsEmpty())
+}
+
+func TestNewDraft_RejectsEmptyBody(t *testing.T) {
+	_, err := NewDraft(uuid.New(), "")
+	require.Error(t, err)
+}
+
+func TestNewReminder_Invariants(t *testing.T) {
+	_, err := NewReminder(uuid.Nil, "msg")
+	require.Error(t, err, "zero leadID must be rejected")
+	_, err = NewReminder(uuid.New(), "")
+	require.Error(t, err, "empty message must be rejected")
+
+	r, err := NewReminder(uuid.New(), "lead went quiet for 3 days")
+	require.NoError(t, err)
+	assert.False(t, r.Dismissed)
+	assert.NotEqual(t, uuid.Nil, r.ID)
+}
+
+func TestReminder_Dismiss_Idempotent(t *testing.T) {
+	r, _ := NewReminder(uuid.New(), "x")
+	r.Dismiss()
+	assert.True(t, r.Dismissed)
+	r.Dismiss() // idempotent — double-click must not error or flip back
+	assert.True(t, r.Dismissed)
+}
+
+func TestRehydrateQualification_PreservesIdentityClampsScore(t *testing.T) {
+	id := uuid.New()
+	leadID := uuid.New()
+	generatedAt := time.Now().UTC().Add(-1 * time.Hour)
+
+	// Score above 100 must be clamped by the factory.
+	q := RehydrateQualification(id, leadID, "n", "b", "d", 150, "r", "a", "p", generatedAt)
+	assert.Equal(t, id, q.ID)
+	assert.Equal(t, leadID, q.LeadID)
+	assert.Equal(t, generatedAt, q.GeneratedAt)
+	assert.Equal(t, 100, q.Score)
+
+	// Score below 0.
+	q = RehydrateQualification(id, leadID, "n", "b", "d", -5, "r", "a", "p", generatedAt)
+	assert.Equal(t, 0, q.Score)
+
+	// In-range passes through.
+	q = RehydrateQualification(id, leadID, "n", "b", "d", 55, "r", "a", "p", generatedAt)
+	assert.Equal(t, 55, q.Score)
+	assert.True(t, q.IsWarm())
+}
+
+func TestQualification_ScoreBands(t *testing.T) {
+	cases := []struct {
+		name      string
+		score     int
+		wantHot   bool
+		wantWarm  bool
+		wantClamp int // expected score after clamping
+	}{
+		{"hot (>=80)", 85, true, false, 85},
+		{"hot boundary", 80, true, false, 80},
+		{"warm (50-79)", 65, false, true, 65},
+		{"warm upper boundary", 79, false, true, 79},
+		{"warm lower boundary", 50, false, true, 50},
+		{"cold (<50)", 20, false, false, 20},
+		{"clamp negative", -10, false, false, 0},
+		{"clamp over 100", 150, true, false, 100},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			q := NewQualification(uuid.New(), "n", "b", "d", c.score, "r", "a", "p")
+			assert.Equal(t, c.wantClamp, q.Score)
+			assert.Equal(t, c.wantHot, q.IsHot())
+			assert.Equal(t, c.wantWarm, q.IsWarm())
+		})
+	}
 }

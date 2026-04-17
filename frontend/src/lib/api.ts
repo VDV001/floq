@@ -122,6 +122,22 @@ export const api = {
   importLeadsCSV: (file: File) =>
     apiUploadFile<{ imported: number }>("/api/leads/import", file),
 
+  // Prospect suggestions (cross-channel dedup)
+  getProspectSuggestions: (leadId: string) =>
+    apiFetch<ProspectSuggestion[]>(`/api/leads/${leadId}/prospect-suggestions`),
+  linkProspect: (leadId: string, prospectId: string) =>
+    apiFetch(`/api/leads/${leadId}/link-prospect`, {
+      method: "POST",
+      body: JSON.stringify({ prospect_id: prospectId }),
+    }),
+  dismissProspectSuggestion: (leadId: string, prospectId: string) =>
+    apiFetch(`/api/leads/${leadId}/dismiss-prospect-suggestion`, {
+      method: "POST",
+      body: JSON.stringify({ prospect_id: prospectId }),
+    }),
+  getSuggestionCounts: () =>
+    apiFetch<Record<string, number>>("/api/leads/suggestion-counts"),
+
   // Messages
   getMessages: (leadId: string) =>
     apiFetch<Message[]>(`/api/leads/${leadId}/messages`),
@@ -329,6 +345,19 @@ export interface Lead {
   source_name?: string;
   created_at: string;
   updated_at: string;
+}
+
+export type SuggestionConfidence = "high" | "medium" | "low";
+
+export interface ProspectSuggestion {
+  prospect_id: string;
+  name: string;
+  company: string;
+  email: string;
+  telegram_username: string;
+  source_name: string;
+  status: string;
+  confidence: SuggestionConfidence;
 }
 
 export interface Message {

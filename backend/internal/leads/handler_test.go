@@ -30,7 +30,7 @@ type mockRepoErr struct {
 	qualifyErr        error
 }
 
-func (m *mockRepoErr) ListLeads(_ context.Context, _ uuid.UUID) ([]domain.Lead, error) {
+func (m *mockRepoErr) ListLeads(_ context.Context, _ uuid.UUID) ([]domain.LeadWithSource, error) {
 	if m.listLeadsErr != nil {
 		return nil, m.listLeadsErr
 	}

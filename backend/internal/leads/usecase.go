@@ -14,13 +14,29 @@ import (
 )
 
 type UseCase struct {
-	repo   domain.Repository
-	ai     domain.AIService
-	sender domain.MessageSender
+	repo             domain.Repository
+	ai               domain.AIService
+	sender           domain.MessageSender
+	suggestionFinder domain.ProspectSuggestionFinder
 }
 
-func NewUseCase(repo domain.Repository, ai domain.AIService, sender domain.MessageSender) *UseCase {
-	return &UseCase{repo: repo, ai: ai, sender: sender}
+// Option configures a *UseCase at construction. Used for dependencies that
+// are optional or that cross context boundaries (injected via adapter).
+type Option func(*UseCase)
+
+// WithSuggestionFinder wires the cross-channel prospect-suggestion port
+// (issue #6). Typically supplied from the composition root after the
+// adapter is built.
+func WithSuggestionFinder(f domain.ProspectSuggestionFinder) Option {
+	return func(uc *UseCase) { uc.suggestionFinder = f }
+}
+
+func NewUseCase(repo domain.Repository, ai domain.AIService, sender domain.MessageSender, opts ...Option) *UseCase {
+	uc := &UseCase{repo: repo, ai: ai, sender: sender}
+	for _, opt := range opts {
+		opt(uc)
+	}
+	return uc
 }
 
 // SetSender sets the message sender after construction (e.g. when the Telegram bot
@@ -29,7 +45,7 @@ func (uc *UseCase) SetSender(sender domain.MessageSender) {
 	uc.sender = sender
 }
 
-func (uc *UseCase) ListLeads(ctx context.Context, userID uuid.UUID) ([]domain.Lead, error) {
+func (uc *UseCase) ListLeads(ctx context.Context, userID uuid.UUID) ([]domain.LeadWithSource, error) {
 	return uc.repo.ListLeads(ctx, userID)
 }
 
@@ -81,12 +97,12 @@ func (uc *UseCase) SendMessage(ctx context.Context, leadID uuid.UUID, body strin
 		return nil, err
 	}
 
-	// Auto-transition: qualified → in_conversation on first outbound message
-	if lead.Status == domain.StatusQualified {
-		if err := lead.TransitionTo(domain.StatusInConversation); err == nil {
-			if err := uc.repo.UpdateLeadStatus(ctx, leadID, domain.StatusInConversation); err != nil {
-				return nil, fmt.Errorf("auto-transition: %w", err)
-			}
+	// Auto-transition rule lives on the entity (Lead.OnOutboundSent) — the
+	// usecase just orchestrates persistence. No lead.Status check at this
+	// layer; the domain method decides whether a transition applies.
+	if lead.OnOutboundSent() {
+		if err := uc.repo.UpdateLeadStatus(ctx, leadID, lead.Status); err != nil {
+			return nil, fmt.Errorf("persist auto-transition: %w", err)
 		}
 	}
 
@@ -157,7 +173,10 @@ func (uc *UseCase) RegenerateDraft(ctx context.Context, leadID uuid.UUID) (*doma
 		return nil, err
 	}
 
-	d := domain.NewDraft(lead.ID, body)
+	d, err := domain.NewDraft(lead.ID, body)
+	if err != nil {
+		return nil, fmt.Errorf("construct draft: %w", err)
+	}
 
 	if err := uc.repo.CreateDraft(ctx, d); err != nil {
 		return nil, err

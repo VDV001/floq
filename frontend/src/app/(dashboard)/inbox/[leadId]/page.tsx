@@ -17,6 +17,7 @@ import {
   User,
 } from "lucide-react";
 import { Switch } from "@/components/ui/switch";
+import { ProspectSuggestionBanner } from "@/components/leads/ProspectSuggestionBanner";
 import { api, Lead, Message, Qualification, Draft } from "@/lib/api";
 
 /* ------------------------------------------------------------------ */
@@ -243,6 +244,15 @@ export default function LeadDetailPage() {
             </button>
           </div>
         </section>
+
+        {/* 2. Prospect suggestions (cross-channel dedup, issue #6) */}
+        <ProspectSuggestionBanner
+          leadId={leadId}
+          onChanged={() => {
+            // After link, lead's source_id may have changed — refetch.
+            api.getLead(leadId).then(setLead).catch(() => {});
+          }}
+        />
 
         {/* 2. AI Qualification */}
         <section className="mb-10">
