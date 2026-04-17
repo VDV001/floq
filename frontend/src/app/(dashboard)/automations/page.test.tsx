@@ -1,5 +1,7 @@
+import type { ReactNode } from "react";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
+import type { UserSettings } from "@/lib/api";
 import AutomationsPage from "./page";
 
 vi.mock("next/navigation", () => ({
@@ -8,13 +10,13 @@ vi.mock("next/navigation", () => ({
 }));
 
 vi.mock("next/link", () => ({
-  default: ({ children, href, ...props }: any) => (
+  default: ({ children, href, ...props }: { children: ReactNode; href: string; [key: string]: unknown }) => (
     <a href={href} {...props}>{children}</a>
   ),
 }));
 
 vi.mock("@/components/ui/switch", () => ({
-  Switch: ({ checked, onCheckedChange, ...props }: any) => (
+  Switch: ({ checked, onCheckedChange, ...props }: { checked: boolean; onCheckedChange: (v: boolean) => void; [key: string]: unknown }) => (
     <button
       role="switch"
       aria-checked={checked}
@@ -47,8 +49,8 @@ import { api } from "@/lib/api";
 describe("AutomationsPage", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    vi.mocked(api.getSettings).mockResolvedValue(mockSettings as any);
-    vi.mocked(api.updateSettings).mockResolvedValue(mockSettings as any);
+    vi.mocked(api.getSettings).mockResolvedValue(mockSettings as UserSettings);
+    vi.mocked(api.updateSettings).mockResolvedValue(mockSettings as UserSettings);
   });
 
   it("renders page header", async () => {

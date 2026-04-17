@@ -1,6 +1,8 @@
+import type { ReactNode } from "react";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import type { OutboundMessage, OutboundStats } from "@/lib/api";
 import OutboundPage from "./page";
 
 vi.mock("next/navigation", () => ({
@@ -9,13 +11,13 @@ vi.mock("next/navigation", () => ({
 }));
 
 vi.mock("next/link", () => ({
-  default: ({ children, href, ...props }: any) => (
+  default: ({ children, href, ...props }: { children: ReactNode; href: string; [key: string]: unknown }) => (
     <a href={href} {...props}>{children}</a>
   ),
 }));
 
 vi.mock("@/components/ui/switch", () => ({
-  Switch: ({ checked, onCheckedChange, ...props }: any) => (
+  Switch: ({ checked, onCheckedChange, ...props }: { checked: boolean; onCheckedChange: (v: boolean) => void; [key: string]: unknown }) => (
     <button
       role="switch"
       aria-checked={checked}
@@ -80,9 +82,9 @@ import { api } from "@/lib/api";
 describe("OutboundPage", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    vi.mocked(api.getOutboundQueue).mockResolvedValue(mockQueue as any);
-    vi.mocked(api.getOutboundSent).mockResolvedValue(mockSent as any);
-    vi.mocked(api.getOutboundStats).mockResolvedValue(mockStats as any);
+    vi.mocked(api.getOutboundQueue).mockResolvedValue(mockQueue as OutboundMessage[]);
+    vi.mocked(api.getOutboundSent).mockResolvedValue(mockSent as OutboundMessage[]);
+    vi.mocked(api.getOutboundStats).mockResolvedValue(mockStats as OutboundStats);
   });
 
   it("renders page header", async () => {
@@ -112,7 +114,7 @@ describe("OutboundPage", () => {
 
   it("approves a message", async () => {
     const user = userEvent.setup();
-    vi.mocked(api.approveMessage).mockResolvedValue(undefined as any);
+    vi.mocked(api.approveMessage).mockResolvedValue(undefined);
 
     render(<OutboundPage />);
 

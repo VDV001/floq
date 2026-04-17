@@ -1,6 +1,8 @@
+import type { ReactNode } from "react";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import type { Sequence, SequenceStep } from "@/lib/api";
 import SequencesPage from "./page";
 
 vi.mock("next/navigation", () => ({
@@ -9,13 +11,13 @@ vi.mock("next/navigation", () => ({
 }));
 
 vi.mock("next/link", () => ({
-  default: ({ children, href, ...props }: any) => (
+  default: ({ children, href, ...props }: { children: ReactNode; href: string; [key: string]: unknown }) => (
     <a href={href} {...props}>{children}</a>
   ),
 }));
 
 vi.mock("@/components/ui/switch", () => ({
-  Switch: ({ checked, onCheckedChange, ...props }: any) => (
+  Switch: ({ checked, onCheckedChange, ...props }: { checked: boolean; onCheckedChange: (v: boolean) => void; [key: string]: unknown }) => (
     <button
       role="switch"
       aria-checked={checked}
@@ -26,7 +28,7 @@ vi.mock("@/components/ui/switch", () => ({
 }));
 
 vi.mock("@/components/ui/separator", () => ({
-  Separator: (props: any) => <hr {...props} />,
+  Separator: (props: React.HTMLAttributes<HTMLHRElement>) => <hr {...props} />,
 }));
 
 const mockSequences = [
@@ -67,11 +69,11 @@ import { api } from "@/lib/api";
 describe("SequencesPage", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    vi.mocked(api.getSequences).mockResolvedValue(mockSequences as any);
+    vi.mocked(api.getSequences).mockResolvedValue(mockSequences as Sequence[]);
     vi.mocked(api.getSequence).mockResolvedValue({
       sequence: mockSequences[0],
       steps: [],
-    } as any);
+    } as { sequence: Sequence; steps: SequenceStep[] });
     vi.mocked(api.getProspects).mockResolvedValue([]);
   });
 
@@ -108,7 +110,7 @@ describe("SequencesPage", () => {
       name: "Новая",
       is_active: false,
       created_at: "2026-01-03T00:00:00Z",
-    } as any);
+    } as Sequence);
 
     render(<SequencesPage />);
 

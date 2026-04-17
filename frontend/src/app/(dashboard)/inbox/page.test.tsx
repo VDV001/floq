@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { vi, describe, it, expect, beforeEach } from "vitest";
@@ -10,7 +11,7 @@ vi.mock("next/navigation", () => ({
 }));
 
 vi.mock("next/link", () => ({
-  default: ({ children, href, ...props }: any) => (
+  default: ({ children, href, ...props }: { children: ReactNode; href: string; [key: string]: unknown }) => (
     <a href={href} {...props}>
       {children}
     </a>
@@ -25,16 +26,16 @@ const mockGetSuggestionCounts = vi.fn();
 
 vi.mock("@/lib/api", () => ({
   api: {
-    getLeads: (...args: any[]) => mockGetLeads(...args),
-    getQualification: (...args: any[]) => mockGetQualification(...args),
-    exportLeadsCSV: (...args: any[]) => mockExportLeadsCSV(...args),
-    importLeadsCSV: (...args: any[]) => mockImportLeadsCSV(...args),
-    getSuggestionCounts: (...args: any[]) => mockGetSuggestionCounts(...args),
+    getLeads: (...args: unknown[]) => mockGetLeads(...args),
+    getQualification: (...args: unknown[]) => mockGetQualification(...args),
+    exportLeadsCSV: (...args: unknown[]) => mockExportLeadsCSV(...args),
+    importLeadsCSV: (...args: unknown[]) => mockImportLeadsCSV(...args),
+    getSuggestionCounts: (...args: unknown[]) => mockGetSuggestionCounts(...args),
   },
 }));
 
 vi.mock("@/lib/utils", () => ({
-  cn: (...args: any[]) => args.filter(Boolean).join(" "),
+  cn: (...args: unknown[]) => args.filter(Boolean).join(" "),
 }));
 
 import InboxPage from "./page";
