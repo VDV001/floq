@@ -46,7 +46,19 @@ func (uc *UseCase) CreateSequence(ctx context.Context, s *domain.Sequence) error
 	return uc.repo.CreateSequence(ctx, s)
 }
 
-func (uc *UseCase) UpdateSequence(ctx context.Context, s *domain.Sequence) error {
+func (uc *UseCase) UpdateSequence(ctx context.Context, id uuid.UUID, name string) error {
+	s, err := uc.repo.GetSequence(ctx, id)
+	if err != nil {
+		return err
+	}
+	if s == nil {
+		return fmt.Errorf("sequence not found")
+	}
+	// Route through the domain method so the non-empty-name invariant is
+	// enforced here, not just at creation time.
+	if err := s.Rename(name); err != nil {
+		return fmt.Errorf("update sequence: %w", err)
+	}
 	return uc.repo.UpdateSequence(ctx, s)
 }
 
@@ -54,8 +66,24 @@ func (uc *UseCase) DeleteSequence(ctx context.Context, id uuid.UUID) error {
 	return uc.repo.DeleteSequence(ctx, id)
 }
 
+// ToggleActive loads the sequence, applies the domain intent method
+// (Activate/Deactivate), and persists. This ensures future rules on
+// activation (e.g. "can't activate a sequence with no steps") live on the
+// entity, not scattered across handlers/usecases.
 func (uc *UseCase) ToggleActive(ctx context.Context, id uuid.UUID, active bool) error {
-	return uc.repo.ToggleActive(ctx, id, active)
+	s, err := uc.repo.GetSequence(ctx, id)
+	if err != nil {
+		return err
+	}
+	if s == nil {
+		return fmt.Errorf("sequence not found")
+	}
+	if active {
+		s.Activate()
+	} else {
+		s.Deactivate()
+	}
+	return uc.repo.UpdateSequence(ctx, s)
 }
 
 func (uc *UseCase) ListSteps(ctx context.Context, sequenceID uuid.UUID) ([]domain.SequenceStep, error) {
@@ -105,7 +133,7 @@ func (uc *UseCase) launchInner(ctx context.Context, sequenceID uuid.UUID, prospe
 			return fmt.Errorf("launch: prospect %s not found", pid)
 		}
 
-		if !prospect.CanReceiveSequence() {
+		if !prospect.IsEligibleForSequence {
 			continue
 		}
 
@@ -159,7 +187,7 @@ func (uc *UseCase) launchInner(ctx context.Context, sequenceID uuid.UUID, prospe
 			previousBody = body
 		}
 
-		if err := uc.prospects.UpdateStatus(ctx, pid, domain.ProspectStatusInSequence); err != nil {
+		if err := uc.prospects.MarkInSequence(ctx, pid); err != nil {
 			return fmt.Errorf("launch: update prospect status: %w", err)
 		}
 	}
@@ -167,12 +195,39 @@ func (uc *UseCase) launchInner(ctx context.Context, sequenceID uuid.UUID, prospe
 	return nil
 }
 
+// ApproveMessage loads the message, asks the domain entity to transition to
+// Approved (fails if the current status forbids it), then persists the result.
+// The state machine (see domain.OutboundMessage.TransitionTo) is the single
+// source of truth for legal transitions — the repo is dumb persistence.
 func (uc *UseCase) ApproveMessage(ctx context.Context, id uuid.UUID) error {
-	return uc.repo.UpdateOutboundStatus(ctx, id, domain.OutboundStatusApproved)
+	msg, err := uc.repo.GetOutboundMessage(ctx, id)
+	if err != nil {
+		return fmt.Errorf("approve message: load: %w", err)
+	}
+	if msg == nil {
+		return fmt.Errorf("approve message: not found")
+	}
+	if err := msg.TransitionTo(domain.OutboundStatusApproved); err != nil {
+		return fmt.Errorf("approve message: %w", err)
+	}
+	return uc.repo.UpdateOutboundStatus(ctx, id, msg.Status)
 }
 
+// RejectMessage follows the same load → domain.TransitionTo → persist pattern
+// as ApproveMessage. Draft and Approved are legal predecessors; anything else
+// (Sent, Bounced, already Rejected) returns an error from the domain.
 func (uc *UseCase) RejectMessage(ctx context.Context, id uuid.UUID) error {
-	return uc.repo.UpdateOutboundStatus(ctx, id, domain.OutboundStatusRejected)
+	msg, err := uc.repo.GetOutboundMessage(ctx, id)
+	if err != nil {
+		return fmt.Errorf("reject message: load: %w", err)
+	}
+	if msg == nil {
+		return fmt.Errorf("reject message: not found")
+	}
+	if err := msg.TransitionTo(domain.OutboundStatusRejected); err != nil {
+		return fmt.Errorf("reject message: %w", err)
+	}
+	return uc.repo.UpdateOutboundStatus(ctx, id, msg.Status)
 }
 
 func (uc *UseCase) EditMessage(ctx context.Context, id uuid.UUID, body string) error {
@@ -255,22 +310,31 @@ func (uc *UseCase) buildFeedbackExamples(ctx context.Context, userID uuid.UUID) 
 	return b.String()
 }
 
+// ConvertToLead creates a lead from a prospect and marks the prospect as
+// converted. Wrapped in a transaction via TxManager — if lead creation
+// succeeds but the status update fails, the whole thing rolls back so we
+// never leave a dangling "prospect still in_sequence but lead exists"
+// state. If no TxManager is configured (legacy wiring / tests), falls back
+// to best-effort sequential execution.
 func (uc *UseCase) ConvertToLead(ctx context.Context, prospectID uuid.UUID) error {
-	prospect, err := uc.prospects.GetProspect(ctx, prospectID)
-	if err != nil {
-		return fmt.Errorf("convert: get prospect: %w", err)
+	convert := func(txCtx context.Context) error {
+		prospect, err := uc.prospects.GetProspect(txCtx, prospectID)
+		if err != nil {
+			return fmt.Errorf("convert: get prospect: %w", err)
+		}
+		if prospect == nil {
+			return fmt.Errorf("convert: prospect not found")
+		}
+		if _, err := uc.leadCreator.CreateLeadFromProspect(txCtx, prospect, prospect.UserID); err != nil {
+			return fmt.Errorf("convert: create lead: %w", err)
+		}
+		if err := uc.prospects.MarkConverted(txCtx, prospectID); err != nil {
+			return fmt.Errorf("convert: update prospect: %w", err)
+		}
+		return nil
 	}
-	if prospect == nil {
-		return fmt.Errorf("convert: prospect not found")
+	if uc.tx == nil {
+		return convert(ctx)
 	}
-
-	if _, err := uc.leadCreator.CreateLeadFromProspect(ctx, prospect, prospect.UserID); err != nil {
-		return fmt.Errorf("convert: create lead: %w", err)
-	}
-
-	if err := uc.prospects.UpdateStatus(ctx, prospectID, domain.ProspectStatusConverted); err != nil {
-		return fmt.Errorf("convert: update prospect: %w", err)
-	}
-
-	return nil
+	return uc.tx.WithTx(ctx, convert)
 }

@@ -7,8 +7,6 @@ import (
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 	"github.com/google/uuid"
-
-	"github.com/daniil/floq/internal/leads/domain"
 )
 
 // TelegramBot listens for incoming Telegram messages and creates leads.
@@ -79,7 +77,7 @@ func (t *TelegramBot) handleMessage(ctx context.Context, msg *tgbotapi.Message) 
 	}
 
 	isNewLead := existing == nil
-	var lead *domain.Lead
+	var lead *InboxLead
 
 	if isNewLead {
 		company := ""
@@ -96,7 +94,7 @@ func (t *TelegramBot) handleMessage(ctx context.Context, msg *tgbotapi.Message) 
 			}
 		}
 
-		newLead, err := domain.NewLead(t.ownerID, domain.ChannelTelegram, contactName, company, text, &chatID, nil)
+		newLead, err := NewInboxLead(t.ownerID, ChannelTelegram, contactName, company, text, &chatID, nil)
 		if err != nil {
 			log.Printf("telegram inbox: error creating lead entity: %v", err)
 			return
@@ -128,21 +126,21 @@ func (t *TelegramBot) handleMessage(ctx context.Context, msg *tgbotapi.Message) 
 	}
 
 	// Create inbound message.
-	message := domain.NewMessage(lead.ID, domain.DirectionInbound, text)
+	message := NewInboxMessage(lead.ID, DirectionInbound, text)
 	if err := t.repo.CreateMessage(ctx, message); err != nil {
 		log.Printf("telegram inbox: error creating message: %v", err)
 		return
 	}
 
 	// Auto-reply with booking link if lead agrees to a call
-	if domain.DetectCallAgreement(text) {
+	if DetectCallAgreement(text) {
 		bookingMsg := "Отлично! Вот ссылка для выбора удобного времени для звонка: " + t.bookingLink + "\n\nВыберите слот и я получу уведомление. До связи!"
 		tgReply := tgbotapi.NewMessage(chatID, bookingMsg)
 		if _, err := t.bot.Send(tgReply); err != nil {
 			log.Printf("telegram inbox: error sending booking link: %v", err)
 		} else {
 			// Save as outbound message
-			outMsg := domain.NewMessage(lead.ID, domain.DirectionOutbound, bookingMsg)
+			outMsg := NewInboxMessage(lead.ID, DirectionOutbound, bookingMsg)
 			t.repo.CreateMessage(ctx, outMsg)
 			log.Printf("telegram inbox: sent booking link to chat %d", chatID)
 		}
@@ -160,7 +158,7 @@ func (t *TelegramBot) handleMessage(ctx context.Context, msg *tgbotapi.Message) 
 				return
 			}
 
-			q := &domain.Qualification{
+			q := &InboxQualification{
 				ID:                uuid.New(),
 				LeadID:            lead.ID,
 				IdentifiedNeed:    result.IdentifiedNeed,
@@ -176,7 +174,7 @@ func (t *TelegramBot) handleMessage(ctx context.Context, msg *tgbotapi.Message) 
 				log.Printf("telegram inbox: error saving qualification for lead %s: %v", lead.ID, err)
 				return
 			}
-			if err := t.repo.UpdateLeadStatus(qCtx, lead.ID, domain.StatusQualified); err != nil {
+			if err := t.repo.UpdateLeadStatus(qCtx, lead.ID, StatusQualified); err != nil {
 				log.Printf("telegram inbox: error updating lead status for %s: %v", lead.ID, err)
 				return
 			}

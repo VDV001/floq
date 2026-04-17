@@ -19,8 +19,15 @@ type ConfigStore interface {
 // OutboundRepository manages the outbound message queue.
 type OutboundRepository interface {
 	GetPendingSends(ctx context.Context) ([]seqdomain.OutboundMessage, error)
-	MarkSent(ctx context.Context, id uuid.UUID) error
-	MarkBounced(ctx context.Context, id uuid.UUID) error
+	// MarkSent persists sent status plus the caller-supplied sent_at
+	// timestamp; see sequences/domain.Repository contract — the repo must
+	// not fall back to DB-side NOW(). The clock is computed by the domain
+	// entity's OutboundMessage.MarkSent before this call.
+	MarkSent(ctx context.Context, id uuid.UUID, sentAt time.Time) error
+	// MarkBounced persists the bounced terminal state; bouncedAt supplied
+	// by the caller (the domain entity's OutboundMessage.MarkBounced) —
+	// see sequences/domain.Repository contract for the rationale.
+	MarkBounced(ctx context.Context, id uuid.UUID, bouncedAt time.Time) error
 }
 
 // ProspectLookup reads and updates prospect data needed for sending.

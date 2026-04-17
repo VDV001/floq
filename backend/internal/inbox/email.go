@@ -12,9 +12,6 @@ import (
 	"github.com/emersion/go-imap/v2/imapclient"
 	"github.com/emersion/go-message/mail"
 	"github.com/google/uuid"
-
-	leadsdomain "github.com/daniil/floq/internal/leads/domain"
-	settingsdomain "github.com/daniil/floq/internal/settings/domain"
 )
 
 // EmailPoller polls an IMAP mailbox for new emails and creates leads.
@@ -69,10 +66,10 @@ func (e *EmailPoller) Start(ctx context.Context) {
 func (e *EmailPoller) resolveConfig(ctx context.Context) (host, port, user, password string) {
 	host, port, user, password = e.fallbackHost, e.fallbackPort, e.fallbackUser, e.fallbackPassword
 	if cfg, err := e.store.GetConfig(ctx, e.ownerID); err == nil {
-		host = settingsdomain.ResolveConfig(cfg.IMAPHost, host)
-		port = settingsdomain.ResolveConfig(cfg.IMAPPort, port)
-		user = settingsdomain.ResolveConfig(cfg.IMAPUser, user)
-		password = settingsdomain.ResolveConfig(cfg.IMAPPassword, password)
+		host = ResolveConfig(cfg.IMAPHost, host)
+		port = ResolveConfig(cfg.IMAPPort, port)
+		user = ResolveConfig(cfg.IMAPUser, user)
+		password = ResolveConfig(cfg.IMAPPassword, password)
 	}
 	return
 }
@@ -258,7 +255,7 @@ func (e *EmailPoller) processEmail(ctx context.Context, fromName, fromEmail, bod
 	}
 
 	isNewLead := existing == nil
-	var lead *leadsdomain.Lead
+	var lead *InboxLead
 
 	// Check if sender is a known prospect
 	prospect, prospectErr := e.prospectRepo.FindByEmail(ctx, e.ownerID, fromEmail)
@@ -277,7 +274,7 @@ func (e *EmailPoller) processEmail(ctx context.Context, fromName, fromEmail, bod
 		}
 
 		emailAddr := fromEmail
-		newLead, err := leadsdomain.NewLead(e.ownerID, leadsdomain.ChannelEmail, contactName, company, body, nil, &emailAddr)
+		newLead, err := NewInboxLead(e.ownerID, ChannelEmail, contactName, company, body, nil, &emailAddr)
 		if err != nil {
 			log.Printf("[email-poller] error creating lead entity: %v", err)
 			return
@@ -306,7 +303,7 @@ func (e *EmailPoller) processEmail(ctx context.Context, fromName, fromEmail, bod
 		lead = existing
 	}
 
-	message := leadsdomain.NewMessage(lead.ID, leadsdomain.DirectionInbound, body)
+	message := NewInboxMessage(lead.ID, DirectionInbound, body)
 	if err := e.repo.CreateMessage(ctx, message); err != nil {
 		log.Printf("[email-poller] error creating message: %v", err)
 		return
@@ -322,7 +319,7 @@ func (e *EmailPoller) processEmail(ctx context.Context, fromName, fromEmail, bod
 				return
 			}
 
-			q := &leadsdomain.Qualification{
+			q := &InboxQualification{
 				ID:                uuid.New(),
 				LeadID:            lead.ID,
 				IdentifiedNeed:    result.IdentifiedNeed,
@@ -338,7 +335,7 @@ func (e *EmailPoller) processEmail(ctx context.Context, fromName, fromEmail, bod
 				log.Printf("[email-poller] error saving qualification for lead %s: %v", lead.ID, err)
 				return
 			}
-			if err := e.repo.UpdateLeadStatus(qCtx, lead.ID, leadsdomain.StatusQualified); err != nil {
+			if err := e.repo.UpdateLeadStatus(qCtx, lead.ID, StatusQualified); err != nil {
 				log.Printf("[email-poller] error updating lead status for %s: %v", lead.ID, err)
 				return
 			}

@@ -9,8 +9,8 @@ import (
 	"github.com/google/uuid"
 )
 
-// settingsInput is used for JSON deserialization of update requests.
-type settingsInput struct {
+// SettingsInput is used for JSON deserialization of update requests.
+type SettingsInput struct {
 	TelegramBotToken  string `json:"telegram_bot_token"`
 	TelegramBotActive bool   `json:"telegram_bot_active"`
 	IMAPHost          string `json:"imap_host"`
@@ -62,19 +62,7 @@ func (uc *UseCase) GetSettings(ctx context.Context, userID uuid.UUID) (*domain.S
 	return s, nil
 }
 
-func (uc *UseCase) UpdateSettings(ctx context.Context, userID uuid.UUID, rawBody []byte) (*domain.Settings, error) {
-	// Decode into a map so we know which fields were actually sent.
-	var raw map[string]json.RawMessage
-	if err := json.Unmarshal(rawBody, &raw); err != nil {
-		return nil, fmt.Errorf("invalid JSON")
-	}
-
-	// Also decode into the struct for typed access.
-	var input settingsInput
-	if err := json.Unmarshal(rawBody, &input); err != nil {
-		return nil, fmt.Errorf("invalid JSON")
-	}
-
+func (uc *UseCase) UpdateSettings(ctx context.Context, userID uuid.UUID, raw map[string]json.RawMessage, input SettingsInput) (*domain.Settings, error) {
 	// If telegram_bot_token is being set, validate it.
 	if _, ok := raw["telegram_bot_token"]; ok && input.TelegramBotToken != "" {
 		if err := uc.tgValidator.Validate(input.TelegramBotToken); err != nil {

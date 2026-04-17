@@ -76,8 +76,8 @@ func (r *Repository) CreateSequence(ctx context.Context, s *domain.Sequence) err
 
 func (r *Repository) UpdateSequence(ctx context.Context, s *domain.Sequence) error {
 	_, err := r.conn(ctx).Exec(ctx,
-		`UPDATE sequences SET name = $1 WHERE id = $2`,
-		s.Name, s.ID)
+		`UPDATE sequences SET name = $1, is_active = $2 WHERE id = $3`,
+		s.Name, s.IsActive, s.ID)
 	if err != nil {
 		return fmt.Errorf("update sequence: %w", err)
 	}
@@ -242,16 +242,25 @@ func (r *Repository) GetPendingSends(ctx context.Context) ([]domain.OutboundMess
 	return msgs, rows.Err()
 }
 
-func (r *Repository) MarkSent(ctx context.Context, id uuid.UUID) error {
+func (r *Repository) MarkSent(ctx context.Context, id uuid.UUID, sentAt time.Time) error {
+	// sent_at must be the caller-supplied timestamp — the domain method
+	// OutboundMessage.MarkSent owns the clock (see domain/entity.go). Using
+	// NOW() here would silently make the DB the source of truth and strip
+	// the domain layer of temporal authority.
 	_, err := r.conn(ctx).Exec(ctx,
-		`UPDATE outbound_messages SET status = 'sent', sent_at = NOW() WHERE id = $1`, id)
+		`UPDATE outbound_messages SET status = 'sent', sent_at = $2 WHERE id = $1`, id, sentAt)
 	if err != nil {
 		return fmt.Errorf("mark sent: %w", err)
 	}
 	return nil
 }
 
-func (r *Repository) MarkBounced(ctx context.Context, id uuid.UUID) error {
+func (r *Repository) MarkBounced(ctx context.Context, id uuid.UUID, _ time.Time) error {
+	// bouncedAt accepted for port-contract symmetry with MarkSent; the
+	// current schema has no bounced_at column so the value is ignored.
+	// When the column is added, this method just starts persisting it —
+	// no port change, no call-site change needed. That's the point of
+	// accepting the clock parameter up front.
 	_, err := r.conn(ctx).Exec(ctx,
 		`UPDATE outbound_messages SET status = 'bounced' WHERE id = $1`, id)
 	if err != nil {

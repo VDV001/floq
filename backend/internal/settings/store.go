@@ -3,6 +3,7 @@ package settings
 import (
 	"context"
 
+	"github.com/daniil/floq/internal/db"
 	"github.com/daniil/floq/internal/settings/domain"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -13,17 +14,22 @@ var _ domain.ConfigStore = (*Store)(nil)
 
 // Store reads user settings from the database.
 type Store struct {
-	pool *pgxpool.Pool
+	q db.Querier
 }
 
 func NewStore(pool *pgxpool.Pool) *Store {
-	return &Store{pool: pool}
+	return &Store{q: pool}
+}
+
+// NewStoreFromQuerier creates a Store from any db.Querier (useful for testing).
+func NewStoreFromQuerier(q db.Querier) *Store {
+	return &Store{q: q}
 }
 
 // GetConfig reads settings for the given user. Returns zero-value UserConfig if no row exists.
 func (s *Store) GetConfig(ctx context.Context, userID uuid.UUID) (*domain.UserConfig, error) {
 	cfg := &domain.UserConfig{}
-	err := s.pool.QueryRow(ctx,
+	err := s.q.QueryRow(ctx,
 		`SELECT COALESCE(resend_api_key, ''),
 		        COALESCE(smtp_host, ''), COALESCE(smtp_port, '465'), COALESCE(smtp_user, ''), COALESCE(smtp_password, ''),
 		        COALESCE(ai_provider, ''), COALESCE(ai_model, ''), COALESCE(ai_api_key, ''),

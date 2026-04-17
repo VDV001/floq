@@ -2,7 +2,7 @@ package sequences
 
 import (
 	"context"
-	"time"
+	"fmt"
 
 	leadsdomain "github.com/daniil/floq/internal/leads/domain"
 	"github.com/daniil/floq/internal/sequences/domain"
@@ -21,22 +21,17 @@ func NewLeadCreatorAdapter(repo leadsdomain.Repository) *LeadCreatorAdapter {
 
 // CreateLeadFromProspect creates a lead from prospect data and returns the new lead ID.
 func (a *LeadCreatorAdapter) CreateLeadFromProspect(ctx context.Context, prospect *domain.ProspectView, userID uuid.UUID) (uuid.UUID, error) {
-	leadID := uuid.New()
-	now := time.Now().UTC()
-	lead := &leadsdomain.Lead{
-		ID:           leadID,
-		UserID:       userID,
-		Channel:      leadsdomain.ChannelEmail,
-		ContactName:  prospect.Name,
-		Company:      prospect.Company,
-		FirstMessage: "Ответ на outbound секвенцию",
-		Status:       leadsdomain.StatusNew,
-		SourceID:     prospect.SourceID,
-		CreatedAt:    now,
-		UpdatedAt:    now,
+	var emailPtr *string
+	if prospect.Email != "" {
+		emailPtr = &prospect.Email
 	}
+	lead, err := leadsdomain.NewLead(userID, leadsdomain.ChannelEmail, prospect.Name, prospect.Company, "Ответ на outbound секвенцию", nil, emailPtr)
+	if err != nil {
+		return uuid.Nil, fmt.Errorf("create lead entity: %w", err)
+	}
+	lead.SourceID = prospect.SourceID
 	if err := a.repo.CreateLead(ctx, lead); err != nil {
 		return uuid.Nil, err
 	}
-	return leadID, nil
+	return lead.ID, nil
 }

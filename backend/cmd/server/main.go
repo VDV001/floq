@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"fmt"
 	"log"
 	"net/http"
 	"os"
@@ -104,10 +103,12 @@ func main() {
 	leadCreatorAdapter := sequences.NewLeadCreatorAdapter(leadsRepo)
 
 	// 5. Use cases
-	leadsUC := leads.NewUseCase(leadsRepo, leadsAI, nil) // sender set after bot init
-	prospectsUC := prospects.NewUseCase(prospectsRepo, prospects.WithLeadChecker(prospects.NewLeadCheckerAdapter(leadsRepo)))
-	sourcesUC := sources.NewUseCase(sourcesRepo, sources.WithStatsReader(sourcesRepo))
 	txManager := db.NewTxManager(pool)
+	suggestionFinder := newProspectSuggestionFinderAdapter(txManager, leadsRepo, prospectsRepo)
+	leadsUC := leads.NewUseCase(leadsRepo, leadsAI, nil, leads.WithSuggestionFinder(suggestionFinder)) // sender set after bot init
+	prospectsUC := prospects.NewUseCase(prospectsRepo, prospects.WithLeadChecker(newLeadCheckerAdapter(leadsRepo)))
+	sourcesUC := sources.NewUseCase(sourcesRepo, sources.WithStatsReader(sourcesRepo))
+	migrateOrphanProspects(pool, ownerID)
 	sequencesUC := sequences.NewUseCase(sequencesRepo, seqAI, prospectReader, leadCreatorAdapter, sequences.WithTxManager(txManager))
 
 	// 5. Auth
@@ -141,8 +142,8 @@ func main() {
 		sources.RegisterRoutes(r, sourcesUC)
 		verify.RegisterRoutes(r, prospectsRepo, nil) // TG bot passed as nil for now
 		parser.RegisterRoutes(r, cfg.TwoGISAPIKey)
-		settings.RegisterRoutes(r, settingsUC, buildAITester(cfg), buildUsageCounter(leadsRepo))
-		chat.RegisterRoutes(r, chat.NewHandler(chat.NewRepository(pool), aiClient))
+		settings.RegisterRoutes(r, settingsUC, buildAITester(cfg), buildSMTPTester(), buildResendTester(), buildUsageCounter(leadsRepo))
+		chat.RegisterRoutes(r, chat.NewHandler(chat.NewRepository(pool), newChatAIAdapter(aiClient)))
 		tgclient.RegisterRoutes(r, tgclient.NewClient(), tgclient.NewRepository(pool))
 	})
 
@@ -171,13 +172,16 @@ func main() {
 
 	// 8. Optional: Telegram inbox bot
 	// Read token from DB first, fall back to .env
-	prospectAdapter := inbox.NewProspectRepoAdapter(prospectsRepo)
+	prospectAdapter := newProspectRepoAdapter(prospectsRepo, txManager)
+	inboxLeadAdapter := newInboxLeadRepoAdapter(leadsRepo)
+	inboxAI := newInboxAIAdapter(aiClient)
+	inboxCfg := newInboxConfigAdapter(settingsStore)
 	tgToken := cfg.TelegramBotToken
 	if dbCfg, err := settingsStore.GetConfig(context.Background(), ownerID); err == nil && dbCfg.TelegramBotToken != "" {
 		tgToken = dbCfg.TelegramBotToken
 	}
 	if tgToken != "" {
-		tgBot, err := inbox.NewTelegramBot(tgToken, leadsRepo, prospectAdapter, aiClient, ownerID, cfg.BookingLink)
+		tgBot, err := inbox.NewTelegramBot(tgToken, inboxLeadAdapter, prospectAdapter, inboxAI, ownerID, cfg.BookingLink)
 		if err != nil {
 			log.Printf("telegram bot init failed: %v", err)
 		} else {
@@ -188,7 +192,7 @@ func main() {
 	}
 
 	// 9. Email IMAP poller (reads settings from DB, falls back to .env)
-	emailPoller := inbox.NewEmailPoller(settingsStore, ownerID, cfg.IMAPHost, cfg.IMAPPort, cfg.IMAPUser, cfg.IMAPPassword, leadsRepo, prospectAdapter, sequencesRepo, aiClient)
+	emailPoller := inbox.NewEmailPoller(inboxCfg, ownerID, cfg.IMAPHost, cfg.IMAPPort, cfg.IMAPUser, cfg.IMAPPassword, inboxLeadAdapter, prospectAdapter, sequencesRepo, inboxAI)
 	go emailPoller.Start(ctx)
 
 	// 10. Reminders cron (hourly, checks for stale leads)
@@ -234,77 +238,3 @@ func main() {
 	log.Println("server stopped")
 }
 
-func buildUsageCounter(repo *leads.Repository) settings.UsageCounter {
-	return func(ctx context.Context, userID uuid.UUID) (int, int, error) {
-		monthLeads, err := repo.CountMonthLeads(ctx, userID)
-		if err != nil {
-			return 0, 0, err
-		}
-		totalLeads, err := repo.CountTotalLeads(ctx, userID)
-		if err != nil {
-			return 0, 0, err
-		}
-		return monthLeads, totalLeads, nil
-	}
-}
-
-func buildAITester(cfg *config.Config) settings.AITester {
-	return func(ctx context.Context, provider, model, apiKey string) (string, error) {
-		var p ai.Provider
-		switch provider {
-		case "claude":
-			if apiKey == "" {
-				apiKey = cfg.AnthropicAPIKey
-			}
-			p = providers.NewClaudeProvider(apiKey)
-		case "openai":
-			if apiKey == "" {
-				apiKey = cfg.OpenAIAPIKey
-			}
-			if model == "" {
-				model = cfg.OpenAIModel
-			}
-			p = providers.NewOpenAIProvider(apiKey, model)
-		case "groq":
-			if apiKey == "" {
-				apiKey = cfg.GroqAPIKey
-			}
-			if model == "" {
-				model = cfg.GroqModel
-			}
-			p = providers.NewOpenAICompatibleProvider(apiKey, model, "https://api.groq.com/openai/v1")
-		case "ollama":
-			if model == "" {
-				model = cfg.OllamaModel
-			}
-			p = providers.NewOllamaProvider(cfg.OllamaBaseURL, model)
-		default:
-			return "", fmt.Errorf("неизвестный провайдер: %s", provider)
-		}
-
-		resp, err := p.Complete(ctx, ai.CompletionRequest{
-			Messages:  []ai.Message{{Role: "user", Content: "Ответь одним словом: привет"}},
-			MaxTokens: 256,
-		})
-		if err != nil {
-			return "", err
-		}
-		// Some reasoning models (gpt-oss) return empty content while thinking;
-		// a successful API call with no error is enough to confirm connectivity.
-		_ = resp
-		return p.Name(), nil
-	}
-}
-
-func corsMiddleware(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Access-Control-Allow-Origin", "*")
-		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
-		if r.Method == "OPTIONS" {
-			w.WriteHeader(http.StatusNoContent)
-			return
-		}
-		next.ServeHTTP(w, r)
-	})
-}

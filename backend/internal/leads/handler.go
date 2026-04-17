@@ -21,6 +21,7 @@ func RegisterRoutes(r chi.Router, uc *UseCase) {
 	r.Get("/api/leads", h.listLeads())
 	r.Get("/api/leads/export", h.exportCSV())
 	r.Post("/api/leads/import", h.importCSV())
+	r.Get("/api/leads/suggestion-counts", h.suggestionCounts())
 	r.Get("/api/leads/{id}", h.getLead())
 	r.Patch("/api/leads/{id}/status", h.updateStatus())
 	r.Get("/api/leads/{id}/messages", h.listMessages())
@@ -29,6 +30,9 @@ func RegisterRoutes(r chi.Router, uc *UseCase) {
 	r.Post("/api/leads/{id}/qualify", h.qualifyLead())
 	r.Get("/api/leads/{id}/draft", h.getDraft())
 	r.Post("/api/leads/{id}/draft/regen", h.regenerateDraft())
+	r.Get("/api/leads/{id}/prospect-suggestions", h.getProspectSuggestions())
+	r.Post("/api/leads/{id}/link-prospect", h.linkProspect())
+	r.Post("/api/leads/{id}/dismiss-prospect-suggestion", h.dismissProspectSuggestion())
 }
 
 func (h *Handler) listLeads() http.HandlerFunc {
@@ -44,7 +48,7 @@ func (h *Handler) listLeads() http.HandlerFunc {
 			return
 		}
 		if leads == nil {
-			leads = []domain.Lead{}
+			leads = []domain.LeadWithSource{}
 		}
 		httputil.WriteJSON(w, http.StatusOK, LeadsToResponse(leads))
 	}

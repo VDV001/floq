@@ -33,6 +33,7 @@ type mockOutboundRepository struct {
 	pending    []seqdomain.OutboundMessage
 	pendingErr error
 	sentIDs    []uuid.UUID
+	sentAts    []time.Time
 	sentErr    error
 	bouncedIDs []uuid.UUID
 	bouncedErr error
@@ -42,12 +43,13 @@ func (m *mockOutboundRepository) GetPendingSends(_ context.Context) ([]seqdomain
 	return m.pending, m.pendingErr
 }
 
-func (m *mockOutboundRepository) MarkSent(_ context.Context, id uuid.UUID) error {
+func (m *mockOutboundRepository) MarkSent(_ context.Context, id uuid.UUID, sentAt time.Time) error {
 	m.sentIDs = append(m.sentIDs, id)
+	m.sentAts = append(m.sentAts, sentAt)
 	return m.sentErr
 }
 
-func (m *mockOutboundRepository) MarkBounced(_ context.Context, id uuid.UUID) error {
+func (m *mockOutboundRepository) MarkBounced(_ context.Context, id uuid.UUID, _ time.Time) error {
 	m.bouncedIDs = append(m.bouncedIDs, id)
 	return m.bouncedErr
 }
@@ -171,8 +173,8 @@ func TestSendPending_EmailHappyPath(t *testing.T) {
 				ID:         msgID,
 				ProspectID: prospectID,
 				Channel:    seqdomain.StepChannelEmail,
-				Body:       "<p>Hello!</p>",
 				Status:     seqdomain.OutboundStatusApproved,
+				Body:       "<p>Hello!</p>",
 			},
 		},
 	}
@@ -257,6 +259,7 @@ func TestSendPending_BounceDetection(t *testing.T) {
 				ID:         msgID,
 				ProspectID: prospectID,
 				Channel:    seqdomain.StepChannelEmail,
+				Status:     seqdomain.OutboundStatusApproved,
 				Body:       "hi",
 			},
 		},
@@ -303,6 +306,7 @@ func TestSendPending_TelegramHappyPath(t *testing.T) {
 				ID:         msgID,
 				ProspectID: prospectID,
 				Channel:    seqdomain.StepChannelTelegram,
+				Status:     seqdomain.OutboundStatusApproved,
 				Body:       "Hello via TG!",
 			},
 		},
@@ -367,12 +371,14 @@ func TestSendPending_TelegramRateLimit(t *testing.T) {
 				ID:         msgID1,
 				ProspectID: prospectID1,
 				Channel:    seqdomain.StepChannelTelegram,
+				Status:     seqdomain.OutboundStatusApproved,
 				Body:       "First TG message",
 			},
 			{
 				ID:         msgID2,
 				ProspectID: prospectID2,
 				Channel:    seqdomain.StepChannelTelegram,
+				Status:     seqdomain.OutboundStatusApproved,
 				Body:       "Second TG message",
 			},
 		},
@@ -432,6 +438,7 @@ func TestSendPending_SkipNoEmail(t *testing.T) {
 				ID:         msgID,
 				ProspectID: prospectID,
 				Channel:    seqdomain.StepChannelEmail,
+				Status:     seqdomain.OutboundStatusApproved,
 				Body:       "hi",
 			},
 		},
@@ -489,6 +496,7 @@ func TestSendPending_TelegramNoSession(t *testing.T) {
 				ID:         msgID,
 				ProspectID: prospectID,
 				Channel:    seqdomain.StepChannelTelegram,
+				Status:     seqdomain.OutboundStatusApproved,
 				Body:       "TG msg",
 			},
 		},
@@ -522,6 +530,7 @@ func TestSendPending_TelegramSendFailure(t *testing.T) {
 				ID:         msgID,
 				ProspectID: prospectID,
 				Channel:    seqdomain.StepChannelTelegram,
+				Status:     seqdomain.OutboundStatusApproved,
 				Body:       "TG msg",
 			},
 		},
@@ -626,6 +635,7 @@ func TestSendPending_ConfigStoreOverridesSMTP(t *testing.T) {
 				ID:         msgID,
 				ProspectID: prospectID,
 				Channel:    seqdomain.StepChannelEmail,
+				Status:     seqdomain.OutboundStatusApproved,
 				Body:       "hello",
 			},
 		},
@@ -679,6 +689,7 @@ func TestSendPending_SubjectWithoutCompany(t *testing.T) {
 				ID:         msgID,
 				ProspectID: prospectID,
 				Channel:    seqdomain.StepChannelEmail,
+				Status:     seqdomain.OutboundStatusApproved,
 				Body:       "hi",
 			},
 		},
@@ -721,6 +732,7 @@ func TestSendPending_TelegramPhoneFallback(t *testing.T) {
 				ID:         msgID,
 				ProspectID: prospectID,
 				Channel:    seqdomain.StepChannelTelegram,
+				Status:     seqdomain.OutboundStatusApproved,
 				Body:       "Phone fallback msg",
 			},
 		},
@@ -760,6 +772,263 @@ func TestSendPending_TelegramPhoneFallback(t *testing.T) {
 	}
 }
 
+func TestSendPending_ProspectLookupError(t *testing.T) {
+	prospectID := uuid.New()
+	msgID := uuid.New()
+
+	seqRepo := &mockOutboundRepository{
+		pending: []seqdomain.OutboundMessage{
+			{
+				ID:         msgID,
+				ProspectID: prospectID,
+				Channel:    seqdomain.StepChannelEmail,
+				Status:     seqdomain.OutboundStatusApproved,
+				Body:       "hi",
+			},
+		},
+	}
+	prospectRepo := &mockProspectLookup{
+		err: fmt.Errorf("prospect db down"),
+	}
+	cfgStore := &mockConfigStore{cfg: &settingsdomain.UserConfig{}}
+
+	s := NewSender(cfgStore, uuid.New(), "", "from@test.com", "",
+		"", "", "", "",
+		seqRepo, prospectRepo, nil, nil)
+
+	err := s.SendPending(context.Background())
+	if err != nil {
+		t.Fatalf("expected no top-level error, got %v", err)
+	}
+	// Error on prospect lookup — message skipped, not sent, not bounced
+	if len(seqRepo.sentIDs) != 0 {
+		t.Errorf("expected 0 sent, got %d", len(seqRepo.sentIDs))
+	}
+	if len(seqRepo.bouncedIDs) != 0 {
+		t.Errorf("expected 0 bounced, got %d", len(seqRepo.bouncedIDs))
+	}
+}
+
+func TestSendPending_NilProspect(t *testing.T) {
+	prospectID := uuid.New()
+	msgID := uuid.New()
+
+	seqRepo := &mockOutboundRepository{
+		pending: []seqdomain.OutboundMessage{
+			{
+				ID:         msgID,
+				ProspectID: prospectID,
+				Channel:    seqdomain.StepChannelEmail,
+				Status:     seqdomain.OutboundStatusApproved,
+				Body:       "hi",
+			},
+		},
+	}
+	// Prospect not in map → returns nil
+	prospectRepo := &mockProspectLookup{
+		prospects: map[uuid.UUID]*prospectsdomain.Prospect{},
+	}
+	cfgStore := &mockConfigStore{cfg: &settingsdomain.UserConfig{}}
+
+	s := NewSender(cfgStore, uuid.New(), "", "from@test.com", "",
+		"", "", "", "",
+		seqRepo, prospectRepo, nil, nil)
+
+	err := s.SendPending(context.Background())
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if len(seqRepo.sentIDs) != 0 {
+		t.Errorf("expected 0 sent, got %d", len(seqRepo.sentIDs))
+	}
+}
+
+func TestSendPending_WithTrackingPixel(t *testing.T) {
+	// Test that appBaseURL being set doesn't break the flow
+	prospectID := uuid.New()
+	msgID := uuid.New()
+
+	seqRepo := &mockOutboundRepository{
+		pending: []seqdomain.OutboundMessage{
+			{
+				ID:         msgID,
+				ProspectID: prospectID,
+				Channel:    seqdomain.StepChannelEmail,
+				Status:     seqdomain.OutboundStatusApproved,
+				Body:       "<p>Hello!</p>",
+			},
+		},
+	}
+	prospectRepo := &mockProspectLookup{
+		prospects: map[uuid.UUID]*prospectsdomain.Prospect{
+			prospectID: {
+				ID:    prospectID,
+				Name:  "Track",
+				Email: "track@example.com",
+			},
+		},
+	}
+	cfgStore := &mockConfigStore{cfg: &settingsdomain.UserConfig{}}
+
+	s := NewSender(cfgStore, uuid.New(), "", "from@test.com", "https://app.floq.test",
+		"", "", "", "",
+		seqRepo, prospectRepo, nil, nil)
+
+	err := s.SendPending(context.Background())
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	// No SMTP / no Resend key → send fails, but flow ran including tracking pixel construction
+}
+
+func TestSendPending_ConfigStoreError(t *testing.T) {
+	// ConfigStore returns an error — should fall back to .env values and continue
+	prospectID := uuid.New()
+	msgID := uuid.New()
+
+	seqRepo := &mockOutboundRepository{
+		pending: []seqdomain.OutboundMessage{
+			{
+				ID:         msgID,
+				ProspectID: prospectID,
+				Channel:    seqdomain.StepChannelEmail,
+				Status:     seqdomain.OutboundStatusApproved,
+				Body:       "hi",
+			},
+		},
+	}
+	prospectRepo := &mockProspectLookup{
+		prospects: map[uuid.UUID]*prospectsdomain.Prospect{
+			prospectID: {
+				ID:    prospectID,
+				Name:  "Test",
+				Email: "test@example.com",
+			},
+		},
+	}
+	cfgStore := &mockConfigStore{err: fmt.Errorf("config db down")}
+
+	s := NewSender(cfgStore, uuid.New(), "", "from@test.com", "",
+		"", "", "", "",
+		seqRepo, prospectRepo, nil, nil)
+
+	err := s.SendPending(context.Background())
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+}
+
+func TestSendPending_TelegramProspectLookupError(t *testing.T) {
+	prospectID := uuid.New()
+	msgID := uuid.New()
+	ownerID := uuid.New()
+
+	seqRepo := &mockOutboundRepository{
+		pending: []seqdomain.OutboundMessage{
+			{
+				ID:         msgID,
+				ProspectID: prospectID,
+				Channel:    seqdomain.StepChannelTelegram,
+				Status:     seqdomain.OutboundStatusApproved,
+				Body:       "TG msg",
+			},
+		},
+	}
+	prospectRepo := &mockProspectLookup{
+		err: fmt.Errorf("prospect db down"),
+	}
+	tgRepo := &mockTelegramSessionStore{
+		phone:       "+70001234567",
+		sessionData: []byte("session"),
+	}
+	cfgStore := &mockConfigStore{cfg: &settingsdomain.UserConfig{}}
+
+	s := NewSender(cfgStore, ownerID, "", "", "",
+		"", "", "", "",
+		seqRepo, prospectRepo, tgRepo, nil)
+
+	err := s.SendPending(context.Background())
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if len(seqRepo.sentIDs) != 0 {
+		t.Errorf("expected 0 sent, got %d", len(seqRepo.sentIDs))
+	}
+}
+
+func TestSendPending_TelegramSessionError(t *testing.T) {
+	prospectID := uuid.New()
+	msgID := uuid.New()
+	ownerID := uuid.New()
+
+	seqRepo := &mockOutboundRepository{
+		pending: []seqdomain.OutboundMessage{
+			{
+				ID:         msgID,
+				ProspectID: prospectID,
+				Channel:    seqdomain.StepChannelTelegram,
+				Status:     seqdomain.OutboundStatusApproved,
+				Body:       "TG msg",
+			},
+		},
+	}
+	tgRepo := &mockTelegramSessionStore{
+		err: fmt.Errorf("session store error"),
+	}
+	cfgStore := &mockConfigStore{cfg: &settingsdomain.UserConfig{}}
+
+	s := NewSender(cfgStore, ownerID, "", "", "",
+		"", "", "", "",
+		seqRepo, nil, tgRepo, nil)
+
+	err := s.SendPending(context.Background())
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if len(seqRepo.sentIDs) != 0 {
+		t.Errorf("expected 0 sent, got %d", len(seqRepo.sentIDs))
+	}
+}
+
+func TestSendPending_TelegramNilProspect(t *testing.T) {
+	prospectID := uuid.New()
+	msgID := uuid.New()
+	ownerID := uuid.New()
+
+	seqRepo := &mockOutboundRepository{
+		pending: []seqdomain.OutboundMessage{
+			{
+				ID:         msgID,
+				ProspectID: prospectID,
+				Channel:    seqdomain.StepChannelTelegram,
+				Status:     seqdomain.OutboundStatusApproved,
+				Body:       "TG msg",
+			},
+		},
+	}
+	// Prospect not found
+	prospectRepo := &mockProspectLookup{
+		prospects: map[uuid.UUID]*prospectsdomain.Prospect{},
+	}
+	tgRepo := &mockTelegramSessionStore{
+		phone:       "+70001234567",
+		sessionData: []byte("session"),
+	}
+	cfgStore := &mockConfigStore{cfg: &settingsdomain.UserConfig{}}
+
+	s := NewSender(cfgStore, ownerID, "", "", "",
+		"", "", "", "",
+		seqRepo, prospectRepo, tgRepo, nil)
+
+	err := s.SendPending(context.Background())
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if len(seqRepo.sentIDs) != 0 {
+		t.Errorf("expected 0 sent, got %d", len(seqRepo.sentIDs))
+	}
+}
+
 func TestSendPending_TelegramNoPhoneNoUsername(t *testing.T) {
 	// Prospect has neither TG username nor phone → message skipped
 	prospectID := uuid.New()
@@ -772,6 +1041,7 @@ func TestSendPending_TelegramNoPhoneNoUsername(t *testing.T) {
 				ID:         msgID,
 				ProspectID: prospectID,
 				Channel:    seqdomain.StepChannelTelegram,
+				Status:     seqdomain.OutboundStatusApproved,
 				Body:       "no target",
 			},
 		},
@@ -802,5 +1072,180 @@ func TestSendPending_TelegramNoPhoneNoUsername(t *testing.T) {
 	}
 	if len(seqRepo.sentIDs) != 0 {
 		t.Errorf("expected 0 sent, got %d", len(seqRepo.sentIDs))
+	}
+}
+
+func TestSendPending_BounceKeywords(t *testing.T) {
+	prospectID := uuid.New()
+	msgID := uuid.New()
+
+	seqRepo := &mockOutboundRepository{
+		pending: []seqdomain.OutboundMessage{
+			{
+				ID:         msgID,
+				ProspectID: prospectID,
+				Channel:    seqdomain.StepChannelEmail,
+				Status:     seqdomain.OutboundStatusApproved,
+				Body:       "hi",
+			},
+		},
+	}
+	prospectRepo := &mockProspectLookup{
+		prospects: map[uuid.UUID]*prospectsdomain.Prospect{
+			prospectID: {
+				ID:    prospectID,
+				Name:  "Bob",
+				Email: "bob@example.com",
+			},
+		},
+	}
+	cfgStore := &mockConfigStore{cfg: &settingsdomain.UserConfig{}}
+
+	// Use SMTP with port 587 (STARTTLS path) and no from address → from = smtpUser
+	s := NewSender(cfgStore, uuid.New(), "", "", "",
+		"127.0.0.1", "587", "sender@test.com", "pass",
+		seqRepo, prospectRepo, nil, nil)
+
+	err := s.SendPending(context.Background())
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if len(seqRepo.bouncedIDs) != 0 {
+		t.Errorf("expected 0 bounced, got %d", len(seqRepo.bouncedIDs))
+	}
+}
+
+func TestSendPending_SMTPFromAddrFallback(t *testing.T) {
+	prospectID := uuid.New()
+	msgID := uuid.New()
+
+	seqRepo := &mockOutboundRepository{
+		pending: []seqdomain.OutboundMessage{
+			{
+				ID:         msgID,
+				ProspectID: prospectID,
+				Channel:    seqdomain.StepChannelEmail,
+				Status:     seqdomain.OutboundStatusApproved,
+				Body:       "hi",
+			},
+		},
+	}
+	prospectRepo := &mockProspectLookup{
+		prospects: map[uuid.UUID]*prospectsdomain.Prospect{
+			prospectID: {
+				ID:    prospectID,
+				Name:  "Alice",
+				Email: "alice@example.com",
+			},
+		},
+	}
+	cfgStore := &mockConfigStore{
+		cfg: &settingsdomain.UserConfig{
+			SMTPHost:     "127.0.0.1",
+			SMTPPort:     "587",
+			SMTPUser:     "dbuser@test.com",
+			SMTPPassword: "dbpass",
+		},
+	}
+
+	s := NewSender(cfgStore, uuid.New(), "", "", "",
+		"", "", "", "",
+		seqRepo, prospectRepo, nil, nil)
+
+	err := s.SendPending(context.Background())
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+}
+
+func TestSendPending_TelegramMarkSentError(t *testing.T) {
+	prospectID := uuid.New()
+	msgID := uuid.New()
+	ownerID := uuid.New()
+
+	seqRepo := &mockOutboundRepository{
+		pending: []seqdomain.OutboundMessage{
+			{
+				ID:         msgID,
+				ProspectID: prospectID,
+				Channel:    seqdomain.StepChannelTelegram,
+				Status:     seqdomain.OutboundStatusApproved,
+				Body:       "TG msg",
+			},
+		},
+		sentErr: fmt.Errorf("mark sent failed"),
+	}
+	prospectRepo := &mockProspectLookup{
+		prospects: map[uuid.UUID]*prospectsdomain.Prospect{
+			prospectID: {
+				ID:               prospectID,
+				TelegramUsername: "tg_user",
+			},
+		},
+	}
+	tgRepo := &mockTelegramSessionStore{
+		phone:       "+70001234567",
+		sessionData: []byte("session"),
+	}
+	tgMessenger := &mockTelegramMessenger{}
+	cfgStore := &mockConfigStore{cfg: &settingsdomain.UserConfig{}}
+
+	s := NewSender(cfgStore, ownerID, "", "", "",
+		"", "", "", "",
+		seqRepo, prospectRepo, tgRepo, tgMessenger)
+
+	err := s.SendPending(context.Background())
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+
+	if len(tgMessenger.calls) != 1 {
+		t.Fatalf("expected 1 TG call, got %d", len(tgMessenger.calls))
+	}
+}
+
+func TestSendViaResend_NoKey(t *testing.T) {
+	cfgStore := &mockConfigStore{cfg: &settingsdomain.UserConfig{}}
+	s := NewSender(cfgStore, uuid.New(), "", "from@test.com", "",
+		"", "", "", "",
+		nil, nil, nil, nil)
+
+	err := s.sendViaResend(context.Background(), "to@test.com", "subj", "body")
+	if err == nil {
+		t.Fatal("expected error for no Resend key")
+	}
+	if err.Error() != "no Resend API key configured" {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+func TestSendViaResend_ConfigStoreError(t *testing.T) {
+	cfgStore := &mockConfigStore{err: fmt.Errorf("db down")}
+	s := NewSender(cfgStore, uuid.New(), "", "from@test.com", "",
+		"", "", "", "",
+		nil, nil, nil, nil)
+
+	err := s.sendViaResend(context.Background(), "to@test.com", "subj", "body")
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if err.Error() != "no Resend API key configured" {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+func TestSendViaSMTPWith_FromFallback(t *testing.T) {
+	s := &Sender{}
+	err := s.sendViaSMTPWith("127.0.0.1", "587", "user@test.com", "pass", "", "to@test.com", "subj", "body")
+	if err == nil {
+		t.Fatal("expected error from smtp.SendMail")
+	}
+}
+
+func TestSendViaSMTPWith_Port465(t *testing.T) {
+	s := &Sender{}
+	err := s.sendViaSMTPWith("127.0.0.1", "465", "user@test.com", "pass", "from@test.com", "to@test.com", "subj", "body")
+	if err == nil {
+		t.Fatal("expected error from TLS dial")
 	}
 }

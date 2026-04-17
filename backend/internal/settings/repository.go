@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/daniil/floq/internal/db"
 	"github.com/daniil/floq/internal/settings/domain"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -15,17 +16,22 @@ import (
 var _ domain.Repository = (*Repository)(nil)
 
 type Repository struct {
-	pool *pgxpool.Pool
+	q db.Querier
 }
 
 func NewRepository(pool *pgxpool.Pool) *Repository {
-	return &Repository{pool: pool}
+	return &Repository{q: pool}
+}
+
+// NewRepositoryFromQuerier creates a Repository from any db.Querier (useful for testing).
+func NewRepositoryFromQuerier(q db.Querier) *Repository {
+	return &Repository{q: q}
 }
 
 func (r *Repository) GetSettings(ctx context.Context, userID uuid.UUID) (*domain.Settings, error) {
 	// Get profile from users table.
 	var fullName, email string
-	err := r.pool.QueryRow(ctx,
+	err := r.q.QueryRow(ctx,
 		`SELECT full_name, email FROM users WHERE id = $1`, userID,
 	).Scan(&fullName, &email)
 	if err != nil {
@@ -48,7 +54,7 @@ func (r *Repository) GetSettings(ctx context.Context, userID uuid.UUID) (*domain
 		AutoProspectToLead: true,
 	}
 
-	err = r.pool.QueryRow(ctx,
+	err = r.q.QueryRow(ctx,
 		`SELECT telegram_bot_token, telegram_bot_active,
 		        imap_host, imap_port, imap_user, imap_password,
 		        resend_api_key,
@@ -102,7 +108,7 @@ func (r *Repository) UpdateSettings(ctx context.Context, userID uuid.UUID, field
 		insertCols, insertVals, updateSet,
 	)
 
-	_, err := r.pool.Exec(ctx, query, args...)
+	_, err := r.q.Exec(ctx, query, args...)
 	if err != nil {
 		return fmt.Errorf("save settings: %w", err)
 	}
@@ -113,7 +119,7 @@ func (r *Repository) UpdateSettings(ctx context.Context, userID uuid.UUID, field
 // This is an extra method on the concrete type, not part of the domain interface.
 func (r *Repository) GetStoredIMAPPassword(ctx context.Context, userID uuid.UUID) (string, error) {
 	var pwd string
-	err := r.pool.QueryRow(ctx,
+	err := r.q.QueryRow(ctx,
 		`SELECT imap_password FROM user_settings WHERE user_id = $1`, userID,
 	).Scan(&pwd)
 	if err != nil {

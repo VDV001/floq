@@ -55,6 +55,8 @@ type DraftResponse struct {
 
 // --- Mapping functions ---
 
+// LeadToResponse maps the plain Lead entity to a response (single-lead endpoints
+// omit source_name since it's not loaded — clients get source_id only).
 func LeadToResponse(l *domain.Lead) LeadResponse {
 	return LeadResponse{
 		ID:             l.ID,
@@ -67,16 +69,22 @@ func LeadToResponse(l *domain.Lead) LeadResponse {
 		TelegramChatID: l.TelegramChatID,
 		EmailAddress:   l.EmailAddress,
 		SourceID:       l.SourceID,
-		SourceName:     l.SourceName,
 		CreatedAt:      l.CreatedAt,
 		UpdatedAt:      l.UpdatedAt,
 	}
 }
 
-func LeadsToResponse(leads []domain.Lead) []LeadResponse {
+// LeadWithSourceToResponse projects the list read-model including source_name.
+func LeadWithSourceToResponse(l *domain.LeadWithSource) LeadResponse {
+	resp := LeadToResponse(&l.Lead)
+	resp.SourceName = l.SourceName
+	return resp
+}
+
+func LeadsToResponse(leads []domain.LeadWithSource) []LeadResponse {
 	resp := make([]LeadResponse, len(leads))
 	for i := range leads {
-		resp[i] = LeadToResponse(&leads[i])
+		resp[i] = LeadWithSourceToResponse(&leads[i])
 	}
 	return resp
 }

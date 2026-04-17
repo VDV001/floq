@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/daniil/floq/internal/db"
 	"github.com/daniil/floq/internal/sources/domain"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -15,15 +16,20 @@ import (
 var _ domain.Repository = (*Repository)(nil)
 
 type Repository struct {
-	pool *pgxpool.Pool
+	q db.Querier
 }
 
 func NewRepository(pool *pgxpool.Pool) *Repository {
-	return &Repository{pool: pool}
+	return &Repository{q: pool}
+}
+
+// NewRepositoryFromQuerier creates a Repository from any db.Querier (useful for testing).
+func NewRepositoryFromQuerier(q db.Querier) *Repository {
+	return &Repository{q: q}
 }
 
 func (r *Repository) ListCategories(ctx context.Context, userID uuid.UUID) ([]domain.CategoryWithSources, error) {
-	rows, err := r.pool.Query(ctx, `
+	rows, err := r.q.Query(ctx, `
 		SELECT c.id, c.user_id, c.name, c.sort_order, c.created_at,
 		       s.id, s.user_id, s.category_id, s.name, s.sort_order, s.created_at
 		FROM source_categories c
@@ -86,7 +92,7 @@ func (r *Repository) ListCategories(ctx context.Context, userID uuid.UUID) ([]do
 }
 
 func (r *Repository) CreateCategory(ctx context.Context, cat *domain.Category) error {
-	_, err := r.pool.Exec(ctx,
+	_, err := r.q.Exec(ctx,
 		`INSERT INTO source_categories (id, user_id, name, sort_order, created_at)
 		 VALUES ($1, $2, $3, $4, $5)
 		 ON CONFLICT (user_id, name) DO NOTHING`,
@@ -97,8 +103,22 @@ func (r *Repository) CreateCategory(ctx context.Context, cat *domain.Category) e
 	return nil
 }
 
+func (r *Repository) GetCategory(ctx context.Context, id uuid.UUID) (*domain.Category, error) {
+	var c domain.Category
+	err := r.q.QueryRow(ctx,
+		`SELECT id, user_id, name, sort_order, created_at FROM source_categories WHERE id = $1`, id).
+		Scan(&c.ID, &c.UserID, &c.Name, &c.SortOrder, &c.CreatedAt)
+	if err == pgx.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("get category: %w", err)
+	}
+	return &c, nil
+}
+
 func (r *Repository) UpdateCategory(ctx context.Context, id uuid.UUID, name string) error {
-	_, err := r.pool.Exec(ctx,
+	_, err := r.q.Exec(ctx,
 		`UPDATE source_categories SET name = $2 WHERE id = $1`, id, name)
 	if err != nil {
 		return fmt.Errorf("update category: %w", err)
@@ -107,7 +127,7 @@ func (r *Repository) UpdateCategory(ctx context.Context, id uuid.UUID, name stri
 }
 
 func (r *Repository) DeleteCategory(ctx context.Context, id uuid.UUID) error {
-	_, err := r.pool.Exec(ctx,
+	_, err := r.q.Exec(ctx,
 		`DELETE FROM source_categories WHERE id = $1`, id)
 	if err != nil {
 		return fmt.Errorf("delete category: %w", err)
@@ -116,7 +136,7 @@ func (r *Repository) DeleteCategory(ctx context.Context, id uuid.UUID) error {
 }
 
 func (r *Repository) CreateSource(ctx context.Context, src *domain.Source) error {
-	_, err := r.pool.Exec(ctx,
+	_, err := r.q.Exec(ctx,
 		`INSERT INTO lead_sources (id, user_id, category_id, name, sort_order, created_at)
 		 VALUES ($1, $2, $3, $4, $5, $6)
 		 ON CONFLICT (category_id, name) DO NOTHING`,
@@ -128,7 +148,7 @@ func (r *Repository) CreateSource(ctx context.Context, src *domain.Source) error
 }
 
 func (r *Repository) UpdateSource(ctx context.Context, id uuid.UUID, name string) error {
-	_, err := r.pool.Exec(ctx,
+	_, err := r.q.Exec(ctx,
 		`UPDATE lead_sources SET name = $2 WHERE id = $1`, id, name)
 	if err != nil {
 		return fmt.Errorf("update source: %w", err)
@@ -137,7 +157,7 @@ func (r *Repository) UpdateSource(ctx context.Context, id uuid.UUID, name string
 }
 
 func (r *Repository) DeleteSource(ctx context.Context, id uuid.UUID) error {
-	_, err := r.pool.Exec(ctx,
+	_, err := r.q.Exec(ctx,
 		`DELETE FROM lead_sources WHERE id = $1`, id)
 	if err != nil {
 		return fmt.Errorf("delete source: %w", err)
@@ -147,7 +167,7 @@ func (r *Repository) DeleteSource(ctx context.Context, id uuid.UUID) error {
 
 func (r *Repository) GetSource(ctx context.Context, id uuid.UUID) (*domain.Source, error) {
 	var s domain.Source
-	err := r.pool.QueryRow(ctx,
+	err := r.q.QueryRow(ctx,
 		`SELECT id, user_id, category_id, name, sort_order, created_at
 		 FROM lead_sources WHERE id = $1`, id).
 		Scan(&s.ID, &s.UserID, &s.CategoryID, &s.Name, &s.SortOrder, &s.CreatedAt)
@@ -161,8 +181,8 @@ func (r *Repository) GetSource(ctx context.Context, id uuid.UUID) (*domain.Sourc
 }
 
 // SourceStats implements StatsReader interface.
-func (r *Repository) SourceStats(ctx context.Context, userID uuid.UUID) ([]SourceStat, error) {
-	rows, err := r.pool.Query(ctx, `
+func (r *Repository) SourceStats(ctx context.Context, userID uuid.UUID) ([]domain.SourceStat, error) {
+	rows, err := r.q.Query(ctx, `
 		SELECT ls.id, ls.name, COALESCE(sc.name, ''),
 		       COALESCE((SELECT COUNT(*) FROM prospects p WHERE p.source_id = ls.id), 0),
 		       COALESCE((SELECT COUNT(*) FROM leads l WHERE l.source_id = ls.id), 0),
@@ -176,9 +196,9 @@ func (r *Repository) SourceStats(ctx context.Context, userID uuid.UUID) ([]Sourc
 	}
 	defer rows.Close()
 
-	var stats []SourceStat
+	var stats []domain.SourceStat
 	for rows.Next() {
-		var s SourceStat
+		var s domain.SourceStat
 		if err := rows.Scan(&s.SourceID, &s.SourceName, &s.CategoryName, &s.ProspectCount, &s.LeadCount, &s.ConvertedCount); err != nil {
 			return nil, fmt.Errorf("scan source stat: %w", err)
 		}
@@ -201,14 +221,12 @@ var defaultSeeds = []defaultSeed{
 
 func (r *Repository) EnsureDefaults(ctx context.Context, userID uuid.UUID) error {
 	var count int
-	err := r.pool.QueryRow(ctx,
+	err := r.q.QueryRow(ctx,
 		`SELECT COUNT(*) FROM source_categories WHERE user_id = $1`, userID).Scan(&count)
 	if err != nil {
 		return fmt.Errorf("count categories: %w", err)
 	}
 	if count > 0 {
-		// Even if defaults exist, migrate orphan prospects (source_id IS NULL)
-		r.migrateOrphanProspects(ctx, userID)
 		return nil
 	}
 
@@ -238,22 +256,11 @@ func (r *Repository) EnsureDefaults(ctx context.Context, userID uuid.UUID) error
 	// Migrate existing prospects with old text source to new source_id
 	for oldSource, newName := range map[string]string{"csv": "CSV файл", "manual": "Вручную", "2gis": "2GIS"} {
 		if srcID, ok := sourceNameToID[newName]; ok {
-			_, _ = r.pool.Exec(ctx,
+			_, _ = r.q.Exec(ctx,
 				`UPDATE prospects SET source_id = $1 WHERE user_id = $2 AND source = $3 AND source_id IS NULL`,
 				srcID, userID, oldSource)
 		}
 	}
 
 	return nil
-}
-
-// migrateOrphanProspects links prospects with source_id=NULL to existing sources by text name.
-func (r *Repository) migrateOrphanProspects(ctx context.Context, userID uuid.UUID) {
-	migrations := map[string]string{"csv": "CSV файл", "manual": "Вручную", "2gis": "2GIS"}
-	for oldSource, newName := range migrations {
-		_, _ = r.pool.Exec(ctx,
-			`UPDATE prospects SET source_id = (SELECT id FROM lead_sources WHERE user_id = $1 AND name = $2 LIMIT 1)
-			 WHERE user_id = $1 AND source = $3 AND source_id IS NULL`,
-			userID, newName, oldSource)
-	}
 }
