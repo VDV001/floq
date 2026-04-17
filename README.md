@@ -4,7 +4,7 @@
 
 Единый инструмент: входящие лиды + холодный аутрич + AI-мозг.
 
-[![Version](https://img.shields.io/badge/version-0.1.0-blue)](VERSION)
+[![Version](https://img.shields.io/badge/version-0.6.0-blue)](VERSION)
 [![CI](https://github.com/VDV001/floq/actions/workflows/ci.yml/badge.svg)](https://github.com/VDV001/floq/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
