@@ -1,5 +1,7 @@
+import type { ReactNode } from "react";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
+import type { UserSettings, Prospect, Sequence, OutboundMessage } from "@/lib/api";
 import OnboardingPage from "./page";
 
 vi.mock("next/navigation", () => ({
@@ -8,7 +10,7 @@ vi.mock("next/navigation", () => ({
 }));
 
 vi.mock("next/link", () => ({
-  default: ({ children, href, ...props }: any) => (
+  default: ({ children, href, ...props }: { children: ReactNode; href: string; [key: string]: unknown }) => (
     <a href={href} {...props}>{children}</a>
   ),
 }));
@@ -35,7 +37,7 @@ import { api } from "@/lib/api";
 describe("OnboardingPage", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    vi.mocked(api.getSettings).mockResolvedValue(mockSettings as any);
+    vi.mocked(api.getSettings).mockResolvedValue(mockSettings as UserSettings);
     vi.mocked(api.getProspects).mockResolvedValue([]);
     vi.mocked(api.getSequences).mockResolvedValue([]);
     vi.mocked(api.getOutboundQueue).mockResolvedValue([]);
@@ -92,10 +94,10 @@ describe("OnboardingPage", () => {
       ai_active: true,
       smtp_active: true,
       imap_active: true,
-    } as any);
-    vi.mocked(api.getProspects).mockResolvedValue([{ id: "p1" }] as any);
-    vi.mocked(api.getSequences).mockResolvedValue([{ id: "s1" }] as any);
-    vi.mocked(api.getOutboundQueue).mockResolvedValue([{ id: "o1" }] as any);
+    } as UserSettings);
+    vi.mocked(api.getProspects).mockResolvedValue([{ id: "p1" }] as Prospect[]);
+    vi.mocked(api.getSequences).mockResolvedValue([{ id: "s1" }] as Sequence[]);
+    vi.mocked(api.getOutboundQueue).mockResolvedValue([{ id: "o1" }] as OutboundMessage[]);
 
     render(<OnboardingPage />);
 

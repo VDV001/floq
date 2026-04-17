@@ -63,7 +63,7 @@ Clean Architecture + DDD. Слои: `domain → usecase → repository → handl
 
 - Backend unit: ~350 тестов, 66.4% coverage
 - Backend integration (`go:build integration`): 55 тестов, → 79.1% с ними
-- Frontend vitest: 109 тестов, 43.2% coverage
+- Frontend vitest: 115 тестов, 43.2% coverage
 - Domain packages: 100% coverage
 
 Запуск:
@@ -73,12 +73,18 @@ Clean Architecture + DDD. Слои: `domain → usecase → repository → handl
 
 ## Фронтенд
 
-Next.js 16 с breaking changes от того, что ты знаешь. Читать `node_modules/next/dist/docs/` перед написанием кода (см. `frontend/AGENTS.md`). Страницы сейчас монолитные (500–950 строк) — issue #13 на рефакторинг.
+Next.js 16 с breaking changes от того, что ты знаешь. Читать `node_modules/next/dist/docs/` перед написанием кода (см. `frontend/AGENTS.md`).
+
+### Структура фронтенда (после issue #13)
+- `src/components/{pagename}/` — UI-компоненты per page (constants.ts, секции, карточки)
+- `src/hooks/use{PageName}.ts` — state + logic hooks per page
+- `src/lib/format.ts` — shared утилиты (getTimeAgo, getInitials)
+- Settings: 7 sub-hooks (useSettingsCore, useTelegramBot, useTelegramAccount, useImapSettings, useResendSettings, useSmtpSettings, useAiSettings)
+- Page.tsx — тонкий оркестратор (~50-180 строк), только layout + composition
 
 ## Open issues
 
-- **#6** — Кросс-канальный dedup: prospects ↔ leads
-- **#13** — Refactor: разбить монолитные page.tsx
+- **#13** — Refactor: разбить монолитные page.tsx (UNCOMMITTED — декомпозиция сделана, ревью пройдено, нужен коммит + PR)
 
 ## Память
 

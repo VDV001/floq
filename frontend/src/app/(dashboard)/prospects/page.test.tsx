@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { vi, describe, it, expect, beforeEach } from "vitest";
@@ -10,7 +11,7 @@ vi.mock("next/navigation", () => ({
 }));
 
 vi.mock("next/link", () => ({
-  default: ({ children, href, ...props }: any) => (
+  default: ({ children, href, ...props }: { children: ReactNode; href: string; [key: string]: unknown }) => (
     <a href={href} {...props}>
       {children}
     </a>
@@ -28,19 +29,19 @@ const mockScrapeWebsite = vi.fn();
 
 vi.mock("@/lib/api", () => ({
   api: {
-    getProspects: (...args: any[]) => mockGetProspects(...args),
-    createProspect: (...args: any[]) => mockCreateProspect(...args),
-    getSources: (...args: any[]) => mockGetSources(...args),
-    getSourceStats: (...args: any[]) => mockGetSourceStats(...args),
-    verifyBatch: (...args: any[]) => mockVerifyBatch(...args),
-    exportProspectsCSV: (...args: any[]) => mockExportProspectsCSV(...args),
-    importProspectsCSV: (...args: any[]) => mockImportProspectsCSV(...args),
-    scrapeWebsite: (...args: any[]) => mockScrapeWebsite(...args),
+    getProspects: (...args: unknown[]) => mockGetProspects(...args),
+    createProspect: (...args: unknown[]) => mockCreateProspect(...args),
+    getSources: (...args: unknown[]) => mockGetSources(...args),
+    getSourceStats: (...args: unknown[]) => mockGetSourceStats(...args),
+    verifyBatch: (...args: unknown[]) => mockVerifyBatch(...args),
+    exportProspectsCSV: (...args: unknown[]) => mockExportProspectsCSV(...args),
+    importProspectsCSV: (...args: unknown[]) => mockImportProspectsCSV(...args),
+    scrapeWebsite: (...args: unknown[]) => mockScrapeWebsite(...args),
   },
 }));
 
 vi.mock("@/components/ui/source-combobox", () => ({
-  SourceCombobox: ({ value, onChange }: any) => (
+  SourceCombobox: ({ value, onChange }: { value: string; onChange: (v: string | null) => void }) => (
     <select
       data-testid="source-combobox"
       value={value ?? ""}
@@ -52,7 +53,7 @@ vi.mock("@/components/ui/source-combobox", () => ({
 }));
 
 vi.mock("@/lib/utils", () => ({
-  cn: (...args: any[]) => args.filter(Boolean).join(" "),
+  cn: (...args: unknown[]) => args.filter(Boolean).join(" "),
 }));
 
 import ProspectsPage from "./page";

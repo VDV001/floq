@@ -1,5 +1,7 @@
+import type { ReactNode } from "react";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
+import type { Lead } from "@/lib/api";
 import AlertsPage from "./page";
 
 vi.mock("next/navigation", () => ({
@@ -8,7 +10,7 @@ vi.mock("next/navigation", () => ({
 }));
 
 vi.mock("next/link", () => ({
-  default: ({ children, href, ...props }: any) => (
+  default: ({ children, href, ...props }: { children: ReactNode; href: string; [key: string]: unknown }) => (
     <a href={href} {...props}>{children}</a>
   ),
 }));
@@ -70,7 +72,7 @@ describe("AlertsPage", () => {
   });
 
   it("renders alerts for followup leads", async () => {
-    vi.mocked(api.getLeads).mockResolvedValue(mockLeads as any);
+    vi.mocked(api.getLeads).mockResolvedValue(mockLeads as Lead[]);
 
     render(<AlertsPage />);
 
@@ -83,7 +85,7 @@ describe("AlertsPage", () => {
   it("shows empty state when no followup leads", async () => {
     vi.mocked(api.getLeads).mockResolvedValue([
       { ...mockLeads[2], status: "new" as const },
-    ] as any);
+    ] as Lead[]);
 
     render(<AlertsPage />);
 
@@ -93,7 +95,7 @@ describe("AlertsPage", () => {
   });
 
   it("renders alert summary section", async () => {
-    vi.mocked(api.getLeads).mockResolvedValue(mockLeads as any);
+    vi.mocked(api.getLeads).mockResolvedValue(mockLeads as Lead[]);
 
     render(<AlertsPage />);
 
@@ -103,7 +105,7 @@ describe("AlertsPage", () => {
   });
 
   it("shows featured card for the first followup lead", async () => {
-    vi.mocked(api.getLeads).mockResolvedValue(mockLeads as any);
+    vi.mocked(api.getLeads).mockResolvedValue(mockLeads as Lead[]);
 
     render(<AlertsPage />);
 

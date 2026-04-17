@@ -1,6 +1,11 @@
 # Env
 .env
 
+# Claude Code
+CLAUDE.md
+frontend/CLAUDE.md
+frontend/AGENTS.md
+
 # Go binary
 backend/server
 backend/tmp/
