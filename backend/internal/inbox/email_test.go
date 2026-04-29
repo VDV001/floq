@@ -669,7 +669,7 @@ func TestNewEmailPoller(t *testing.T) {
 		&mockConfigStore{},
 		ownerID,
 		"imap.example.com", "993", "user@example.com", "pass",
-		repo, prospectRepo, seqRepo, aiClient,
+		repo, prospectRepo, seqRepo, aiClient, nil,
 	)
 
 	require.NotNil(t, poller)

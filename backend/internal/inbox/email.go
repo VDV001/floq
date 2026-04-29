@@ -3,8 +3,10 @@ package inbox
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
 	"io"
 	"log"
+	"net"
 	"strings"
 	"time"
 
@@ -14,6 +16,11 @@ import (
 	"github.com/google/uuid"
 )
 
+// ContextDialer allows dialing TCP connections through a proxy.
+type ContextDialer interface {
+	DialContext(ctx context.Context, network, addr string) (net.Conn, error)
+}
+
 // EmailPoller polls an IMAP mailbox for new emails and creates leads.
 type EmailPoller struct {
 	store        ConfigStore
@@ -22,6 +29,7 @@ type EmailPoller struct {
 	seqRepo      SequenceRepository
 	aiClient     AIQualifier
 	ownerID      uuid.UUID
+	dialer       ContextDialer
 
 	fallbackHost     string
 	fallbackPort     string
@@ -29,7 +37,7 @@ type EmailPoller struct {
 	fallbackPassword string
 }
 
-func NewEmailPoller(store ConfigStore, ownerID uuid.UUID, fallbackHost, fallbackPort, fallbackUser, fallbackPassword string, repo LeadRepository, prospectRepo ProspectRepository, seqRepo SequenceRepository, aiClient AIQualifier) *EmailPoller {
+func NewEmailPoller(store ConfigStore, ownerID uuid.UUID, fallbackHost, fallbackPort, fallbackUser, fallbackPassword string, repo LeadRepository, prospectRepo ProspectRepository, seqRepo SequenceRepository, aiClient AIQualifier, dialer ContextDialer) *EmailPoller {
 	return &EmailPoller{
 		store:            store,
 		repo:             repo,
@@ -37,6 +45,7 @@ func NewEmailPoller(store ConfigStore, ownerID uuid.UUID, fallbackHost, fallback
 		seqRepo:          seqRepo,
 		aiClient:         aiClient,
 		ownerID:          ownerID,
+		dialer:           dialer,
 		fallbackHost:     fallbackHost,
 		fallbackPort:     fallbackPort,
 		fallbackUser:     fallbackUser,
@@ -81,10 +90,23 @@ func (e *EmailPoller) poll(ctx context.Context) {
 	}
 
 	addr := host + ":" + port
-	c, err := imapclient.DialTLS(addr, nil)
-	if err != nil {
-		log.Printf("[email-poller] connect error: %v", err)
-		return
+	var c *imapclient.Client
+	var err error
+
+	if e.dialer != nil {
+		rawConn, dialErr := e.dialer.DialContext(ctx, "tcp", addr)
+		if dialErr != nil {
+			log.Printf("[email-poller] proxy dial error: %v", dialErr)
+			return
+		}
+		tlsConn := tls.Client(rawConn, &tls.Config{ServerName: host})
+		c = imapclient.New(tlsConn, nil)
+	} else {
+		c, err = imapclient.DialTLS(addr, nil)
+		if err != nil {
+			log.Printf("[email-poller] connect error: %v", err)
+			return
+		}
 	}
 	defer c.Close()
 

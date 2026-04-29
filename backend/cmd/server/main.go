@@ -87,7 +87,7 @@ func main() {
 	}
 
 	// 2b. AI provider (dynamic: reads provider/model/key from DB, falls back to .env)
-	aiProvider := providers.NewDynamicProvider(settingsStore, ownerID, cfg)
+	aiProvider := providers.NewDynamicProvider(settingsStore, ownerID, cfg, nil)
 	aiClient := ai.NewAIClient(aiProvider, cfg.BookingLink, cfg.SenderName, cfg.SenderCompany, cfg.SenderPhone, cfg.SenderWebsite)
 
 	// 3. Repositories
@@ -153,7 +153,7 @@ func main() {
 	// 7. Outbound email sender (cron every 30 seconds)
 	// Always starts — reads Resend API key from DB each tick (falls back to .env)
 	tgRepo := tgclient.NewRepository(pool)
-	emailSender := outbound.NewSender(settingsStore, ownerID, cfg.ResendAPIKey, cfg.SMTPFrom, cfg.AppBaseURL, cfg.SMTPHost, cfg.SMTPPort, cfg.SMTPUser, cfg.SMTPPassword, sequencesRepo, prospectsRepo, tgRepo, outbound.NewMTProtoMessenger())
+	emailSender := outbound.NewSender(settingsStore, ownerID, cfg.ResendAPIKey, cfg.SMTPFrom, cfg.AppBaseURL, cfg.SMTPHost, cfg.SMTPPort, cfg.SMTPUser, cfg.SMTPPassword, sequencesRepo, prospectsRepo, tgRepo, outbound.NewMTProtoMessenger(), nil)
 	go func() {
 		ticker := time.NewTicker(30 * time.Second)
 		defer ticker.Stop()
@@ -192,7 +192,7 @@ func main() {
 	}
 
 	// 9. Email IMAP poller (reads settings from DB, falls back to .env)
-	emailPoller := inbox.NewEmailPoller(inboxCfg, ownerID, cfg.IMAPHost, cfg.IMAPPort, cfg.IMAPUser, cfg.IMAPPassword, inboxLeadAdapter, prospectAdapter, sequencesRepo, inboxAI)
+	emailPoller := inbox.NewEmailPoller(inboxCfg, ownerID, cfg.IMAPHost, cfg.IMAPPort, cfg.IMAPUser, cfg.IMAPPassword, inboxLeadAdapter, prospectAdapter, sequencesRepo, inboxAI, nil)
 	go emailPoller.Start(ctx)
 
 	// 10. Reminders cron (hourly, checks for stale leads)

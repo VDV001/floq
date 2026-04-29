@@ -40,7 +40,7 @@ func buildAITester(cfg *config.Config) settings.AITester {
 			if apiKey == "" {
 				apiKey = cfg.AnthropicAPIKey
 			}
-			p = providers.NewClaudeProvider(apiKey)
+			p = providers.NewClaudeProvider(apiKey, nil)
 		case "openai":
 			if apiKey == "" {
 				apiKey = cfg.OpenAIAPIKey
@@ -56,12 +56,12 @@ func buildAITester(cfg *config.Config) settings.AITester {
 			if model == "" {
 				model = cfg.GroqModel
 			}
-			p = providers.NewOpenAICompatibleProvider(apiKey, model, "https://api.groq.com/openai/v1")
+			p = providers.NewOpenAICompatibleProvider(apiKey, model, "https://api.groq.com/openai/v1", nil)
 		case "ollama":
 			if model == "" {
 				model = cfg.OllamaModel
 			}
-			p = providers.NewOllamaProvider(cfg.OllamaBaseURL, model)
+			p = providers.NewOllamaProvider(cfg.OllamaBaseURL, model, nil)
 		default:
 			return "", fmt.Errorf("неизвестный провайдер: %s", provider)
 		}

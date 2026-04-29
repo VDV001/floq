@@ -5,6 +5,7 @@ import (
 	"crypto/tls"
 	"fmt"
 	"log"
+	"net"
 	"net/smtp"
 	"strings"
 	"sync"
@@ -17,6 +18,11 @@ import (
 	settingsdomain "github.com/daniil/floq/internal/settings/domain"
 	"github.com/google/uuid"
 )
+
+// ContextDialer allows dialing TCP connections through a proxy.
+type ContextDialer interface {
+	DialContext(ctx context.Context, network, addr string) (net.Conn, error)
+}
 
 type Sender struct {
 	store        ConfigStore
@@ -32,6 +38,7 @@ type Sender struct {
 	prospectRepo ProspectLookup
 	tgRepo       TelegramSessionStore
 	tgMessenger  TelegramMessenger
+	dialer       ContextDialer
 
 	tgLastSent time.Time
 	tgRateMu   sync.Mutex
@@ -44,6 +51,7 @@ func NewSender(
 	seqRepo OutboundRepository, prospectRepo ProspectLookup,
 	tgRepo TelegramSessionStore,
 	tgMessenger TelegramMessenger,
+	dialer ContextDialer,
 ) *Sender {
 	return &Sender{
 		store:        store,
@@ -59,6 +67,7 @@ func NewSender(
 		prospectRepo: prospectRepo,
 		tgRepo:       tgRepo,
 		tgMessenger:  tgMessenger,
+		dialer:       dialer,
 	}
 }
 
@@ -184,9 +193,19 @@ func (s *Sender) sendViaSMTPWith(host, port, user, password, from, to, subject, 
 func (s *Sender) sendSMTPWithTLS(addr string, auth smtp.Auth, host, from, to string, message []byte) error {
 	tlsConfig := &tls.Config{ServerName: host}
 
-	conn, err := tls.Dial("tcp", addr, tlsConfig)
-	if err != nil {
-		return fmt.Errorf("smtp tls dial: %w", err)
+	var conn net.Conn
+	var err error
+	if s.dialer != nil {
+		rawConn, dialErr := s.dialer.DialContext(context.Background(), "tcp", addr)
+		if dialErr != nil {
+			return fmt.Errorf("smtp proxy dial: %w", dialErr)
+		}
+		conn = tls.Client(rawConn, tlsConfig)
+	} else {
+		conn, err = tls.Dial("tcp", addr, tlsConfig)
+		if err != nil {
+			return fmt.Errorf("smtp tls dial: %w", err)
+		}
 	}
 	defer conn.Close()
 

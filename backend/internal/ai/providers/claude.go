@@ -3,6 +3,7 @@ package providers
 import (
 	"context"
 	"fmt"
+	"net/http"
 
 	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/anthropics/anthropic-sdk-go/option"
@@ -14,9 +15,13 @@ type ClaudeProvider struct {
 	model  anthropic.Model
 }
 
-func NewClaudeProvider(apiKey string) *ClaudeProvider {
+func NewClaudeProvider(apiKey string, httpClient *http.Client) *ClaudeProvider {
+	opts := []option.RequestOption{option.WithAPIKey(apiKey)}
+	if httpClient != nil {
+		opts = append(opts, option.WithHTTPClient(httpClient))
+	}
 	return &ClaudeProvider{
-		client: anthropic.NewClient(option.WithAPIKey(apiKey)),
+		client: anthropic.NewClient(opts...),
 		model:  anthropic.ModelClaude3_7SonnetLatest,
 	}
 }

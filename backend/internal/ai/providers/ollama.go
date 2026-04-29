@@ -3,6 +3,7 @@ package providers
 import (
 	"context"
 	"fmt"
+	"net/http"
 
 	"github.com/daniil/floq/internal/ai"
 	"github.com/openai/openai-go"
@@ -15,11 +16,15 @@ type OllamaProvider struct {
 	model  string
 }
 
-func NewOllamaProvider(baseURL, model string) *OllamaProvider {
-	client := openai.NewClient(
-		option.WithBaseURL(baseURL+"/v1"),
+func NewOllamaProvider(baseURL, model string, httpClient *http.Client) *OllamaProvider {
+	opts := []option.RequestOption{
+		option.WithBaseURL(baseURL + "/v1"),
 		option.WithAPIKey("ollama"),
-	)
+	}
+	if httpClient != nil {
+		opts = append(opts, option.WithHTTPClient(httpClient))
+	}
+	client := openai.NewClient(opts...)
 	return &OllamaProvider{client: client, model: model}
 }
 
