@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/daniil/floq/internal/httputil"
@@ -112,7 +113,12 @@ func (h *Handler) importCSV() http.HandlerFunc {
 		}
 		count, err := h.uc.ImportCSV(r.Context(), userID, data)
 		if err != nil {
-			httputil.WriteError(w, http.StatusBadRequest, err.Error())
+			msg := err.Error()
+			if strings.Contains(msg, "csv header") || strings.Contains(msg, "csv record") {
+				httputil.WriteError(w, http.StatusBadRequest, msg)
+			} else {
+				httputil.WriteError(w, http.StatusBadRequest, "failed to import CSV")
+			}
 			return
 		}
 

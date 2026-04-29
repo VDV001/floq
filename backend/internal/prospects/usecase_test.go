@@ -119,12 +119,13 @@ func (m *mockLeadChecker) LeadExistsByEmail(_ context.Context, _ uuid.UUID, emai
 
 type mockErrorRepo struct {
 	mockRepo
-	listErr   error
-	getErr    error
-	createErr error
-	deleteErr error
-	findErr   error
-	batchErr  error
+	listErr    error
+	getErr     error
+	createErr  error
+	deleteErr  error
+	findErr    error
+	findByTGErr error
+	batchErr   error
 }
 
 func (m *mockErrorRepo) ListProspects(_ context.Context, _ uuid.UUID) ([]domain.ProspectWithSource, error) {
@@ -158,6 +159,13 @@ func (m *mockErrorRepo) DeleteProspect(_ context.Context, _ uuid.UUID) error {
 func (m *mockErrorRepo) FindByEmail(_ context.Context, _ uuid.UUID, _ string) (*domain.Prospect, error) {
 	if m.findErr != nil {
 		return nil, m.findErr
+	}
+	return nil, nil
+}
+
+func (m *mockErrorRepo) FindByTelegramUsername(_ context.Context, _ uuid.UUID, _ string) (*domain.Prospect, error) {
+	if m.findByTGErr != nil {
+		return nil, m.findByTGErr
 	}
 	return nil, nil
 }
@@ -601,6 +609,15 @@ func TestImportCSV_DedupByTelegramUsername(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, 1, count) // only Bob
 	assert.Equal(t, "Bob", repo.batched[0].Name)
+}
+
+func TestImportCSV_FindByTGUsernameError(t *testing.T) {
+	repo := &mockErrorRepo{findByTGErr: fmt.Errorf("db connection refused")}
+	uc := NewUseCase(repo)
+	csvData := []byte("name,telegram_username\nAlice,alice_tg\n")
+	_, err := uc.ImportCSV(context.Background(), uuid.New(), csvData)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "dedup prospect tg check")
 }
 
 func TestImportCSV_CaseInsensitiveHeaders(t *testing.T) {
