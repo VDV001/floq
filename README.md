@@ -4,9 +4,9 @@
 
 Единый инструмент: входящие лиды + холодный аутрич + AI-мозг.
 
-[![Version](https://img.shields.io/badge/version-0.6.0-blue)](VERSION)
+[![Version](https://img.shields.io/badge/version-0.8.0-blue)](VERSION)
 [![CI](https://github.com/VDV001/floq/actions/workflows/ci.yml/badge.svg)](https://github.com/VDV001/floq/actions/workflows/ci.yml)
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![License: AGPL-3.0](https://img.shields.io/badge/license-AGPL--3.0-blue)](LICENSE)
 
 ---
 
@@ -296,4 +296,10 @@ npm run lint
 
 ## Лицензия
 
-[MIT](LICENSE)
+Copyright © 2026 Daniil Vdovin.
+
+Этот проект лицензирован под **GNU Affero General Public License v3.0** — см. файл [LICENSE](LICENSE).
+
+Если вы модифицируете код и предоставляете его как сетевой сервис, вы обязаны опубликовать исходный код ваших изменений под той же лицензией.
+
+Для коммерческого использования без ограничений AGPL — свяжитесь с автором для получения коммерческой лицензии.

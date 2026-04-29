@@ -1,6 +1,7 @@
 package settings
 
 import (
+	"context"
 	"crypto/tls"
 	"fmt"
 	"net"
@@ -8,20 +9,40 @@ import (
 	"time"
 )
 
+// IMAPContextDialer allows dialing TCP connections through a proxy.
+type IMAPContextDialer interface {
+	DialContext(ctx context.Context, network, addr string) (net.Conn, error)
+}
+
 // IMAPTester tests IMAP server connectivity.
-type IMAPTester struct{}
+type IMAPTester struct {
+	Dialer IMAPContextDialer
+}
 
 // TestConnection attempts a TLS connection to the IMAP server, sends a LOGIN
 // command, and returns nil on success or an error describing the failure.
 func (t *IMAPTester) TestConnection(host, port, user, password string) error {
 	addr := net.JoinHostPort(host, port)
-	conn, err := tls.DialWithDialer(
-		&net.Dialer{Timeout: 10 * time.Second},
-		"tcp", addr,
-		&tls.Config{ServerName: host},
-	)
-	if err != nil {
-		return fmt.Errorf("Не удалось подключиться: %v", err)
+
+	var conn *tls.Conn
+	var err error
+	if t.Dialer != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		rawConn, dialErr := t.Dialer.DialContext(ctx, "tcp", addr)
+		if dialErr != nil {
+			return fmt.Errorf("Не удалось подключиться: %v", dialErr)
+		}
+		conn = tls.Client(rawConn, &tls.Config{ServerName: host})
+	} else {
+		conn, err = tls.DialWithDialer(
+			&net.Dialer{Timeout: 10 * time.Second},
+			"tcp", addr,
+			&tls.Config{ServerName: host},
+		)
+		if err != nil {
+			return fmt.Errorf("Не удалось подключиться: %v", err)
+		}
 	}
 	defer conn.Close()
 

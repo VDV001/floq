@@ -124,6 +124,7 @@ func VerifyEmail(email string) EmailResult {
 
 // smtpProbe connects to the MX host and checks whether the email is deliverable.
 // It also performs catch-all detection. Returns (smtpValid, isCatchAll, errorMessage).
+// TODO: accept optional proxy dialer to route SMTP probes through proxy.
 func smtpProbe(mxHost, email, domain string) (bool, bool, string) {
 	conn, err := net.DialTimeout("tcp", mxHost+":25", 10*time.Second)
 	if err != nil {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"net"
 	"strings"
 	"sync"
 	"time"
@@ -11,6 +12,7 @@ import (
 	"github.com/gotd/td/session"
 	"github.com/gotd/td/telegram"
 	"github.com/gotd/td/telegram/auth"
+	"github.com/gotd/td/telegram/dcs"
 	"github.com/gotd/td/telegram/message"
 	"github.com/gotd/td/telegram/message/peer"
 	"github.com/gotd/td/tg"
@@ -48,20 +50,38 @@ func (s *memStorage) StoreSession(_ context.Context, data []byte) error {
 	return nil
 }
 
+// ContextDialer is an interface for dialers that support context (e.g. SOCKS5 proxy).
+type ContextDialer interface {
+	DialContext(ctx context.Context, network, addr string) (net.Conn, error)
+}
+
+// Option configures a Client.
+type Option func(*Client)
+
+// WithDialer sets a custom dialer (e.g. SOCKS5 proxy) for MTProto connections.
+func WithDialer(d ContextDialer) Option {
+	return func(c *Client) { c.dialer = d }
+}
+
 // Client wraps a gotd/td MTProto client for personal Telegram account messaging.
 type Client struct {
 	apiID   int
 	apiHash string
 	storage *memStorage
+	dialer  ContextDialer
 }
 
 // NewClient creates a new MTProto client wrapper with default Telethon credentials.
-func NewClient() *Client {
-	return &Client{
+func NewClient(opts ...Option) *Client {
+	c := &Client{
 		apiID:   defaultAPIID,
 		apiHash: defaultAPIHash,
 		storage: &memStorage{},
 	}
+	for _, opt := range opts {
+		opt(c)
+	}
+	return c
 }
 
 // GetSessionData returns the raw session bytes for persistence.
@@ -90,10 +110,14 @@ func (c *Client) LoadSession(data []byte) {
 
 // newTelegramClient creates a new underlying gotd telegram.Client.
 func (c *Client) newTelegramClient() *telegram.Client {
-	return telegram.NewClient(c.apiID, c.apiHash, telegram.Options{
+	opts := telegram.Options{
 		SessionStorage: c.storage,
 		NoUpdates:      true,
-	})
+	}
+	if c.dialer != nil {
+		opts.Resolver = dcs.Plain(dcs.PlainOptions{Dial: c.dialer.DialContext})
+	}
+	return telegram.NewClient(c.apiID, c.apiHash, opts)
 }
 
 // normalizePhone ensures phone number starts with +.

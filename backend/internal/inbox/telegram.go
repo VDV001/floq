@@ -3,6 +3,7 @@ package inbox
 import (
 	"context"
 	"log"
+	"net/http"
 	"time"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
@@ -20,8 +21,11 @@ type TelegramBot struct {
 }
 
 // NewTelegramBot creates a new TelegramBot with the given token and dependencies.
-func NewTelegramBot(token string, repo LeadRepository, prospectRepo ProspectRepository, aiClient AIQualifier, ownerID uuid.UUID, bookingLink string) (*TelegramBot, error) {
-	bot, err := tgbotapi.NewBotAPI(token)
+func NewTelegramBot(token string, repo LeadRepository, prospectRepo ProspectRepository, aiClient AIQualifier, ownerID uuid.UUID, bookingLink string, httpClient *http.Client) (*TelegramBot, error) {
+	if httpClient == nil {
+		httpClient = http.DefaultClient
+	}
+	bot, err := tgbotapi.NewBotAPIWithClient(token, tgbotapi.APIEndpoint, httpClient)
 	if err != nil {
 		return nil, err
 	}

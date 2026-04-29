@@ -39,6 +39,7 @@ type Config struct {
 	SenderPhone     string
 	SenderWebsite   string
 	StaleDays       int
+	ProxyURL        string
 }
 
 // Load reads configuration from environment variables and returns a Config.
@@ -76,6 +77,7 @@ func Load() *Config {
 		SenderPhone:     os.Getenv("SENDER_PHONE"),
 		SenderWebsite:   os.Getenv("SENDER_WEBSITE"),
 		StaleDays:       getEnvInt("STALE_DAYS", 2),
+		ProxyURL:        os.Getenv("PROXY_URL"),
 	}
 }
 

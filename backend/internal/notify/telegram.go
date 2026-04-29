@@ -3,6 +3,7 @@ package notify
 import (
 	"context"
 	"fmt"
+	"net/http"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
@@ -14,8 +15,11 @@ type TelegramNotifier struct {
 }
 
 // NewTelegramNotifier creates a new TelegramNotifier with the given bot token and chat ID.
-func NewTelegramNotifier(token string, chatID int64) (*TelegramNotifier, error) {
-	bot, err := tgbotapi.NewBotAPI(token)
+func NewTelegramNotifier(token string, chatID int64, httpClient *http.Client) (*TelegramNotifier, error) {
+	if httpClient == nil {
+		httpClient = http.DefaultClient
+	}
+	bot, err := tgbotapi.NewBotAPIWithClient(token, tgbotapi.APIEndpoint, httpClient)
 	if err != nil {
 		return nil, err
 	}

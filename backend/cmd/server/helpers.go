@@ -16,6 +16,7 @@ import (
 	"github.com/daniil/floq/internal/settings"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
+	openaiopt "github.com/openai/openai-go/option"
 )
 
 func buildUsageCounter(repo *leads.Repository) settings.UsageCounter {
@@ -32,7 +33,7 @@ func buildUsageCounter(repo *leads.Repository) settings.UsageCounter {
 	}
 }
 
-func buildAITester(cfg *config.Config) settings.AITester {
+func buildAITester(cfg *config.Config, httpClient *http.Client) settings.AITester {
 	return func(ctx context.Context, provider, model, apiKey string) (string, error) {
 		var p ai.Provider
 		switch provider {
@@ -40,7 +41,7 @@ func buildAITester(cfg *config.Config) settings.AITester {
 			if apiKey == "" {
 				apiKey = cfg.AnthropicAPIKey
 			}
-			p = providers.NewClaudeProvider(apiKey)
+			p = providers.NewClaudeProvider(apiKey, httpClient)
 		case "openai":
 			if apiKey == "" {
 				apiKey = cfg.OpenAIAPIKey
@@ -48,7 +49,11 @@ func buildAITester(cfg *config.Config) settings.AITester {
 			if model == "" {
 				model = cfg.OpenAIModel
 			}
-			p = providers.NewOpenAIProvider(apiKey, model)
+			var opts []openaiopt.RequestOption
+			if httpClient != nil {
+				opts = append(opts, openaiopt.WithHTTPClient(httpClient))
+			}
+			p = providers.NewOpenAIProvider(apiKey, model, opts...)
 		case "groq":
 			if apiKey == "" {
 				apiKey = cfg.GroqAPIKey
@@ -56,12 +61,12 @@ func buildAITester(cfg *config.Config) settings.AITester {
 			if model == "" {
 				model = cfg.GroqModel
 			}
-			p = providers.NewOpenAICompatibleProvider(apiKey, model, "https://api.groq.com/openai/v1")
+			p = providers.NewOpenAICompatibleProvider(apiKey, model, "https://api.groq.com/openai/v1", httpClient)
 		case "ollama":
 			if model == "" {
 				model = cfg.OllamaModel
 			}
-			p = providers.NewOllamaProvider(cfg.OllamaBaseURL, model)
+			p = providers.NewOllamaProvider(cfg.OllamaBaseURL, model, httpClient)
 		default:
 			return "", fmt.Errorf("неизвестный провайдер: %s", provider)
 		}
@@ -78,16 +83,32 @@ func buildAITester(cfg *config.Config) settings.AITester {
 	}
 }
 
-func buildSMTPTester() settings.SMTPTester {
+// ContextDialer is an interface for dialers that support context (e.g. SOCKS5 proxy).
+type ContextDialer interface {
+	DialContext(ctx context.Context, network, addr string) (net.Conn, error)
+}
+
+func buildSMTPTester(proxyDialer ContextDialer) settings.SMTPTester {
 	return func(ctx context.Context, host, port, user, password string) error {
 		addr := net.JoinHostPort(host, port)
-		dialer := &net.Dialer{}
-		conn, err := tls.DialWithDialer(
-			dialer, "tcp", addr,
-			&tls.Config{ServerName: host},
-		)
-		if err != nil {
-			return fmt.Errorf("Не удалось подключиться: %v", err)
+
+		var conn net.Conn
+		var err error
+		if proxyDialer != nil {
+			// Connect through proxy, then upgrade to TLS
+			rawConn, dialErr := proxyDialer.DialContext(ctx, "tcp", addr)
+			if dialErr != nil {
+				return fmt.Errorf("Не удалось подключиться через прокси: %v", dialErr)
+			}
+			conn = tls.Client(rawConn, &tls.Config{ServerName: host})
+		} else {
+			conn, err = tls.DialWithDialer(
+				&net.Dialer{}, "tcp", addr,
+				&tls.Config{ServerName: host},
+			)
+			if err != nil {
+				return fmt.Errorf("Не удалось подключиться: %v", err)
+			}
 		}
 		defer conn.Close()
 
@@ -106,7 +127,7 @@ func buildSMTPTester() settings.SMTPTester {
 	}
 }
 
-func buildResendTester() settings.ResendTester {
+func buildResendTester(httpClient *http.Client) settings.ResendTester {
 	return func(ctx context.Context, apiKey string) error {
 		req, err := http.NewRequestWithContext(ctx, "GET", "https://api.resend.com/api-keys", nil)
 		if err != nil {
@@ -114,7 +135,11 @@ func buildResendTester() settings.ResendTester {
 		}
 		req.Header.Set("Authorization", "Bearer "+apiKey)
 
-		resp, err := http.DefaultClient.Do(req)
+		client := httpClient
+		if client == nil {
+			client = http.DefaultClient
+		}
+		resp, err := client.Do(req)
 		if err != nil {
 			return fmt.Errorf("Ошибка запроса: %v", err)
 		}

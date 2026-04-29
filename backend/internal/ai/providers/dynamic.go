@@ -3,12 +3,14 @@ package providers
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"sync"
 
 	"github.com/daniil/floq/internal/ai"
 	"github.com/daniil/floq/internal/config"
 	"github.com/daniil/floq/internal/settings"
 	"github.com/google/uuid"
+	"github.com/openai/openai-go/option"
 )
 
 // DynamicProvider reads AI settings from user_settings DB on each call,
@@ -17,17 +19,19 @@ type DynamicProvider struct {
 	store       *settings.Store
 	ownerID     uuid.UUID
 	fallbackCfg *config.Config
+	httpClient  *http.Client
 
 	mu           sync.Mutex
 	cached       ai.Provider
 	cachedKey    string // "provider:model:apikey" — cache invalidation key
 }
 
-func NewDynamicProvider(store *settings.Store, ownerID uuid.UUID, fallbackCfg *config.Config) *DynamicProvider {
+func NewDynamicProvider(store *settings.Store, ownerID uuid.UUID, fallbackCfg *config.Config, httpClient *http.Client) *DynamicProvider {
 	return &DynamicProvider{
 		store:       store,
 		ownerID:     ownerID,
 		fallbackCfg: fallbackCfg,
+		httpClient:  httpClient,
 	}
 }
 
@@ -105,13 +109,17 @@ func (d *DynamicProvider) resolve(ctx context.Context) (ai.Provider, error) {
 	var p ai.Provider
 	switch providerName {
 	case "claude":
-		p = NewClaudeProvider(apiKey)
+		p = NewClaudeProvider(apiKey, d.httpClient)
 	case "openai":
-		p = NewOpenAIProvider(apiKey, model)
+		var opts []option.RequestOption
+		if d.httpClient != nil {
+			opts = append(opts, option.WithHTTPClient(d.httpClient))
+		}
+		p = NewOpenAIProvider(apiKey, model, opts...)
 	case "groq":
-		p = NewOpenAICompatibleProvider(apiKey, model, "https://api.groq.com/openai/v1")
+		p = NewOpenAICompatibleProvider(apiKey, model, "https://api.groq.com/openai/v1", d.httpClient)
 	case "ollama":
-		p = NewOllamaProvider(d.fallbackCfg.OllamaBaseURL, model)
+		p = NewOllamaProvider(d.fallbackCfg.OllamaBaseURL, model, d.httpClient)
 	default:
 		return nil, fmt.Errorf("unknown AI provider: %s", providerName)
 	}

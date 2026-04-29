@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/http"
 
 	"github.com/daniil/floq/internal/ai"
 	"github.com/openai/openai-go"
@@ -27,8 +28,12 @@ func NewOpenAIProvider(apiKey, model string, opts ...option.RequestOption) *Open
 
 // NewOpenAICompatibleProvider creates an OpenAI-compatible provider with a custom base URL.
 // Works with Groq, Together, Fireworks, etc.
-func NewOpenAICompatibleProvider(apiKey, model, baseURL string) *OpenAIProvider {
-	return NewOpenAIProvider(apiKey, model, option.WithBaseURL(baseURL))
+func NewOpenAICompatibleProvider(apiKey, model, baseURL string, httpClient *http.Client) *OpenAIProvider {
+	opts := []option.RequestOption{option.WithBaseURL(baseURL)}
+	if httpClient != nil {
+		opts = append(opts, option.WithHTTPClient(httpClient))
+	}
+	return NewOpenAIProvider(apiKey, model, opts...)
 }
 
 func (p *OpenAIProvider) Name() string { return "openai" }
