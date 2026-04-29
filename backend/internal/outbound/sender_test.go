@@ -211,34 +211,8 @@ func TestSendPending_EmailHappyPath(t *testing.T) {
 }
 
 func TestSendPending_BounceDetection(t *testing.T) {
-	// SMTP is configured with host/user/password pointing to a non-existent server.
-	// Since port 465 uses TLS dial, it will fail with a connection error, NOT a 550.
-	// Instead, we use port 587 which calls smtp.SendMail — also fails, but not with 550.
-	//
-	// The real way to trigger bounce detection is by having the send return an error
-	// containing "550". Since we can't control SMTP errors, we test the Resend path
-	// with no API key — that gives "no Resend API key" which does NOT trigger bounce.
-	//
-	// To properly test bounce detection, we verify that when SMTP is configured and
-	// the dial fails (port 465 → "smtp tls dial:" error), it is NOT marked as bounced.
-	// Then separately, for the bounce logic itself, we construct a scenario where
-	// the error contains "550":
-	//
-	// We use smtpHost with port 587 which calls smtp.SendMail. Connection refused
-	// error won't trigger bounce. But we verify the non-bounce path works.
-	//
-	// For actual "550" bounce: SMTP server at localhost that returns 550 is hard to
-	// set up in a unit test. Instead we test the branch by using port 465, which will
-	// try TLS dial to localhost and fail. The error "smtp tls dial:" does NOT contain
-	// "550", so the message should NOT be bounced.
-	//
-	// ACTUAL strategy: use a "real" SMTP connection to localhost on a random port that
-	// is not listening. For port 465, error will be "smtp tls dial:". For port 587,
-	// error from smtp.SendMail will be connection refused. Neither contains "550".
-	// So we verify that transient errors do NOT trigger bounce.
-	//
-	// Then to test the bounce branch: we hack it by having SMTP configured to port 465
-	// on a host that somehow returns 550. That's impractical in unit tests.
+	// SMTP configured with a non-existent server — dial fails with connection error,
+	// NOT a 550. Verifies that transient errors do NOT trigger bounce detection.
 	//
 	// BEST APPROACH: Just run with no SMTP, use Resend path. The Resend client will
 	// actually try to call the API. With a fake key "bounce-test-550", the Resend API
@@ -1236,7 +1210,7 @@ func TestSendViaResend_ConfigStoreError(t *testing.T) {
 
 func TestSendViaSMTPWith_FromFallback(t *testing.T) {
 	s := &Sender{}
-	err := s.sendViaSMTPWith("127.0.0.1", "587", "user@test.com", "pass", "", "to@test.com", "subj", "body")
+	err := s.sendViaSMTPWith(context.Background(), "127.0.0.1", "587", "user@test.com", "pass", "", "to@test.com", "subj", "body")
 	if err == nil {
 		t.Fatal("expected error from SMTP dial")
 	}
@@ -1244,7 +1218,7 @@ func TestSendViaSMTPWith_FromFallback(t *testing.T) {
 
 func TestSendViaSMTPWith_Port465(t *testing.T) {
 	s := &Sender{}
-	err := s.sendViaSMTPWith("127.0.0.1", "465", "user@test.com", "pass", "from@test.com", "to@test.com", "subj", "body")
+	err := s.sendViaSMTPWith(context.Background(), "127.0.0.1", "465", "user@test.com", "pass", "from@test.com", "to@test.com", "subj", "body")
 	if err == nil {
 		t.Fatal("expected error from TLS dial")
 	}

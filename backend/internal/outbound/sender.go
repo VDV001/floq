@@ -125,7 +125,7 @@ func (s *Sender) SendPending(ctx context.Context) error {
 
 		var sendErr error
 		if smtpHost != "" && smtpUser != "" && smtpPassword != "" {
-			sendErr = s.sendViaSMTPWith(smtpHost, smtpPort, smtpUser, smtpPassword, fromAddr, prospect.Email, subject, htmlBody)
+			sendErr = s.sendViaSMTPWith(ctx, smtpHost, smtpPort, smtpUser, smtpPassword, fromAddr, prospect.Email, subject, htmlBody)
 		} else {
 			sendErr = s.sendViaResend(ctx, prospect.Email, subject, htmlBody)
 		}
@@ -168,7 +168,7 @@ func (s *Sender) SendPending(ctx context.Context) error {
 }
 
 // sendViaSMTPWith sends email through an SMTP server (mail.ru, Yandex, Gmail, etc.)
-func (s *Sender) sendViaSMTPWith(host, port, user, password, from, to, subject, htmlBody string) error {
+func (s *Sender) sendViaSMTPWith(ctx context.Context, host, port, user, password, from, to, subject, htmlBody string) error {
 	if from == "" {
 		from = user
 	}
@@ -182,21 +182,21 @@ func (s *Sender) sendViaSMTPWith(host, port, user, password, from, to, subject, 
 
 	// mail.ru / Yandex require TLS on port 465
 	if port == "465" {
-		return s.sendSMTPWithTLS(addr, auth, host, from, to, message)
+		return s.sendSMTPWithTLS(ctx, addr, auth, host, from, to, message)
 	}
 
 	// Port 587 uses STARTTLS
-	return s.sendSMTPWithSTARTTLS(addr, auth, host, from, to, message)
+	return s.sendSMTPWithSTARTTLS(ctx, addr, auth, host, from, to, message)
 }
 
 // sendSMTPWithTLS handles implicit TLS (port 465).
-func (s *Sender) sendSMTPWithTLS(addr string, auth smtp.Auth, host, from, to string, message []byte) error {
+func (s *Sender) sendSMTPWithTLS(ctx context.Context, addr string, auth smtp.Auth, host, from, to string, message []byte) error {
 	tlsConfig := &tls.Config{ServerName: host}
 
 	var conn net.Conn
 	var err error
 	if s.dialer != nil {
-		rawConn, dialErr := s.dialer.DialContext(context.Background(), "tcp", addr)
+		rawConn, dialErr := s.dialer.DialContext(ctx, "tcp", addr)
 		if dialErr != nil {
 			return fmt.Errorf("smtp proxy dial: %w", dialErr)
 		}
@@ -239,12 +239,12 @@ func (s *Sender) sendSMTPWithTLS(addr string, auth smtp.Auth, host, from, to str
 }
 
 // sendSMTPWithSTARTTLS handles port 587 STARTTLS via manual SMTP client (supports proxy dialer).
-func (s *Sender) sendSMTPWithSTARTTLS(addr string, auth smtp.Auth, host, from, to string, message []byte) error {
+func (s *Sender) sendSMTPWithSTARTTLS(ctx context.Context, addr string, auth smtp.Auth, host, from, to string, message []byte) error {
 	var conn net.Conn
 	var err error
 
 	if s.dialer != nil {
-		conn, err = s.dialer.DialContext(context.Background(), "tcp", addr)
+		conn, err = s.dialer.DialContext(ctx, "tcp", addr)
 	} else {
 		conn, err = net.DialTimeout("tcp", addr, 30*time.Second)
 	}

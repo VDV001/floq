@@ -91,18 +91,29 @@ func buildSMTPTester(proxyDialer proxy.ContextDialer) settings.SMTPTester {
 
 		var conn net.Conn
 		var err error
-		if proxyDialer != nil {
-			// Connect through proxy, then upgrade to TLS
-			rawConn, dialErr := proxyDialer.DialContext(ctx, "tcp", addr)
-			if dialErr != nil {
-				return fmt.Errorf("Не удалось подключиться через прокси: %v", dialErr)
+
+		if port == "465" {
+			if proxyDialer != nil {
+				rawConn, dialErr := proxyDialer.DialContext(ctx, "tcp", addr)
+				if dialErr != nil {
+					return fmt.Errorf("Не удалось подключиться через прокси: %v", dialErr)
+				}
+				conn = tls.Client(rawConn, &tls.Config{ServerName: host})
+			} else {
+				conn, err = tls.DialWithDialer(
+					&net.Dialer{Timeout: 10 * time.Second}, "tcp", addr,
+					&tls.Config{ServerName: host},
+				)
+				if err != nil {
+					return fmt.Errorf("Не удалось подключиться: %v", err)
+				}
 			}
-			conn = tls.Client(rawConn, &tls.Config{ServerName: host})
 		} else {
-			conn, err = tls.DialWithDialer(
-				&net.Dialer{Timeout: 10 * time.Second}, "tcp", addr,
-				&tls.Config{ServerName: host},
-			)
+			if proxyDialer != nil {
+				conn, err = proxyDialer.DialContext(ctx, "tcp", addr)
+			} else {
+				conn, err = net.DialTimeout("tcp", addr, 10*time.Second)
+			}
 			if err != nil {
 				return fmt.Errorf("Не удалось подключиться: %v", err)
 			}
@@ -114,6 +125,12 @@ func buildSMTPTester(proxyDialer proxy.ContextDialer) settings.SMTPTester {
 			return fmt.Errorf("Ошибка создания SMTP-клиента")
 		}
 		defer client.Close()
+
+		if port != "465" {
+			if err := client.StartTLS(&tls.Config{ServerName: host}); err != nil {
+				return fmt.Errorf("Ошибка STARTTLS: %v", err)
+			}
+		}
 
 		auth := smtpLib.PlainAuth("", user, password, host)
 		if err := client.Auth(auth); err != nil {
