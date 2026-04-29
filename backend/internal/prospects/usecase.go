@@ -6,10 +6,24 @@ import (
 	"encoding/csv"
 	"fmt"
 	"io"
+	"strings"
 
 	"github.com/daniil/floq/internal/prospects/domain"
 	"github.com/google/uuid"
 )
+
+var columnAliases = map[string]string{
+	"name": "name", "имя": "name", "имя в tg": "name", "full_name": "name",
+	"company": "company", "компания": "company", "организация": "company",
+	"title": "title", "должность": "title", "позиция": "title",
+	"email": "email", "почта": "email", "e-mail": "email",
+	"phone": "phone", "телефон": "phone", "тел": "phone",
+	"whatsapp": "whatsapp",
+	"telegram_username": "telegram_username", "tg-контакты": "telegram_username", "tg": "telegram_username", "telegram": "telegram_username",
+	"industry": "industry", "отрасль": "industry",
+	"company_size": "company_size",
+	"context": "context", "комментарий": "context", "описание": "context", "превью вакансии": "context",
+}
 
 type LeadChecker interface {
 	LeadExistsByEmail(ctx context.Context, userID uuid.UUID, email string) (bool, error)
@@ -104,26 +118,26 @@ func (uc *UseCase) DeleteProspect(ctx context.Context, id uuid.UUID) error {
 }
 
 func (uc *UseCase) ImportCSV(ctx context.Context, userID uuid.UUID, csvData []byte) (int, error) {
-	reader := csv.NewReader(bytes.NewReader(csvData))
+	csvData = stripBOM(csvData)
+	delimiter := detectDelimiter(csvData)
 
-	// Read and validate header
+	reader := csv.NewReader(bytes.NewReader(csvData))
+	reader.Comma = delimiter
+	reader.LazyQuotes = true
+
 	header, err := reader.Read()
 	if err != nil {
 		return 0, fmt.Errorf("read csv header: %w", err)
 	}
-	if len(header) < 4 || header[0] != "name" || header[1] != "company" || header[2] != "title" || header[3] != "email" {
-		return 0, fmt.Errorf("invalid csv header: expected name,company,title,email")
+
+	colMap := mapColumns(header)
+	if _, ok := colMap["name"]; !ok {
+		return 0, fmt.Errorf("invalid csv header: required column 'name' (or alias: имя, имя в tg) not found")
 	}
 
-	// Build column index map for optional columns
-	colIndex := make(map[string]int, len(header))
-	for i, name := range header {
-		colIndex[name] = i
-	}
-
-	getCol := func(record []string, name string) string {
-		if idx, ok := colIndex[name]; ok && idx < len(record) {
-			return record[idx]
+	getCol := func(record []string, canonical string) string {
+		if idx, ok := colMap[canonical]; ok && idx < len(record) {
+			return strings.TrimSpace(record[idx])
 		}
 		return ""
 	}
@@ -138,7 +152,8 @@ func (uc *UseCase) ImportCSV(ctx context.Context, userID uuid.UUID, csvData []by
 			return 0, fmt.Errorf("read csv record: %w", err)
 		}
 
-		email := record[3]
+		email := getCol(record, "email")
+		tgUsername := strings.TrimPrefix(getCol(record, "telegram_username"), "@")
 
 		if email != "" {
 			dup, err := uc.repo.FindByEmail(ctx, userID, email)
@@ -157,17 +172,24 @@ func (uc *UseCase) ImportCSV(ctx context.Context, userID uuid.UUID, csvData []by
 					continue
 				}
 			}
+		} else if tgUsername != "" {
+			dup, err := uc.repo.FindByTelegramUsername(ctx, userID, tgUsername)
+			if err != nil {
+				return 0, fmt.Errorf("dedup prospect tg check: %w", err)
+			}
+			if dup != nil {
+				continue
+			}
 		}
 
-		p, err := domain.NewProspect(userID, record[0], record[1], record[2], email, "csv")
+		name := getCol(record, "name")
+		p, err := domain.NewProspect(userID, name, getCol(record, "company"), getCol(record, "title"), email, "csv")
 		if err != nil {
-			// Skip rows with invalid name/userID — CSV import shouldn't
-			// abort on a single malformed row, but we must not persist one.
 			continue
 		}
 		p.Phone = getCol(record, "phone")
 		p.WhatsApp = getCol(record, "whatsapp")
-		p.TelegramUsername = getCol(record, "telegram_username")
+		p.TelegramUsername = tgUsername
 		p.Industry = getCol(record, "industry")
 		p.CompanySize = getCol(record, "company_size")
 		p.Context = getCol(record, "context")
@@ -181,8 +203,46 @@ func (uc *UseCase) ImportCSV(ctx context.Context, userID uuid.UUID, csvData []by
 	return len(prospects), nil
 }
 
+func stripBOM(data []byte) []byte {
+	if len(data) >= 3 && data[0] == 0xEF && data[1] == 0xBB && data[2] == 0xBF {
+		return data[3:]
+	}
+	return data
+}
+
+func detectDelimiter(data []byte) rune {
+	idx := bytes.IndexByte(data, '\n')
+	firstLine := string(data)
+	if idx > 0 {
+		firstLine = string(data[:idx])
+	}
+	if strings.Count(firstLine, ";") > strings.Count(firstLine, ",") {
+		return ';'
+	}
+	return ','
+}
+
+func mapColumns(header []string) map[string]int {
+	result := make(map[string]int, len(header))
+	for i, raw := range header {
+		normalized := strings.ToLower(strings.TrimSpace(raw))
+		if canonical, ok := columnAliases[normalized]; ok {
+			if _, exists := result[canonical]; !exists {
+				result[canonical] = i
+			}
+		}
+	}
+	return result
+}
+
 func (uc *UseCase) TemplateCSV() []byte {
-	return nil
+	var buf bytes.Buffer
+	buf.Write([]byte{0xEF, 0xBB, 0xBF})
+	w := csv.NewWriter(&buf)
+	_ = w.Write([]string{"name", "company", "title", "email", "phone", "whatsapp", "telegram_username", "industry", "company_size", "context"})
+	_ = w.Write([]string{"Иван Петров", "ООО Рога и Копыта", "Менеджер", "ivan@example.com", "+79991234567", "", "ivan_petrov", "IT", "10-50", "Заинтересован в интеграции"})
+	w.Flush()
+	return buf.Bytes()
 }
 
 func (uc *UseCase) ExportCSV(ctx context.Context, userID uuid.UUID) ([]byte, error) {

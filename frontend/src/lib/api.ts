@@ -85,7 +85,10 @@ async function apiUploadFile<T>(path: string, file: File): Promise<T> {
     headers: token ? { Authorization: `Bearer ${token}` } : {},
     body: formData,
   });
-  if (!res.ok) throw new Error(`Upload error: ${res.status}`);
+  if (!res.ok) {
+    const body = await res.json().catch(() => null);
+    throw new Error(body?.error || `Upload error: ${res.status}`);
+  }
   return res.json();
 }
 
@@ -190,6 +193,7 @@ export const api = {
   deleteProspect: (id: string) =>
     apiFetch(`/api/prospects/${id}`, { method: "DELETE" }),
   exportProspectsCSV: () => apiDownload("/api/prospects/export"),
+  downloadProspectTemplate: () => apiDownload("/api/prospects/template"),
   importProspectsCSV: (file: File) =>
     apiUploadFile<{ imported: number }>("/api/prospects/import", file),
 
