@@ -4,11 +4,11 @@ import (
 	"context"
 	"fmt"
 	"log"
-	"net"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/daniil/floq/internal/proxy"
 	"github.com/gotd/td/session"
 	"github.com/gotd/td/telegram"
 	"github.com/gotd/td/telegram/auth"
@@ -50,16 +50,11 @@ func (s *memStorage) StoreSession(_ context.Context, data []byte) error {
 	return nil
 }
 
-// ContextDialer is an interface for dialers that support context (e.g. SOCKS5 proxy).
-type ContextDialer interface {
-	DialContext(ctx context.Context, network, addr string) (net.Conn, error)
-}
-
 // Option configures a Client.
 type Option func(*Client)
 
 // WithDialer sets a custom dialer (e.g. SOCKS5 proxy) for MTProto connections.
-func WithDialer(d ContextDialer) Option {
+func WithDialer(d proxy.ContextDialer) Option {
 	return func(c *Client) { c.dialer = d }
 }
 
@@ -68,7 +63,7 @@ type Client struct {
 	apiID   int
 	apiHash string
 	storage *memStorage
-	dialer  ContextDialer
+	dialer  proxy.ContextDialer
 }
 
 // NewClient creates a new MTProto client wrapper with default Telethon credentials.

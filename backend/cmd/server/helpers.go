@@ -8,11 +8,13 @@ import (
 	"net"
 	"net/http"
 	smtpLib "net/smtp"
+	"time"
 
 	"github.com/daniil/floq/internal/ai"
 	"github.com/daniil/floq/internal/ai/providers"
 	"github.com/daniil/floq/internal/config"
 	"github.com/daniil/floq/internal/leads"
+	"github.com/daniil/floq/internal/proxy"
 	"github.com/daniil/floq/internal/settings"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -83,12 +85,7 @@ func buildAITester(cfg *config.Config, httpClient *http.Client) settings.AITeste
 	}
 }
 
-// ContextDialer is an interface for dialers that support context (e.g. SOCKS5 proxy).
-type ContextDialer interface {
-	DialContext(ctx context.Context, network, addr string) (net.Conn, error)
-}
-
-func buildSMTPTester(proxyDialer ContextDialer) settings.SMTPTester {
+func buildSMTPTester(proxyDialer proxy.ContextDialer) settings.SMTPTester {
 	return func(ctx context.Context, host, port, user, password string) error {
 		addr := net.JoinHostPort(host, port)
 
@@ -103,7 +100,7 @@ func buildSMTPTester(proxyDialer ContextDialer) settings.SMTPTester {
 			conn = tls.Client(rawConn, &tls.Config{ServerName: host})
 		} else {
 			conn, err = tls.DialWithDialer(
-				&net.Dialer{}, "tcp", addr,
+				&net.Dialer{Timeout: 10 * time.Second}, "tcp", addr,
 				&tls.Config{ServerName: host},
 			)
 			if err != nil {

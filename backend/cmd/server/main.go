@@ -149,7 +149,7 @@ func main() {
 		prospects.RegisterRoutes(r, prospectsUC)
 		sequences.RegisterRoutes(r, sequencesUC)
 		sources.RegisterRoutes(r, sourcesUC)
-		verify.RegisterRoutes(r, prospectsRepo, nil) // TG bot passed as nil for now
+		verify.RegisterRoutes(r, prospectsRepo, nil, proxyDialer) // TG bot passed as nil for now
 		parser.RegisterRoutes(r, cfg.TwoGISAPIKey, httpClient)
 		settings.RegisterRoutes(r, settingsUC, buildAITester(cfg, httpClient), buildSMTPTester(proxyDialer), buildResendTester(httpClient), buildUsageCounter(leadsRepo))
 		chat.RegisterRoutes(r, chat.NewHandler(chat.NewRepository(pool), newChatAIAdapter(aiClient)))
@@ -166,7 +166,7 @@ func main() {
 	// 7. Outbound email sender (cron every 30 seconds)
 	// Always starts — reads Resend API key from DB each tick (falls back to .env)
 	tgRepo := tgclient.NewRepository(pool)
-	emailSender := outbound.NewSender(settingsStore, ownerID, cfg.ResendAPIKey, cfg.SMTPFrom, cfg.AppBaseURL, cfg.SMTPHost, cfg.SMTPPort, cfg.SMTPUser, cfg.SMTPPassword, sequencesRepo, prospectsRepo, tgRepo, outbound.NewMTProtoMessenger(), proxyDialer)
+	emailSender := outbound.NewSender(settingsStore, ownerID, cfg.ResendAPIKey, cfg.SMTPFrom, cfg.AppBaseURL, cfg.SMTPHost, cfg.SMTPPort, cfg.SMTPUser, cfg.SMTPPassword, sequencesRepo, prospectsRepo, tgRepo, outbound.NewMTProtoMessenger(), proxyDialer, httpClient)
 	go func() {
 		ticker := time.NewTicker(30 * time.Second)
 		defer ticker.Stop()
