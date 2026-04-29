@@ -678,7 +678,7 @@ func TestHandleMessage_UpdateLeadStatusError(t *testing.T) {
 
 func TestNewTelegramBot_InvalidToken(t *testing.T) {
 	// Empty token should fail.
-	_, err := NewTelegramBot("", nil, nil, nil, uuid.New(), "")
+	_, err := NewTelegramBot("", nil, nil, nil, uuid.New(), "", nil)
 	// telegram bot-api returns error for empty token.
 	assert.Error(t, err)
 }

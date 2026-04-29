@@ -181,7 +181,7 @@ func main() {
 		tgToken = dbCfg.TelegramBotToken
 	}
 	if tgToken != "" {
-		tgBot, err := inbox.NewTelegramBot(tgToken, inboxLeadAdapter, prospectAdapter, inboxAI, ownerID, cfg.BookingLink)
+		tgBot, err := inbox.NewTelegramBot(tgToken, inboxLeadAdapter, prospectAdapter, inboxAI, ownerID, cfg.BookingLink, nil)
 		if err != nil {
 			log.Printf("telegram bot init failed: %v", err)
 		} else {
@@ -201,7 +201,7 @@ func main() {
 	if tgToken != "" && notifyChatIDStr != "" {
 		chatID, err := strconv.ParseInt(notifyChatIDStr, 10, 64)
 		if err == nil {
-			n, err := notify.NewTelegramNotifier(tgToken, chatID)
+			n, err := notify.NewTelegramNotifier(tgToken, chatID, nil)
 			if err != nil {
 				log.Printf("telegram notifier init failed: %v", err)
 			} else {

@@ -24,7 +24,7 @@ func TestNewTelegramNotifier_InvalidToken(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			notifier, err := NewTelegramNotifier(tt.token, 123)
+			notifier, err := NewTelegramNotifier(tt.token, 123, nil)
 			require.Error(t, err)
 			assert.Nil(t, notifier)
 		})
@@ -148,7 +148,7 @@ func TestNewTelegramNotifier_VariousChatIDs(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			// Token is invalid so we expect error, but we're testing
 			// that chatID value doesn't affect the token validation.
-			_, err := NewTelegramNotifier("bad-token", tt.chatID)
+			_, err := NewTelegramNotifier("bad-token", tt.chatID, nil)
 			require.Error(t, err)
 		})
 	}
