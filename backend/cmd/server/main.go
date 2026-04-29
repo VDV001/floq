@@ -26,6 +26,7 @@ import (
 	"github.com/daniil/floq/internal/notify"
 	"github.com/daniil/floq/internal/outbound"
 	"github.com/daniil/floq/internal/parser"
+	"github.com/daniil/floq/internal/proxy"
 	"github.com/daniil/floq/internal/reminders"
 	"github.com/daniil/floq/internal/prospects"
 	"github.com/daniil/floq/internal/sequences"
@@ -45,6 +46,14 @@ func main() {
 	_ = godotenv.Load()
 
 	cfg := config.Load()
+
+	// 0. Proxy provider (empty PROXY_URL = direct connection)
+	proxyProvider, err := proxy.NewFromURL(cfg.ProxyURL)
+	if err != nil {
+		log.Fatalf("invalid PROXY_URL: %v", err)
+	}
+	httpClient := proxyProvider.HTTPClient()
+	proxyDialer := proxyProvider.Dialer() // non-nil for SOCKS5 only
 
 	// 1. DB pool
 	pool, err := pgxpool.New(context.Background(), cfg.DatabaseURL)
@@ -79,7 +88,7 @@ func main() {
 	// 2. Settings store (reads user_settings from DB, used by services)
 	settingsStore := settings.NewStore(pool)
 	settingsRepo := settings.NewRepository(pool)
-	settingsUC := settings.NewUseCase(settingsRepo, &settings.HTTPTelegramValidator{})
+	settingsUC := settings.NewUseCase(settingsRepo, &settings.HTTPTelegramValidator{HTTPClient: httpClient})
 
 	ownerID, err := uuid.Parse(cfg.OwnerUserID)
 	if err != nil {
@@ -87,7 +96,7 @@ func main() {
 	}
 
 	// 2b. AI provider (dynamic: reads provider/model/key from DB, falls back to .env)
-	aiProvider := providers.NewDynamicProvider(settingsStore, ownerID, cfg, nil)
+	aiProvider := providers.NewDynamicProvider(settingsStore, ownerID, cfg, httpClient)
 	aiClient := ai.NewAIClient(aiProvider, cfg.BookingLink, cfg.SenderName, cfg.SenderCompany, cfg.SenderPhone, cfg.SenderWebsite)
 
 	// 3. Repositories
@@ -141,10 +150,14 @@ func main() {
 		sequences.RegisterRoutes(r, sequencesUC)
 		sources.RegisterRoutes(r, sourcesUC)
 		verify.RegisterRoutes(r, prospectsRepo, nil) // TG bot passed as nil for now
-		parser.RegisterRoutes(r, cfg.TwoGISAPIKey)
-		settings.RegisterRoutes(r, settingsUC, buildAITester(cfg), buildSMTPTester(), buildResendTester(), buildUsageCounter(leadsRepo))
+		parser.RegisterRoutes(r, cfg.TwoGISAPIKey, httpClient)
+		settings.RegisterRoutes(r, settingsUC, buildAITester(cfg, httpClient), buildSMTPTester(proxyDialer), buildResendTester(httpClient), buildUsageCounter(leadsRepo))
 		chat.RegisterRoutes(r, chat.NewHandler(chat.NewRepository(pool), newChatAIAdapter(aiClient)))
-		tgclient.RegisterRoutes(r, tgclient.NewClient(), tgclient.NewRepository(pool))
+		tgOpts := []tgclient.Option{}
+		if proxyDialer != nil {
+			tgOpts = append(tgOpts, tgclient.WithDialer(proxyDialer))
+		}
+		tgclient.RegisterRoutes(r, tgclient.NewClient(tgOpts...), tgclient.NewRepository(pool))
 	})
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -153,7 +166,7 @@ func main() {
 	// 7. Outbound email sender (cron every 30 seconds)
 	// Always starts — reads Resend API key from DB each tick (falls back to .env)
 	tgRepo := tgclient.NewRepository(pool)
-	emailSender := outbound.NewSender(settingsStore, ownerID, cfg.ResendAPIKey, cfg.SMTPFrom, cfg.AppBaseURL, cfg.SMTPHost, cfg.SMTPPort, cfg.SMTPUser, cfg.SMTPPassword, sequencesRepo, prospectsRepo, tgRepo, outbound.NewMTProtoMessenger(), nil)
+	emailSender := outbound.NewSender(settingsStore, ownerID, cfg.ResendAPIKey, cfg.SMTPFrom, cfg.AppBaseURL, cfg.SMTPHost, cfg.SMTPPort, cfg.SMTPUser, cfg.SMTPPassword, sequencesRepo, prospectsRepo, tgRepo, outbound.NewMTProtoMessenger(), proxyDialer)
 	go func() {
 		ticker := time.NewTicker(30 * time.Second)
 		defer ticker.Stop()
@@ -181,7 +194,7 @@ func main() {
 		tgToken = dbCfg.TelegramBotToken
 	}
 	if tgToken != "" {
-		tgBot, err := inbox.NewTelegramBot(tgToken, inboxLeadAdapter, prospectAdapter, inboxAI, ownerID, cfg.BookingLink, nil)
+		tgBot, err := inbox.NewTelegramBot(tgToken, inboxLeadAdapter, prospectAdapter, inboxAI, ownerID, cfg.BookingLink, httpClient)
 		if err != nil {
 			log.Printf("telegram bot init failed: %v", err)
 		} else {
@@ -192,7 +205,7 @@ func main() {
 	}
 
 	// 9. Email IMAP poller (reads settings from DB, falls back to .env)
-	emailPoller := inbox.NewEmailPoller(inboxCfg, ownerID, cfg.IMAPHost, cfg.IMAPPort, cfg.IMAPUser, cfg.IMAPPassword, inboxLeadAdapter, prospectAdapter, sequencesRepo, inboxAI, nil)
+	emailPoller := inbox.NewEmailPoller(inboxCfg, ownerID, cfg.IMAPHost, cfg.IMAPPort, cfg.IMAPUser, cfg.IMAPPassword, inboxLeadAdapter, prospectAdapter, sequencesRepo, inboxAI, proxyDialer)
 	go emailPoller.Start(ctx)
 
 	// 10. Reminders cron (hourly, checks for stale leads)
@@ -201,7 +214,7 @@ func main() {
 	if tgToken != "" && notifyChatIDStr != "" {
 		chatID, err := strconv.ParseInt(notifyChatIDStr, 10, 64)
 		if err == nil {
-			n, err := notify.NewTelegramNotifier(tgToken, chatID, nil)
+			n, err := notify.NewTelegramNotifier(tgToken, chatID, httpClient)
 			if err != nil {
 				log.Printf("telegram notifier init failed: %v", err)
 			} else {

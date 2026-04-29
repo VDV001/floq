@@ -13,17 +13,17 @@ var _ domain.TelegramTokenValidator = (*HTTPTelegramValidator)(nil)
 
 // HTTPTelegramValidator validates Telegram bot tokens via the Telegram API.
 type HTTPTelegramValidator struct {
-	baseURL    string // override for testing; empty = production URL
-	httpClient *http.Client
+	BaseURL    string       // override for testing; empty = production URL
+	HTTPClient *http.Client // optional; nil = http.DefaultClient
 }
 
 func (v *HTTPTelegramValidator) Validate(token string) error {
-	base := v.baseURL
+	base := v.BaseURL
 	if base == "" {
 		base = "https://api.telegram.org"
 	}
 
-	client := v.httpClient
+	client := v.HTTPClient
 	if client == nil {
 		client = http.DefaultClient
 	}

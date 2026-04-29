@@ -9,12 +9,14 @@ import (
 )
 
 type Handler struct {
-	twoGIS *TwoGISClient
+	twoGIS     *TwoGISClient
+	httpClient *http.Client
 }
 
-func RegisterRoutes(r chi.Router, twoGISAPIKey string) {
+func RegisterRoutes(r chi.Router, twoGISAPIKey string, httpClient *http.Client) {
 	h := &Handler{
-		twoGIS: NewTwoGISClient(twoGISAPIKey),
+		twoGIS:     NewTwoGISClient(twoGISAPIKey, httpClient),
+		httpClient: httpClient,
 	}
 	r.Post("/api/parser/website", h.scrapeWebsite())
 	r.Post("/api/parser/twogis", h.searchTwoGIS())
@@ -36,7 +38,7 @@ func (h *Handler) scrapeWebsite() http.HandlerFunc {
 			return
 		}
 
-		emails, err := ScrapeEmails(body.URL)
+		emails, err := ScrapeEmails(body.URL, h.httpClient)
 		if err != nil {
 			httputil.WriteError(w, http.StatusUnprocessableEntity, err.Error())
 			return

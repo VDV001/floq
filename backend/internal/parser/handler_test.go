@@ -15,7 +15,7 @@ import (
 
 func setupParserRouter() chi.Router {
 	r := chi.NewRouter()
-	RegisterRoutes(r, "test-api-key")
+	RegisterRoutes(r, "test-api-key", nil)
 	return r
 }
 
@@ -98,7 +98,7 @@ func TestScrapeEmails_WithTestServer(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	emails, err := ScrapeEmails(srv.URL)
+	emails, err := ScrapeEmails(srv.URL, nil)
 	require.NoError(t, err)
 	assert.Contains(t, emails, "info@testcompany.com")
 }
@@ -116,7 +116,7 @@ func TestScrapeEmails_WithContactPage(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	emails, err := ScrapeEmails(srv.URL)
+	emails, err := ScrapeEmails(srv.URL, nil)
 	require.NoError(t, err)
 	assert.Contains(t, emails, "sales@company.com")
 }
@@ -131,7 +131,7 @@ func TestScrapeEmails_FilterJunk(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	emails, err := ScrapeEmails(srv.URL)
+	emails, err := ScrapeEmails(srv.URL, nil)
 	require.NoError(t, err)
 	assert.Contains(t, emails, "info@company.com")
 	assert.NotContains(t, emails, "noreply@company.com")
@@ -148,7 +148,7 @@ func TestScrapeEmails_Deduplication(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	emails, err := ScrapeEmails(srv.URL)
+	emails, err := ScrapeEmails(srv.URL, nil)
 	require.NoError(t, err)
 	count := 0
 	for _, e := range emails {
@@ -162,12 +162,12 @@ func TestScrapeEmails_Deduplication(t *testing.T) {
 func TestScrapeEmails_NoSchema(t *testing.T) {
 	// URL without schema should get https:// prepended.
 	// This will fail to connect but proves the normalization path.
-	_, err := ScrapeEmails("nonexistent.invalid.test")
+	_, err := ScrapeEmails("nonexistent.invalid.test", nil)
 	assert.Error(t, err)
 }
 
 func TestScrapeEmails_InvalidURL(t *testing.T) {
-	_, err := ScrapeEmails("://bad")
+	_, err := ScrapeEmails("://bad", nil)
 	assert.Error(t, err)
 }
 
@@ -177,7 +177,7 @@ func TestScrapeEmails_ServerError(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	_, err := ScrapeEmails(srv.URL)
+	_, err := ScrapeEmails(srv.URL, nil)
 	assert.Error(t, err)
 }
 
@@ -191,7 +191,7 @@ func TestScrapeEmails_EmptyPage(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	emails, err := ScrapeEmails(srv.URL)
+	emails, err := ScrapeEmails(srv.URL, nil)
 	require.NoError(t, err)
 	assert.Empty(t, emails)
 }
@@ -363,7 +363,7 @@ func TestScrapeEmails_Over50Emails(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	emails, err := ScrapeEmails(srv.URL)
+	emails, err := ScrapeEmails(srv.URL, nil)
 	require.NoError(t, err)
 	assert.LessOrEqual(t, len(emails), 50)
 }
@@ -376,7 +376,7 @@ func TestScrapeEmails_TooManyRedirects(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	_, err := ScrapeEmails(srv.URL)
+	_, err := ScrapeEmails(srv.URL, nil)
 	assert.Error(t, err)
 }
 
