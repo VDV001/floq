@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/daniil/floq/internal/httputil"
@@ -21,6 +22,7 @@ func RegisterRoutes(r chi.Router, uc *UseCase) {
 	r.Get("/api/prospects", h.listProspects())
 	r.Post("/api/prospects", h.createProspect())
 	r.Get("/api/prospects/export", h.exportCSV())
+	r.Get("/api/prospects/template", h.templateCSV())
 	r.Post("/api/prospects/import", h.importCSV())
 	r.Get("/api/prospects/{id}", h.getProspect())
 	r.Delete("/api/prospects/{id}", h.deleteProspect())
@@ -111,11 +113,26 @@ func (h *Handler) importCSV() http.HandlerFunc {
 		}
 		count, err := h.uc.ImportCSV(r.Context(), userID, data)
 		if err != nil {
-			httputil.WriteError(w, http.StatusBadRequest, err.Error())
+			msg := err.Error()
+			if strings.Contains(msg, "csv header") || strings.Contains(msg, "csv record") {
+				httputil.WriteError(w, http.StatusBadRequest, msg)
+			} else {
+				httputil.WriteError(w, http.StatusBadRequest, "failed to import CSV")
+			}
 			return
 		}
 
 		httputil.WriteJSON(w, http.StatusOK, map[string]int{"imported": count})
+	}
+}
+
+func (h *Handler) templateCSV() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		data := h.uc.TemplateCSV()
+		w.Header().Set("Content-Type", "text/csv; charset=utf-8")
+		w.Header().Set("Content-Disposition", `attachment; filename="floq-import-template.csv"`)
+		w.WriteHeader(http.StatusOK)
+		w.Write(data)
 	}
 }
 

@@ -1,6 +1,6 @@
 "use client";
 
-import { Search, Upload, Download, ShieldCheck, Sparkles, ArrowRight, CheckCircle2, AlertTriangle, XCircle } from "lucide-react";
+import { Search, Upload, Download, FileDown, ShieldCheck, Sparkles, ArrowRight, CheckCircle2, AlertTriangle, XCircle } from "lucide-react";
 import { api } from "@/lib/api";
 import { ProspectTable } from "@/components/prospects/ProspectTable";
 import { AddProspectForm } from "@/components/prospects/AddProspectForm";
@@ -59,13 +59,19 @@ export default function ProspectsPage() {
               className="flex items-center gap-2 rounded-lg border border-[#c3c6d7]/30 bg-[#c3c6d7]/10 px-5 py-2.5 font-semibold text-[#0d1c2e] transition-all hover:bg-[#c3c6d7]/20">
               <Download className="size-5" /> Экспорт CSV
             </button>
-            <label className="flex cursor-pointer items-center gap-2 rounded-lg border border-[#c3c6d7]/30 bg-[#c3c6d7]/10 px-5 py-2.5 font-semibold text-[#0d1c2e] transition-all hover:bg-[#c3c6d7]/20">
+            <button onClick={() => api.downloadProspectTemplate().catch(() => alert("Ошибка загрузки шаблона"))}
+              className="flex items-center gap-2 rounded-lg border border-[#c3c6d7]/30 bg-[#c3c6d7]/10 px-5 py-2.5 font-semibold text-[#0d1c2e] transition-all hover:bg-[#c3c6d7]/20"
+              title="Скачать пустой CSV-шаблон с правильными заголовками">
+              <FileDown className="size-5" /> Шаблон
+            </button>
+            <label className="flex cursor-pointer items-center gap-2 rounded-lg border border-[#c3c6d7]/30 bg-[#c3c6d7]/10 px-5 py-2.5 font-semibold text-[#0d1c2e] transition-all hover:bg-[#c3c6d7]/20"
+              title="Поддерживаются колонки: name/имя, company/компания, email/почта, telegram/tg-контакты, phone/телефон и др.">
               <Upload className="size-5" /> Импорт CSV
               <input type="file" accept=".csv" className="hidden" onChange={async (e) => {
                 const file = e.target.files?.[0];
                 if (!file) return;
                 try { const res = await api.importProspectsCSV(file); alert(`Импортировано ${res.imported} проспектов`); await fetchProspects(); }
-                catch { alert("Ошибка импорта"); }
+                catch (err) { alert(err instanceof Error ? err.message : "Ошибка импорта"); }
                 e.target.value = "";
               }} />
             </label>
