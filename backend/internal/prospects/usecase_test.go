@@ -60,7 +60,12 @@ func (m *mockRepo) GetProspectForUser(_ context.Context, userID, prospectID uuid
 	return p, nil
 }
 
-func (m *mockRepo) FindByTelegramUsername(_ context.Context, _ uuid.UUID, _ string) (*domain.Prospect, error) {
+func (m *mockRepo) FindByTelegramUsername(_ context.Context, userID uuid.UUID, username string) (*domain.Prospect, error) {
+	for _, p := range m.prospects {
+		if p.UserID == userID && p.TelegramUsername == username {
+			return p, nil
+		}
+	}
 	return nil, nil
 }
 
@@ -476,6 +481,160 @@ func TestImportCSV_EmptyCSV(t *testing.T) {
 	_, err := uc.ImportCSV(context.Background(), uuid.New(), []byte(""))
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "read csv header")
+}
+
+func TestImportCSV_StripsBOM(t *testing.T) {
+	repo := newMockRepo()
+	uc := NewUseCase(repo, WithLeadChecker(&mockLeadChecker{}))
+	userID := uuid.New()
+
+	bom := []byte{0xEF, 0xBB, 0xBF}
+	csvData := append(bom, []byte("name,company,title,email\nAlice,Acme,CEO,alice@acme.com\n")...)
+
+	count, err := uc.ImportCSV(context.Background(), userID, csvData)
+	require.NoError(t, err)
+	assert.Equal(t, 1, count)
+	assert.Equal(t, "Alice", repo.batched[0].Name)
+}
+
+func TestImportCSV_SemicolonDelimiter(t *testing.T) {
+	repo := newMockRepo()
+	uc := NewUseCase(repo, WithLeadChecker(&mockLeadChecker{}))
+	userID := uuid.New()
+
+	csvData := []byte("name;company;title;email\nAlice;Acme;CEO;alice@acme.com\n")
+
+	count, err := uc.ImportCSV(context.Background(), userID, csvData)
+	require.NoError(t, err)
+	assert.Equal(t, 1, count)
+	assert.Equal(t, "Alice", repo.batched[0].Name)
+	assert.Equal(t, "Acme", repo.batched[0].Company)
+}
+
+func TestImportCSV_FlexibleColumnOrder(t *testing.T) {
+	repo := newMockRepo()
+	uc := NewUseCase(repo, WithLeadChecker(&mockLeadChecker{}))
+	userID := uuid.New()
+
+	csvData := []byte("email,name,company,title\nalice@acme.com,Alice,Acme,CEO\n")
+
+	count, err := uc.ImportCSV(context.Background(), userID, csvData)
+	require.NoError(t, err)
+	assert.Equal(t, 1, count)
+	assert.Equal(t, "Alice", repo.batched[0].Name)
+	assert.Equal(t, "alice@acme.com", repo.batched[0].Email)
+	assert.Equal(t, "Acme", repo.batched[0].Company)
+	assert.Equal(t, "CEO", repo.batched[0].Title)
+}
+
+func TestImportCSV_RussianColumnAliases(t *testing.T) {
+	repo := newMockRepo()
+	uc := NewUseCase(repo, WithLeadChecker(&mockLeadChecker{}))
+	userID := uuid.New()
+
+	csvData := []byte("имя;компания;должность;почта;телефон;telegram\nАлиса;ООО Рога;CEO;alice@acme.com;+79991234567;alice_tg\n")
+
+	count, err := uc.ImportCSV(context.Background(), userID, csvData)
+	require.NoError(t, err)
+	assert.Equal(t, 1, count)
+	assert.Equal(t, "Алиса", repo.batched[0].Name)
+	assert.Equal(t, "ООО Рога", repo.batched[0].Company)
+	assert.Equal(t, "CEO", repo.batched[0].Title)
+	assert.Equal(t, "alice@acme.com", repo.batched[0].Email)
+	assert.Equal(t, "+79991234567", repo.batched[0].Phone)
+	assert.Equal(t, "alice_tg", repo.batched[0].TelegramUsername)
+}
+
+func TestImportCSV_TGContactsAlias(t *testing.T) {
+	repo := newMockRepo()
+	uc := NewUseCase(repo, WithLeadChecker(&mockLeadChecker{}))
+	userID := uuid.New()
+
+	csvData := []byte("имя в tg;tg-контакты;телефон;комментарий\nДарья;@crmlab_assistant;;Интегратор\n")
+
+	count, err := uc.ImportCSV(context.Background(), userID, csvData)
+	require.NoError(t, err)
+	assert.Equal(t, 1, count)
+	assert.Equal(t, "Дарья", repo.batched[0].Name)
+	assert.Equal(t, "crmlab_assistant", repo.batched[0].TelegramUsername)
+	assert.Equal(t, "Интегратор", repo.batched[0].Context)
+}
+
+func TestImportCSV_OnlyNameRequired(t *testing.T) {
+	repo := newMockRepo()
+	uc := NewUseCase(repo, WithLeadChecker(&mockLeadChecker{}))
+	userID := uuid.New()
+
+	csvData := []byte("name\nAlice\nBob\n")
+
+	count, err := uc.ImportCSV(context.Background(), userID, csvData)
+	require.NoError(t, err)
+	assert.Equal(t, 2, count)
+	assert.Equal(t, "Alice", repo.batched[0].Name)
+	assert.Equal(t, "Bob", repo.batched[1].Name)
+}
+
+func TestImportCSV_NormalizeTGUsername(t *testing.T) {
+	repo := newMockRepo()
+	uc := NewUseCase(repo, WithLeadChecker(&mockLeadChecker{}))
+	userID := uuid.New()
+
+	csvData := []byte("name,telegram_username\nAlice,@alice_bot\nBob,bob_user\n")
+
+	count, err := uc.ImportCSV(context.Background(), userID, csvData)
+	require.NoError(t, err)
+	assert.Equal(t, 2, count)
+	assert.Equal(t, "alice_bot", repo.batched[0].TelegramUsername)
+	assert.Equal(t, "bob_user", repo.batched[1].TelegramUsername)
+}
+
+func TestImportCSV_DedupByTelegramUsername(t *testing.T) {
+	repo := newMockRepo()
+	userID := uuid.New()
+	existing, _ := domain.NewProspect(userID, "Existing", "Co", "CTO", "", "manual")
+	existing.TelegramUsername = "alice_tg"
+	repo.prospects[existing.ID] = existing
+
+	uc := NewUseCase(repo, WithLeadChecker(&mockLeadChecker{}))
+	csvData := []byte("name,telegram_username\nAlice,@alice_tg\nBob,bob_tg\n")
+	count, err := uc.ImportCSV(context.Background(), userID, csvData)
+	require.NoError(t, err)
+	assert.Equal(t, 1, count) // only Bob
+	assert.Equal(t, "Bob", repo.batched[0].Name)
+}
+
+func TestImportCSV_CaseInsensitiveHeaders(t *testing.T) {
+	repo := newMockRepo()
+	uc := NewUseCase(repo, WithLeadChecker(&mockLeadChecker{}))
+	userID := uuid.New()
+
+	csvData := []byte("Name,Company,Title,Email\nAlice,Acme,CEO,alice@acme.com\n")
+
+	count, err := uc.ImportCSV(context.Background(), userID, csvData)
+	require.NoError(t, err)
+	assert.Equal(t, 1, count)
+	assert.Equal(t, "Alice", repo.batched[0].Name)
+}
+
+func TestImportCSV_NoNameColumn(t *testing.T) {
+	repo := newMockRepo()
+	uc := NewUseCase(repo)
+
+	csvData := []byte("company,title,email\nAcme,CEO,a@b.com\n")
+
+	_, err := uc.ImportCSV(context.Background(), uuid.New(), csvData)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "name")
+}
+
+func TestTemplateCSV(t *testing.T) {
+	uc := NewUseCase(newMockRepo())
+	data := uc.TemplateCSV()
+
+	csv := string(data)
+	assert.True(t, data[0] == 0xEF && data[1] == 0xBB && data[2] == 0xBF, "should have BOM")
+	assert.Contains(t, csv, "name,company,title,email")
+	assert.Contains(t, csv, "telegram_username")
 }
 
 func TestImportCSV_MalformedRecord(t *testing.T) {

@@ -181,6 +181,10 @@ func (uc *UseCase) ImportCSV(ctx context.Context, userID uuid.UUID, csvData []by
 	return len(prospects), nil
 }
 
+func (uc *UseCase) TemplateCSV() []byte {
+	return nil
+}
+
 func (uc *UseCase) ExportCSV(ctx context.Context, userID uuid.UUID) ([]byte, error) {
 	prospects, err := uc.repo.ListProspects(ctx, userID)
 	if err != nil {
