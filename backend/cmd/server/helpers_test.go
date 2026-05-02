@@ -3,8 +3,12 @@ package main
 import (
 	"context"
 	"errors"
+	"io"
+	"net/http"
+	"strings"
 	"testing"
 
+	"github.com/daniil/floq/internal/config"
 	"github.com/daniil/floq/internal/settings"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -53,6 +57,81 @@ func TestBuildSMTPTester_Port587_WrapsErrSMTPDial(t *testing.T) {
 	require.Error(t, err)
 	assert.True(t, errors.Is(err, settings.ErrSMTPDial),
 		"STARTTLS-path dial failures must also wrap settings.ErrSMTPDial; got: %v", err)
+}
+
+// roundTripperFunc adapts a function to http.RoundTripper so tests can
+// inject canned responses or transport errors without standing up a real
+// server.
+type roundTripperFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripperFunc) RoundTrip(r *http.Request) (*http.Response, error) {
+	return f(r)
+}
+
+func TestBuildResendTester_HTTP200_NoError(t *testing.T) {
+	client := &http.Client{Transport: roundTripperFunc(func(r *http.Request) (*http.Response, error) {
+		return &http.Response{
+			StatusCode: 200,
+			Body:       io.NopCloser(strings.NewReader(`{"data":[]}`)),
+			Header:     http.Header{},
+		}, nil
+	})}
+	tester := buildResendTester(client)
+	err := tester(context.Background(), "test-key")
+	require.NoError(t, err)
+}
+
+func TestBuildResendTester_HTTP401_WrapsErrResendAuth(t *testing.T) {
+	client := &http.Client{Transport: roundTripperFunc(func(r *http.Request) (*http.Response, error) {
+		return &http.Response{
+			StatusCode: 401,
+			Body:       io.NopCloser(strings.NewReader(`{"message":"invalid key"}`)),
+			Header:     http.Header{},
+		}, nil
+	})}
+	tester := buildResendTester(client)
+	err := tester(context.Background(), "bad-key")
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, settings.ErrResendAuth),
+		"non-200 status must wrap settings.ErrResendAuth so the settings handler can map to a UI message; got: %v", err)
+}
+
+func TestBuildResendTester_TransportError_WrapsErrResendRequest(t *testing.T) {
+	client := &http.Client{Transport: roundTripperFunc(func(r *http.Request) (*http.Response, error) {
+		return nil, errors.New("synthetic transport error")
+	})}
+	tester := buildResendTester(client)
+	err := tester(context.Background(), "any-key")
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, settings.ErrResendRequest),
+		"transport-level failures must wrap settings.ErrResendRequest; got: %v", err)
+}
+
+func TestBuildResendTester_NoUIStringsLeak(t *testing.T) {
+	client := &http.Client{Transport: roundTripperFunc(func(r *http.Request) (*http.Response, error) {
+		return &http.Response{
+			StatusCode: 401,
+			Body:       io.NopCloser(strings.NewReader(``)),
+			Header:     http.Header{},
+		}, nil
+	})}
+	tester := buildResendTester(client)
+	err := tester(context.Background(), "bad-key")
+	require.Error(t, err)
+	assert.NotContains(t, err.Error(), "Неверный",
+		"helpers.go must not return Russian UI strings — settings/handler.go owns the user copy")
+	assert.NotContains(t, err.Error(), "Ошибка",
+		"helpers.go must not return Russian UI strings")
+}
+
+func TestBuildAITester_UnknownProvider_WrapsErrAIUnknownProvider(t *testing.T) {
+	tester := buildAITester(&config.Config{}, nil)
+	_, err := tester(context.Background(), "definitely-not-a-real-provider", "model", "key")
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, settings.ErrAIUnknownProvider),
+		"unknown-provider switch default must wrap settings.ErrAIUnknownProvider; got: %v", err)
+	assert.NotContains(t, err.Error(), "неизвестный провайдер",
+		"helpers.go must not embed Russian copy in the error — handler maps via errors.Is")
 }
 
 func TestBuildSMTPTester_NoUIStringsLeak(t *testing.T) {
