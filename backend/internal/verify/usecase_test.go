@@ -101,6 +101,63 @@ func TestUseCase_VerifyBatch_VerifiesAndUpdatesNotChecked(t *testing.T) {
 		"invalid email syntax must produce VerifyStatusInvalid")
 }
 
+// fakeTelegramVerifier records what usernames the UseCase passed it
+// and returns a canned result. It implements TelegramVerifier without
+// pulling in the tgbotapi SDK, which is the whole point of having the
+// interface.
+type fakeTelegramVerifier struct {
+	calledWith []string
+	result     TelegramResult
+}
+
+func (f *fakeTelegramVerifier) Verify(username string) TelegramResult {
+	f.calledWith = append(f.calledWith, username)
+	return f.result
+}
+
+func TestUseCase_VerifyBatch_CallsTelegramVerifierForProspectsWithUsername(t *testing.T) {
+	pID := uuid.New()
+	store := &fakeProspectStore{
+		prospects: []domain.ProspectWithSource{
+			{Prospect: domain.Prospect{
+				ID:               pID,
+				Email:            "not-a-valid-email",
+				TelegramUsername: "@someuser",
+				VerifyStatus:     domain.VerifyStatusNotChecked,
+			}},
+		},
+	}
+	tg := &fakeTelegramVerifier{result: TelegramResult{Username: "someuser", Exists: true}}
+	uc := NewUseCase(store, tg, nil)
+
+	count, err := uc.VerifyBatch(context.Background(), uuid.New())
+
+	require.NoError(t, err)
+	assert.Equal(t, 1, count)
+	require.Len(t, tg.calledWith, 1, "TelegramVerifier must be called exactly once")
+	assert.Equal(t, "@someuser", tg.calledWith[0])
+}
+
+func TestUseCase_VerifyBatch_NilTelegramVerifier_SkipsTelegramVerification(t *testing.T) {
+	pID := uuid.New()
+	store := &fakeProspectStore{
+		prospects: []domain.ProspectWithSource{
+			{Prospect: domain.Prospect{
+				ID:               pID,
+				Email:            "not-a-valid-email",
+				TelegramUsername: "@someuser",
+				VerifyStatus:     domain.VerifyStatusNotChecked,
+			}},
+		},
+	}
+	uc := NewUseCase(store, nil, nil)
+
+	count, err := uc.VerifyBatch(context.Background(), uuid.New())
+
+	require.NoError(t, err)
+	assert.Equal(t, 1, count, "email verification must still proceed when TelegramVerifier is nil")
+}
+
 func TestUseCase_VerifyBatch_UpdateError_DoesNotIncrementCount(t *testing.T) {
 	store := &fakeProspectStore{
 		prospects: []domain.ProspectWithSource{
