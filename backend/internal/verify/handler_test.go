@@ -48,13 +48,13 @@ func (m *mockProspectRepo) UpdateVerification(_ context.Context, id uuid.UUID, _
 func setupVerifyRouter() chi.Router {
 	r := chi.NewRouter()
 	repo := &mockProspectRepo{}
-	RegisterRoutes(r, repo, nil, nil)
+	RegisterRoutes(r, NewUseCase(repo, nil, nil))
 	return r
 }
 
 func setupVerifyRouterWithRepo(repo *mockProspectRepo) chi.Router {
 	r := chi.NewRouter()
-	RegisterRoutes(r, repo, nil, nil)
+	RegisterRoutes(r, NewUseCase(repo, nil, nil))
 	return r
 }
 
@@ -87,7 +87,7 @@ func TestHandler_VerifyEmail_InvalidSyntax(t *testing.T) {
 	err := json.NewDecoder(rec.Body).Decode(&result)
 	require.NoError(t, err)
 	assert.False(t, result.IsValidSyntax)
-	assert.Equal(t, "invalid", result.Status)
+	assert.Equal(t, domain.VerifyStatusInvalid, result.Status)
 	assert.Equal(t, 0, result.Score)
 }
 
@@ -281,15 +281,15 @@ func TestHandler_VerifyBatch_UpdateVerifyError(t *testing.T) {
 // --- VerifyEmail function ---
 
 func TestVerifyEmail_DisposableDomain(t *testing.T) {
-	result := VerifyEmail("user@mailinator.com")
+	result := VerifyEmail(context.Background(), "user@mailinator.com", nil)
 	assert.True(t, result.IsValidSyntax)
 	assert.True(t, result.IsDisposable)
 	assert.Equal(t, 5, result.Score)
-	assert.Equal(t, "invalid", result.Status)
+	assert.Equal(t, domain.VerifyStatusInvalid, result.Status)
 }
 
 func TestVerifyEmail_FreeProvider(t *testing.T) {
-	result := VerifyEmail("user@gmail.com")
+	result := VerifyEmail(context.Background(), "user@gmail.com", nil)
 	assert.True(t, result.IsValidSyntax)
 	assert.True(t, result.IsFreeProvider)
 }
@@ -307,7 +307,7 @@ func TestVerifyEmail_ValidSyntaxFormat(t *testing.T) {
 		{"", false},
 	}
 	for _, tc := range tests {
-		result := VerifyEmail(tc.email)
+		result := VerifyEmail(context.Background(), tc.email, nil)
 		assert.Equal(t, tc.valid, result.IsValidSyntax, "email: %s", tc.email)
 	}
 }

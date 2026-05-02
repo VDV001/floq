@@ -9,21 +9,22 @@ import (
 	"strings"
 	"time"
 
+	"github.com/daniil/floq/internal/prospects/domain"
 	"github.com/daniil/floq/internal/proxy"
 )
 
 // EmailResult holds the outcome of an email verification pipeline.
 type EmailResult struct {
-	Email          string `json:"email"`
-	IsValidSyntax  bool   `json:"is_valid_syntax"`
-	HasMX          bool   `json:"has_mx"`
-	SMTPValid      bool   `json:"smtp_valid"`
-	SMTPError      string `json:"smtp_error,omitempty"`
-	IsDisposable   bool   `json:"is_disposable"`
-	IsCatchAll     bool   `json:"is_catch_all"`
-	IsFreeProvider bool   `json:"is_free_provider"`
-	Score          int    `json:"score"`
-	Status         string `json:"status"` // "valid" | "risky" | "invalid"
+	Email          string              `json:"email"`
+	IsValidSyntax  bool                `json:"is_valid_syntax"`
+	HasMX          bool                `json:"has_mx"`
+	SMTPValid      bool                `json:"smtp_valid"`
+	SMTPError      string              `json:"smtp_error,omitempty"`
+	IsDisposable   bool                `json:"is_disposable"`
+	IsCatchAll     bool                `json:"is_catch_all"`
+	IsFreeProvider bool                `json:"is_free_provider"`
+	Score          int                 `json:"score"`
+	Status         domain.VerifyStatus `json:"status"`
 }
 
 var emailRegex = regexp.MustCompile(`^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$`)
@@ -46,12 +47,8 @@ var freeProviders = map[string]bool{
 }
 
 // VerifyEmail runs the full email verification pipeline and returns the result.
-// An optional proxy dialer can be provided to route SMTP probes through a proxy.
-func VerifyEmail(email string, dialer ...proxy.ContextDialer) EmailResult {
-	var d proxy.ContextDialer
-	if len(dialer) > 0 {
-		d = dialer[0]
-	}
+// dialer may be nil for a direct connection.
+func VerifyEmail(ctx context.Context, email string, dialer proxy.ContextDialer) EmailResult {
 	result := EmailResult{
 		Email: email,
 	}
@@ -59,33 +56,33 @@ func VerifyEmail(email string, dialer ...proxy.ContextDialer) EmailResult {
 	// Step 1: Syntax check
 	if !emailRegex.MatchString(email) {
 		result.Score = 0
-		result.Status = "invalid"
+		result.Status = domain.VerifyStatusInvalid
 		return result
 	}
 	result.IsValidSyntax = true
 
 	// Step 2: Extract domain
 	parts := strings.SplitN(email, "@", 2)
-	domain := parts[1]
+	emailDomain := parts[1]
 
 	// Step 3: Disposable check
-	result.IsDisposable = IsDisposable(domain)
+	result.IsDisposable = IsDisposable(emailDomain)
 
 	// Step 4: Free provider check
-	result.IsFreeProvider = freeProviders[strings.ToLower(domain)]
+	result.IsFreeProvider = freeProviders[strings.ToLower(emailDomain)]
 
 	// Step 5: MX lookup
-	mxRecords, err := net.LookupMX(domain)
+	mxRecords, err := net.LookupMX(emailDomain)
 	if err != nil || len(mxRecords) == 0 {
 		result.Score = 5
-		result.Status = "invalid"
+		result.Status = domain.VerifyStatusInvalid
 		return result
 	}
 	result.HasMX = true
 
 	// Step 6: SMTP probe
 	mxHost := strings.TrimSuffix(mxRecords[0].Host, ".")
-	smtpValid, catchAll, smtpErr := smtpProbe(mxHost, email, domain, d)
+	smtpValid, catchAll, smtpErr := smtpProbe(ctx, mxHost, email, emailDomain, dialer)
 	result.SMTPValid = smtpValid
 	result.IsCatchAll = catchAll
 	if smtpErr != "" {
@@ -120,11 +117,11 @@ func VerifyEmail(email string, dialer ...proxy.ContextDialer) EmailResult {
 	// Step 9: Status
 	switch {
 	case score >= 70:
-		result.Status = "valid"
+		result.Status = domain.VerifyStatusValid
 	case score >= 40:
-		result.Status = "risky"
+		result.Status = domain.VerifyStatusRisky
 	default:
-		result.Status = "invalid"
+		result.Status = domain.VerifyStatusInvalid
 	}
 
 	return result
@@ -132,14 +129,15 @@ func VerifyEmail(email string, dialer ...proxy.ContextDialer) EmailResult {
 
 // smtpProbe connects to the MX host and checks whether the email is deliverable.
 // It also performs catch-all detection. Returns (smtpValid, isCatchAll, errorMessage).
-func smtpProbe(mxHost, email, domain string, dialer proxy.ContextDialer) (bool, bool, string) {
+func smtpProbe(ctx context.Context, mxHost, email, emailDomain string, dialer proxy.ContextDialer) (bool, bool, string) {
 	addr := mxHost + ":25"
 	var conn net.Conn
 	var err error
 	if dialer != nil {
-		conn, err = dialer.DialContext(context.Background(), "tcp", addr)
+		conn, err = dialer.DialContext(ctx, "tcp", addr)
 	} else {
-		conn, err = net.DialTimeout("tcp", addr, 10*time.Second)
+		netDialer := &net.Dialer{Timeout: 10 * time.Second}
+		conn, err = netDialer.DialContext(ctx, "tcp", addr)
 	}
 	if err != nil {
 		return false, false, fmt.Sprintf("dial error: %v", err)
@@ -171,7 +169,7 @@ func smtpProbe(mxHost, email, domain string, dialer proxy.ContextDialer) (bool, 
 
 	// Step 7: Catch-all detection — try a random address
 	catchAll := false
-	randomAddr := fmt.Sprintf("floq-verify-test-%d@%s", time.Now().UnixNano(), domain)
+	randomAddr := fmt.Sprintf("floq-verify-test-%d@%s", time.Now().UnixNano(), emailDomain)
 
 	// Reset for the catch-all probe
 	if err := client.Reset(); err == nil {

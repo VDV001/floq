@@ -2,6 +2,7 @@ package outbound
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"testing"
 	"time"
@@ -1185,11 +1186,8 @@ func TestSendViaResend_NoKey(t *testing.T) {
 		nil, nil, nil, nil, nil, nil)
 
 	err := s.sendViaResend(context.Background(), "to@test.com", "subj", "body")
-	if err == nil {
-		t.Fatal("expected error for no Resend key")
-	}
-	if err.Error() != "no Resend API key configured" {
-		t.Errorf("unexpected error: %v", err)
+	if !errors.Is(err, ErrNoResendAPIKey) {
+		t.Fatalf("expected errors.Is to match ErrNoResendAPIKey, got: %v", err)
 	}
 }
 
@@ -1200,11 +1198,8 @@ func TestSendViaResend_ConfigStoreError(t *testing.T) {
 		nil, nil, nil, nil, nil, nil)
 
 	err := s.sendViaResend(context.Background(), "to@test.com", "subj", "body")
-	if err == nil {
-		t.Fatal("expected error")
-	}
-	if err.Error() != "no Resend API key configured" {
-		t.Errorf("unexpected error: %v", err)
+	if !errors.Is(err, ErrNoResendAPIKey) {
+		t.Fatalf("expected errors.Is to match ErrNoResendAPIKey, got: %v", err)
 	}
 }
 

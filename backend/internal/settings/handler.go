@@ -3,6 +3,7 @@ package settings
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -14,6 +15,28 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 )
+
+// smtpErrorToUserMessage maps a typed SMTP error from the composition
+// root's tester into a Russian user-facing message. Owning this mapping
+// here (rather than in cmd/server/helpers.go) is the Clean Architecture
+// rule: UI strings live next to the handler that emits them, not in the
+// infrastructure that produces the technical error.
+func smtpErrorToUserMessage(err error) string {
+	switch {
+	case errors.Is(err, ErrSMTPProxyDial):
+		return "Не удалось подключиться через прокси"
+	case errors.Is(err, ErrSMTPDial):
+		return "Не удалось подключиться"
+	case errors.Is(err, ErrSMTPClient):
+		return "Ошибка создания SMTP-клиента"
+	case errors.Is(err, ErrSMTPStartTLS):
+		return "Ошибка STARTTLS"
+	case errors.Is(err, ErrSMTPAuth):
+		return "Неверный логин или пароль SMTP"
+	default:
+		return "Ошибка SMTP"
+	}
+}
 
 // Settings is the JSON DTO returned by the API.
 type Settings struct {
@@ -390,7 +413,7 @@ func (h *Handler) testSMTP() http.HandlerFunc {
 		defer cancel()
 
 		if err := h.smtpTester(ctx, body.Host, body.Port, body.User, body.Password); err != nil {
-			httputil.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "error": err.Error()})
+			httputil.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "error": smtpErrorToUserMessage(err)})
 			return
 		}
 

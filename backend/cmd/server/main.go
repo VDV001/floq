@@ -149,7 +149,7 @@ func main() {
 		prospects.RegisterRoutes(r, prospectsUC)
 		sequences.RegisterRoutes(r, sequencesUC)
 		sources.RegisterRoutes(r, sourcesUC)
-		verify.RegisterRoutes(r, prospectsRepo, nil, proxyDialer) // TG bot passed as nil for now
+		verify.RegisterRoutes(r, verify.NewUseCase(prospectsRepo, verify.NewBotTelegramVerifier(nil), proxyDialer)) // TG bot passed as nil for now
 		parser.RegisterRoutes(r, cfg.TwoGISAPIKey, httpClient)
 		settings.RegisterRoutes(r, settingsUC, buildAITester(cfg, httpClient), buildSMTPTester(proxyDialer), buildResendTester(httpClient), buildUsageCounter(leadsRepo))
 		chat.RegisterRoutes(r, chat.NewHandler(chat.NewRepository(pool), newChatAIAdapter(aiClient)))

@@ -377,7 +377,7 @@ func (s *Sender) sendViaResend(ctx context.Context, to, subject, htmlBody string
 		apiKey = settingsdomain.ResolveConfig(cfg.ResendAPIKey, apiKey)
 	}
 	if apiKey == "" {
-		return fmt.Errorf("no Resend API key configured")
+		return ErrNoResendAPIKey
 	}
 
 	body, _ := json.Marshal(map[string]interface{}{
@@ -387,7 +387,7 @@ func (s *Sender) sendViaResend(ctx context.Context, to, subject, htmlBody string
 		"html":    htmlBody,
 	})
 
-	req, err := http.NewRequestWithContext(ctx, "POST", "https://api.resend.com/emails", bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(ctx, "POST", resendAPIURL, bytes.NewReader(body))
 	if err != nil {
 		return fmt.Errorf("resend request: %w", err)
 	}
@@ -405,7 +405,7 @@ func (s *Sender) sendViaResend(ctx context.Context, to, subject, htmlBody string
 	defer resp.Body.Close()
 
 	if resp.StatusCode >= 400 {
-		return fmt.Errorf("resend API error: status %d", resp.StatusCode)
+		return &ResendAPIError{StatusCode: resp.StatusCode}
 	}
 	return nil
 }
