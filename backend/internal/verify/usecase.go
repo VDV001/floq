@@ -7,7 +7,6 @@ import (
 
 	"github.com/daniil/floq/internal/prospects/domain"
 	"github.com/daniil/floq/internal/proxy"
-	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 	"github.com/google/uuid"
 )
 
@@ -19,20 +18,28 @@ type ProspectStore interface {
 	UpdateVerification(ctx context.Context, id uuid.UUID, status domain.VerifyStatus, score int, details string, verifiedAt time.Time) error
 }
 
+// TelegramVerifier checks whether a Telegram username corresponds to an
+// existing account. The concrete adapter (BotTelegramVerifier in
+// telegram.go) wraps the tgbotapi SDK; usecase code depends only on this
+// interface to keep the SDK out of the application layer.
+type TelegramVerifier interface {
+	Verify(username string) TelegramResult
+}
+
 // UseCase orchestrates email and Telegram verification across the user's
 // prospects. It is the layer that owns the time/iteration/persist policy
 // of the verification flow; HTTP handlers delegate to it without making
 // any business decisions of their own.
 type UseCase struct {
 	prospects ProspectStore
-	bot       *tgbotapi.BotAPI    // optional; nil disables Telegram verification
+	telegram  TelegramVerifier    // optional; nil disables Telegram verification
 	dialer    proxy.ContextDialer // optional; nil means direct connections
 }
 
 // NewUseCase wires a UseCase against the given prospect store, optional
-// Telegram bot, and optional proxy dialer.
-func NewUseCase(prospects ProspectStore, bot *tgbotapi.BotAPI, dialer proxy.ContextDialer) *UseCase {
-	return &UseCase{prospects: prospects, bot: bot, dialer: dialer}
+// Telegram verifier, and optional proxy dialer.
+func NewUseCase(prospects ProspectStore, telegram TelegramVerifier, dialer proxy.ContextDialer) *UseCase {
+	return &UseCase{prospects: prospects, telegram: telegram, dialer: dialer}
 }
 
 // VerifyBatch verifies every not-yet-checked prospect for userID and
@@ -57,8 +64,8 @@ func (uc *UseCase) VerifyBatch(ctx context.Context, userID uuid.UUID) (int, erro
 		details := map[string]any{
 			"email": emailResult,
 		}
-		if p.TelegramUsername != "" && uc.bot != nil {
-			details["telegram"] = VerifyTelegram(uc.bot, p.TelegramUsername)
+		if p.TelegramUsername != "" && uc.telegram != nil {
+			details["telegram"] = uc.telegram.Verify(p.TelegramUsername)
 		}
 
 		detailsJSON, err := json.Marshal(details)
