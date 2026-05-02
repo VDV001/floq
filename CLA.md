@@ -2,6 +2,8 @@
 
 Version 1.0, April 2026
 
+Canonical version (used by CLA Assistant): https://gist.github.com/VDV001/4c8fbc07ba97be5529f21cfc2a7e7324
+
 Thank you for your interest in contributing to **Floq** (the "Project"), maintained by **Daniil Vdovin** (the "Maintainer").
 
 This Contributor License Agreement ("Agreement") defines the terms under which you ("Contributor") submit Contributions to the Project. By submitting a Contribution, you accept and agree to the following terms.
