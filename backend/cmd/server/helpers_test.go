@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/daniil/floq/internal/config"
 	"github.com/daniil/floq/internal/settings"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -121,6 +122,16 @@ func TestBuildResendTester_NoUIStringsLeak(t *testing.T) {
 		"helpers.go must not return Russian UI strings — settings/handler.go owns the user copy")
 	assert.NotContains(t, err.Error(), "Ошибка",
 		"helpers.go must not return Russian UI strings")
+}
+
+func TestBuildAITester_UnknownProvider_WrapsErrAIUnknownProvider(t *testing.T) {
+	tester := buildAITester(&config.Config{}, nil)
+	_, err := tester(context.Background(), "definitely-not-a-real-provider", "model", "key")
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, settings.ErrAIUnknownProvider),
+		"unknown-provider switch default must wrap settings.ErrAIUnknownProvider; got: %v", err)
+	assert.NotContains(t, err.Error(), "неизвестный провайдер",
+		"helpers.go must not embed Russian copy in the error — handler maps via errors.Is")
 }
 
 func TestBuildSMTPTester_NoUIStringsLeak(t *testing.T) {
