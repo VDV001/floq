@@ -96,7 +96,7 @@ func buildSMTPTester(proxyDialer proxy.ContextDialer) settings.SMTPTester {
 			if proxyDialer != nil {
 				rawConn, dialErr := proxyDialer.DialContext(ctx, "tcp", addr)
 				if dialErr != nil {
-					return fmt.Errorf("Не удалось подключиться через прокси: %v", dialErr)
+					return fmt.Errorf("%w: %v", settings.ErrSMTPProxyDial, dialErr)
 				}
 				conn = tls.Client(rawConn, &tls.Config{ServerName: host})
 			} else {
@@ -105,36 +105,39 @@ func buildSMTPTester(proxyDialer proxy.ContextDialer) settings.SMTPTester {
 					&tls.Config{ServerName: host},
 				)
 				if err != nil {
-					return fmt.Errorf("Не удалось подключиться: %v", err)
+					return fmt.Errorf("%w: %v", settings.ErrSMTPDial, err)
 				}
 			}
 		} else {
 			if proxyDialer != nil {
 				conn, err = proxyDialer.DialContext(ctx, "tcp", addr)
+				if err != nil {
+					return fmt.Errorf("%w: %v", settings.ErrSMTPProxyDial, err)
+				}
 			} else {
 				conn, err = net.DialTimeout("tcp", addr, 10*time.Second)
-			}
-			if err != nil {
-				return fmt.Errorf("Не удалось подключиться: %v", err)
+				if err != nil {
+					return fmt.Errorf("%w: %v", settings.ErrSMTPDial, err)
+				}
 			}
 		}
 		defer conn.Close()
 
 		client, err := smtpLib.NewClient(conn, host)
 		if err != nil {
-			return fmt.Errorf("Ошибка создания SMTP-клиента")
+			return fmt.Errorf("%w: %v", settings.ErrSMTPClient, err)
 		}
 		defer client.Close()
 
 		if port != "465" {
 			if err := client.StartTLS(&tls.Config{ServerName: host}); err != nil {
-				return fmt.Errorf("Ошибка STARTTLS: %v", err)
+				return fmt.Errorf("%w: %v", settings.ErrSMTPStartTLS, err)
 			}
 		}
 
 		auth := smtpLib.PlainAuth("", user, password, host)
 		if err := client.Auth(auth); err != nil {
-			return fmt.Errorf("Неверный логин или пароль SMTP")
+			return fmt.Errorf("%w: %v", settings.ErrSMTPAuth, err)
 		}
 		_ = client.Quit()
 		return nil
