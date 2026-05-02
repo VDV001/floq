@@ -38,6 +38,18 @@ func smtpErrorToUserMessage(err error) string {
 	}
 }
 
+// resendErrorToUserMessage mirrors smtpErrorToUserMessage for Resend.
+func resendErrorToUserMessage(err error) string {
+	switch {
+	case errors.Is(err, ErrResendAuth):
+		return "Неверный API ключ Resend"
+	case errors.Is(err, ErrResendRequest):
+		return "Ошибка запроса"
+	default:
+		return "Ошибка Resend"
+	}
+}
+
 // Settings is the JSON DTO returned by the API.
 type Settings struct {
 	// Profile (read-only, from users table)
@@ -375,7 +387,7 @@ func (h *Handler) testResend() http.HandlerFunc {
 		defer cancel()
 
 		if err := h.resendTester(ctx, body.APIKey); err != nil {
-			httputil.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "error": err.Error()})
+			httputil.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "error": resendErrorToUserMessage(err)})
 			return
 		}
 

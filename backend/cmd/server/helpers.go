@@ -148,7 +148,7 @@ func buildResendTester(httpClient *http.Client) settings.ResendTester {
 	return func(ctx context.Context, apiKey string) error {
 		req, err := http.NewRequestWithContext(ctx, "GET", "https://api.resend.com/api-keys", nil)
 		if err != nil {
-			return fmt.Errorf("Ошибка запроса: %v", err)
+			return fmt.Errorf("%w: %v", settings.ErrResendRequest, err)
 		}
 		req.Header.Set("Authorization", "Bearer "+apiKey)
 
@@ -158,12 +158,12 @@ func buildResendTester(httpClient *http.Client) settings.ResendTester {
 		}
 		resp, err := client.Do(req)
 		if err != nil {
-			return fmt.Errorf("Ошибка запроса: %v", err)
+			return fmt.Errorf("%w: %v", settings.ErrResendRequest, err)
 		}
 		defer resp.Body.Close()
 
 		if resp.StatusCode != 200 {
-			return fmt.Errorf("Неверный API ключ Resend")
+			return settings.ErrResendAuth
 		}
 		return nil
 	}
