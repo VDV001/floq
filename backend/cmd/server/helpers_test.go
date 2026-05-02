@@ -2,9 +2,10 @@ package main
 
 import (
 	"context"
-	"strings"
+	"errors"
 	"testing"
 
+	"github.com/daniil/floq/internal/settings"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -38,27 +39,33 @@ func TestBuildSMTPTester_BadHost_NotPanic(t *testing.T) {
 	assert.NotEmpty(t, err.Error())
 }
 
-func TestBuildSMTPTester_RoutesPort465ToTLSPath(t *testing.T) {
-	// Indirect routing assertion: errors from port-465 attempts mention
-	// the implicit-TLS dial path in their message ("прокси" or generic
-	// connect error), while port-587 attempts mention STARTTLS only
-	// after the dial succeeds (which it will not against 127.0.0.1:1).
-	// Here we just confirm both branches return non-empty errors with
-	// distinct, non-overlapping wording — no business assertions.
+func TestBuildSMTPTester_Port465_WrapsErrSMTPDial(t *testing.T) {
 	tester := buildSMTPTester(nil)
-
-	err465 := tester(context.Background(), "127.0.0.1", "465", "u", "p")
-	require.Error(t, err465)
-
-	err587 := tester(context.Background(), "127.0.0.1", "1", "u", "p")
-	require.Error(t, err587)
-
-	assert.NotEqual(t, err465.Error(), err587.Error(),
-		"the two branches must produce distinct error messages so callers can tell them apart")
-	// Both messages currently include some Russian connection-failure copy.
-	// We pin that they are non-empty rather than the exact string, so a
-	// follow-up that lifts UI strings out of helpers.go does not need to
-	// rewrite this test.
-	assert.True(t, strings.TrimSpace(err465.Error()) != "")
-	assert.True(t, strings.TrimSpace(err587.Error()) != "")
+	err := tester(context.Background(), "127.0.0.1", "465", "u", "p")
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, settings.ErrSMTPDial),
+		"port-465 dial failures must wrap settings.ErrSMTPDial so the settings handler can map to a UI message; got: %v", err)
 }
+
+func TestBuildSMTPTester_Port587_WrapsErrSMTPDial(t *testing.T) {
+	tester := buildSMTPTester(nil)
+	err := tester(context.Background(), "127.0.0.1", "1", "u", "p")
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, settings.ErrSMTPDial),
+		"STARTTLS-path dial failures must also wrap settings.ErrSMTPDial; got: %v", err)
+}
+
+func TestBuildSMTPTester_NoUIStringsLeak(t *testing.T) {
+	// Composition-root helpers must NOT carry user-facing copy.
+	// settings/handler.go owns the Russian translation via errors.Is.
+	tester := buildSMTPTester(nil)
+	err := tester(context.Background(), "127.0.0.1", "1", "u", "p")
+	require.Error(t, err)
+	assert.NotContains(t, err.Error(), "Не удалось",
+		"helpers.go must not return Russian UI strings; this is a Clean Architecture violation")
+	assert.NotContains(t, err.Error(), "Ошибка",
+		"helpers.go must not return Russian UI strings")
+	assert.NotContains(t, err.Error(), "Неверный",
+		"helpers.go must not return Russian UI strings")
+}
+
