@@ -53,7 +53,7 @@ func (h *Handler) verifyEmailSingle() http.HandlerFunc {
 			return
 		}
 
-		result := VerifyEmail(body.Email, h.dialer)
+		result := VerifyEmail(r.Context(), body.Email, h.dialer)
 		httputil.WriteJSON(w, http.StatusOK, result)
 	}
 }
@@ -78,7 +78,7 @@ func (h *Handler) verifyBatch() http.HandlerFunc {
 				continue
 			}
 
-			emailResult := VerifyEmail(p.Email, h.dialer)
+			emailResult := VerifyEmail(r.Context(), p.Email, h.dialer)
 
 			details := map[string]any{
 				"email": emailResult,

@@ -1,6 +1,7 @@
 package verify
 
 import (
+	"context"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -74,7 +75,7 @@ func TestFreeProviders(t *testing.T) {
 }
 
 func TestVerifyEmail_InvalidSyntax(t *testing.T) {
-	result := VerifyEmail("not-an-email")
+	result := VerifyEmail(context.Background(), "not-an-email", nil)
 	assert.False(t, result.IsValidSyntax)
 	assert.Equal(t, 0, result.Score)
 	assert.Equal(t, "invalid", result.Status)
@@ -82,7 +83,7 @@ func TestVerifyEmail_InvalidSyntax(t *testing.T) {
 }
 
 func TestVerifyEmail_EmptyString(t *testing.T) {
-	result := VerifyEmail("")
+	result := VerifyEmail(context.Background(), "", nil)
 	assert.False(t, result.IsValidSyntax)
 	assert.Equal(t, 0, result.Score)
 	assert.Equal(t, "invalid", result.Status)

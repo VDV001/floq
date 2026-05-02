@@ -281,7 +281,7 @@ func TestHandler_VerifyBatch_UpdateVerifyError(t *testing.T) {
 // --- VerifyEmail function ---
 
 func TestVerifyEmail_DisposableDomain(t *testing.T) {
-	result := VerifyEmail("user@mailinator.com")
+	result := VerifyEmail(context.Background(), "user@mailinator.com", nil)
 	assert.True(t, result.IsValidSyntax)
 	assert.True(t, result.IsDisposable)
 	assert.Equal(t, 5, result.Score)
@@ -289,7 +289,7 @@ func TestVerifyEmail_DisposableDomain(t *testing.T) {
 }
 
 func TestVerifyEmail_FreeProvider(t *testing.T) {
-	result := VerifyEmail("user@gmail.com")
+	result := VerifyEmail(context.Background(), "user@gmail.com", nil)
 	assert.True(t, result.IsValidSyntax)
 	assert.True(t, result.IsFreeProvider)
 }
@@ -307,7 +307,7 @@ func TestVerifyEmail_ValidSyntaxFormat(t *testing.T) {
 		{"", false},
 	}
 	for _, tc := range tests {
-		result := VerifyEmail(tc.email)
+		result := VerifyEmail(context.Background(), tc.email, nil)
 		assert.Equal(t, tc.valid, result.IsValidSyntax, "email: %s", tc.email)
 	}
 }

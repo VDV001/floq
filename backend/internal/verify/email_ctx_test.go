@@ -45,13 +45,3 @@ func TestSmtpProbe_RespectsCanceledContext(t *testing.T) {
 	require.NotNil(t, dialer.capturedCtx)
 	assert.Error(t, dialer.capturedCtx.Err(), "captured ctx must be the canceled one")
 }
-
-func TestVerifyEmail_AcceptsContextAndExplicitDialer(t *testing.T) {
-	// Disposable domain short-circuits before any network call,
-	// so this test only checks that the new signature compiles
-	// and that callers can pass nil dialer explicitly (no variadic).
-	result := VerifyEmail(context.Background(), "user@mailinator.com", nil)
-	assert.True(t, result.IsValidSyntax)
-	assert.True(t, result.IsDisposable)
-	assert.Equal(t, "invalid", result.Status)
-}

@@ -46,12 +46,8 @@ var freeProviders = map[string]bool{
 }
 
 // VerifyEmail runs the full email verification pipeline and returns the result.
-// An optional proxy dialer can be provided to route SMTP probes through a proxy.
-func VerifyEmail(email string, dialer ...proxy.ContextDialer) EmailResult {
-	var d proxy.ContextDialer
-	if len(dialer) > 0 {
-		d = dialer[0]
-	}
+// dialer may be nil for a direct connection.
+func VerifyEmail(ctx context.Context, email string, dialer proxy.ContextDialer) EmailResult {
 	result := EmailResult{
 		Email: email,
 	}
@@ -85,7 +81,7 @@ func VerifyEmail(email string, dialer ...proxy.ContextDialer) EmailResult {
 
 	// Step 6: SMTP probe
 	mxHost := strings.TrimSuffix(mxRecords[0].Host, ".")
-	smtpValid, catchAll, smtpErr := smtpProbe(mxHost, email, domain, d)
+	smtpValid, catchAll, smtpErr := smtpProbe(ctx, mxHost, email, domain, dialer)
 	result.SMTPValid = smtpValid
 	result.IsCatchAll = catchAll
 	if smtpErr != "" {
@@ -132,14 +128,15 @@ func VerifyEmail(email string, dialer ...proxy.ContextDialer) EmailResult {
 
 // smtpProbe connects to the MX host and checks whether the email is deliverable.
 // It also performs catch-all detection. Returns (smtpValid, isCatchAll, errorMessage).
-func smtpProbe(mxHost, email, domain string, dialer proxy.ContextDialer) (bool, bool, string) {
+func smtpProbe(ctx context.Context, mxHost, email, domain string, dialer proxy.ContextDialer) (bool, bool, string) {
 	addr := mxHost + ":25"
 	var conn net.Conn
 	var err error
 	if dialer != nil {
-		conn, err = dialer.DialContext(context.Background(), "tcp", addr)
+		conn, err = dialer.DialContext(ctx, "tcp", addr)
 	} else {
-		conn, err = net.DialTimeout("tcp", addr, 10*time.Second)
+		netDialer := &net.Dialer{Timeout: 10 * time.Second}
+		conn, err = netDialer.DialContext(ctx, "tcp", addr)
 	}
 	if err != nil {
 		return false, false, fmt.Sprintf("dial error: %v", err)
