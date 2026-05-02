@@ -48,13 +48,13 @@ func (m *mockProspectRepo) UpdateVerification(_ context.Context, id uuid.UUID, _
 func setupVerifyRouter() chi.Router {
 	r := chi.NewRouter()
 	repo := &mockProspectRepo{}
-	RegisterRoutes(r, repo, nil, nil)
+	RegisterRoutes(r, NewUseCase(repo, nil, nil))
 	return r
 }
 
 func setupVerifyRouterWithRepo(repo *mockProspectRepo) chi.Router {
 	r := chi.NewRouter()
-	RegisterRoutes(r, repo, nil, nil)
+	RegisterRoutes(r, NewUseCase(repo, nil, nil))
 	return r
 }
 
