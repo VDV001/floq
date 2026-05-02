@@ -6,20 +6,15 @@ import (
 	"crypto/tls"
 	"io"
 	"log"
-	"net"
 	"strings"
 	"time"
 
+	"github.com/daniil/floq/internal/proxy"
 	"github.com/emersion/go-imap/v2"
 	"github.com/emersion/go-imap/v2/imapclient"
 	"github.com/emersion/go-message/mail"
 	"github.com/google/uuid"
 )
-
-// ContextDialer allows dialing TCP connections through a proxy.
-type ContextDialer interface {
-	DialContext(ctx context.Context, network, addr string) (net.Conn, error)
-}
 
 // EmailPoller polls an IMAP mailbox for new emails and creates leads.
 type EmailPoller struct {
@@ -29,7 +24,7 @@ type EmailPoller struct {
 	seqRepo      SequenceRepository
 	aiClient     AIQualifier
 	ownerID      uuid.UUID
-	dialer       ContextDialer
+	dialer       proxy.ContextDialer
 
 	fallbackHost     string
 	fallbackPort     string
@@ -37,7 +32,7 @@ type EmailPoller struct {
 	fallbackPassword string
 }
 
-func NewEmailPoller(store ConfigStore, ownerID uuid.UUID, fallbackHost, fallbackPort, fallbackUser, fallbackPassword string, repo LeadRepository, prospectRepo ProspectRepository, seqRepo SequenceRepository, aiClient AIQualifier, dialer ContextDialer) *EmailPoller {
+func NewEmailPoller(store ConfigStore, ownerID uuid.UUID, fallbackHost, fallbackPort, fallbackUser, fallbackPassword string, repo LeadRepository, prospectRepo ProspectRepository, seqRepo SequenceRepository, aiClient AIQualifier, dialer proxy.ContextDialer) *EmailPoller {
 	return &EmailPoller{
 		store:            store,
 		repo:             repo,

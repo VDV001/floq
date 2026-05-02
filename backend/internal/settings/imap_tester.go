@@ -7,16 +7,13 @@ import (
 	"net"
 	"strings"
 	"time"
-)
 
-// IMAPContextDialer allows dialing TCP connections through a proxy.
-type IMAPContextDialer interface {
-	DialContext(ctx context.Context, network, addr string) (net.Conn, error)
-}
+	"github.com/daniil/floq/internal/proxy"
+)
 
 // IMAPTester tests IMAP server connectivity.
 type IMAPTester struct {
-	Dialer IMAPContextDialer
+	Dialer proxy.ContextDialer
 }
 
 // TestConnection attempts a TLS connection to the IMAP server, sends a LOGIN

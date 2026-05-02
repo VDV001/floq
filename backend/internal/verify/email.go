@@ -1,12 +1,15 @@
 package verify
 
 import (
+	"context"
 	"fmt"
 	"net"
 	"net/smtp"
 	"regexp"
 	"strings"
 	"time"
+
+	"github.com/daniil/floq/internal/proxy"
 )
 
 // EmailResult holds the outcome of an email verification pipeline.
@@ -43,7 +46,12 @@ var freeProviders = map[string]bool{
 }
 
 // VerifyEmail runs the full email verification pipeline and returns the result.
-func VerifyEmail(email string) EmailResult {
+// An optional proxy dialer can be provided to route SMTP probes through a proxy.
+func VerifyEmail(email string, dialer ...proxy.ContextDialer) EmailResult {
+	var d proxy.ContextDialer
+	if len(dialer) > 0 {
+		d = dialer[0]
+	}
 	result := EmailResult{
 		Email: email,
 	}
@@ -77,7 +85,7 @@ func VerifyEmail(email string) EmailResult {
 
 	// Step 6: SMTP probe
 	mxHost := strings.TrimSuffix(mxRecords[0].Host, ".")
-	smtpValid, catchAll, smtpErr := smtpProbe(mxHost, email, domain)
+	smtpValid, catchAll, smtpErr := smtpProbe(mxHost, email, domain, d)
 	result.SMTPValid = smtpValid
 	result.IsCatchAll = catchAll
 	if smtpErr != "" {
@@ -124,9 +132,15 @@ func VerifyEmail(email string) EmailResult {
 
 // smtpProbe connects to the MX host and checks whether the email is deliverable.
 // It also performs catch-all detection. Returns (smtpValid, isCatchAll, errorMessage).
-// TODO: accept optional proxy dialer to route SMTP probes through proxy.
-func smtpProbe(mxHost, email, domain string) (bool, bool, string) {
-	conn, err := net.DialTimeout("tcp", mxHost+":25", 10*time.Second)
+func smtpProbe(mxHost, email, domain string, dialer proxy.ContextDialer) (bool, bool, string) {
+	addr := mxHost + ":25"
+	var conn net.Conn
+	var err error
+	if dialer != nil {
+		conn, err = dialer.DialContext(context.Background(), "tcp", addr)
+	} else {
+		conn, err = net.DialTimeout("tcp", addr, 10*time.Second)
+	}
 	if err != nil {
 		return false, false, fmt.Sprintf("dial error: %v", err)
 	}

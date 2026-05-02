@@ -105,7 +105,7 @@ func (m *mockTelegramMessenger) SendMessage(_ context.Context, _ []byte, target,
 
 func TestNewSender_Fields(t *testing.T) {
 	ownerID := uuid.New()
-	s := NewSender(nil, ownerID, "key123", "from@test.com", "https://app.test", "smtp.mail.ru", "465", "user@test.com", "pass", nil, nil, nil, nil, nil)
+	s := NewSender(nil, ownerID, "key123", "from@test.com", "https://app.test", "smtp.mail.ru", "465", "user@test.com", "pass", nil, nil, nil, nil, nil, nil)
 
 	if s.ownerID != ownerID {
 		t.Errorf("expected ownerID %s, got %s", ownerID, s.ownerID)
@@ -125,7 +125,7 @@ func TestNewSender_Fields(t *testing.T) {
 }
 
 func TestNewSender_NilDeps(t *testing.T) {
-	s := NewSender(nil, uuid.Nil, "", "", "", "", "", "", "", nil, nil, nil, nil, nil)
+	s := NewSender(nil, uuid.Nil, "", "", "", "", "", "", "", nil, nil, nil, nil, nil, nil)
 	if s == nil {
 		t.Fatal("expected non-nil Sender")
 	}
@@ -139,7 +139,7 @@ func TestSendPending_NoPendingMessages(t *testing.T) {
 	seqRepo := &mockOutboundRepository{pending: nil}
 	cfgStore := &mockConfigStore{cfg: &settingsdomain.UserConfig{}}
 
-	s := NewSender(cfgStore, uuid.New(), "", "from@x.com", "", "", "", "", "", seqRepo, nil, nil, nil, nil)
+	s := NewSender(cfgStore, uuid.New(), "", "from@x.com", "", "", "", "", "", seqRepo, nil, nil, nil, nil, nil)
 
 	if err := s.SendPending(context.Background()); err != nil {
 		t.Fatalf("expected no error, got %v", err)
@@ -193,7 +193,7 @@ func TestSendPending_EmailHappyPath(t *testing.T) {
 
 	s := NewSender(cfgStore, uuid.New(), "", "from@test.com", "https://app.test",
 		"", "", "", "", // no SMTP
-		seqRepo, prospectRepo, nil, nil, nil)
+		seqRepo, prospectRepo, nil, nil, nil, nil)
 
 	err := s.SendPending(context.Background())
 	if err != nil {
@@ -211,34 +211,8 @@ func TestSendPending_EmailHappyPath(t *testing.T) {
 }
 
 func TestSendPending_BounceDetection(t *testing.T) {
-	// SMTP is configured with host/user/password pointing to a non-existent server.
-	// Since port 465 uses TLS dial, it will fail with a connection error, NOT a 550.
-	// Instead, we use port 587 which calls smtp.SendMail — also fails, but not with 550.
-	//
-	// The real way to trigger bounce detection is by having the send return an error
-	// containing "550". Since we can't control SMTP errors, we test the Resend path
-	// with no API key — that gives "no Resend API key" which does NOT trigger bounce.
-	//
-	// To properly test bounce detection, we verify that when SMTP is configured and
-	// the dial fails (port 465 → "smtp tls dial:" error), it is NOT marked as bounced.
-	// Then separately, for the bounce logic itself, we construct a scenario where
-	// the error contains "550":
-	//
-	// We use smtpHost with port 587 which calls smtp.SendMail. Connection refused
-	// error won't trigger bounce. But we verify the non-bounce path works.
-	//
-	// For actual "550" bounce: SMTP server at localhost that returns 550 is hard to
-	// set up in a unit test. Instead we test the branch by using port 465, which will
-	// try TLS dial to localhost and fail. The error "smtp tls dial:" does NOT contain
-	// "550", so the message should NOT be bounced.
-	//
-	// ACTUAL strategy: use a "real" SMTP connection to localhost on a random port that
-	// is not listening. For port 465, error will be "smtp tls dial:". For port 587,
-	// error from smtp.SendMail will be connection refused. Neither contains "550".
-	// So we verify that transient errors do NOT trigger bounce.
-	//
-	// Then to test the bounce branch: we hack it by having SMTP configured to port 465
-	// on a host that somehow returns 550. That's impractical in unit tests.
+	// SMTP configured with a non-existent server — dial fails with connection error,
+	// NOT a 550. Verifies that transient errors do NOT trigger bounce detection.
 	//
 	// BEST APPROACH: Just run with no SMTP, use Resend path. The Resend client will
 	// actually try to call the API. With a fake key "bounce-test-550", the Resend API
@@ -278,7 +252,7 @@ func TestSendPending_BounceDetection(t *testing.T) {
 	// Use SMTP on port 465 → TLS dial will fail → transient error, no bounce
 	s := NewSender(cfgStore, uuid.New(), "", "from@test.com", "",
 		"127.0.0.1", "465", "user", "pass",
-		seqRepo, prospectRepo, nil, nil, nil)
+		seqRepo, prospectRepo, nil, nil, nil, nil)
 
 	err := s.SendPending(context.Background())
 	if err != nil {
@@ -330,7 +304,7 @@ func TestSendPending_TelegramHappyPath(t *testing.T) {
 
 	s := NewSender(cfgStore, ownerID, "", "", "",
 		"", "", "", "",
-		seqRepo, prospectRepo, tgRepo, tgMessenger, nil)
+		seqRepo, prospectRepo, tgRepo, tgMessenger, nil, nil)
 
 	err := s.SendPending(context.Background())
 	if err != nil {
@@ -404,7 +378,7 @@ func TestSendPending_TelegramRateLimit(t *testing.T) {
 
 	s := NewSender(cfgStore, ownerID, "", "", "",
 		"", "", "", "",
-		seqRepo, prospectRepo, tgRepo, tgMessenger, nil)
+		seqRepo, prospectRepo, tgRepo, tgMessenger, nil, nil)
 
 	err := s.SendPending(context.Background())
 	if err != nil {
@@ -456,7 +430,7 @@ func TestSendPending_SkipNoEmail(t *testing.T) {
 
 	s := NewSender(cfgStore, uuid.New(), "", "from@test.com", "",
 		"", "", "", "",
-		seqRepo, prospectRepo, nil, nil, nil)
+		seqRepo, prospectRepo, nil, nil, nil, nil)
 
 	err := s.SendPending(context.Background())
 	if err != nil {
@@ -478,7 +452,7 @@ func TestSendPending_GetPendingSendsError(t *testing.T) {
 
 	s := NewSender(cfgStore, uuid.New(), "", "", "",
 		"", "", "", "",
-		seqRepo, nil, nil, nil, nil)
+		seqRepo, nil, nil, nil, nil, nil)
 
 	err := s.SendPending(context.Background())
 	if err == nil {
@@ -507,7 +481,7 @@ func TestSendPending_TelegramNoSession(t *testing.T) {
 
 	s := NewSender(cfgStore, uuid.New(), "", "", "",
 		"", "", "", "",
-		seqRepo, nil, tgRepo, nil, nil)
+		seqRepo, nil, tgRepo, nil, nil, nil)
 
 	err := s.SendPending(context.Background())
 	if err != nil {
@@ -554,7 +528,7 @@ func TestSendPending_TelegramSendFailure(t *testing.T) {
 
 	s := NewSender(cfgStore, ownerID, "", "", "",
 		"", "", "", "",
-		seqRepo, prospectRepo, tgRepo, tgMessenger, nil)
+		seqRepo, prospectRepo, tgRepo, tgMessenger, nil, nil)
 
 	err := s.SendPending(context.Background())
 	if err != nil {
@@ -584,7 +558,7 @@ func TestSendPending_TelegramNilRepo(t *testing.T) {
 	// tgRepo is nil → handleTelegramMessage should bail out early
 	s := NewSender(cfgStore, uuid.New(), "", "", "",
 		"", "", "", "",
-		seqRepo, nil, nil, nil, nil)
+		seqRepo, nil, nil, nil, nil, nil)
 
 	err := s.SendPending(context.Background())
 	if err != nil {
@@ -611,7 +585,7 @@ func TestSendPending_UnknownChannel(t *testing.T) {
 
 	s := NewSender(cfgStore, uuid.New(), "", "", "",
 		"", "", "", "",
-		seqRepo, nil, nil, nil, nil)
+		seqRepo, nil, nil, nil, nil, nil)
 
 	err := s.SendPending(context.Background())
 	if err != nil {
@@ -662,7 +636,7 @@ func TestSendPending_ConfigStoreOverridesSMTP(t *testing.T) {
 	// .env SMTP is empty
 	s := NewSender(cfgStore, uuid.New(), "", "from@test.com", "",
 		"", "", "", "",
-		seqRepo, prospectRepo, nil, nil, nil)
+		seqRepo, prospectRepo, nil, nil, nil, nil)
 
 	err := s.SendPending(context.Background())
 	if err != nil {
@@ -708,7 +682,7 @@ func TestSendPending_SubjectWithoutCompany(t *testing.T) {
 
 	s := NewSender(cfgStore, uuid.New(), "", "from@test.com", "",
 		"", "", "", "",
-		seqRepo, prospectRepo, nil, nil, nil)
+		seqRepo, prospectRepo, nil, nil, nil, nil)
 
 	err := s.SendPending(context.Background())
 	if err != nil {
@@ -754,7 +728,7 @@ func TestSendPending_TelegramPhoneFallback(t *testing.T) {
 
 	s := NewSender(cfgStore, ownerID, "", "", "",
 		"", "", "", "",
-		seqRepo, prospectRepo, tgRepo, tgMessenger, nil)
+		seqRepo, prospectRepo, tgRepo, tgMessenger, nil, nil)
 
 	err := s.SendPending(context.Background())
 	if err != nil {
@@ -794,7 +768,7 @@ func TestSendPending_ProspectLookupError(t *testing.T) {
 
 	s := NewSender(cfgStore, uuid.New(), "", "from@test.com", "",
 		"", "", "", "",
-		seqRepo, prospectRepo, nil, nil, nil)
+		seqRepo, prospectRepo, nil, nil, nil, nil)
 
 	err := s.SendPending(context.Background())
 	if err != nil {
@@ -832,7 +806,7 @@ func TestSendPending_NilProspect(t *testing.T) {
 
 	s := NewSender(cfgStore, uuid.New(), "", "from@test.com", "",
 		"", "", "", "",
-		seqRepo, prospectRepo, nil, nil, nil)
+		seqRepo, prospectRepo, nil, nil, nil, nil)
 
 	err := s.SendPending(context.Background())
 	if err != nil {
@@ -872,7 +846,7 @@ func TestSendPending_WithTrackingPixel(t *testing.T) {
 
 	s := NewSender(cfgStore, uuid.New(), "", "from@test.com", "https://app.floq.test",
 		"", "", "", "",
-		seqRepo, prospectRepo, nil, nil, nil)
+		seqRepo, prospectRepo, nil, nil, nil, nil)
 
 	err := s.SendPending(context.Background())
 	if err != nil {
@@ -910,7 +884,7 @@ func TestSendPending_ConfigStoreError(t *testing.T) {
 
 	s := NewSender(cfgStore, uuid.New(), "", "from@test.com", "",
 		"", "", "", "",
-		seqRepo, prospectRepo, nil, nil, nil)
+		seqRepo, prospectRepo, nil, nil, nil, nil)
 
 	err := s.SendPending(context.Background())
 	if err != nil {
@@ -945,7 +919,7 @@ func TestSendPending_TelegramProspectLookupError(t *testing.T) {
 
 	s := NewSender(cfgStore, ownerID, "", "", "",
 		"", "", "", "",
-		seqRepo, prospectRepo, tgRepo, nil, nil)
+		seqRepo, prospectRepo, tgRepo, nil, nil, nil)
 
 	err := s.SendPending(context.Background())
 	if err != nil {
@@ -979,7 +953,7 @@ func TestSendPending_TelegramSessionError(t *testing.T) {
 
 	s := NewSender(cfgStore, ownerID, "", "", "",
 		"", "", "", "",
-		seqRepo, nil, tgRepo, nil, nil)
+		seqRepo, nil, tgRepo, nil, nil, nil)
 
 	err := s.SendPending(context.Background())
 	if err != nil {
@@ -1018,7 +992,7 @@ func TestSendPending_TelegramNilProspect(t *testing.T) {
 
 	s := NewSender(cfgStore, ownerID, "", "", "",
 		"", "", "", "",
-		seqRepo, prospectRepo, tgRepo, nil, nil)
+		seqRepo, prospectRepo, tgRepo, nil, nil, nil)
 
 	err := s.SendPending(context.Background())
 	if err != nil {
@@ -1060,7 +1034,7 @@ func TestSendPending_TelegramNoPhoneNoUsername(t *testing.T) {
 
 	s := NewSender(cfgStore, ownerID, "", "", "",
 		"", "", "", "",
-		seqRepo, prospectRepo, tgRepo, tgMessenger, nil)
+		seqRepo, prospectRepo, tgRepo, tgMessenger, nil, nil)
 
 	err := s.SendPending(context.Background())
 	if err != nil {
@@ -1104,7 +1078,7 @@ func TestSendPending_BounceKeywords(t *testing.T) {
 	// Use SMTP with port 587 (STARTTLS path) and no from address → from = smtpUser
 	s := NewSender(cfgStore, uuid.New(), "", "", "",
 		"127.0.0.1", "587", "sender@test.com", "pass",
-		seqRepo, prospectRepo, nil, nil, nil)
+		seqRepo, prospectRepo, nil, nil, nil, nil)
 
 	err := s.SendPending(context.Background())
 	if err != nil {
@@ -1150,7 +1124,7 @@ func TestSendPending_SMTPFromAddrFallback(t *testing.T) {
 
 	s := NewSender(cfgStore, uuid.New(), "", "", "",
 		"", "", "", "",
-		seqRepo, prospectRepo, nil, nil, nil)
+		seqRepo, prospectRepo, nil, nil, nil, nil)
 
 	err := s.SendPending(context.Background())
 	if err != nil {
@@ -1192,7 +1166,7 @@ func TestSendPending_TelegramMarkSentError(t *testing.T) {
 
 	s := NewSender(cfgStore, ownerID, "", "", "",
 		"", "", "", "",
-		seqRepo, prospectRepo, tgRepo, tgMessenger, nil)
+		seqRepo, prospectRepo, tgRepo, tgMessenger, nil, nil)
 
 	err := s.SendPending(context.Background())
 	if err != nil {
@@ -1208,7 +1182,7 @@ func TestSendViaResend_NoKey(t *testing.T) {
 	cfgStore := &mockConfigStore{cfg: &settingsdomain.UserConfig{}}
 	s := NewSender(cfgStore, uuid.New(), "", "from@test.com", "",
 		"", "", "", "",
-		nil, nil, nil, nil, nil)
+		nil, nil, nil, nil, nil, nil)
 
 	err := s.sendViaResend(context.Background(), "to@test.com", "subj", "body")
 	if err == nil {
@@ -1223,7 +1197,7 @@ func TestSendViaResend_ConfigStoreError(t *testing.T) {
 	cfgStore := &mockConfigStore{err: fmt.Errorf("db down")}
 	s := NewSender(cfgStore, uuid.New(), "", "from@test.com", "",
 		"", "", "", "",
-		nil, nil, nil, nil, nil)
+		nil, nil, nil, nil, nil, nil)
 
 	err := s.sendViaResend(context.Background(), "to@test.com", "subj", "body")
 	if err == nil {
@@ -1236,15 +1210,15 @@ func TestSendViaResend_ConfigStoreError(t *testing.T) {
 
 func TestSendViaSMTPWith_FromFallback(t *testing.T) {
 	s := &Sender{}
-	err := s.sendViaSMTPWith("127.0.0.1", "587", "user@test.com", "pass", "", "to@test.com", "subj", "body")
+	err := s.sendViaSMTPWith(context.Background(), "127.0.0.1", "587", "user@test.com", "pass", "", "to@test.com", "subj", "body")
 	if err == nil {
-		t.Fatal("expected error from smtp.SendMail")
+		t.Fatal("expected error from SMTP dial")
 	}
 }
 
 func TestSendViaSMTPWith_Port465(t *testing.T) {
 	s := &Sender{}
-	err := s.sendViaSMTPWith("127.0.0.1", "465", "user@test.com", "pass", "from@test.com", "to@test.com", "subj", "body")
+	err := s.sendViaSMTPWith(context.Background(), "127.0.0.1", "465", "user@test.com", "pass", "from@test.com", "to@test.com", "subj", "body")
 	if err == nil {
 		t.Fatal("expected error from TLS dial")
 	}

@@ -8,6 +8,7 @@ import (
 
 	"github.com/daniil/floq/internal/httputil"
 	"github.com/daniil/floq/internal/prospects/domain"
+	"github.com/daniil/floq/internal/proxy"
 	"github.com/go-chi/chi/v5"
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 	"github.com/google/uuid"
@@ -26,12 +27,13 @@ type ProspectRepository interface {
 // Handler exposes verification endpoints.
 type Handler struct {
 	prospectRepo ProspectRepository
-	bot          *tgbotapi.BotAPI // can be nil if not configured
+	bot          *tgbotapi.BotAPI    // can be nil if not configured
+	dialer       proxy.ContextDialer // can be nil (direct connection)
 }
 
 // RegisterRoutes wires the verification endpoints into the given router.
-func RegisterRoutes(r chi.Router, prospectRepo ProspectRepository, bot *tgbotapi.BotAPI) {
-	h := &Handler{prospectRepo: prospectRepo, bot: bot}
+func RegisterRoutes(r chi.Router, prospectRepo ProspectRepository, bot *tgbotapi.BotAPI, dialer proxy.ContextDialer) {
+	h := &Handler{prospectRepo: prospectRepo, bot: bot, dialer: dialer}
 	r.Post("/api/verify/email", h.verifyEmailSingle())
 	r.Post("/api/verify/batch", h.verifyBatch())
 	r.Get("/api/prospects/{id}/verify", h.getVerifyStatus())
@@ -51,7 +53,7 @@ func (h *Handler) verifyEmailSingle() http.HandlerFunc {
 			return
 		}
 
-		result := VerifyEmail(body.Email)
+		result := VerifyEmail(body.Email, h.dialer)
 		httputil.WriteJSON(w, http.StatusOK, result)
 	}
 }
@@ -76,7 +78,7 @@ func (h *Handler) verifyBatch() http.HandlerFunc {
 				continue
 			}
 
-			emailResult := VerifyEmail(p.Email)
+			emailResult := VerifyEmail(p.Email, h.dialer)
 
 			details := map[string]any{
 				"email": emailResult,

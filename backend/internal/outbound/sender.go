@@ -1,28 +1,25 @@
 package outbound
 
 import (
+	"bytes"
 	"context"
 	"crypto/tls"
+	"encoding/json"
 	"fmt"
 	"log"
 	"net"
+	"net/http"
 	"net/smtp"
 	"strings"
 	"sync"
 	"time"
 
-	resend "github.com/resendlabs/resend-go"
-
+	"github.com/daniil/floq/internal/proxy"
 	prospectsdomain "github.com/daniil/floq/internal/prospects/domain"
 	seqdomain "github.com/daniil/floq/internal/sequences/domain"
 	settingsdomain "github.com/daniil/floq/internal/settings/domain"
 	"github.com/google/uuid"
 )
-
-// ContextDialer allows dialing TCP connections through a proxy.
-type ContextDialer interface {
-	DialContext(ctx context.Context, network, addr string) (net.Conn, error)
-}
 
 type Sender struct {
 	store        ConfigStore
@@ -38,7 +35,8 @@ type Sender struct {
 	prospectRepo ProspectLookup
 	tgRepo       TelegramSessionStore
 	tgMessenger  TelegramMessenger
-	dialer       ContextDialer
+	dialer       proxy.ContextDialer
+	httpClient   *http.Client
 
 	tgLastSent time.Time
 	tgRateMu   sync.Mutex
@@ -51,7 +49,8 @@ func NewSender(
 	seqRepo OutboundRepository, prospectRepo ProspectLookup,
 	tgRepo TelegramSessionStore,
 	tgMessenger TelegramMessenger,
-	dialer ContextDialer,
+	dialer proxy.ContextDialer,
+	httpClient *http.Client,
 ) *Sender {
 	return &Sender{
 		store:        store,
@@ -68,6 +67,7 @@ func NewSender(
 		tgRepo:       tgRepo,
 		tgMessenger:  tgMessenger,
 		dialer:       dialer,
+		httpClient:   httpClient,
 	}
 }
 
@@ -125,7 +125,7 @@ func (s *Sender) SendPending(ctx context.Context) error {
 
 		var sendErr error
 		if smtpHost != "" && smtpUser != "" && smtpPassword != "" {
-			sendErr = s.sendViaSMTPWith(smtpHost, smtpPort, smtpUser, smtpPassword, fromAddr, prospect.Email, subject, htmlBody)
+			sendErr = s.sendViaSMTPWith(ctx, smtpHost, smtpPort, smtpUser, smtpPassword, fromAddr, prospect.Email, subject, htmlBody)
 		} else {
 			sendErr = s.sendViaResend(ctx, prospect.Email, subject, htmlBody)
 		}
@@ -168,7 +168,7 @@ func (s *Sender) SendPending(ctx context.Context) error {
 }
 
 // sendViaSMTPWith sends email through an SMTP server (mail.ru, Yandex, Gmail, etc.)
-func (s *Sender) sendViaSMTPWith(host, port, user, password, from, to, subject, htmlBody string) error {
+func (s *Sender) sendViaSMTPWith(ctx context.Context, host, port, user, password, from, to, subject, htmlBody string) error {
 	if from == "" {
 		from = user
 	}
@@ -182,21 +182,21 @@ func (s *Sender) sendViaSMTPWith(host, port, user, password, from, to, subject, 
 
 	// mail.ru / Yandex require TLS on port 465
 	if port == "465" {
-		return s.sendSMTPWithTLS(addr, auth, host, from, to, message)
+		return s.sendSMTPWithTLS(ctx, addr, auth, host, from, to, message)
 	}
 
 	// Port 587 uses STARTTLS
-	return smtp.SendMail(addr, auth, from, []string{to}, message)
+	return s.sendSMTPWithSTARTTLS(ctx, addr, auth, host, from, to, message)
 }
 
 // sendSMTPWithTLS handles implicit TLS (port 465).
-func (s *Sender) sendSMTPWithTLS(addr string, auth smtp.Auth, host, from, to string, message []byte) error {
+func (s *Sender) sendSMTPWithTLS(ctx context.Context, addr string, auth smtp.Auth, host, from, to string, message []byte) error {
 	tlsConfig := &tls.Config{ServerName: host}
 
 	var conn net.Conn
 	var err error
 	if s.dialer != nil {
-		rawConn, dialErr := s.dialer.DialContext(context.Background(), "tcp", addr)
+		rawConn, dialErr := s.dialer.DialContext(ctx, "tcp", addr)
 		if dialErr != nil {
 			return fmt.Errorf("smtp proxy dial: %w", dialErr)
 		}
@@ -235,6 +235,52 @@ func (s *Sender) sendSMTPWithTLS(addr string, auth smtp.Auth, host, from, to str
 		return fmt.Errorf("smtp close: %w", err)
 	}
 
+	return client.Quit()
+}
+
+// sendSMTPWithSTARTTLS handles port 587 STARTTLS via manual SMTP client (supports proxy dialer).
+func (s *Sender) sendSMTPWithSTARTTLS(ctx context.Context, addr string, auth smtp.Auth, host, from, to string, message []byte) error {
+	var conn net.Conn
+	var err error
+
+	if s.dialer != nil {
+		conn, err = s.dialer.DialContext(ctx, "tcp", addr)
+	} else {
+		conn, err = net.DialTimeout("tcp", addr, 30*time.Second)
+	}
+	if err != nil {
+		return fmt.Errorf("smtp dial: %w", err)
+	}
+	defer conn.Close()
+
+	client, err := smtp.NewClient(conn, host)
+	if err != nil {
+		return fmt.Errorf("smtp client: %w", err)
+	}
+	defer client.Close()
+
+	if err := client.StartTLS(&tls.Config{ServerName: host}); err != nil {
+		return fmt.Errorf("smtp starttls: %w", err)
+	}
+	if err := client.Auth(auth); err != nil {
+		return fmt.Errorf("smtp auth: %w", err)
+	}
+	if err := client.Mail(from); err != nil {
+		return fmt.Errorf("smtp mail from: %w", err)
+	}
+	if err := client.Rcpt(to); err != nil {
+		return fmt.Errorf("smtp rcpt to: %w", err)
+	}
+	w, err := client.Data()
+	if err != nil {
+		return fmt.Errorf("smtp data: %w", err)
+	}
+	if _, err := w.Write(message); err != nil {
+		return fmt.Errorf("smtp write: %w", err)
+	}
+	if err := w.Close(); err != nil {
+		return fmt.Errorf("smtp close: %w", err)
+	}
 	return client.Quit()
 }
 
@@ -324,7 +370,7 @@ func (s *Sender) handleTelegramMessage(ctx context.Context, msg seqdomain.Outbou
 	log.Printf("[outbound] sent telegram message to %s (msg %s)", prospect.Phone, msg.ID)
 }
 
-// sendViaResend sends email through the Resend API.
+// sendViaResend sends email through the Resend API using raw HTTP.
 func (s *Sender) sendViaResend(ctx context.Context, to, subject, htmlBody string) error {
 	apiKey := s.fallbackKey
 	if cfg, err := s.store.GetConfig(ctx, s.ownerID); err == nil {
@@ -334,12 +380,32 @@ func (s *Sender) sendViaResend(ctx context.Context, to, subject, htmlBody string
 		return fmt.Errorf("no Resend API key configured")
 	}
 
-	client := resend.NewClient(apiKey)
-	_, err := client.Emails.Send(&resend.SendEmailRequest{
-		From:    s.fromAddress,
-		To:      []string{to},
-		Subject: subject,
-		Html:    htmlBody,
+	body, _ := json.Marshal(map[string]interface{}{
+		"from":    s.fromAddress,
+		"to":      []string{to},
+		"subject": subject,
+		"html":    htmlBody,
 	})
-	return err
+
+	req, err := http.NewRequestWithContext(ctx, "POST", "https://api.resend.com/emails", bytes.NewReader(body))
+	if err != nil {
+		return fmt.Errorf("resend request: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+apiKey)
+	req.Header.Set("Content-Type", "application/json")
+
+	client := s.httpClient
+	if client == nil {
+		client = http.DefaultClient
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("resend send: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 400 {
+		return fmt.Errorf("resend API error: status %d", resp.StatusCode)
+	}
+	return nil
 }

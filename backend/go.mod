@@ -15,7 +15,6 @@ require (
 	github.com/jackc/pgx/v5 v5.9.1
 	github.com/joho/godotenv v1.5.1
 	github.com/openai/openai-go v1.12.0
-	github.com/resendlabs/resend-go v1.7.0
 	github.com/stretchr/testify v1.11.1
 	golang.org/x/crypto v0.49.0
 	golang.org/x/net v0.52.0
