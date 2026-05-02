@@ -69,7 +69,7 @@ func (uc *UseCase) VerifyBatch(ctx context.Context, userID uuid.UUID) (int, erro
 		if err := uc.prospects.UpdateVerification(
 			ctx,
 			p.ID,
-			domain.VerifyStatus(emailResult.Status),
+			emailResult.Status,
 			emailResult.Score,
 			string(detailsJSON),
 			time.Now().UTC(),

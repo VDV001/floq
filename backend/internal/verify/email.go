@@ -9,21 +9,22 @@ import (
 	"strings"
 	"time"
 
+	"github.com/daniil/floq/internal/prospects/domain"
 	"github.com/daniil/floq/internal/proxy"
 )
 
 // EmailResult holds the outcome of an email verification pipeline.
 type EmailResult struct {
-	Email          string `json:"email"`
-	IsValidSyntax  bool   `json:"is_valid_syntax"`
-	HasMX          bool   `json:"has_mx"`
-	SMTPValid      bool   `json:"smtp_valid"`
-	SMTPError      string `json:"smtp_error,omitempty"`
-	IsDisposable   bool   `json:"is_disposable"`
-	IsCatchAll     bool   `json:"is_catch_all"`
-	IsFreeProvider bool   `json:"is_free_provider"`
-	Score          int    `json:"score"`
-	Status         string `json:"status"` // "valid" | "risky" | "invalid"
+	Email          string              `json:"email"`
+	IsValidSyntax  bool                `json:"is_valid_syntax"`
+	HasMX          bool                `json:"has_mx"`
+	SMTPValid      bool                `json:"smtp_valid"`
+	SMTPError      string              `json:"smtp_error,omitempty"`
+	IsDisposable   bool                `json:"is_disposable"`
+	IsCatchAll     bool                `json:"is_catch_all"`
+	IsFreeProvider bool                `json:"is_free_provider"`
+	Score          int                 `json:"score"`
+	Status         domain.VerifyStatus `json:"status"`
 }
 
 var emailRegex = regexp.MustCompile(`^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$`)
@@ -55,33 +56,33 @@ func VerifyEmail(ctx context.Context, email string, dialer proxy.ContextDialer) 
 	// Step 1: Syntax check
 	if !emailRegex.MatchString(email) {
 		result.Score = 0
-		result.Status = "invalid"
+		result.Status = domain.VerifyStatusInvalid
 		return result
 	}
 	result.IsValidSyntax = true
 
 	// Step 2: Extract domain
 	parts := strings.SplitN(email, "@", 2)
-	domain := parts[1]
+	emailDomain := parts[1]
 
 	// Step 3: Disposable check
-	result.IsDisposable = IsDisposable(domain)
+	result.IsDisposable = IsDisposable(emailDomain)
 
 	// Step 4: Free provider check
-	result.IsFreeProvider = freeProviders[strings.ToLower(domain)]
+	result.IsFreeProvider = freeProviders[strings.ToLower(emailDomain)]
 
 	// Step 5: MX lookup
-	mxRecords, err := net.LookupMX(domain)
+	mxRecords, err := net.LookupMX(emailDomain)
 	if err != nil || len(mxRecords) == 0 {
 		result.Score = 5
-		result.Status = "invalid"
+		result.Status = domain.VerifyStatusInvalid
 		return result
 	}
 	result.HasMX = true
 
 	// Step 6: SMTP probe
 	mxHost := strings.TrimSuffix(mxRecords[0].Host, ".")
-	smtpValid, catchAll, smtpErr := smtpProbe(ctx, mxHost, email, domain, dialer)
+	smtpValid, catchAll, smtpErr := smtpProbe(ctx, mxHost, email, emailDomain, dialer)
 	result.SMTPValid = smtpValid
 	result.IsCatchAll = catchAll
 	if smtpErr != "" {
@@ -116,11 +117,11 @@ func VerifyEmail(ctx context.Context, email string, dialer proxy.ContextDialer) 
 	// Step 9: Status
 	switch {
 	case score >= 70:
-		result.Status = "valid"
+		result.Status = domain.VerifyStatusValid
 	case score >= 40:
-		result.Status = "risky"
+		result.Status = domain.VerifyStatusRisky
 	default:
-		result.Status = "invalid"
+		result.Status = domain.VerifyStatusInvalid
 	}
 
 	return result
@@ -128,7 +129,7 @@ func VerifyEmail(ctx context.Context, email string, dialer proxy.ContextDialer) 
 
 // smtpProbe connects to the MX host and checks whether the email is deliverable.
 // It also performs catch-all detection. Returns (smtpValid, isCatchAll, errorMessage).
-func smtpProbe(ctx context.Context, mxHost, email, domain string, dialer proxy.ContextDialer) (bool, bool, string) {
+func smtpProbe(ctx context.Context, mxHost, email, emailDomain string, dialer proxy.ContextDialer) (bool, bool, string) {
 	addr := mxHost + ":25"
 	var conn net.Conn
 	var err error
@@ -168,7 +169,7 @@ func smtpProbe(ctx context.Context, mxHost, email, domain string, dialer proxy.C
 
 	// Step 7: Catch-all detection — try a random address
 	catchAll := false
-	randomAddr := fmt.Sprintf("floq-verify-test-%d@%s", time.Now().UnixNano(), domain)
+	randomAddr := fmt.Sprintf("floq-verify-test-%d@%s", time.Now().UnixNano(), emailDomain)
 
 	// Reset for the catch-all probe
 	if err := client.Reset(); err == nil {

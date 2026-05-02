@@ -97,7 +97,7 @@ func TestUseCase_VerifyBatch_VerifiesAndUpdatesNotChecked(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, 1, count)
 	assert.Equal(t, []uuid.UUID{pID}, store.updatedIDs)
-	assert.Equal(t, domain.VerifyStatus("invalid"), store.updatedStatuses[0],
+	assert.Equal(t, domain.VerifyStatusInvalid, store.updatedStatuses[0],
 		"invalid email syntax must produce VerifyStatusInvalid")
 }
 

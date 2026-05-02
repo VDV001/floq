@@ -87,7 +87,7 @@ func TestHandler_VerifyEmail_InvalidSyntax(t *testing.T) {
 	err := json.NewDecoder(rec.Body).Decode(&result)
 	require.NoError(t, err)
 	assert.False(t, result.IsValidSyntax)
-	assert.Equal(t, "invalid", result.Status)
+	assert.Equal(t, domain.VerifyStatusInvalid, result.Status)
 	assert.Equal(t, 0, result.Score)
 }
 
@@ -285,7 +285,7 @@ func TestVerifyEmail_DisposableDomain(t *testing.T) {
 	assert.True(t, result.IsValidSyntax)
 	assert.True(t, result.IsDisposable)
 	assert.Equal(t, 5, result.Score)
-	assert.Equal(t, "invalid", result.Status)
+	assert.Equal(t, domain.VerifyStatusInvalid, result.Status)
 }
 
 func TestVerifyEmail_FreeProvider(t *testing.T) {
