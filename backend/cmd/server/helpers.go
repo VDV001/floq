@@ -70,7 +70,7 @@ func buildAITester(cfg *config.Config, httpClient *http.Client) settings.AITeste
 			}
 			p = providers.NewOllamaProvider(cfg.OllamaBaseURL, model, httpClient)
 		default:
-			return "", fmt.Errorf("неизвестный провайдер: %s", provider)
+			return "", fmt.Errorf("%w: %s", settings.ErrAIUnknownProvider, provider)
 		}
 
 		resp, err := p.Complete(ctx, ai.CompletionRequest{
