@@ -97,6 +97,7 @@ func (c *AIClient) Qualify(ctx context.Context, contactName, channel, firstMessa
 			{Role: "user", Content: userPrompt},
 		},
 		MaxTokens: 1024,
+		Mode:      ModelModeExecute,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("ai qualify: %w", err)
@@ -126,6 +127,7 @@ func (c *AIClient) DraftReply(ctx context.Context, contactName, company, channel
 			{Role: "user", Content: userPrompt},
 		},
 		MaxTokens: 1024,
+		Mode:      ModelModeExecute,
 	})
 	if err != nil {
 		return "", fmt.Errorf("ai draft reply: %w", err)
@@ -149,6 +151,7 @@ func (c *AIClient) GenerateFollowup(ctx context.Context, contactName, company, d
 			{Role: "user", Content: userPrompt},
 		},
 		MaxTokens: 1024,
+		Mode:      ModelModeExecute,
 	})
 	if err != nil {
 		return "", fmt.Errorf("ai generate followup: %w", err)
@@ -184,6 +187,7 @@ func (c *AIClient) GenerateColdMessage(ctx context.Context, name, title, company
 			{Role: "user", Content: userPrompt},
 		},
 		MaxTokens: 2048,
+		Mode:      ModelModeExecute,
 	})
 	if err != nil {
 		return "", fmt.Errorf("ai cold message: %w", err)
@@ -219,6 +223,7 @@ func (c *AIClient) GenerateTelegramMessage(ctx context.Context, name, title, com
 			{Role: "user", Content: r.Replace(TelegramOutreachUser)},
 		},
 		MaxTokens: 2048,
+		Mode:      ModelModeExecute,
 	})
 	if err != nil {
 		return "", fmt.Errorf("ai telegram message: %w", err)
@@ -252,6 +257,7 @@ func (c *AIClient) GenerateTelegramReply(ctx context.Context, name, title, compa
 			{Role: "user", Content: r.Replace(TelegramConversationUser)},
 		},
 		MaxTokens: 2048,
+		Mode:      ModelModeExecute,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("ai telegram reply: %w", err)
@@ -287,6 +293,7 @@ func (c *AIClient) GenerateCallBrief(ctx context.Context, name, title, company, 
 			{Role: "user", Content: r.Replace(PhoneCallBriefUser)},
 		},
 		MaxTokens: 1024,
+		Mode:      ModelModePlan,
 	})
 	if err != nil {
 		return "", fmt.Errorf("ai call brief: %w", err)
