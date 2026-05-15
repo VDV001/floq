@@ -43,7 +43,7 @@ func buildAITester(cfg *config.Config, httpClient *http.Client) settings.AITeste
 			if apiKey == "" {
 				apiKey = cfg.AnthropicAPIKey
 			}
-			p = providers.NewClaudeProvider(apiKey, httpClient)
+			p = providers.NewClaudeProvider(apiKey, model, httpClient)
 		case "openai":
 			if apiKey == "" {
 				apiKey = cfg.OpenAIAPIKey

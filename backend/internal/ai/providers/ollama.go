@@ -30,6 +30,15 @@ func NewOllamaProvider(baseURL, model string, httpClient *http.Client) *OllamaPr
 
 func (p *OllamaProvider) Name() string { return "ollama" }
 
+// modelForMode returns the configured Ollama model regardless of the
+// requested mode. Ollama runs locally and typically hosts a single model
+// at a time — switching models per mode would require multiple
+// concurrently-loaded models, which is rarely the local-hardware setup.
+// The mode parameter is accepted for interface symmetry.
+func (p *OllamaProvider) modelForMode(_ ai.ModelMode) string {
+	return p.model
+}
+
 func (p *OllamaProvider) Complete(ctx context.Context, req ai.CompletionRequest) (string, error) {
 	var messages []openai.ChatCompletionMessageParamUnion
 
@@ -45,7 +54,7 @@ func (p *OllamaProvider) Complete(ctx context.Context, req ai.CompletionRequest)
 	}
 
 	resp, err := p.client.Chat.Completions.New(ctx, openai.ChatCompletionNewParams{
-		Model:     p.model,
+		Model:     p.modelForMode(req.Mode),
 		Messages:  messages,
 		MaxTokens: param.NewOpt(int64(req.MaxTokens)),
 	})

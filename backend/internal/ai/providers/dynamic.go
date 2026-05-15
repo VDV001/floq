@@ -109,7 +109,9 @@ func (d *DynamicProvider) resolve(ctx context.Context) (ai.Provider, error) {
 	var p ai.Provider
 	switch providerName {
 	case "claude":
-		p = NewClaudeProvider(apiKey, d.httpClient)
+		// Pass user-configured model as override; empty string falls back
+		// to the per-mode default map inside ClaudeProvider.
+		p = NewClaudeProvider(apiKey, model, d.httpClient)
 	case "openai":
 		var opts []option.RequestOption
 		if d.httpClient != nil {
