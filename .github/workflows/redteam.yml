@@ -1,0 +1,44 @@
+name: Redteam (security pilot)
+
+# Dedicated workflow surfacing the inbox InputFirewall redteam corpus
+# as a separate PR check. The same tests are also covered by the main
+# CI workflow (go test ./...), but a standalone job makes the security
+# posture visible at a glance and lets reviewers gate merges on a
+# clearly-named "Redteam corpus" check.
+#
+# Pilot acceptance: every scenario in tests/redteam.yaml must pass.
+# Adding a new InputFirewall pattern requires adding a positive (block)
+# scenario AND a negative (info) scenario to keep the false-positive
+# rate observable.
+#
+# See: docs/security-model.md §5
+
+on:
+  push:
+    branches: [main, "feat/**", "fix/**"]
+  pull_request:
+    branches: [main]
+
+jobs:
+  redteam:
+    name: Redteam corpus (inbox InputFirewall)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: backend/go.mod
+          cache-dependency-path: backend/go.sum
+      - name: Run InputFirewall + redteam corpus
+        run: go test -count=1 -v ./internal/ai/security/...
+      - name: Verify corpus floor (>=30 scenarios)
+        run: |
+          count=$(grep -c "^  - description:" ../tests/redteam.yaml || echo 0)
+          echo "Found $count scenarios in tests/redteam.yaml"
+          if [ "$count" -lt 30 ]; then
+            echo "::error::Redteam corpus has $count scenarios; minimum 30 required (pilot floor)"
+            exit 1
+          fi
