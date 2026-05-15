@@ -87,7 +87,10 @@ func regexpMatcher(re *regexp.Regexp) func(string) string {
 // (any block beats any warn beats any info).
 var (
 	// Block-severity: explicit jailbreak / role-override attempts.
-	reIgnorePrevious = regexp.MustCompile(`(?i)\b(ignore|disregard|forget)\s+(all\s+)?(previous|prior|above|earlier)\s+(instructions?|prompts?|rules?|messages?)`)
+	// Allows "ignore previous instructions", "disregard your prior rules",
+	// "forget all the above messages". Optional possessive/quantifier
+	// between verb and "previous/prior/above/earlier".
+	reIgnorePrevious = regexp.MustCompile(`(?i)\b(ignore|disregard|forget)\s+(your|the|all|all\s+the|all\s+your)?\s*(previous|prior|above|earlier)\s+(instructions?|prompts?|rules?|messages?)`)
 	reRussianIgnore  = regexp.MustCompile(`(?i)(забудь|игнорируй|забудьте|игнорируйте)\s+(все\s+)?(предыдущ|прежн|вышеупомян)`)
 	reRussianNewInst = regexp.MustCompile(`(?i)(нов(ая|ые))\s+(инструкци|правил)`)
 	// Multi-form: "Print|reveal|show ... (system|initial|original|your)
