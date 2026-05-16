@@ -130,3 +130,79 @@ func TestProcessEmail_ExistingLead_DoesNotCallLinker(t *testing.T) {
 
 	assert.Empty(t, linker.takeInvocations(), "linker is only triggered on new lead creation")
 }
+
+func TestHandleMessage_CallsIdentityLinker_WithNormalizedUsername(t *testing.T) {
+	repo := newMockLeadRepo()
+	aiClient := &mockAIQualifier{result: &QualificationResult{Score: 5}}
+	linker := &recordingIdentityLinker{}
+	ownerID := uuid.New()
+	bot := newTestBot(repo, aiClient, ownerID, "")
+	bot.identityLinker = linker
+
+	msg := makeTgMessageWithUsername(42, "Alice", "Bot", "ALICE_BOT", "Hi")
+	bot.handleMessage(context.Background(), msg)
+	waitQualifyDone(t, repo)
+
+	invs := linker.takeInvocations()
+	require.Len(t, invs, 1)
+	got := invs[0]
+	assert.Equal(t, ownerID, got.UserID)
+	assert.Empty(t, got.Email)
+	assert.Empty(t, got.Phone)
+	assert.Equal(t, "alice_bot", got.TelegramUsername, "linker must receive the canonical username")
+}
+
+func TestHandleMessage_EmptyUsername_SkipsLinker(t *testing.T) {
+	repo := newMockLeadRepo()
+	aiClient := &mockAIQualifier{result: &QualificationResult{Score: 5}}
+	linker := &recordingIdentityLinker{}
+	bot := newTestBot(repo, aiClient, uuid.New(), "")
+	bot.identityLinker = linker
+
+	// No UserName on the message — linker has nothing to resolve.
+	msg := makeTgMessage(43, "Alice", "Bot", "Hello")
+	bot.handleMessage(context.Background(), msg)
+	waitQualifyDone(t, repo)
+
+	assert.Empty(t, linker.takeInvocations(), "linker must be skipped when no identifier is available")
+}
+
+func TestHandleMessage_LinkerError_DoesNotBreakInboundFlow(t *testing.T) {
+	repo := newMockLeadRepo()
+	aiClient := &mockAIQualifier{result: &QualificationResult{Score: 5}}
+	linker := &recordingIdentityLinker{returnErr: errors.New("identity backend down")}
+	bot := newTestBot(repo, aiClient, uuid.New(), "")
+	bot.identityLinker = linker
+
+	msg := makeTgMessageWithUsername(44, "Alice", "Bot", "alice_bot", "Hi")
+	bot.handleMessage(context.Background(), msg)
+	waitQualifyDone(t, repo)
+
+	require.Len(t, repo.leads, 1, "lead must land even when linker fails")
+}
+
+func TestHandleMessage_ExistingLead_DoesNotCallLinker(t *testing.T) {
+	repo := newMockLeadRepo()
+	aiClient := &mockAIQualifier{result: &QualificationResult{Score: 5}}
+	linker := &recordingIdentityLinker{}
+	ownerID := uuid.New()
+
+	chatID := int64(45)
+	repo.existingLeadByChatID[chatID] = &InboxLead{
+		ID:           uuid.New(),
+		UserID:       ownerID,
+		Channel:      ChannelTelegram,
+		ContactName:  "Alice",
+		FirstMessage: "Earlier",
+		Status:       StatusNew,
+	}
+
+	bot := newTestBot(repo, aiClient, ownerID, "")
+	bot.identityLinker = linker
+
+	msg := makeTgMessageWithUsername(chatID, "Alice", "Bot", "alice_bot", "Reply with more text than the existing first_message threshold of twenty chars")
+	bot.handleMessage(context.Background(), msg)
+	waitQualifyDone(t, repo)
+
+	assert.Empty(t, linker.takeInvocations(), "existing lead path must not re-trigger identity linking")
+}
