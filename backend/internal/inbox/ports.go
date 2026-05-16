@@ -140,3 +140,17 @@ type AIQualifier interface {
 type ConfigStore interface {
 	GetConfig(ctx context.Context, userID uuid.UUID) (*InboxConfig, error)
 }
+
+// IdentityLinker is the narrow port inbox needs from the leads-context
+// identity machinery: take a freshly created lead and a tuple of raw
+// identifiers, resolve them to a unified Identity (creating one if
+// none matches), and link the lead to it. The adapter in the
+// composition root bridges this to leads.IdentityResolver + leads.
+// IdentityRepository.LinkLead.
+//
+// Implementations MUST be idempotent and tolerate partially-empty
+// identifier tuples — inbox supplies only the channel-native handle
+// (email for email-poller, telegram_username for telegram-bot).
+type IdentityLinker interface {
+	LinkLeadToIdentity(ctx context.Context, userID, leadID uuid.UUID, email, phone, telegramUsername string) error
+}

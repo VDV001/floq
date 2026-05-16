@@ -24,14 +24,16 @@ import (
 // extracted and their text content is appended to the qualification
 // context. A nil analyzer keeps the legacy text-only behaviour.
 type EmailPoller struct {
-	store        ConfigStore
-	repo         LeadRepository
-	prospectRepo ProspectRepository
-	seqRepo      SequenceRepository
-	aiClient     AIQualifier
-	analyzer     *attachments.Analyzer
-	ownerID      uuid.UUID
-	dialer       proxy.ContextDialer
+	store          ConfigStore
+	repo           LeadRepository
+	prospectRepo   ProspectRepository
+	seqRepo        SequenceRepository
+	aiClient       AIQualifier
+	analyzer       *attachments.Analyzer
+	identityLinker IdentityLinker
+	logger         *slog.Logger
+	ownerID        uuid.UUID
+	dialer         proxy.ContextDialer
 
 	fallbackHost     string
 	fallbackPort     string
@@ -48,6 +50,7 @@ func NewEmailPoller(store ConfigStore, ownerID uuid.UUID, fallbackHost, fallback
 		aiClient:         aiClient,
 		ownerID:          ownerID,
 		dialer:           dialer,
+		logger:           slog.Default(),
 		fallbackHost:     fallbackHost,
 		fallbackPort:     fallbackPort,
 		fallbackUser:     fallbackUser,
@@ -70,6 +73,26 @@ type EmailPollerOption func(*EmailPoller)
 // nil to disable; the poller silently degrades to text-only.
 func WithAttachmentAnalyzer(a *attachments.Analyzer) EmailPollerOption {
 	return func(p *EmailPoller) { p.analyzer = a }
+}
+
+// WithIdentityLinker wires the IdentityLinker used to resolve and
+// link each newly created lead to a unified Identity. Pass nil (or
+// omit the option) to disable; the poller continues to create leads
+// untouched. Linker errors are logged and swallowed — the inbound
+// flow must never block on identity-aggregation backend hiccups.
+func WithIdentityLinker(l IdentityLinker) EmailPollerOption {
+	return func(p *EmailPoller) { p.identityLinker = l }
+}
+
+// WithLogger overrides the default slog.Logger so the email poller
+// emits structured warnings to the same handler as the rest of the
+// server. Pass nil to keep slog.Default().
+func WithLogger(l *slog.Logger) EmailPollerOption {
+	return func(p *EmailPoller) {
+		if l != nil {
+			p.logger = l
+		}
+	}
 }
 
 func (e *EmailPoller) Start(ctx context.Context) {
@@ -372,6 +395,13 @@ func (e *EmailPoller) processEmail(ctx context.Context, fromName, fromEmail, bod
 		}
 		log.Printf("[email-poller] new lead created for %s (%s)", fromEmail, contactName)
 
+		if e.identityLinker != nil {
+			if err := e.identityLinker.LinkLeadToIdentity(ctx, e.ownerID, lead.ID, fromEmail, "", ""); err != nil {
+				e.logger.WarnContext(ctx, "inbox: identity link failed",
+					"lead", lead.ID, "channel", "email", "err", err)
+			}
+		}
+
 		// Auto-convert matched prospect to lead
 		if hasProspectMatch {
 			if convErr := e.prospectRepo.ConvertToLead(ctx, prospect.ID, lead.ID); convErr != nil {
@@ -401,7 +431,7 @@ func (e *EmailPoller) processEmail(ctx context.Context, fromName, fromEmail, bod
 			for _, att := range atts {
 				res := e.analyzer.Analyze(ctx, att)
 				if res.Skipped != "" {
-					slog.WarnContext(ctx, "inbox: attachment skipped",
+					e.logger.WarnContext(ctx, "inbox: attachment skipped",
 						"filename", att.Filename, "reason", res.Skipped, "err", res.Err)
 					continue
 				}

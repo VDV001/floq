@@ -15,11 +15,17 @@ import (
 // tests. It indexes identities by each canonical identifier so the
 // lookups exercise byte-equality (matching the SQL repo's contract).
 type inMemoryIdentityRepo struct {
-	mu      sync.Mutex
-	byEmail map[string]*domain.Identity
-	byPhone map[string]*domain.Identity
-	byTg    map[string]*domain.Identity
-	saved   []*domain.Identity
+	mu             sync.Mutex
+	byEmail        map[string]*domain.Identity
+	byPhone        map[string]*domain.Identity
+	byTg           map[string]*domain.Identity
+	saved          []*domain.Identity
+	leadLinks      []identityLink
+	prospectLinks  []identityLink
+}
+
+type identityLink struct {
+	OwnerID, IdentityID uuid.UUID
 }
 
 func newInMemoryIdentityRepo() *inMemoryIdentityRepo {
@@ -61,6 +67,30 @@ func (r *inMemoryIdentityRepo) Save(_ context.Context, id *domain.Identity) erro
 	if id.TelegramUsername != "" {
 		r.byTg[id.TelegramUsername] = id
 	}
+	return nil
+}
+
+func (r *inMemoryIdentityRepo) LinkLead(_ context.Context, leadID, identityID uuid.UUID) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for _, l := range r.leadLinks {
+		if l.OwnerID == leadID && l.IdentityID == identityID {
+			return nil
+		}
+	}
+	r.leadLinks = append(r.leadLinks, identityLink{OwnerID: leadID, IdentityID: identityID})
+	return nil
+}
+
+func (r *inMemoryIdentityRepo) LinkProspect(_ context.Context, prospectID, identityID uuid.UUID) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for _, l := range r.prospectLinks {
+		if l.OwnerID == prospectID && l.IdentityID == identityID {
+			return nil
+		}
+	}
+	r.prospectLinks = append(r.prospectLinks, identityLink{OwnerID: prospectID, IdentityID: identityID})
 	return nil
 }
 

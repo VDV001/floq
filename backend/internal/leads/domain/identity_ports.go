@@ -6,15 +6,23 @@ import (
 	"github.com/google/uuid"
 )
 
-// IdentityRepository persists Identity aggregates and looks them up by
-// each canonical identifier. All lookup arguments are expected to be
-// pre-normalized (the resolver canonicalizes via internal/normalize
-// before calling); SQL implementations should compare byte-exact.
+// IdentityRepository persists Identity aggregates, looks them up by
+// each canonical identifier, and maintains the link tables that map
+// leads and prospects to the unified identity. All lookup arguments
+// are expected to be pre-normalized (the resolver canonicalizes via
+// internal/normalize before calling); SQL implementations should
+// compare byte-exact.
+//
+// LinkLead and LinkProspect MUST be idempotent — repeated calls with
+// the same arguments produce a single row, so backfill goroutines can
+// re-run without duplicating links.
 type IdentityRepository interface {
 	FindByEmail(ctx context.Context, userID uuid.UUID, email string) (*Identity, error)
 	FindByPhone(ctx context.Context, userID uuid.UUID, phone string) (*Identity, error)
 	FindByTelegramUsername(ctx context.Context, userID uuid.UUID, tg string) (*Identity, error)
 	Save(ctx context.Context, id *Identity) error
+	LinkLead(ctx context.Context, leadID, identityID uuid.UUID) error
+	LinkProspect(ctx context.Context, prospectID, identityID uuid.UUID) error
 }
 
 // IdentityResolver maps a (possibly partial, possibly raw) tuple of
