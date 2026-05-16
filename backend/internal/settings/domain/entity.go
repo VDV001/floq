@@ -26,9 +26,10 @@ type Settings struct {
 	SMTPPassword string
 
 	// AI
-	AIProvider string
-	AIModel    string
-	AIAPIKey   string
+	AIProvider          string
+	AIModel             string
+	AIAPIKey            string
+	AIStyleCheckEnabled bool
 
 	// Notifications
 	NotifyTelegram    bool

@@ -98,6 +98,14 @@ func main() {
 	// 2b. AI provider (dynamic: reads provider/model/key from DB, falls back to .env)
 	aiProvider := providers.NewDynamicProvider(settingsStore, ownerID, cfg, httpClient)
 	aiClient := ai.NewAIClient(aiProvider, cfg.BookingLink, cfg.SenderName, cfg.SenderCompany, cfg.SenderPhone, cfg.SenderWebsite)
+	// Apply the owner's style-check preference at boot. We don't propagate
+	// runtime changes — switching the toggle in the UI requires a server
+	// restart for now. This is acceptable because the toggle is rare and
+	// the alternative (per-request settings lookup) would double our DB
+	// reads on every outbound generation.
+	if ownerSettings, err := settingsRepo.GetSettings(context.Background(), ownerID); err == nil && ownerSettings.AIStyleCheckEnabled {
+		aiClient.EnableStyleCheck()
+	}
 
 	// 3. Repositories
 	leadsRepo := leads.NewRepository(pool)
