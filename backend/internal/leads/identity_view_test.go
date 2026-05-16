@@ -1,0 +1,200 @@
+package leads
+
+import (
+	"context"
+	"errors"
+	"sync"
+	"testing"
+
+	"github.com/daniil/floq/internal/leads/domain"
+	"github.com/google/uuid"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+type stubIdentityReader struct {
+	mu              sync.Mutex
+	byLead          map[uuid.UUID]*domain.Identity
+	linkedByIdentity map[uuid.UUID][]uuid.UUID
+	getErr          error
+	linkedErr       error
+}
+
+func newStubIdentityReader() *stubIdentityReader {
+	return &stubIdentityReader{
+		byLead:           make(map[uuid.UUID]*domain.Identity),
+		linkedByIdentity: make(map[uuid.UUID][]uuid.UUID),
+	}
+}
+
+func (s *stubIdentityReader) GetByLeadID(_ context.Context, leadID uuid.UUID) (*domain.Identity, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.getErr != nil {
+		return nil, s.getErr
+	}
+	return s.byLead[leadID], nil
+}
+
+func (s *stubIdentityReader) LinkedLeadIDs(_ context.Context, identityID uuid.UUID) ([]uuid.UUID, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.linkedErr != nil {
+		return nil, s.linkedErr
+	}
+	return s.linkedByIdentity[identityID], nil
+}
+
+func TestUseCase_GetLeadView_NoIdentity_ReturnsLeadOnly(t *testing.T) {
+	leadID := uuid.New()
+	lead := &domain.Lead{ID: leadID, UserID: uuid.New(), Channel: domain.ChannelEmail, ContactName: "Alice", Status: domain.StatusNew}
+
+	repo := newMockUCRepo()
+	repo.byID[leadID] = lead
+	identities := newStubIdentityReader()
+
+	uc := NewUseCase(repo, nil, nil, WithIdentityReader(identities))
+	view, err := uc.GetLeadView(context.Background(), leadID)
+	require.NoError(t, err)
+	require.NotNil(t, view)
+	assert.Equal(t, lead, view.Lead)
+	assert.Nil(t, view.Identity, "no identity linked → Identity field must be nil")
+	assert.Empty(t, view.LinkedLeadIDs)
+}
+
+func TestUseCase_GetLeadView_WithIdentity_ReturnsAggregate(t *testing.T) {
+	userID := uuid.New()
+	leadID := uuid.New()
+	otherLead := uuid.New()
+	identityID := uuid.New()
+
+	lead := &domain.Lead{ID: leadID, UserID: userID, Channel: domain.ChannelEmail, ContactName: "Alice", Status: domain.StatusNew}
+	identity := &domain.Identity{ID: identityID, UserID: userID, Email: "alice@acme.com", TelegramUsername: "alice_bot"}
+
+	repo := newMockUCRepo()
+	repo.byID[leadID] = lead
+	identities := newStubIdentityReader()
+	identities.byLead[leadID] = identity
+	identities.linkedByIdentity[identityID] = []uuid.UUID{leadID, otherLead}
+
+	uc := NewUseCase(repo, nil, nil, WithIdentityReader(identities))
+	view, err := uc.GetLeadView(context.Background(), leadID)
+	require.NoError(t, err)
+	require.NotNil(t, view.Identity)
+	assert.Equal(t, identityID, view.Identity.ID)
+	assert.Equal(t, "alice@acme.com", view.Identity.Email)
+	assert.ElementsMatch(t, []uuid.UUID{leadID, otherLead}, view.LinkedLeadIDs)
+}
+
+func TestUseCase_GetLeadView_NoReader_GracefullyDegrades(t *testing.T) {
+	leadID := uuid.New()
+	lead := &domain.Lead{ID: leadID, UserID: uuid.New(), Channel: domain.ChannelEmail, ContactName: "Alice", Status: domain.StatusNew}
+	repo := newMockUCRepo()
+	repo.byID[leadID] = lead
+
+	uc := NewUseCase(repo, nil, nil) // no WithIdentityReader
+
+	view, err := uc.GetLeadView(context.Background(), leadID)
+	require.NoError(t, err)
+	require.NotNil(t, view)
+	assert.Equal(t, lead, view.Lead)
+	assert.Nil(t, view.Identity)
+}
+
+func TestUseCase_GetLeadView_LeadNotFound(t *testing.T) {
+	repo := newMockUCRepo()
+	uc := NewUseCase(repo, nil, nil, WithIdentityReader(newStubIdentityReader()))
+
+	view, err := uc.GetLeadView(context.Background(), uuid.New())
+	require.NoError(t, err, "missing lead is a (nil, nil) contract, not an error")
+	assert.Nil(t, view)
+}
+
+func TestUseCase_GetLeadView_IdentityFetchFails_FallsBackToLeadOnly(t *testing.T) {
+	leadID := uuid.New()
+	lead := &domain.Lead{ID: leadID, UserID: uuid.New(), Channel: domain.ChannelEmail, ContactName: "Alice", Status: domain.StatusNew}
+	repo := newMockUCRepo()
+	repo.byID[leadID] = lead
+
+	identities := newStubIdentityReader()
+	identities.getErr = errors.New("identity db down")
+
+	uc := NewUseCase(repo, nil, nil, WithIdentityReader(identities))
+	view, err := uc.GetLeadView(context.Background(), leadID)
+	require.NoError(t, err, "identity fetch failure must not block lead detail rendering")
+	require.NotNil(t, view)
+	assert.Equal(t, lead, view.Lead)
+	assert.Nil(t, view.Identity, "fallback view exposes the lead without identity")
+}
+
+// --- minimal UseCase repo mock for these tests (the existing one in
+// usecase_test.go is a different package-internal type; redeclaring
+// here keeps the file self-contained without forcing renames).
+
+type mockUCRepo struct {
+	mu   sync.Mutex
+	byID map[uuid.UUID]*domain.Lead
+}
+
+func newMockUCRepo() *mockUCRepo {
+	return &mockUCRepo{byID: make(map[uuid.UUID]*domain.Lead)}
+}
+
+func (m *mockUCRepo) GetLead(_ context.Context, id uuid.UUID) (*domain.Lead, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.byID[id], nil
+}
+
+// The remaining domain.Repository methods are stubbed out — tests in
+// this file only exercise GetLeadView, which uses GetLead. Each stub
+// panics so accidental dependency creep surfaces immediately.
+
+func (m *mockUCRepo) ListLeads(context.Context, uuid.UUID) ([]domain.LeadWithSource, error) {
+	panic("not used")
+}
+func (m *mockUCRepo) GetLeadForUser(context.Context, uuid.UUID, uuid.UUID) (*domain.Lead, error) {
+	panic("not used")
+}
+func (m *mockUCRepo) CreateLead(context.Context, *domain.Lead) error { panic("not used") }
+func (m *mockUCRepo) UpdateFirstMessage(context.Context, uuid.UUID, string) error {
+	panic("not used")
+}
+func (m *mockUCRepo) UpdateLeadStatus(context.Context, uuid.UUID, domain.LeadStatus) error {
+	panic("not used")
+}
+func (m *mockUCRepo) UpdateSourceID(context.Context, uuid.UUID, *uuid.UUID) error {
+	panic("not used")
+}
+func (m *mockUCRepo) GetLeadByTelegramChatID(context.Context, uuid.UUID, int64) (*domain.Lead, error) {
+	panic("not used")
+}
+func (m *mockUCRepo) GetLeadByEmailAddress(context.Context, uuid.UUID, string) (*domain.Lead, error) {
+	panic("not used")
+}
+func (m *mockUCRepo) StaleLeadsWithoutReminder(context.Context, int) ([]domain.Lead, error) {
+	panic("not used")
+}
+func (m *mockUCRepo) ListMessages(context.Context, uuid.UUID) ([]domain.Message, error) {
+	panic("not used")
+}
+func (m *mockUCRepo) CreateMessage(context.Context, *domain.Message) error { panic("not used") }
+func (m *mockUCRepo) GetQualification(context.Context, uuid.UUID) (*domain.Qualification, error) {
+	panic("not used")
+}
+func (m *mockUCRepo) UpsertQualification(context.Context, *domain.Qualification) error {
+	panic("not used")
+}
+func (m *mockUCRepo) GetLatestDraft(context.Context, uuid.UUID) (*domain.Draft, error) {
+	panic("not used")
+}
+func (m *mockUCRepo) CreateDraft(context.Context, *domain.Draft) error { panic("not used") }
+func (m *mockUCRepo) CreateReminder(context.Context, uuid.UUID, string) error {
+	panic("not used")
+}
+func (m *mockUCRepo) CountMonthLeads(context.Context, uuid.UUID) (int, error) {
+	panic("not used")
+}
+func (m *mockUCRepo) CountTotalLeads(context.Context, uuid.UUID) (int, error) {
+	panic("not used")
+}
