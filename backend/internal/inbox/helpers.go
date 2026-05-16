@@ -5,16 +5,25 @@ import (
 	"strings"
 	"time"
 
+	"github.com/daniil/floq/internal/normalize"
 	"github.com/google/uuid"
 )
 
 // NewInboxLead creates a new InboxLead with generated ID, status=new, and timestamps.
+//
+// The emailAddress pointer is canonicalized through the shared normalize
+// kernel (lowercase + trim) so cross-channel dedup downstream can compare
+// values byte-for-byte without re-normalizing.
 func NewInboxLead(userID uuid.UUID, channel Channel, contactName, company, firstMessage string, telegramChatID *int64, emailAddress *string) (*InboxLead, error) {
 	if channel != ChannelTelegram && channel != ChannelEmail {
 		return nil, fmt.Errorf("invalid channel: %q", channel)
 	}
 	if contactName == "" {
 		return nil, fmt.Errorf("contact name is required")
+	}
+	if emailAddress != nil {
+		normalized := normalize.Email(*emailAddress)
+		emailAddress = &normalized
 	}
 	now := time.Now().UTC()
 	return &InboxLead{

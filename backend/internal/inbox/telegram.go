@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/daniil/floq/internal/normalize"
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 	"github.com/google/uuid"
 )
@@ -86,7 +87,7 @@ func (t *TelegramBot) handleMessage(ctx context.Context, msg *tgbotapi.Message) 
 	if isNewLead {
 		company := ""
 		var prospect *ProspectMatch
-		username := msg.From.UserName
+		username := normalize.TelegramUsername(msg.From.UserName)
 		if username != "" && t.prospectRepo != nil {
 			p, pErr := t.prospectRepo.FindByTelegramUsername(ctx, t.ownerID, username)
 			if pErr == nil && p != nil && p.Status != ProspectStatusConverted {
