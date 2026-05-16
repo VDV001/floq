@@ -5,6 +5,7 @@ import (
 	"errors"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/daniil/floq/internal/leads/domain"
 	"github.com/google/uuid"
@@ -127,17 +128,117 @@ func TestUseCase_GetLeadView_IdentityFetchFails_FallsBackToLeadOnly(t *testing.T
 	assert.Nil(t, view.Identity, "fallback view exposes the lead without identity")
 }
 
+func TestUseCase_GetAggregatedMessages_NoReader_ReturnsLeadOnly(t *testing.T) {
+	leadID := uuid.New()
+	repo := newMockUCRepo()
+	repo.messagesByLead = map[uuid.UUID][]domain.Message{
+		leadID: {{ID: uuid.New(), LeadID: leadID, Body: "solo"}},
+	}
+	uc := NewUseCase(repo, nil, nil)
+
+	msgs, err := uc.GetAggregatedMessages(context.Background(), leadID)
+	require.NoError(t, err)
+	require.Len(t, msgs, 1)
+	assert.Equal(t, "solo", msgs[0].Body)
+}
+
+func TestUseCase_GetAggregatedMessages_NoIdentity_FallsBackToLeadOnly(t *testing.T) {
+	leadID := uuid.New()
+	repo := newMockUCRepo()
+	repo.messagesByLead = map[uuid.UUID][]domain.Message{
+		leadID: {{ID: uuid.New(), LeadID: leadID, Body: "solo"}},
+	}
+	uc := NewUseCase(repo, nil, nil, WithIdentityReader(newStubIdentityReader()))
+
+	msgs, err := uc.GetAggregatedMessages(context.Background(), leadID)
+	require.NoError(t, err)
+	require.Len(t, msgs, 1)
+}
+
+func TestUseCase_GetAggregatedMessages_MergesLeadsChronologically(t *testing.T) {
+	userID := uuid.New()
+	leadA, leadB := uuid.New(), uuid.New()
+	identityID := uuid.New()
+	t0 := time.Date(2026, 5, 16, 10, 0, 0, 0, time.UTC)
+
+	msgA1 := domain.Message{ID: uuid.New(), LeadID: leadA, Body: "A-first", SentAt: t0}
+	msgB1 := domain.Message{ID: uuid.New(), LeadID: leadB, Body: "B-second", SentAt: t0.Add(1 * time.Minute)}
+	msgA2 := domain.Message{ID: uuid.New(), LeadID: leadA, Body: "A-third", SentAt: t0.Add(2 * time.Minute)}
+
+	repo := newMockUCRepo()
+	repo.messagesByLead = map[uuid.UUID][]domain.Message{
+		leadA: {msgA1, msgA2}, // already-sorted within lead
+		leadB: {msgB1},
+	}
+	identities := newStubIdentityReader()
+	identities.byLead[leadA] = &domain.Identity{ID: identityID, UserID: userID, Email: "alice@acme.com"}
+	identities.linkedByIdentity[identityID] = []uuid.UUID{leadA, leadB}
+
+	uc := NewUseCase(repo, nil, nil, WithIdentityReader(identities))
+	msgs, err := uc.GetAggregatedMessages(context.Background(), leadA)
+	require.NoError(t, err)
+	require.Len(t, msgs, 3)
+	assert.Equal(t, "A-first", msgs[0].Body)
+	assert.Equal(t, "B-second", msgs[1].Body)
+	assert.Equal(t, "A-third", msgs[2].Body)
+}
+
+func TestUseCase_GetAggregatedMessages_PartialLeadFailure_PreservesOthers(t *testing.T) {
+	userID := uuid.New()
+	leadA, leadB := uuid.New(), uuid.New()
+	identityID := uuid.New()
+	t0 := time.Date(2026, 5, 16, 10, 0, 0, 0, time.UTC)
+
+	repo := newMockUCRepo()
+	repo.messagesByLead = map[uuid.UUID][]domain.Message{
+		leadA: {{ID: uuid.New(), LeadID: leadA, Body: "A-ok", SentAt: t0}},
+	}
+	repo.listMessagesErr = map[uuid.UUID]error{
+		leadB: errors.New("transient pg blip"),
+	}
+
+	identities := newStubIdentityReader()
+	identities.byLead[leadA] = &domain.Identity{ID: identityID, UserID: userID, Email: "alice@acme.com"}
+	identities.linkedByIdentity[identityID] = []uuid.UUID{leadA, leadB}
+
+	uc := NewUseCase(repo, nil, nil, WithIdentityReader(identities))
+	msgs, err := uc.GetAggregatedMessages(context.Background(), leadA)
+	require.NoError(t, err, "one bad lead must not abort the entire timeline")
+	require.Len(t, msgs, 1)
+	assert.Equal(t, "A-ok", msgs[0].Body)
+}
+
+func TestUseCase_GetAggregatedMessages_IdentityErrorDegradesToLeadOnly(t *testing.T) {
+	leadID := uuid.New()
+	repo := newMockUCRepo()
+	repo.messagesByLead = map[uuid.UUID][]domain.Message{
+		leadID: {{ID: uuid.New(), LeadID: leadID, Body: "solo"}},
+	}
+	identities := newStubIdentityReader()
+	identities.getErr = errors.New("identity db down")
+
+	uc := NewUseCase(repo, nil, nil, WithIdentityReader(identities))
+	msgs, err := uc.GetAggregatedMessages(context.Background(), leadID)
+	require.NoError(t, err)
+	require.Len(t, msgs, 1)
+}
+
 // --- minimal UseCase repo mock for these tests (the existing one in
 // usecase_test.go is a different package-internal type; redeclaring
 // here keeps the file self-contained without forcing renames).
 
 type mockUCRepo struct {
-	mu   sync.Mutex
-	byID map[uuid.UUID]*domain.Lead
+	mu              sync.Mutex
+	byID            map[uuid.UUID]*domain.Lead
+	messagesByLead  map[uuid.UUID][]domain.Message
+	listMessagesErr map[uuid.UUID]error
 }
 
 func newMockUCRepo() *mockUCRepo {
-	return &mockUCRepo{byID: make(map[uuid.UUID]*domain.Lead)}
+	return &mockUCRepo{
+		byID:           make(map[uuid.UUID]*domain.Lead),
+		messagesByLead: make(map[uuid.UUID][]domain.Message),
+	}
 }
 
 func (m *mockUCRepo) GetLead(_ context.Context, id uuid.UUID) (*domain.Lead, error) {
@@ -175,8 +276,13 @@ func (m *mockUCRepo) GetLeadByEmailAddress(context.Context, uuid.UUID, string) (
 func (m *mockUCRepo) StaleLeadsWithoutReminder(context.Context, int) ([]domain.Lead, error) {
 	panic("not used")
 }
-func (m *mockUCRepo) ListMessages(context.Context, uuid.UUID) ([]domain.Message, error) {
-	panic("not used")
+func (m *mockUCRepo) ListMessages(_ context.Context, leadID uuid.UUID) ([]domain.Message, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if err, ok := m.listMessagesErr[leadID]; ok {
+		return nil, err
+	}
+	return m.messagesByLead[leadID], nil
 }
 func (m *mockUCRepo) CreateMessage(context.Context, *domain.Message) error { panic("not used") }
 func (m *mockUCRepo) GetQualification(context.Context, uuid.UUID) (*domain.Qualification, error) {

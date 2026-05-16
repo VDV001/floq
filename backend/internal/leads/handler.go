@@ -109,7 +109,19 @@ func (h *Handler) listMessages() http.HandlerFunc {
 			httputil.WriteError(w, http.StatusBadRequest, "invalid lead id")
 			return
 		}
-		msgs, err := h.uc.GetMessages(r.Context(), id)
+
+		// ?aggregated=true switches to the identity-merged timeline,
+		// where messages from every lead sharing this lead's Identity
+		// surface in chronological order. The frontend pin the param
+		// to the user_settings.aggregated_inbox_view preference.
+		aggregated := r.URL.Query().Get("aggregated") == "true"
+
+		var msgs []domain.Message
+		if aggregated {
+			msgs, err = h.uc.GetAggregatedMessages(r.Context(), id)
+		} else {
+			msgs, err = h.uc.GetMessages(r.Context(), id)
+		}
 		if err != nil {
 			httputil.WriteError(w, http.StatusInternalServerError, "failed to list messages")
 			return

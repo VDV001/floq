@@ -2,6 +2,7 @@ package leads
 
 import (
 	"context"
+	"sort"
 
 	"github.com/daniil/floq/internal/leads/domain"
 	"github.com/google/uuid"
@@ -79,5 +80,56 @@ func (uc *UseCase) GetLeadView(ctx context.Context, leadID uuid.UUID) (*LeadView
 	}
 	view.LinkedLeadIDs = linked
 	return view, nil
+}
+
+// GetAggregatedMessages returns the chronologically merged stream of
+// messages from every lead sharing the requesting lead's Identity.
+// When the lead has no Identity, no IdentityReader is wired, or the
+// reader errors, the call falls back to single-lead messages — the
+// detail page never goes empty due to identity-side hiccups.
+//
+// Partial per-lead errors during the merge are logged but do not
+// abort the result — the operator sees whatever leads we managed to
+// reach, sorted by SentAt ascending.
+func (uc *UseCase) GetAggregatedMessages(ctx context.Context, leadID uuid.UUID) ([]domain.Message, error) {
+	if uc.identityReader == nil {
+		return uc.repo.ListMessages(ctx, leadID)
+	}
+	identity, err := uc.identityReader.GetByLeadID(ctx, leadID)
+	if err != nil {
+		uc.logger.WarnContext(ctx, "leads: aggregated timeline identity lookup failed, returning lead-only",
+			"lead", leadID, "err", err)
+		return uc.repo.ListMessages(ctx, leadID)
+	}
+	if identity == nil {
+		return uc.repo.ListMessages(ctx, leadID)
+	}
+	leadIDs, err := uc.identityReader.LinkedLeadIDs(ctx, identity.ID)
+	if err != nil {
+		uc.logger.WarnContext(ctx, "leads: aggregated timeline linked-leads lookup failed, returning lead-only",
+			"lead", leadID, "identity", identity.ID, "err", err)
+		return uc.repo.ListMessages(ctx, leadID)
+	}
+	if len(leadIDs) == 0 {
+		return uc.repo.ListMessages(ctx, leadID)
+	}
+
+	seen := make(map[uuid.UUID]bool, len(leadIDs))
+	all := make([]domain.Message, 0)
+	for _, id := range leadIDs {
+		if seen[id] {
+			continue
+		}
+		seen[id] = true
+		msgs, mErr := uc.repo.ListMessages(ctx, id)
+		if mErr != nil {
+			uc.logger.WarnContext(ctx, "leads: aggregated timeline partial fetch failed",
+				"lead", id, "identity", identity.ID, "err", mErr)
+			continue
+		}
+		all = append(all, msgs...)
+	}
+	sort.Slice(all, func(i, j int) bool { return all[i].SentAt.Before(all[j].SentAt) })
+	return all, nil
 }
 
