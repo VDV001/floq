@@ -48,6 +48,7 @@ function defaultSettings(): Partial<UserSettings> {
     auto_followup_days: 2,
     auto_prospect_to_lead: true,
     auto_verify_import: false,
+    aggregated_inbox_view: true,
   };
 }
 

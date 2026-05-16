@@ -92,6 +92,52 @@ func (r *IdentityRepository) LinkProspect(ctx context.Context, prospectID, ident
 	return nil
 }
 
+// GetByLeadID returns the Identity linked to the given lead via
+// lead_identities, or (nil, nil) if the lead has no link row yet.
+// One row per lead is the contract — the link table's PK guarantees
+// uniqueness, but if multiple links sneak in (operator-driven manual
+// merge in a future phase) the LIMIT 1 keeps the call deterministic.
+func (r *IdentityRepository) GetByLeadID(ctx context.Context, leadID uuid.UUID) (*domain.Identity, error) {
+	var id domain.Identity
+	err := r.q(ctx).QueryRow(ctx,
+		`SELECT i.id, i.user_id, COALESCE(i.email, ''), COALESCE(i.phone, ''), COALESCE(i.telegram_username, ''), i.created_at
+		 FROM identities i
+		 JOIN lead_identities li ON li.identity_id = i.id
+		 WHERE li.lead_id = $1
+		 ORDER BY li.linked_at ASC
+		 LIMIT 1`, leadID).
+		Scan(&id.ID, &id.UserID, &id.Email, &id.Phone, &id.TelegramUsername, &id.CreatedAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("identity by lead_id: %w", err)
+	}
+	return &id, nil
+}
+
+// LinkedLeadIDs returns every lead currently associated with the
+// identity. Order is by linked_at ASC so the original/triggering lead
+// surfaces first — useful for "first contact" semantics in the UI.
+func (r *IdentityRepository) LinkedLeadIDs(ctx context.Context, identityID uuid.UUID) ([]uuid.UUID, error) {
+	rows, err := r.q(ctx).Query(ctx,
+		`SELECT lead_id FROM lead_identities WHERE identity_id = $1 ORDER BY linked_at ASC`,
+		identityID)
+	if err != nil {
+		return nil, fmt.Errorf("linked lead_ids: %w", err)
+	}
+	defer rows.Close()
+	out := make([]uuid.UUID, 0)
+	for rows.Next() {
+		var id uuid.UUID
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("scan lead_id: %w", err)
+		}
+		out = append(out, id)
+	}
+	return out, rows.Err()
+}
+
 // scanIdentity runs a single-row identity SELECT and unifies the
 // (nil, nil) on-not-found contract plus the error-wrapping label. The
 // SQL argument is built from compile-time literals only (no runtime

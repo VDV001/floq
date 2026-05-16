@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"log"
+	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
@@ -128,7 +129,10 @@ func main() {
 	// 5. Use cases
 	txManager := db.NewTxManager(pool)
 	suggestionFinder := newProspectSuggestionFinderAdapter(txManager, leadsRepo, prospectsRepo)
-	leadsUC := leads.NewUseCase(leadsRepo, leadsAI, nil, leads.WithSuggestionFinder(suggestionFinder)) // sender set after bot init
+	leadsUC := leads.NewUseCase(leadsRepo, leadsAI, nil,
+		leads.WithSuggestionFinder(suggestionFinder),
+		leads.WithIdentityReader(identityRepo),
+		leads.WithLogger(slog.Default())) // sender set after bot init
 	prospectsUC := prospects.NewUseCase(prospectsRepo,
 		prospects.WithLeadChecker(newLeadCheckerAdapter(leadsRepo)),
 		prospects.WithIdentityLinker(identityLinker))

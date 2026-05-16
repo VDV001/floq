@@ -94,6 +94,34 @@ func (r *inMemoryIdentityRepo) LinkProspect(_ context.Context, prospectID, ident
 	return nil
 }
 
+func (r *inMemoryIdentityRepo) GetByLeadID(_ context.Context, leadID uuid.UUID) (*domain.Identity, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for _, l := range r.leadLinks {
+		if l.OwnerID == leadID {
+			for _, id := range r.saved {
+				if id.ID == l.IdentityID {
+					copy := *id
+					return &copy, nil
+				}
+			}
+		}
+	}
+	return nil, nil
+}
+
+func (r *inMemoryIdentityRepo) LinkedLeadIDs(_ context.Context, identityID uuid.UUID) ([]uuid.UUID, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	out := make([]uuid.UUID, 0)
+	for _, l := range r.leadLinks {
+		if l.IdentityID == identityID {
+			out = append(out, l.OwnerID)
+		}
+	}
+	return out, nil
+}
+
 // preset stores an identity in all relevant indexes without going through
 // Save (so the saved counter only tracks Resolver-driven inserts).
 func (r *inMemoryIdentityRepo) preset(id *domain.Identity) {

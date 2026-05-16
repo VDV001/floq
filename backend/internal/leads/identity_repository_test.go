@@ -164,3 +164,86 @@ func TestIdentityRepository_Link_RejectsMissingFK(t *testing.T) {
 	err = repo.LinkLead(ctx, uuid.New(), id.ID)
 	require.Error(t, err, "FK on lead_id must reject inserts pointing at a non-existent lead")
 }
+
+func TestIdentityRepository_GetByLeadID_ReturnsLinkedIdentity(t *testing.T) {
+	pool := testutil.TestDB(t)
+	userID := testutil.SeedUser(t, pool)
+	repo := leads.NewIdentityRepository(pool)
+	ctx := context.Background()
+
+	leadID := uuid.New()
+	_, err := pool.Exec(ctx,
+		`INSERT INTO leads (id, user_id, channel, contact_name, first_message) VALUES ($1, $2, 'email', 'Alice', 'hi')`,
+		leadID, userID)
+	require.NoError(t, err)
+
+	id, err := domain.NewIdentity(userID, "alice@acme.com", "+79991234567", "alice_bot")
+	require.NoError(t, err)
+	require.NoError(t, repo.Save(ctx, id))
+	require.NoError(t, repo.LinkLead(ctx, leadID, id.ID))
+
+	got, err := repo.GetByLeadID(ctx, leadID)
+	require.NoError(t, err)
+	require.NotNil(t, got)
+	assert.Equal(t, id.ID, got.ID)
+	assert.Equal(t, "alice@acme.com", got.Email)
+	assert.Equal(t, "+79991234567", got.Phone)
+	assert.Equal(t, "alice_bot", got.TelegramUsername)
+}
+
+func TestIdentityRepository_GetByLeadID_NoLink_ReturnsNil(t *testing.T) {
+	pool := testutil.TestDB(t)
+	userID := testutil.SeedUser(t, pool)
+	repo := leads.NewIdentityRepository(pool)
+	ctx := context.Background()
+
+	leadID := uuid.New()
+	_, err := pool.Exec(ctx,
+		`INSERT INTO leads (id, user_id, channel, contact_name, first_message) VALUES ($1, $2, 'email', 'Alice', 'hi')`,
+		leadID, userID)
+	require.NoError(t, err)
+
+	got, err := repo.GetByLeadID(ctx, leadID)
+	require.NoError(t, err, "missing link is not an error")
+	assert.Nil(t, got)
+}
+
+func TestIdentityRepository_LinkedLeadIDs(t *testing.T) {
+	pool := testutil.TestDB(t)
+	userID := testutil.SeedUser(t, pool)
+	repo := leads.NewIdentityRepository(pool)
+	ctx := context.Background()
+
+	leadA, leadB := uuid.New(), uuid.New()
+	for _, id := range []uuid.UUID{leadA, leadB} {
+		_, err := pool.Exec(ctx,
+			`INSERT INTO leads (id, user_id, channel, contact_name, first_message) VALUES ($1, $2, 'email', 'Alice', 'hi')`,
+			id, userID)
+		require.NoError(t, err)
+	}
+
+	id, err := domain.NewIdentity(userID, "alice@acme.com", "", "")
+	require.NoError(t, err)
+	require.NoError(t, repo.Save(ctx, id))
+	require.NoError(t, repo.LinkLead(ctx, leadA, id.ID))
+	require.NoError(t, repo.LinkLead(ctx, leadB, id.ID))
+
+	leadIDs, err := repo.LinkedLeadIDs(ctx, id.ID)
+	require.NoError(t, err)
+	assert.ElementsMatch(t, []uuid.UUID{leadA, leadB}, leadIDs)
+}
+
+func TestIdentityRepository_LinkedLeadIDs_None(t *testing.T) {
+	pool := testutil.TestDB(t)
+	userID := testutil.SeedUser(t, pool)
+	repo := leads.NewIdentityRepository(pool)
+	ctx := context.Background()
+
+	id, err := domain.NewIdentity(userID, "alice@acme.com", "", "")
+	require.NoError(t, err)
+	require.NoError(t, repo.Save(ctx, id))
+
+	leadIDs, err := repo.LinkedLeadIDs(ctx, id.ID)
+	require.NoError(t, err)
+	assert.Empty(t, leadIDs, "identity without any LinkLead must return an empty slice")
+}

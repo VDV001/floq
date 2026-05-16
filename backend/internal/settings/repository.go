@@ -39,8 +39,9 @@ func (r *Repository) GetSettings(ctx context.Context, userID uuid.UUID) (*domain
 	}
 
 	// Defaults applied when no user_settings row exists yet (pgx.ErrNoRows
-	// path below). AIStyleCheckEnabled also has DEFAULT TRUE in migration
-	// 025 — keep the two in sync if you change the policy.
+	// path below). AIStyleCheckEnabled (migration 025) and
+	// AggregatedInboxView (migration 027) both have DEFAULT TRUE in SQL —
+	// keep the two in sync here if you change the policy.
 	s := &domain.Settings{
 		FullName:            fullName,
 		Email:               email,
@@ -48,6 +49,7 @@ func (r *Repository) GetSettings(ctx context.Context, userID uuid.UUID) (*domain
 		AIProvider:          "ollama",
 		AIModel:             "gemma3:4b",
 		AIStyleCheckEnabled: true,
+		AggregatedInboxView: true,
 		NotifyTelegram:      true,
 		AutoQualify:         true,
 		AutoDraft:           true,
@@ -66,7 +68,8 @@ func (r *Repository) GetSettings(ctx context.Context, userID uuid.UUID) (*domain
 		        notify_telegram, notify_email_digest,
 		        auto_qualify, auto_draft, auto_send, auto_send_delay_min,
 		        auto_followup, auto_followup_days, auto_prospect_to_lead, auto_verify_import,
-		        ai_style_check_enabled
+		        ai_style_check_enabled,
+		        aggregated_inbox_view
 		 FROM user_settings WHERE user_id = $1`, userID,
 	).Scan(
 		&s.TelegramBotToken, &s.TelegramBotActive,
@@ -78,6 +81,7 @@ func (r *Repository) GetSettings(ctx context.Context, userID uuid.UUID) (*domain
 		&s.AutoQualify, &s.AutoDraft, &s.AutoSend, &s.AutoSendDelayMin,
 		&s.AutoFollowup, &s.AutoFollowupDays, &s.AutoProspectToLead, &s.AutoVerifyImport,
 		&s.AIStyleCheckEnabled,
+		&s.AggregatedInboxView,
 	)
 	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return nil, fmt.Errorf("load settings: %w", err)

@@ -142,8 +142,15 @@ export const api = {
     apiFetch<Record<string, number>>("/api/leads/suggestion-counts"),
 
   // Messages
-  getMessages: (leadId: string) =>
-    apiFetch<Message[]>(`/api/leads/${leadId}/messages`),
+  //
+  // When `aggregated` is true the backend merges messages from every
+  // lead sharing the same Identity (multi-source dedup, #27). Default
+  // is single-lead — backward-compatible with callers that don't pass
+  // the flag.
+  getMessages: (leadId: string, opts?: { aggregated?: boolean }) =>
+    apiFetch<Message[]>(
+      `/api/leads/${leadId}/messages${opts?.aggregated ? "?aggregated=true" : ""}`
+    ),
   sendMessage: (leadId: string, body: string) =>
     apiFetch<Message>(`/api/leads/${leadId}/send`, {
       method: "POST",
@@ -349,6 +356,20 @@ export interface Lead {
   source_name?: string;
   created_at: string;
   updated_at: string;
+  identity?: IdentitySummary;
+}
+
+// IdentitySummary surfaces the unified Identity attached to a lead via
+// lead_identities. All identifier fields are pre-canonicalized
+// server-side (lowercase + trim for email/tg, digits + leading "+"
+// for phone). `linked_lead_ids` always includes the current lead when
+// the identity is present — clients dedupe when rendering siblings.
+export interface IdentitySummary {
+  id: string;
+  email?: string;
+  phone?: string;
+  telegram_username?: string;
+  linked_lead_ids: string[];
 }
 
 export type SuggestionConfidence = "high" | "medium" | "low";
@@ -532,4 +553,6 @@ export interface UserSettings {
   auto_followup_days: number;
   auto_prospect_to_lead: boolean;
   auto_verify_import: boolean;
+  ai_style_check_enabled?: boolean;
+  aggregated_inbox_view: boolean;
 }
