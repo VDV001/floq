@@ -6,6 +6,7 @@ import (
 	"encoding/csv"
 	"fmt"
 	"io"
+	"log/slog"
 	"strings"
 
 	"github.com/daniil/floq/internal/normalize"
@@ -48,9 +49,23 @@ type LeadChecker interface {
 	LeadExistsByEmail(ctx context.Context, userID uuid.UUID, email string) (bool, error)
 }
 
+// IdentityLinker is the narrow port prospects needs from the
+// leads-context identity machinery: take a freshly persisted prospect's
+// identifiers, resolve them to a unified Identity (creating one if no
+// match), and link the prospect to it. The adapter in the composition
+// root bridges this to leads.IdentityResolver + leads.IdentityRepository.
+// LinkProspect.
+//
+// Implementations MUST be idempotent so a backfill re-run produces no
+// duplicate link rows.
+type IdentityLinker interface {
+	LinkProspectToIdentity(ctx context.Context, userID, prospectID uuid.UUID, email, phone, telegramUsername string) error
+}
+
 type UseCase struct {
-	repo        domain.Repository
-	leadChecker LeadChecker
+	repo           domain.Repository
+	leadChecker    LeadChecker
+	identityLinker IdentityLinker
 }
 
 func NewUseCase(repo domain.Repository, opts ...func(*UseCase)) *UseCase {
@@ -63,6 +78,14 @@ func NewUseCase(repo domain.Repository, opts ...func(*UseCase)) *UseCase {
 
 func WithLeadChecker(lc LeadChecker) func(*UseCase) {
 	return func(uc *UseCase) { uc.leadChecker = lc }
+}
+
+// WithIdentityLinker wires the cross-context identity linker so each
+// imported prospect gets resolved to a unified Identity and linked via
+// prospect_identities. Pass nil (or omit the option) to keep the legacy
+// flow.
+func WithIdentityLinker(l IdentityLinker) func(*UseCase) {
+	return func(uc *UseCase) { uc.identityLinker = l }
 }
 
 func (uc *UseCase) ListProspects(ctx context.Context, userID uuid.UUID) ([]domain.ProspectWithSource, error) {
@@ -252,6 +275,15 @@ func (uc *UseCase) ImportCSV(ctx context.Context, userID uuid.UUID, csvData []by
 
 	if err := uc.repo.CreateProspectsBatch(ctx, prospects); err != nil {
 		return nil, err
+	}
+
+	if uc.identityLinker != nil {
+		for _, p := range prospects {
+			if err := uc.identityLinker.LinkProspectToIdentity(ctx, userID, p.ID, p.Email, p.Phone, p.TelegramUsername); err != nil {
+				slog.WarnContext(ctx, "prospects: identity link failed",
+					"prospect", p.ID, "err", err)
+			}
+		}
 	}
 
 	return &ImportReport{Imported: len(prospects), Skipped: skipped}, nil
