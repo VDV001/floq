@@ -58,7 +58,7 @@ type Attachment struct {
 // Result is the analyser's verdict for one attachment. Either Text is
 // populated (success) or Skipped + Err are (graceful skip). Pages is
 // non-zero only for PDF success. Preview is Text truncated to
-// PreviewMax bytes (rune-safe) so logs don't blow up on a 10-page КП.
+// PreviewMax runes (UTF-8 safe) so logs don't blow up on a 10-page КП.
 type Result struct {
 	Filename    string
 	ContentType string
