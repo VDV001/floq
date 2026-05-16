@@ -1,0 +1,8 @@
+hello.pdf is the sample PDF distributed in
+github.com/ledongthuc/pdf/examples/read_plain_text/pdf_test.pdf
+under the BSD-3-Clause license.
+
+Copyright (c) 2009 The Go Authors. All rights reserved.
+
+Used here verbatim for deterministic unit-testing of the PDF text-layer
+extractor in pdf.go. See go.mod for the corresponding library import.
