@@ -3,6 +3,7 @@ package inbox
 import (
 	"context"
 	"log"
+	"log/slog"
 	"net/http"
 	"time"
 
@@ -13,16 +14,35 @@ import (
 
 // TelegramBot listens for incoming Telegram messages and creates leads.
 type TelegramBot struct {
-	bot          *tgbotapi.BotAPI
-	repo         LeadRepository
-	prospectRepo ProspectRepository
-	aiClient     AIQualifier
-	ownerID      uuid.UUID
-	bookingLink  string
+	bot            *tgbotapi.BotAPI
+	repo           LeadRepository
+	prospectRepo   ProspectRepository
+	aiClient       AIQualifier
+	identityLinker IdentityLinker
+	ownerID        uuid.UUID
+	bookingLink    string
+}
+
+// TelegramBotOption configures a *TelegramBot at construction. Used for
+// optional dependencies that cross context boundaries (currently the
+// IdentityLinker bridge to the leads-context identity store).
+type TelegramBotOption func(*TelegramBot)
+
+// WithTelegramIdentityLinker wires the IdentityLinker used to resolve
+// and link each newly created Telegram lead to a unified Identity. Pass
+// nil (or omit the option) to disable. Linker errors are logged and
+// swallowed — the Telegram-side inbound flow never blocks on identity
+// backend hiccups.
+//
+// Named asymmetrically to its email-poller sibling (WithIdentityLinker)
+// because the two pollers live in the same package and Go does not
+// allow option-name collisions across different option types.
+func WithTelegramIdentityLinker(l IdentityLinker) TelegramBotOption {
+	return func(b *TelegramBot) { b.identityLinker = l }
 }
 
 // NewTelegramBot creates a new TelegramBot with the given token and dependencies.
-func NewTelegramBot(token string, repo LeadRepository, prospectRepo ProspectRepository, aiClient AIQualifier, ownerID uuid.UUID, bookingLink string, httpClient *http.Client) (*TelegramBot, error) {
+func NewTelegramBot(token string, repo LeadRepository, prospectRepo ProspectRepository, aiClient AIQualifier, ownerID uuid.UUID, bookingLink string, httpClient *http.Client, opts ...TelegramBotOption) (*TelegramBot, error) {
 	if httpClient == nil {
 		httpClient = http.DefaultClient
 	}
@@ -30,7 +50,11 @@ func NewTelegramBot(token string, repo LeadRepository, prospectRepo ProspectRepo
 	if err != nil {
 		return nil, err
 	}
-	return &TelegramBot{bot: bot, repo: repo, prospectRepo: prospectRepo, aiClient: aiClient, ownerID: ownerID, bookingLink: bookingLink}, nil
+	b := &TelegramBot{bot: bot, repo: repo, prospectRepo: prospectRepo, aiClient: aiClient, ownerID: ownerID, bookingLink: bookingLink}
+	for _, opt := range opts {
+		opt(b)
+	}
+	return b, nil
 }
 
 // Bot returns the underlying BotAPI for sharing with other modules.
@@ -113,6 +137,13 @@ func (t *TelegramBot) handleMessage(ctx context.Context, msg *tgbotapi.Message) 
 			return
 		}
 		log.Printf("telegram inbox: new lead created for chat %d (%s)", chatID, contactName)
+
+		if t.identityLinker != nil && username != "" {
+			if err := t.identityLinker.LinkLeadToIdentity(ctx, t.ownerID, lead.ID, "", "", username); err != nil {
+				slog.WarnContext(ctx, "inbox: identity link failed",
+					"lead", lead.ID, "channel", "telegram", "err", err)
+			}
+		}
 
 		if prospect != nil {
 			if convErr := t.prospectRepo.ConvertToLead(ctx, prospect.ID, lead.ID); convErr != nil {
