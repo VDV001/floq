@@ -103,6 +103,62 @@ func (r *recordingProvider) Complete(_ context.Context, req CompletionRequest) (
 
 func (r *recordingProvider) Name() string { return "recording" }
 
+// --- AnalyzeImage (vision) ---
+
+// visionMockProvider satisfies the (yet-to-be-added) VisionProvider
+// interface that AIClient checks via type assertion. The interface is
+// optional: only providers that support multimodal calls implement it.
+type visionMockProvider struct {
+	mockProvider
+	visionResp string
+	visionErr  error
+	lastMime   string
+	lastPrompt string
+	lastBytes  int
+}
+
+func (v *visionMockProvider) AnalyzeImage(_ context.Context, data []byte, mimeType, prompt string) (string, error) {
+	v.lastMime = mimeType
+	v.lastPrompt = prompt
+	v.lastBytes = len(data)
+	return v.visionResp, v.visionErr
+}
+
+func TestAIClient_AnalyzeImage_Success(t *testing.T) {
+	vp := &visionMockProvider{visionResp: "Backlog: fix login"}
+	c := NewAIClient(vp, "", "", "", "", "")
+
+	got, err := c.AnalyzeImage(context.Background(), []byte("png"), "image/png", "OCR this")
+	require.NoError(t, err)
+	assert.Equal(t, "Backlog: fix login", got)
+	assert.Equal(t, "image/png", vp.lastMime)
+	assert.Equal(t, "OCR this", vp.lastPrompt)
+	assert.Equal(t, 3, vp.lastBytes)
+}
+
+func TestAIClient_AnalyzeImage_UnsupportedProvider(t *testing.T) {
+	// mockProvider does NOT implement VisionProvider; AnalyzeImage must
+	// return ErrVisionUnsupported so callers can route the attachment to
+	// a graceful skip path.
+	mp := &mockProvider{response: "irrelevant"}
+	c := NewAIClient(mp, "", "", "", "", "")
+
+	_, err := c.AnalyzeImage(context.Background(), []byte("png"), "image/png", "p")
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrVisionUnsupported)
+}
+
+func TestAIClient_AnalyzeImage_ProviderError(t *testing.T) {
+	vp := &visionMockProvider{visionErr: errors.New("rate limit")}
+	c := NewAIClient(vp, "", "", "", "", "")
+
+	_, err := c.AnalyzeImage(context.Background(), []byte("png"), "image/png", "p")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "analyze image")
+}
+
+// --- helpers ---
+
 func contains(haystack, needle string) bool {
 	// avoid pulling in strings import here to keep the helper self-contained
 	for i := 0; i+len(needle) <= len(haystack); i++ {
