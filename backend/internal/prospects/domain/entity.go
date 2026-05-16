@@ -5,6 +5,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/daniil/floq/internal/normalize"
 	"github.com/google/uuid"
 )
 
@@ -142,7 +143,7 @@ func NewProspect(userID uuid.UUID, name, company, title, email, source string) (
 		Name:          name,
 		Company:       company,
 		Title:         title,
-		Email:         email,
+		Email:         normalize.Email(email),
 		Source:        source,
 		Status:        ProspectStatusNew,
 		VerifyStatus:  VerifyStatusNotChecked,
@@ -150,6 +151,26 @@ func NewProspect(userID uuid.UUID, name, company, title, email, source string) (
 		CreatedAt:     now,
 		UpdatedAt:     now,
 	}, nil
+}
+
+// SetEmail canonicalizes and assigns the prospect's email. Callers must use
+// this rather than mutating Email directly so the lowercase+trim invariant
+// holds for every aggregate that leaves the domain layer.
+func (p *Prospect) SetEmail(email string) {
+	p.Email = normalize.Email(email)
+}
+
+// SetPhone canonicalizes and assigns the prospect's phone. Non-digit
+// characters are stripped; a leading "+" is preserved when present.
+func (p *Prospect) SetPhone(phone string) {
+	p.Phone = normalize.Phone(phone)
+}
+
+// SetTelegramUsername canonicalizes and assigns the Telegram handle: any
+// leading "@" is removed and the result is lowercased, matching Telegram's
+// own case-insensitive lookup semantics.
+func (p *Prospect) SetTelegramUsername(username string) {
+	p.TelegramUsername = normalize.TelegramUsername(username)
 }
 
 // CanLaunchSequence returns true if the prospect is eligible for a sequence launch.
