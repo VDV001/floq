@@ -70,6 +70,28 @@ func (r *IdentityRepository) FindByTelegramUsername(ctx context.Context, userID 
 	return r.scanIdentity(ctx, findIdentitySelect+`telegram_username = $2`, userID, tg, "telegram_username")
 }
 
+func (r *IdentityRepository) LinkLead(ctx context.Context, leadID, identityID uuid.UUID) error {
+	_, err := r.q(ctx).Exec(ctx,
+		`INSERT INTO lead_identities (lead_id, identity_id) VALUES ($1, $2)
+		 ON CONFLICT (lead_id, identity_id) DO NOTHING`,
+		leadID, identityID)
+	if err != nil {
+		return fmt.Errorf("link lead identity: %w", err)
+	}
+	return nil
+}
+
+func (r *IdentityRepository) LinkProspect(ctx context.Context, prospectID, identityID uuid.UUID) error {
+	_, err := r.q(ctx).Exec(ctx,
+		`INSERT INTO prospect_identities (prospect_id, identity_id) VALUES ($1, $2)
+		 ON CONFLICT (prospect_id, identity_id) DO NOTHING`,
+		prospectID, identityID)
+	if err != nil {
+		return fmt.Errorf("link prospect identity: %w", err)
+	}
+	return nil
+}
+
 // scanIdentity runs a single-row identity SELECT and unifies the
 // (nil, nil) on-not-found contract plus the error-wrapping label. The
 // SQL argument is built from compile-time literals only (no runtime
