@@ -10,19 +10,33 @@ import (
 // --- Response DTOs ---
 
 type LeadResponse struct {
-	ID             uuid.UUID `json:"id"`
-	UserID         uuid.UUID `json:"user_id"`
-	Channel        string    `json:"channel"`
-	ContactName    string    `json:"contact_name"`
-	Company        string    `json:"company"`
-	FirstMessage   string    `json:"first_message"`
-	Status         string    `json:"status"`
-	TelegramChatID *int64    `json:"telegram_chat_id,omitempty"`
-	EmailAddress   *string    `json:"email_address,omitempty"`
-	SourceID       *uuid.UUID `json:"source_id,omitempty"`
-	SourceName     string     `json:"source_name,omitempty"`
-	CreatedAt      time.Time  `json:"created_at"`
-	UpdatedAt      time.Time `json:"updated_at"`
+	ID             uuid.UUID                `json:"id"`
+	UserID         uuid.UUID                `json:"user_id"`
+	Channel        string                   `json:"channel"`
+	ContactName    string                   `json:"contact_name"`
+	Company        string                   `json:"company"`
+	FirstMessage   string                   `json:"first_message"`
+	Status         string                   `json:"status"`
+	TelegramChatID *int64                   `json:"telegram_chat_id,omitempty"`
+	EmailAddress   *string                  `json:"email_address,omitempty"`
+	SourceID       *uuid.UUID               `json:"source_id,omitempty"`
+	SourceName     string                   `json:"source_name,omitempty"`
+	CreatedAt      time.Time                `json:"created_at"`
+	UpdatedAt      time.Time                `json:"updated_at"`
+	Identity       *IdentitySummaryResponse `json:"identity,omitempty"`
+}
+
+// IdentitySummaryResponse projects the unified-identity context onto
+// the lead detail page. LinkedLeadIDs always includes the requesting
+// lead — clients dedupe when rendering the IdentityBadge sibling list.
+// All identifier fields are pre-canonicalized server-side; the
+// frontend renders them as-is.
+type IdentitySummaryResponse struct {
+	ID               uuid.UUID   `json:"id"`
+	Email            string      `json:"email,omitempty"`
+	Phone            string      `json:"phone,omitempty"`
+	TelegramUsername string      `json:"telegram_username,omitempty"`
+	LinkedLeadIDs    []uuid.UUID `json:"linked_lead_ids"`
 }
 
 type MessageResponse struct {
@@ -72,6 +86,28 @@ func LeadToResponse(l *domain.Lead) LeadResponse {
 		CreatedAt:      l.CreatedAt,
 		UpdatedAt:      l.UpdatedAt,
 	}
+}
+
+// LeadViewToResponse maps the full identity-aware view used by the
+// detail page. Identity is omitted from the JSON (omitempty) when the
+// lead has no linked Identity yet — the frontend treats absence as
+// "single-channel lead" and hides the IdentityBadge.
+func LeadViewToResponse(v *LeadView) LeadResponse {
+	resp := LeadToResponse(v.Lead)
+	if v.Identity != nil {
+		linked := v.LinkedLeadIDs
+		if linked == nil {
+			linked = []uuid.UUID{}
+		}
+		resp.Identity = &IdentitySummaryResponse{
+			ID:               v.Identity.ID,
+			Email:            v.Identity.Email,
+			Phone:            v.Identity.Phone,
+			TelegramUsername: v.Identity.TelegramUsername,
+			LinkedLeadIDs:    linked,
+		}
+	}
+	return resp
 }
 
 // LeadWithSourceToResponse projects the list read-model including source_name.

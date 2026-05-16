@@ -61,16 +61,16 @@ func (h *Handler) getLead() http.HandlerFunc {
 			httputil.WriteError(w, http.StatusBadRequest, "invalid lead id")
 			return
 		}
-		lead, err := h.uc.GetLead(r.Context(), id)
+		view, err := h.uc.GetLeadView(r.Context(), id)
 		if err != nil {
 			httputil.WriteError(w, http.StatusInternalServerError, "failed to get lead")
 			return
 		}
-		if lead == nil {
+		if view == nil {
 			httputil.WriteError(w, http.StatusNotFound, "lead not found")
 			return
 		}
-		httputil.WriteJSON(w, http.StatusOK, LeadToResponse(lead))
+		httputil.WriteJSON(w, http.StatusOK, LeadViewToResponse(view))
 	}
 }
 

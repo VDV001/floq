@@ -161,6 +161,63 @@ func TestHandler_GetLead_BadID(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
+func TestHandler_GetLead_IncludesIdentitySummary(t *testing.T) {
+	repo := newMockRepo()
+	leadID := uuid.New()
+	repo.leads[leadID] = &domain.Lead{
+		ID:          leadID,
+		Channel:     domain.ChannelEmail,
+		ContactName: "Bob",
+		Status:      domain.StatusNew,
+	}
+
+	identityID := uuid.New()
+	otherLead := uuid.New()
+	identities := newStubIdentityReader()
+	identities.byLead[leadID] = &domain.Identity{
+		ID:               identityID,
+		UserID:           uuid.New(),
+		Email:            "bob@acme.com",
+		TelegramUsername: "bob",
+	}
+	identities.linkedByIdentity[identityID] = []uuid.UUID{leadID, otherLead}
+
+	r := newTestRouter(NewUseCase(repo, &mockAI{}, nil, WithIdentityReader(identities)))
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", fmt.Sprintf("/api/leads/%s", leadID), nil)
+	r.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	var resp LeadResponse
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	require.NotNil(t, resp.Identity, "identity summary must be present when reader is wired and lead has a link")
+	assert.Equal(t, identityID, resp.Identity.ID)
+	assert.Equal(t, "bob@acme.com", resp.Identity.Email)
+	assert.Equal(t, "bob", resp.Identity.TelegramUsername)
+	assert.ElementsMatch(t, []uuid.UUID{leadID, otherLead}, resp.Identity.LinkedLeadIDs)
+}
+
+func TestHandler_GetLead_OmitsIdentityWhenNoLink(t *testing.T) {
+	repo := newMockRepo()
+	leadID := uuid.New()
+	repo.leads[leadID] = &domain.Lead{
+		ID:          leadID,
+		Channel:     domain.ChannelEmail,
+		ContactName: "Bob",
+		Status:      domain.StatusNew,
+	}
+
+	r := newTestRouter(NewUseCase(repo, &mockAI{}, nil, WithIdentityReader(newStubIdentityReader())))
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", fmt.Sprintf("/api/leads/%s", leadID), nil)
+	r.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	var resp LeadResponse
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.Nil(t, resp.Identity, "identity must be omitted when no link exists for the lead")
+}
+
 func TestHandler_UpdateStatus(t *testing.T) {
 	repo := newMockRepo()
 	leadID := uuid.New()

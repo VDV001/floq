@@ -128,7 +128,9 @@ func main() {
 	// 5. Use cases
 	txManager := db.NewTxManager(pool)
 	suggestionFinder := newProspectSuggestionFinderAdapter(txManager, leadsRepo, prospectsRepo)
-	leadsUC := leads.NewUseCase(leadsRepo, leadsAI, nil, leads.WithSuggestionFinder(suggestionFinder)) // sender set after bot init
+	leadsUC := leads.NewUseCase(leadsRepo, leadsAI, nil,
+		leads.WithSuggestionFinder(suggestionFinder),
+		leads.WithIdentityReader(identityRepo)) // sender set after bot init
 	prospectsUC := prospects.NewUseCase(prospectsRepo,
 		prospects.WithLeadChecker(newLeadCheckerAdapter(leadsRepo)),
 		prospects.WithIdentityLinker(identityLinker))

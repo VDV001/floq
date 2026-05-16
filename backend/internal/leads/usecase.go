@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"time"
 
 	"github.com/daniil/floq/internal/leads/domain"
@@ -18,6 +19,8 @@ type UseCase struct {
 	ai               domain.AIService
 	sender           domain.MessageSender
 	suggestionFinder domain.ProspectSuggestionFinder
+	identityReader   IdentityReader
+	logger           *slog.Logger
 }
 
 // Option configures a *UseCase at construction. Used for dependencies that
@@ -31,8 +34,19 @@ func WithSuggestionFinder(f domain.ProspectSuggestionFinder) Option {
 	return func(uc *UseCase) { uc.suggestionFinder = f }
 }
 
+// WithLogger overrides the default slog.Logger so the use case emits
+// structured warnings through the server-wide handler. Pass nil to
+// keep slog.Default().
+func WithLogger(l *slog.Logger) Option {
+	return func(uc *UseCase) {
+		if l != nil {
+			uc.logger = l
+		}
+	}
+}
+
 func NewUseCase(repo domain.Repository, ai domain.AIService, sender domain.MessageSender, opts ...Option) *UseCase {
-	uc := &UseCase{repo: repo, ai: ai, sender: sender}
+	uc := &UseCase{repo: repo, ai: ai, sender: sender, logger: slog.Default()}
 	for _, opt := range opts {
 		opt(uc)
 	}
