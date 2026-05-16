@@ -25,19 +25,40 @@ export default function LeadDetailPage() {
   const [qualLoading, setQualLoading] = useState(true);
   const [draftLoading, setDraftLoading] = useState(true);
   // Aggregated view is on by default — matches the server-side
-  // user_settings.aggregated_inbox_view DEFAULT TRUE. We hydrate from
-  // /api/settings on mount in case the user has opted out.
-  const [aggregated, setAggregated] = useState(true);
+  // user_settings.aggregated_inbox_view DEFAULT TRUE. The hydrate
+  // effect below upgrades the value from /api/settings before the
+  // messages fetch runs, so we never load a stale per-source thread
+  // when the user has opted in to aggregation (or vice versa).
+  const [aggregated, setAggregated] = useState<boolean | null>(null);
+
+  // Hydrate the inbox-view preference once. The second effect waits
+  // for `aggregated` to leave its `null` sentinel before fetching,
+  // so each user gets exactly one initial messages request — no
+  // duplicate-fetch flicker on the first mount.
+  useEffect(() => {
+    let cancelled = false;
+    api
+      .getSettings()
+      .then((s) => {
+        if (!cancelled) setAggregated(s.aggregated_inbox_view);
+      })
+      .catch(() => {
+        if (!cancelled) setAggregated(true); // server default
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
-    if (!leadId) return;
+    if (!leadId || aggregated === null) return;
     let cancelled = false;
+    const flag = aggregated;
 
     async function fetchData() {
       try { const leadData = await api.getLead(leadId); if (!cancelled) setLead(leadData); }
       catch { if (!cancelled) setError(true); }
-      try { const settings = await api.getSettings(); if (!cancelled) setAggregated(settings.aggregated_inbox_view); } catch {}
-      try { const msgs = await api.getMessages(leadId, { aggregated }); if (!cancelled) setMessages(msgs); } catch {}
+      try { const msgs = await api.getMessages(leadId, { aggregated: flag }); if (!cancelled) setMessages(msgs); } catch {}
       try { const qual = await api.getQualification(leadId); if (!cancelled) setQualification(qual); } catch {}
       if (!cancelled) setQualLoading(false);
       try { const d = await api.getDraft(leadId); if (!cancelled) { setDraft(d); } } catch {}
@@ -46,7 +67,7 @@ export default function LeadDetailPage() {
 
     fetchData();
     const interval = setInterval(() => {
-      api.getMessages(leadId, { aggregated }).then(setMessages).catch(() => {});
+      api.getMessages(leadId, { aggregated: flag }).then(setMessages).catch(() => {});
       api.getQualification(leadId).then(setQualification).catch(() => {});
     }, 5000);
     return () => { cancelled = true; clearInterval(interval); };
