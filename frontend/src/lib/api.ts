@@ -349,6 +349,20 @@ export interface Lead {
   source_name?: string;
   created_at: string;
   updated_at: string;
+  identity?: IdentitySummary;
+}
+
+// IdentitySummary surfaces the unified Identity attached to a lead via
+// lead_identities. All identifier fields are pre-canonicalized
+// server-side (lowercase + trim for email/tg, digits + leading "+"
+// for phone). `linked_lead_ids` always includes the current lead when
+// the identity is present — clients dedupe when rendering siblings.
+export interface IdentitySummary {
+  id: string;
+  email?: string;
+  phone?: string;
+  telegram_username?: string;
+  linked_lead_ids: string[];
 }
 
 export type SuggestionConfidence = "high" | "medium" | "low";
