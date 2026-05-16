@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/daniil/floq/internal/inbox/attachments"
+	"github.com/daniil/floq/internal/normalize"
 	"github.com/daniil/floq/internal/proxy"
 	"github.com/emersion/go-imap/v2"
 	"github.com/emersion/go-imap/v2/imapclient"
@@ -329,6 +330,7 @@ func extractTextBody(raw []byte) string {
 }
 
 func (e *EmailPoller) processEmail(ctx context.Context, fromName, fromEmail, body string, atts []attachments.Attachment) {
+	fromEmail = normalize.Email(fromEmail)
 	existing, err := e.repo.GetLeadByEmailAddress(ctx, e.ownerID, fromEmail)
 	if err != nil {
 		log.Printf("[email-poller] error looking up lead for %s: %v", fromEmail, err)
