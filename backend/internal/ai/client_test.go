@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // --- extractJSON ---
@@ -99,17 +100,159 @@ func TestResolveSenderVars_NoPlaceholders(t *testing.T) {
 // --- mockProvider ---
 
 type mockProvider struct {
-	name     string
+	name string
+	// response is returned on every Complete call when responses is empty
+	// (backward-compatible single-shot behaviour for existing tests).
 	response string
-	err      error
+	// responses, when non-empty, is consumed sequentially across Complete
+	// calls — index 0 first, index 1 second, etc. Tests that exercise
+	// multi-pass flows (style-check retry) use this to script per-call
+	// answers. Out-of-range calls return the err verbatim with empty
+	// content so the test catches "called more times than expected".
+	responses []string
+	err       error
+	calls     int // total Complete invocations, for assertions
 }
 
 func (m *mockProvider) Complete(_ context.Context, _ CompletionRequest) (string, error) {
+	m.calls++
+	if len(m.responses) > 0 {
+		if m.calls-1 >= len(m.responses) {
+			return "", m.err
+		}
+		return m.responses[m.calls-1], m.err
+	}
 	return m.response, m.err
 }
 
 func (m *mockProvider) Name() string {
 	return m.name
+}
+
+// --- Style-check wiring for Generate* ---
+//
+// Each cold/telegram/reply/followup pipeline should:
+//   - call provider exactly once when style-check is disabled, returning
+//     the draft verbatim;
+//   - call provider twice when style-check is enabled and the first style
+//     pass returns score ≥ 7 (draft + style pass), returning the first
+//     draft;
+//   - call provider three times when style-check is enabled and the
+//     first style pass returns score < 7 (draft + style pass + regen),
+//     returning the regenerated draft.
+//
+// We exercise all four use cases through a closure-table so the retry
+// contract stays consistent across them.
+
+type wiringCase struct {
+	name           string
+	enableStyle    bool
+	styleResponse  string // JSON of StyleResult; used when enableStyle is true
+	expectedCalls  int
+	expectedResult string
+}
+
+func styleCheckWiringCases() []wiringCase {
+	return []wiringCase{
+		{
+			name:           "disabled — single call, returns draft",
+			enableStyle:    false,
+			expectedCalls:  1,
+			expectedResult: "first draft",
+		},
+		{
+			name:           "enabled high score — no retry, returns first draft",
+			enableStyle:    true,
+			styleResponse:  `{"score":9,"issues":[],"feedback":""}`,
+			expectedCalls:  2,
+			expectedResult: "first draft",
+		},
+		{
+			name:           "enabled low score — one retry, returns regenerated",
+			enableStyle:    true,
+			styleResponse:  `{"score":3,"issues":["jargon"],"feedback":"more concrete"}`,
+			expectedCalls:  3,
+			expectedResult: "regenerated draft",
+		},
+	}
+}
+
+func newClientForWiring(provider Provider, enableStyle bool) *AIClient {
+	c := NewAIClient(provider, "https://cal.com/test", "Bob", "Acme", "+7", "https://acme.example")
+	if enableStyle {
+		c.EnableStyleCheck()
+	}
+	return c
+}
+
+func responsesForCase(tc wiringCase) []string {
+	if !tc.enableStyle {
+		return []string{"first draft"}
+	}
+	if tc.expectedCalls == 2 {
+		return []string{"first draft", tc.styleResponse}
+	}
+	return []string{"first draft", tc.styleResponse, "regenerated draft"}
+}
+
+func TestGenerateColdMessage_StyleCheck(t *testing.T) {
+	for _, tc := range styleCheckWiringCases() {
+		t.Run(tc.name, func(t *testing.T) {
+			mp := &mockProvider{responses: responsesForCase(tc)}
+			c := newClientForWiring(mp, tc.enableStyle)
+
+			got, err := c.GenerateColdMessage(context.Background(),
+				"Alice", "CTO", "Beta", "context", "step", "", "linkedin", "")
+			require.NoError(t, err)
+			assert.Equal(t, tc.expectedCalls, mp.calls)
+			assert.Equal(t, tc.expectedResult, got)
+		})
+	}
+}
+
+func TestGenerateTelegramMessage_StyleCheck(t *testing.T) {
+	for _, tc := range styleCheckWiringCases() {
+		t.Run(tc.name, func(t *testing.T) {
+			mp := &mockProvider{responses: responsesForCase(tc)}
+			c := newClientForWiring(mp, tc.enableStyle)
+
+			got, err := c.GenerateTelegramMessage(context.Background(),
+				"Alice", "CTO", "Beta", "context", "step", "", "linkedin", "")
+			require.NoError(t, err)
+			assert.Equal(t, tc.expectedCalls, mp.calls)
+			assert.Equal(t, tc.expectedResult, got)
+		})
+	}
+}
+
+func TestDraftReply_StyleCheck(t *testing.T) {
+	for _, tc := range styleCheckWiringCases() {
+		t.Run(tc.name, func(t *testing.T) {
+			mp := &mockProvider{responses: responsesForCase(tc)}
+			c := newClientForWiring(mp, tc.enableStyle)
+
+			got, err := c.DraftReply(context.Background(),
+				"Alice", "Beta", "email", "incoming message", `{"score":7}`)
+			require.NoError(t, err)
+			assert.Equal(t, tc.expectedCalls, mp.calls)
+			assert.Equal(t, tc.expectedResult, got)
+		})
+	}
+}
+
+func TestGenerateFollowup_StyleCheck(t *testing.T) {
+	for _, tc := range styleCheckWiringCases() {
+		t.Run(tc.name, func(t *testing.T) {
+			mp := &mockProvider{responses: responsesForCase(tc)}
+			c := newClientForWiring(mp, tc.enableStyle)
+
+			got, err := c.GenerateFollowup(context.Background(),
+				"Alice", "Beta", "7", "last message", "our reply")
+			require.NoError(t, err)
+			assert.Equal(t, tc.expectedCalls, mp.calls)
+			assert.Equal(t, tc.expectedResult, got)
+		})
+	}
 }
 
 // --- ProviderName ---

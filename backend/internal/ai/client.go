@@ -41,12 +41,13 @@ type QualificationResult struct {
 }
 
 type AIClient struct {
-	provider      Provider
-	bookingLink   string
-	senderName    string
-	senderCompany string
-	senderPhone   string
-	senderWebsite string
+	provider          Provider
+	bookingLink       string
+	senderName        string
+	senderCompany     string
+	senderPhone       string
+	senderWebsite     string
+	styleCheckEnabled bool
 }
 
 func NewAIClient(provider Provider, bookingLink, senderName, senderCompany, senderPhone, senderWebsite string) *AIClient {
