@@ -9,6 +9,34 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestNewLead_NormalizesEmail(t *testing.T) {
+	cases := []struct {
+		name string
+		in   *string
+		want *string
+	}{
+		{"upper-cased", strPtr("ALICE@ACME.COM"), strPtr("alice@acme.com")},
+		{"surrounding whitespace", strPtr("  alice@acme.com  "), strPtr("alice@acme.com")},
+		{"mixed case", strPtr("Alice@Acme.Com"), strPtr("alice@acme.com")},
+		{"already canonical", strPtr("alice@acme.com"), strPtr("alice@acme.com")},
+		{"nil stays nil", nil, nil},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			lead, err := NewLead(uuid.New(), ChannelEmail, "Alice", "Acme", "hello", nil, c.in)
+			require.NoError(t, err)
+			if c.want == nil {
+				assert.Nil(t, lead.EmailAddress)
+				return
+			}
+			require.NotNil(t, lead.EmailAddress)
+			assert.Equal(t, *c.want, *lead.EmailAddress)
+		})
+	}
+}
+
+func strPtr(s string) *string { return &s }
+
 func TestLead_InheritsSourceFrom(t *testing.T) {
 	leadSource := uuid.New()
 	prospectSource := uuid.New()
