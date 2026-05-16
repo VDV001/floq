@@ -12,6 +12,7 @@ import { ImapSection } from "@/components/settings/ImapSection";
 import { ResendSection } from "@/components/settings/ResendSection";
 import { SmtpSection } from "@/components/settings/SmtpSection";
 import { AiProviderSection } from "@/components/settings/AiProviderSection";
+import { InboxViewSection } from "@/components/settings/InboxViewSection";
 
 export default function SettingsPage() {
   const core = useSettingsCore();
@@ -65,6 +66,11 @@ export default function SettingsPage() {
         <div className="grid grid-cols-12 gap-8">
           <section className="col-span-12 flex flex-col gap-8 lg:col-span-4">
             <ProfileCard settings={core.settings} />
+            <InboxViewSection
+              aggregated={core.settings?.aggregated_inbox_view ?? true}
+              saving={core.saving}
+              onToggle={(next) => core.save({ aggregated_inbox_view: next })}
+            />
             <NotificationsCard notifyTg={notifyTg} setNotifyTg={setNotifyTg} notifyEmail={notifyEmail} setNotifyEmail={setNotifyEmail} telegramBotActive={tgBot.botActive} />
             <button onClick={handleSave} disabled={core.saving}
               className={`flex w-full items-center justify-center gap-3 rounded-xl px-6 py-4 text-base font-extrabold text-white shadow-lg transition-all hover:-translate-y-0.5 active:scale-95 disabled:opacity-50 ${
