@@ -1,6 +1,12 @@
 package ai
 
-import "context"
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"log/slog"
+	"strings"
+)
 
 // StyleResult holds the outcome of a style-check pass over AI-generated
 // outreach copy. Score is 0–10 (10 = lively, personal, no jargon; 0 =
@@ -23,11 +29,32 @@ const StyleCheckPassThreshold = 7
 // channel ("email" | "telegram" | "reply" | "followup") tunes the
 // strictness — email tolerates a slightly more formal tone than TG.
 //
-// This is the RED stub: it returns a high score so downstream callers
-// don't trigger a retry. The GREEN commit replaces this with a real
-// provider call that parses StyleResult JSON.
-func (c *AIClient) StyleCheck(_ context.Context, _ string, _ string) (*StyleResult, error) {
-	return &StyleResult{Score: 10}, nil
+// Returns a parsed StyleResult. JSON errors and provider errors are
+// wrapped with "style check:" so callers can match on substring.
+func (c *AIClient) StyleCheck(ctx context.Context, draft, channel string) (*StyleResult, error) {
+	user := strings.NewReplacer(
+		"{{channel}}", channel,
+		"{{draft}}", draft,
+	).Replace(StyleCheckUser)
+
+	resp, err := c.provider.Complete(ctx, CompletionRequest{
+		Messages: []Message{
+			{Role: "system", Content: StyleCheckSystem},
+			{Role: "user", Content: user},
+		},
+		MaxTokens: 512,
+		Mode:      ModelModeBudget,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("style check: %w", err)
+	}
+
+	var result StyleResult
+	cleaned := extractJSON(resp)
+	if err := json.Unmarshal([]byte(cleaned), &result); err != nil {
+		return nil, fmt.Errorf("style check: parse response: %w (raw: %s)", err, resp[:min(len(resp), 200)])
+	}
+	return &result, nil
 }
 
 // EnableStyleCheck toggles the post-generation style-check pass on. By
@@ -35,4 +62,55 @@ func (c *AIClient) StyleCheck(_ context.Context, _ string, _ string) (*StyleResu
 // The composition root wires this from user settings.
 func (c *AIClient) EnableStyleCheck() {
 	c.styleCheckEnabled = true
+}
+
+// applyStyleCheck runs the post-generation pipeline: if style-check is
+// enabled and the draft scores below StyleCheckPassThreshold, regenFn is
+// invoked exactly once with the LLM's feedback string to produce a retry.
+//
+// Failure modes (style-check error, JSON parse error, provider error in
+// the second pass): degrade gracefully and return the original draft.
+// Outreach generation must not block on a style-pass outage — the original
+// draft is still sendable.
+func (c *AIClient) applyStyleCheck(
+	ctx context.Context,
+	draft, channel string,
+	regenFn func(ctx context.Context, feedback string) (string, error),
+) string {
+	if !c.styleCheckEnabled {
+		return draft
+	}
+	result, err := c.StyleCheck(ctx, draft, channel)
+	if err != nil {
+		slog.WarnContext(ctx, "style check failed; using original draft",
+			"channel", channel, "err", err)
+		return draft
+	}
+	if result.Score >= StyleCheckPassThreshold {
+		return draft
+	}
+	regen, err := regenFn(ctx, result.Feedback)
+	if err != nil {
+		slog.WarnContext(ctx, "style retry failed; using original draft",
+			"channel", channel, "err", err)
+		return draft
+	}
+	return regen
+}
+
+// retryUserPrompt appends the StyleRetryHint to the user-prompt content of
+// the last message in msgs, returning a new slice (msgs is not mutated).
+// Used by Generate*'s regenFn closures so they don't each rewrite the
+// concatenation by hand.
+func retryUserPrompt(msgs []Message, feedback string) []Message {
+	out := make([]Message, len(msgs))
+	copy(out, msgs)
+	hint := strings.ReplaceAll(StyleRetryHint, "{{feedback}}", feedback)
+	for i := len(out) - 1; i >= 0; i-- {
+		if out[i].Role == "user" {
+			out[i].Content = out[i].Content + "\n\n" + hint
+			break
+		}
+	}
+	return out
 }

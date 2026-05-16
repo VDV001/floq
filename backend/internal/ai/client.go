@@ -122,18 +122,23 @@ func (c *AIClient) DraftReply(ctx context.Context, contactName, company, channel
 	)
 	userPrompt := r.Replace(DraftUser)
 
-	resp, err := c.provider.Complete(ctx, CompletionRequest{
+	req := CompletionRequest{
 		Messages: []Message{
 			{Role: "system", Content: c.resolveSystemPrompt(DraftSystem)},
 			{Role: "user", Content: userPrompt},
 		},
 		MaxTokens: 1024,
 		Mode:      ModelModeExecute,
-	})
+	}
+	resp, err := c.provider.Complete(ctx, req)
 	if err != nil {
 		return "", fmt.Errorf("ai draft reply: %w", err)
 	}
-	return resp, nil
+	return c.applyStyleCheck(ctx, resp, "reply", func(ctx context.Context, fb string) (string, error) {
+		retry := req
+		retry.Messages = retryUserPrompt(req.Messages, fb)
+		return c.provider.Complete(ctx, retry)
+	}), nil
 }
 
 func (c *AIClient) GenerateFollowup(ctx context.Context, contactName, company, daysAgo, lastMessage, ourLastReply string) (string, error) {
@@ -146,18 +151,23 @@ func (c *AIClient) GenerateFollowup(ctx context.Context, contactName, company, d
 	)
 	userPrompt := r.Replace(FollowupUser)
 
-	resp, err := c.provider.Complete(ctx, CompletionRequest{
+	req := CompletionRequest{
 		Messages: []Message{
 			{Role: "system", Content: FollowupSystem},
 			{Role: "user", Content: userPrompt},
 		},
 		MaxTokens: 1024,
 		Mode:      ModelModeExecute,
-	})
+	}
+	resp, err := c.provider.Complete(ctx, req)
 	if err != nil {
 		return "", fmt.Errorf("ai generate followup: %w", err)
 	}
-	return resp, nil
+	return c.applyStyleCheck(ctx, resp, "followup", func(ctx context.Context, fb string) (string, error) {
+		retry := req
+		retry.Messages = retryUserPrompt(req.Messages, fb)
+		return c.provider.Complete(ctx, retry)
+	}), nil
 }
 
 func (c *AIClient) GenerateColdMessage(ctx context.Context, name, title, company, prospectContext, stepHint, previousMessage, source, feedbackExamples string) (string, error) {
@@ -182,18 +192,23 @@ func (c *AIClient) GenerateColdMessage(ctx context.Context, name, title, company
 		systemPrompt += "\n\n" + feedbackExamples
 	}
 
-	resp, err := c.provider.Complete(ctx, CompletionRequest{
+	req := CompletionRequest{
 		Messages: []Message{
 			{Role: "system", Content: systemPrompt},
 			{Role: "user", Content: userPrompt},
 		},
 		MaxTokens: 2048,
 		Mode:      ModelModeExecute,
-	})
+	}
+	resp, err := c.provider.Complete(ctx, req)
 	if err != nil {
 		return "", fmt.Errorf("ai cold message: %w", err)
 	}
-	return resp, nil
+	return c.applyStyleCheck(ctx, resp, "email", func(ctx context.Context, fb string) (string, error) {
+		retry := req
+		retry.Messages = retryUserPrompt(req.Messages, fb)
+		return c.provider.Complete(ctx, retry)
+	}), nil
 }
 
 func (c *AIClient) GenerateTelegramMessage(ctx context.Context, name, title, company, prospectContext, stepHint, previousMessage, source, feedbackExamples string) (string, error) {
@@ -218,18 +233,23 @@ func (c *AIClient) GenerateTelegramMessage(ctx context.Context, name, title, com
 		systemPrompt += "\n\n" + feedbackExamples
 	}
 
-	resp, err := c.provider.Complete(ctx, CompletionRequest{
+	req := CompletionRequest{
 		Messages: []Message{
 			{Role: "system", Content: systemPrompt},
 			{Role: "user", Content: r.Replace(TelegramOutreachUser)},
 		},
 		MaxTokens: 2048,
 		Mode:      ModelModeExecute,
-	})
+	}
+	resp, err := c.provider.Complete(ctx, req)
 	if err != nil {
 		return "", fmt.Errorf("ai telegram message: %w", err)
 	}
-	return resp, nil
+	return c.applyStyleCheck(ctx, resp, "telegram", func(ctx context.Context, fb string) (string, error) {
+		retry := req
+		retry.Messages = retryUserPrompt(req.Messages, fb)
+		return c.provider.Complete(ctx, retry)
+	}), nil
 }
 
 // TelegramReplyResult holds the AI response and whether escalation to a manager is needed.
