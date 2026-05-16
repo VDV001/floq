@@ -95,14 +95,62 @@ func New(vc VisionClient) *Analyzer {
 // reported through Result.Skipped + Result.Err so a batch of
 // attachments can be processed with a uniform loop.
 //
-// RED stub: routes every attachment to SkipUnsupported. The GREEN
-// commit replaces this with real PDF / image dispatch.
-func (a *Analyzer) Analyze(_ context.Context, att Attachment) Result {
-	return Result{
-		Filename:    att.Filename,
-		ContentType: att.ContentType,
-		Skipped:     SkipUnsupported,
-		Err:         ErrUnsupportedFormat,
+// Routing: any payload over MaxBytes is skipped before MIME inspection
+// so a 50 MB PDF never even reaches the parser. PDFs go through the
+// text-layer extractor; image/* MIME types go through the VisionClient;
+// everything else is skipped as SkipUnsupported.
+func (a *Analyzer) Analyze(ctx context.Context, att Attachment) Result {
+	res := Result{Filename: att.Filename, ContentType: att.ContentType}
+
+	if len(att.Data) > MaxBytes {
+		res.Skipped = SkipTooLarge
+		res.Err = ErrTooLarge
+		return res
+	}
+
+	mime := strings.ToLower(strings.TrimSpace(att.ContentType))
+	switch {
+	case strings.HasPrefix(mime, "application/pdf"):
+		text, pages, err := extractPDFText(att.Data)
+		res.Pages = pages
+		switch {
+		case errors.Is(err, ErrTooManyPages):
+			res.Skipped = SkipTooManyPages
+			res.Err = err
+			return res
+		case errors.Is(err, ErrNoTextLayer):
+			res.Skipped = SkipNoTextLayer
+			res.Err = err
+			return res
+		case err != nil:
+			res.Skipped = SkipExtractError
+			res.Err = err
+			return res
+		}
+		res.Text = text
+		res.Preview = preview(text)
+		return res
+
+	case strings.HasPrefix(mime, "image/"):
+		if a.vc == nil {
+			res.Skipped = SkipUnsupported
+			res.Err = ErrUnsupportedFormat
+			return res
+		}
+		text, err := extractImageText(ctx, a.vc, att.Data, mime)
+		if err != nil {
+			res.Skipped = SkipVisionError
+			res.Err = err
+			return res
+		}
+		res.Text = text
+		res.Preview = preview(text)
+		return res
+
+	default:
+		res.Skipped = SkipUnsupported
+		res.Err = ErrUnsupportedFormat
+		return res
 	}
 }
 

@@ -2,12 +2,16 @@ package attachments
 
 import (
 	"context"
+	_ "embed"
 	"errors"
 	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 )
+
+//go:embed testdata/hello.pdf
+var helloPDF []byte
 
 // --- helpers ---
 
@@ -28,15 +32,12 @@ func (m *mockVisionClient) AnalyzeImage(_ context.Context, data []byte, mimeType
 	return m.resp, m.err
 }
 
-// pdfBytes is a tiny but structurally valid PDF carrying "Hello PDF".
-// The GREEN commit will swap in a real go:embed of testdata/hello.pdf;
-// the RED stub doesn't need real PDF bytes because every code path
-// returns SkipUnsupported.
+// pdfBytes returns the embedded test PDF (see testdata/NOTICE.txt for
+// provenance). One page, ~220 chars of text starting with
+// "This is a heading".
 func pdfBytes(t *testing.T) []byte {
 	t.Helper()
-	// GREEN commit replaces with go:embed; RED returns a placeholder so
-	// the test compiles. The stub Analyze() will skip this anyway.
-	return []byte("%PDF-1.0\n%%EOF\n")
+	return helloPDF
 }
 
 func oversized(t *testing.T) []byte {
@@ -59,7 +60,7 @@ func TestAnalyzer_Analyze(t *testing.T) {
 			name:        "PDF success: text is extracted",
 			att:         Attachment{Filename: "kp.pdf", ContentType: "application/pdf", Data: pdfBytes(t)},
 			vc:          &mockVisionClient{},
-			wantTextHas: "Hello PDF",
+			wantTextHas: "This is a heading",
 		},
 		{
 			name:        "PDF too large: skipped with too_large",
