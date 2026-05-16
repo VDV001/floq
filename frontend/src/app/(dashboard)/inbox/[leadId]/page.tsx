@@ -24,6 +24,10 @@ export default function LeadDetailPage() {
   const [error, setError] = useState(false);
   const [qualLoading, setQualLoading] = useState(true);
   const [draftLoading, setDraftLoading] = useState(true);
+  // Aggregated view is on by default — matches the server-side
+  // user_settings.aggregated_inbox_view DEFAULT TRUE. We hydrate from
+  // /api/settings on mount in case the user has opted out.
+  const [aggregated, setAggregated] = useState(true);
 
   useEffect(() => {
     if (!leadId) return;
@@ -32,7 +36,8 @@ export default function LeadDetailPage() {
     async function fetchData() {
       try { const leadData = await api.getLead(leadId); if (!cancelled) setLead(leadData); }
       catch { if (!cancelled) setError(true); }
-      try { const msgs = await api.getMessages(leadId); if (!cancelled) setMessages(msgs); } catch {}
+      try { const settings = await api.getSettings(); if (!cancelled) setAggregated(settings.aggregated_inbox_view); } catch {}
+      try { const msgs = await api.getMessages(leadId, { aggregated }); if (!cancelled) setMessages(msgs); } catch {}
       try { const qual = await api.getQualification(leadId); if (!cancelled) setQualification(qual); } catch {}
       if (!cancelled) setQualLoading(false);
       try { const d = await api.getDraft(leadId); if (!cancelled) { setDraft(d); } } catch {}
@@ -41,11 +46,11 @@ export default function LeadDetailPage() {
 
     fetchData();
     const interval = setInterval(() => {
-      api.getMessages(leadId).then(setMessages).catch(() => {});
+      api.getMessages(leadId, { aggregated }).then(setMessages).catch(() => {});
       api.getQualification(leadId).then(setQualification).catch(() => {});
     }, 5000);
     return () => { cancelled = true; clearInterval(interval); };
-  }, [leadId]);
+  }, [leadId, aggregated]);
 
   if (loading) return <div className="flex h-full items-center justify-center"><div className="size-8 animate-spin rounded-full border-4 border-[#3b6ef6] border-t-transparent" /></div>;
   if (error || !lead) return (

@@ -142,8 +142,15 @@ export const api = {
     apiFetch<Record<string, number>>("/api/leads/suggestion-counts"),
 
   // Messages
-  getMessages: (leadId: string) =>
-    apiFetch<Message[]>(`/api/leads/${leadId}/messages`),
+  //
+  // When `aggregated` is true the backend merges messages from every
+  // lead sharing the same Identity (multi-source dedup, #27). Default
+  // is single-lead — backward-compatible with callers that don't pass
+  // the flag.
+  getMessages: (leadId: string, opts?: { aggregated?: boolean }) =>
+    apiFetch<Message[]>(
+      `/api/leads/${leadId}/messages${opts?.aggregated ? "?aggregated=true" : ""}`
+    ),
   sendMessage: (leadId: string, body: string) =>
     apiFetch<Message>(`/api/leads/${leadId}/send`, {
       method: "POST",
@@ -546,4 +553,6 @@ export interface UserSettings {
   auto_followup_days: number;
   auto_prospect_to_lead: boolean;
   auto_verify_import: boolean;
+  ai_style_check_enabled?: boolean;
+  aggregated_inbox_view: boolean;
 }
