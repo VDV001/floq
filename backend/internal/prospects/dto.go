@@ -83,3 +83,28 @@ func ProspectsToResponse(prospects []domain.ProspectWithSource) []ProspectRespon
 	}
 	return resp
 }
+
+// SkippedRowResponse is the wire representation of a row that the CSV
+// importer dropped.
+type SkippedRowResponse struct {
+	Line   int    `json:"line"`
+	Reason string `json:"reason"`
+}
+
+// ImportReportResponse is the wire representation of an ImportCSV result.
+// Skipped is guaranteed to be a non-nil slice so the frontend can iterate
+// without nil-checks; the use case layer carries it as the natural Go
+// nil-or-slice and the mapper coerces here.
+type ImportReportResponse struct {
+	Imported int                  `json:"imported"`
+	Skipped  []SkippedRowResponse `json:"skipped"`
+}
+
+// ImportReportToResponse maps the use case ImportReport into its wire form.
+func ImportReportToResponse(r *ImportReport) ImportReportResponse {
+	skipped := make([]SkippedRowResponse, len(r.Skipped))
+	for i, s := range r.Skipped {
+		skipped[i] = SkippedRowResponse{Line: s.Line, Reason: s.Reason}
+	}
+	return ImportReportResponse{Imported: r.Imported, Skipped: skipped}
+}

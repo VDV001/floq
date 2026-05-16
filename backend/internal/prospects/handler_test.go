@@ -289,10 +289,7 @@ func TestHandler_ImportCSV_OK(t *testing.T) {
 	router.ServeHTTP(w, req)
 
 	assert.Equal(t, http.StatusOK, w.Code)
-	var resp struct {
-		Imported int          `json:"imported"`
-		Skipped  []SkippedRow `json:"skipped"`
-	}
+	var resp ImportReportResponse
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 	assert.Equal(t, 1, resp.Imported)
 	assert.Empty(t, resp.Skipped)

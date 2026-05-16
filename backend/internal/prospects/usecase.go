@@ -17,18 +17,18 @@ import (
 // Line is 1-indexed and counts the header (so the first data row is line 2),
 // matching what a user sees in a spreadsheet editor.
 type SkippedRow struct {
-	Line   int    `json:"line"`
-	Reason string `json:"reason"`
+	Line   int
+	Reason string
 }
 
 // ImportReport is the structured result of a CSV import. Imported holds the
 // number of prospects successfully persisted; Skipped enumerates rows that
-// were not imported together with a human-readable reason. The caller (HTTP
-// handler) surfaces both pieces to the UI so users can see what was dropped
-// and why instead of silently observing "Импортировано 0".
+// were not imported together with a human-readable reason. The transport
+// layer maps this to a JSON DTO — the use case stays free of presentation
+// concerns (no JSON tags, no empty-slice coercion).
 type ImportReport struct {
-	Imported int          `json:"imported"`
-	Skipped  []SkippedRow `json:"skipped"`
+	Imported int
+	Skipped  []SkippedRow
 }
 
 var columnAliases = map[string]string{

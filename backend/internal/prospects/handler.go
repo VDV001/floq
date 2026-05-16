@@ -121,14 +121,7 @@ func (h *Handler) importCSV() http.HandlerFunc {
 			}
 			return
 		}
-
-		// Always emit a JSON array for "skipped" so the frontend can iterate
-		// without nil-checks. Imported count remains the primary integer
-		// surfaced in the existing UI toast.
-		if report.Skipped == nil {
-			report.Skipped = []SkippedRow{}
-		}
-		httputil.WriteJSON(w, http.StatusOK, report)
+		httputil.WriteJSON(w, http.StatusOK, ImportReportToResponse(report))
 	}
 }
 
