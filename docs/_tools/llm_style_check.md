@@ -27,7 +27,8 @@ below the threshold.
   `StyleRetryHint` appended to the user prompt.
 - **Toggle:** `user_settings.ai_style_check_enabled` (BOOLEAN, default `TRUE`,
   migration 025). The composition root in `cmd/server/main.go` reads the
-  owner's setting at boot and calls `AIClient.EnableStyleCheck()`.
+  owner's setting at boot and passes the value through
+  `ai.WithStyleCheck(enabled)` to `NewAIClient`.
 - **Mode:** `ModelMode.Budget` — Haiku / gpt-4o-mini / local Ollama. Style
   checks dominate by volume; we trade reasoning depth for cost.
 
