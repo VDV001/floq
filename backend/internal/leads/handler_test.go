@@ -254,6 +254,61 @@ func TestHandler_ListMessages_ForbidsCrossTenant(t *testing.T) {
 		"cross-tenant message read must 404 (per-tenant boundary, no info leak)")
 }
 
+func TestHandler_LeadSubresources_ForbidCrossTenant(t *testing.T) {
+	// Six lead sub-resources are owned by user A; user B (the
+	// attacker) tries to touch each with a valid JWT and the
+	// owner's leadID. Every endpoint must answer 404 — the body
+	// changes per operation but the contract is uniform: cross-tenant
+	// probes can never observe a non-404 response.
+	cases := []struct {
+		name   string
+		method string
+		path   func(uuid.UUID) string
+		body   func() *bytes.Buffer
+	}{
+		{name: "PATCH status", method: "PATCH",
+			path: func(id uuid.UUID) string { return fmt.Sprintf("/api/leads/%s/status", id) },
+			body: func() *bytes.Buffer { return bytes.NewBufferString(`{"status":"qualified"}`) }},
+		{name: "POST send", method: "POST",
+			path: func(id uuid.UUID) string { return fmt.Sprintf("/api/leads/%s/send", id) },
+			body: func() *bytes.Buffer { return bytes.NewBufferString(`{"body":"poke"}`) }},
+		{name: "GET qualification", method: "GET",
+			path: func(id uuid.UUID) string { return fmt.Sprintf("/api/leads/%s/qualification", id) }},
+		{name: "POST qualify", method: "POST",
+			path: func(id uuid.UUID) string { return fmt.Sprintf("/api/leads/%s/qualify", id) }},
+		{name: "GET draft", method: "GET",
+			path: func(id uuid.UUID) string { return fmt.Sprintf("/api/leads/%s/draft", id) }},
+		{name: "POST draft regen", method: "POST",
+			path: func(id uuid.UUID) string { return fmt.Sprintf("/api/leads/%s/draft/regen", id) }},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			repo := newMockRepo()
+			ownerID := uuid.New()
+			attackerID := uuid.New()
+			leadID := uuid.New()
+			repo.leads[leadID] = &domain.Lead{
+				ID: leadID, UserID: ownerID,
+				Channel: domain.ChannelEmail, ContactName: "Owner", Status: domain.StatusNew,
+			}
+
+			r := newTestRouter(NewUseCase(repo, &mockAI{}, nil))
+			w := httptest.NewRecorder()
+			var body *bytes.Buffer
+			if tc.body != nil {
+				body = tc.body()
+			}
+			req := reqWithUser(tc.method, tc.path(leadID), body, attackerID)
+			req.Header.Set("Content-Type", "application/json")
+			r.ServeHTTP(w, req)
+
+			assert.Equal(t, http.StatusNotFound, w.Code,
+				"%s must 404 for foreign tenant — no info leak", tc.name)
+		})
+	}
+}
+
 func TestHandler_ListMessages_Aggregated_ForbidsCrossTenant(t *testing.T) {
 	repo := newMockRepo()
 	ownerID := uuid.New()
