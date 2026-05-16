@@ -14,6 +14,7 @@ import (
 	prospectsdomain "github.com/daniil/floq/internal/prospects/domain"
 	settingsdomain "github.com/daniil/floq/internal/settings/domain"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 // --- LeadChecker adapter (prospects → leads boundary) ---
@@ -428,5 +429,99 @@ func (a *chatAIAdapter) Complete(ctx context.Context, req chat.ChatCompletionReq
 
 func (a *chatAIAdapter) ProviderName() string {
 	return a.client.ProviderName()
+}
+
+// --- IdentityLinker adapter (inbox + prospects → leads-identity boundary) ---
+
+// identityLinkerAdapter bridges the narrow IdentityLinker ports the
+// inbox + prospects contexts expose to the leads-context machinery.
+// Both LinkLeadToIdentity and LinkProspectToIdentity route through one
+// resolver, so a lead and a prospect that share an identifier collapse
+// to the same Identity row.
+type identityLinkerAdapter struct {
+	resolver leadsdomain.IdentityResolver
+	repo     leadsdomain.IdentityRepository
+}
+
+// Compile-time checks: the adapter must satisfy BOTH narrow ports.
+var (
+	_ inbox.IdentityLinker     = (*identityLinkerAdapter)(nil)
+	_ prospects.IdentityLinker = (*identityLinkerAdapter)(nil)
+)
+
+func newIdentityLinkerAdapter(resolver leadsdomain.IdentityResolver, repo leadsdomain.IdentityRepository) *identityLinkerAdapter {
+	return &identityLinkerAdapter{resolver: resolver, repo: repo}
+}
+
+func (a *identityLinkerAdapter) LinkLeadToIdentity(ctx context.Context, userID, leadID uuid.UUID, email, phone, telegramUsername string) error {
+	id, err := a.resolver.Resolve(ctx, userID, email, phone, telegramUsername)
+	if err != nil {
+		return fmt.Errorf("resolve identity for lead: %w", err)
+	}
+	return a.repo.LinkLead(ctx, leadID, id.ID)
+}
+
+func (a *identityLinkerAdapter) LinkProspectToIdentity(ctx context.Context, userID, prospectID uuid.UUID, email, phone, telegramUsername string) error {
+	id, err := a.resolver.Resolve(ctx, userID, email, phone, telegramUsername)
+	if err != nil {
+		return fmt.Errorf("resolve identity for prospect: %w", err)
+	}
+	return a.repo.LinkProspect(ctx, prospectID, id.ID)
+}
+
+// --- SQL BackfillSource for IdentityBackfill ---
+
+// sqlBackfillSource feeds IdentityBackfill from the legacy leads +
+// prospects tables. Queries are intentionally simple full scans
+// scoped by `... IS NOT NULL` / non-empty filters — backfill is a
+// one-shot startup job, not a hot path.
+type sqlBackfillSource struct {
+	pool *pgxpool.Pool
+}
+
+var _ leads.BackfillSource = (*sqlBackfillSource)(nil)
+
+func newSQLBackfillSource(pool *pgxpool.Pool) *sqlBackfillSource {
+	return &sqlBackfillSource{pool: pool}
+}
+
+func (s *sqlBackfillSource) LeadsForBackfill(ctx context.Context) ([]leads.LeadIdentifierRow, error) {
+	rows, err := s.pool.Query(ctx,
+		`SELECT id, user_id, COALESCE(email_address, '')
+		 FROM leads
+		 WHERE email_address IS NOT NULL AND email_address <> ''`)
+	if err != nil {
+		return nil, fmt.Errorf("backfill source: query leads: %w", err)
+	}
+	defer rows.Close()
+	var out []leads.LeadIdentifierRow
+	for rows.Next() {
+		var r leads.LeadIdentifierRow
+		if err := rows.Scan(&r.LeadID, &r.UserID, &r.Email); err != nil {
+			return nil, fmt.Errorf("backfill source: scan lead: %w", err)
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+func (s *sqlBackfillSource) ProspectsForBackfill(ctx context.Context) ([]leads.ProspectIdentifierRow, error) {
+	rows, err := s.pool.Query(ctx,
+		`SELECT id, user_id, email, phone, telegram_username
+		 FROM prospects
+		 WHERE email <> '' OR phone <> '' OR telegram_username <> ''`)
+	if err != nil {
+		return nil, fmt.Errorf("backfill source: query prospects: %w", err)
+	}
+	defer rows.Close()
+	var out []leads.ProspectIdentifierRow
+	for rows.Next() {
+		var r leads.ProspectIdentifierRow
+		if err := rows.Scan(&r.ProspectID, &r.UserID, &r.Email, &r.Phone, &r.TelegramUsername); err != nil {
+			return nil, fmt.Errorf("backfill source: scan prospect: %w", err)
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
 }
 

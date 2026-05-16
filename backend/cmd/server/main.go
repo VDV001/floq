@@ -115,18 +115,23 @@ func main() {
 	prospectsRepo := prospects.NewRepository(pool)
 	sourcesRepo := sources.NewRepository(pool)
 	sequencesRepo := sequences.NewRepository(pool)
+	identityRepo := leads.NewIdentityRepository(pool)
 
 	// 4. Adapters
 	leadsAI := leads.NewAIAdapter(aiClient)
 	seqAI := sequences.NewAIMessageGeneratorAdapter(aiClient)
 	prospectReader := sequences.NewProspectReaderAdapter(prospectsRepo)
 	leadCreatorAdapter := sequences.NewLeadCreatorAdapter(leadsRepo)
+	identityResolver := leads.NewIdentityResolver(identityRepo)
+	identityLinker := newIdentityLinkerAdapter(identityResolver, identityRepo)
 
 	// 5. Use cases
 	txManager := db.NewTxManager(pool)
 	suggestionFinder := newProspectSuggestionFinderAdapter(txManager, leadsRepo, prospectsRepo)
 	leadsUC := leads.NewUseCase(leadsRepo, leadsAI, nil, leads.WithSuggestionFinder(suggestionFinder)) // sender set after bot init
-	prospectsUC := prospects.NewUseCase(prospectsRepo, prospects.WithLeadChecker(newLeadCheckerAdapter(leadsRepo)))
+	prospectsUC := prospects.NewUseCase(prospectsRepo,
+		prospects.WithLeadChecker(newLeadCheckerAdapter(leadsRepo)),
+		prospects.WithIdentityLinker(identityLinker))
 	sourcesUC := sources.NewUseCase(sourcesRepo, sources.WithStatsReader(sourcesRepo))
 	migrateOrphanProspects(pool, ownerID)
 	sequencesUC := sequences.NewUseCase(sequencesRepo, seqAI, prospectReader, leadCreatorAdapter, sequences.WithTxManager(txManager))
@@ -205,7 +210,8 @@ func main() {
 		tgToken = dbCfg.TelegramBotToken
 	}
 	if tgToken != "" {
-		tgBot, err := inbox.NewTelegramBot(tgToken, inboxLeadAdapter, prospectAdapter, inboxAI, ownerID, cfg.BookingLink, httpClient)
+		tgBot, err := inbox.NewTelegramBot(tgToken, inboxLeadAdapter, prospectAdapter, inboxAI, ownerID, cfg.BookingLink, httpClient,
+			inbox.WithTelegramIdentityLinker(identityLinker))
 		if err != nil {
 			log.Printf("telegram bot init failed: %v", err)
 		} else {
@@ -222,8 +228,21 @@ func main() {
 	// (analyser returns SkipVisionError, lead is still created).
 	attachmentAnalyzer := attachments.New(aiClient)
 	emailPoller := inbox.NewEmailPoller(inboxCfg, ownerID, cfg.IMAPHost, cfg.IMAPPort, cfg.IMAPUser, cfg.IMAPPassword, inboxLeadAdapter, prospectAdapter, sequencesRepo, inboxAI, proxyDialer,
-		inbox.WithAttachmentAnalyzer(attachmentAnalyzer))
+		inbox.WithAttachmentAnalyzer(attachmentAnalyzer),
+		inbox.WithIdentityLinker(identityLinker))
 	go emailPoller.Start(ctx)
+
+	// Identity backfill: walk existing leads + prospects once on
+	// startup, attach each row to its unified Identity via the same
+	// resolver. Idempotent — repeated invocations produce no
+	// duplicate links (ON CONFLICT DO NOTHING). Errors per-row are
+	// logged and swallowed; ctx cancellation aborts the walk.
+	go func() {
+		runner := leads.NewIdentityBackfill(newSQLBackfillSource(pool), identityResolver, identityRepo)
+		if err := runner.Run(ctx); err != nil {
+			log.Printf("identity backfill: %v", err)
+		}
+	}()
 
 	// 10. Reminders cron (hourly, checks for stale leads)
 	var notifier reminders.Notifier
