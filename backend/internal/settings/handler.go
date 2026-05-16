@@ -100,6 +100,9 @@ type Settings struct {
 	AutoFollowupDays   int  `json:"auto_followup_days"`
 	AutoProspectToLead bool `json:"auto_prospect_to_lead"`
 	AutoVerifyImport   bool `json:"auto_verify_import"`
+
+	// Inbox view preference — see domain.Settings.AggregatedInboxView.
+	AggregatedInboxView bool `json:"aggregated_inbox_view"`
 }
 
 // AITester tests an AI provider connection by sending a simple prompt.
@@ -183,8 +186,9 @@ func domainToDTO(ds *domain.Settings) Settings {
 		AutoSendDelayMin:   ds.AutoSendDelayMin,
 		AutoFollowup:       ds.AutoFollowup,
 		AutoFollowupDays:   ds.AutoFollowupDays,
-		AutoProspectToLead: ds.AutoProspectToLead,
-		AutoVerifyImport:   ds.AutoVerifyImport,
+		AutoProspectToLead:  ds.AutoProspectToLead,
+		AutoVerifyImport:    ds.AutoVerifyImport,
+		AggregatedInboxView: ds.AggregatedInboxView,
 	}
 }
 

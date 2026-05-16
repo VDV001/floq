@@ -36,6 +36,11 @@ type SettingsInput struct {
 	AutoFollowupDays  int    `json:"auto_followup_days"`
 	AutoProspectToLead bool  `json:"auto_prospect_to_lead"`
 	AutoVerifyImport  bool   `json:"auto_verify_import"`
+
+	// AggregatedInboxView toggles the unified-identity lead detail
+	// timeline (#27). Server default is TRUE; the field is part of
+	// the SettingsInput so the UI can let users opt out per-account.
+	AggregatedInboxView bool `json:"aggregated_inbox_view"`
 }
 
 type UseCase struct {
@@ -149,6 +154,9 @@ func (uc *UseCase) UpdateSettings(ctx context.Context, userID uuid.UUID, raw map
 	}
 	if _, ok := raw["auto_prospect_to_lead"]; ok {
 		fields["auto_prospect_to_lead"] = input.AutoProspectToLead
+	}
+	if _, ok := raw["aggregated_inbox_view"]; ok {
+		fields["aggregated_inbox_view"] = input.AggregatedInboxView
 	}
 	if _, ok := raw["auto_verify_import"]; ok {
 		fields["auto_verify_import"] = input.AutoVerifyImport
