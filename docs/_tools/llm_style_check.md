@@ -105,6 +105,22 @@ generation must not block on a style-pass outage.
 - `internal/settings/style_check_settings_test.go` — repository default,
   DB-stored override, use case forwarding into the fields map.
 
+## Operational notes
+
+- **Toggle is read at server boot.** `cmd/server/main.go` calls
+  `settingsRepo.GetSettings(...)` once and passes the value through
+  `ai.WithStyleCheck(...)` to `NewAIClient`. The field is then immutable for
+  the lifetime of the process.
+- **Changing `ai_style_check_enabled` via the UI requires a server restart.**
+  We chose this deliberately: hot-reloading would mean a per-request settings
+  lookup, doubling the DB read budget for every outbound generation. The
+  toggle is a low-frequency operational lever, not a runtime user knob.
+- **Default lives in two places** that must stay in sync: migration
+  `025_add_ai_style_check_enabled.up.sql` (`DEFAULT TRUE`) and
+  `internal/settings/repository.go` (the `&domain.Settings{...}` defaults
+  block, applied when `pgx.ErrNoRows` is returned). When changing the
+  default, change both.
+
 ## Future work
 
 - LLM-judge benchmarking (promptfoo) on a held-out adversarial set to

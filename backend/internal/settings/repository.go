@@ -38,7 +38,9 @@ func (r *Repository) GetSettings(ctx context.Context, userID uuid.UUID) (*domain
 		return nil, fmt.Errorf("load user profile: %w", err)
 	}
 
-	// Defaults.
+	// Defaults applied when no user_settings row exists yet (pgx.ErrNoRows
+	// path below). AIStyleCheckEnabled also has DEFAULT TRUE in migration
+	// 025 — keep the two in sync if you change the policy.
 	s := &domain.Settings{
 		FullName:            fullName,
 		Email:               email,

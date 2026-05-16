@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"strings"
 )
 
@@ -48,10 +49,32 @@ type AIClient struct {
 	senderPhone       string
 	senderWebsite     string
 	styleCheckEnabled bool
+	logger            *slog.Logger
 }
 
-func NewAIClient(provider Provider, bookingLink, senderName, senderCompany, senderPhone, senderWebsite string) *AIClient {
-	return &AIClient{
+// AIClientOption is a functional option for NewAIClient. Options keep the
+// configurable bits (style-check toggle, logger) outside the long fixed
+// argument list and let callers set them at construction without later
+// mutation.
+type AIClientOption func(*AIClient)
+
+// WithStyleCheck wires the boot-time style-check preference into the
+// client. Pass true to enable the post-generation style pass for all
+// outreach Generate* calls, false to leave it off. The value is fixed
+// once NewAIClient returns — there is no runtime mutator.
+func WithStyleCheck(enabled bool) AIClientOption {
+	return func(c *AIClient) { c.styleCheckEnabled = enabled }
+}
+
+// WithLogger injects a slog.Logger the client uses for warnings (today
+// only the graceful-degradation paths in applyStyleCheck). Defaults to
+// slog.Default() when omitted.
+func WithLogger(logger *slog.Logger) AIClientOption {
+	return func(c *AIClient) { c.logger = logger }
+}
+
+func NewAIClient(provider Provider, bookingLink, senderName, senderCompany, senderPhone, senderWebsite string, opts ...AIClientOption) *AIClient {
+	c := &AIClient{
 		provider:      provider,
 		bookingLink:   bookingLink,
 		senderName:    senderName,
@@ -59,6 +82,13 @@ func NewAIClient(provider Provider, bookingLink, senderName, senderCompany, send
 		senderPhone:   senderPhone,
 		senderWebsite: senderWebsite,
 	}
+	for _, opt := range opts {
+		opt(c)
+	}
+	if c.logger == nil {
+		c.logger = slog.Default()
+	}
+	return c
 }
 
 func (c *AIClient) resolveSystemPrompt(prompt string) string {

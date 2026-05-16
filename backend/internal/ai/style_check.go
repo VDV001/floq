@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log/slog"
 	"strings"
 )
 
@@ -57,13 +56,6 @@ func (c *AIClient) StyleCheck(ctx context.Context, draft, channel string) (*Styl
 	return &result, nil
 }
 
-// EnableStyleCheck toggles the post-generation style-check pass on. By
-// default AIClient does not perform style checks (additive behaviour).
-// The composition root wires this from user settings.
-func (c *AIClient) EnableStyleCheck() {
-	c.styleCheckEnabled = true
-}
-
 // applyStyleCheck runs the post-generation pipeline: if style-check is
 // enabled and the draft scores below StyleCheckPassThreshold, regenFn is
 // invoked exactly once with the LLM's feedback string to produce a retry.
@@ -71,7 +63,8 @@ func (c *AIClient) EnableStyleCheck() {
 // Failure modes (style-check error, JSON parse error, provider error in
 // the second pass): degrade gracefully and return the original draft.
 // Outreach generation must not block on a style-pass outage — the original
-// draft is still sendable.
+// draft is still sendable. Warnings are logged through the client's
+// injected logger (see WithLogger).
 func (c *AIClient) applyStyleCheck(
 	ctx context.Context,
 	draft, channel string,
@@ -82,7 +75,7 @@ func (c *AIClient) applyStyleCheck(
 	}
 	result, err := c.StyleCheck(ctx, draft, channel)
 	if err != nil {
-		slog.WarnContext(ctx, "style check failed; using original draft",
+		c.logger.WarnContext(ctx, "style check failed; using original draft",
 			"channel", channel, "err", err)
 		return draft
 	}
@@ -91,7 +84,7 @@ func (c *AIClient) applyStyleCheck(
 	}
 	regen, err := regenFn(ctx, result.Feedback)
 	if err != nil {
-		slog.WarnContext(ctx, "style retry failed; using original draft",
+		c.logger.WarnContext(ctx, "style retry failed; using original draft",
 			"channel", channel, "err", err)
 		return draft
 	}

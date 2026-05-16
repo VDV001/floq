@@ -178,11 +178,8 @@ func styleCheckWiringCases() []wiringCase {
 }
 
 func newClientForWiring(provider Provider, enableStyle bool) *AIClient {
-	c := NewAIClient(provider, "https://cal.com/test", "Bob", "Acme", "+7", "https://acme.example")
-	if enableStyle {
-		c.EnableStyleCheck()
-	}
-	return c
+	return NewAIClient(provider, "https://cal.com/test", "Bob", "Acme", "+7", "https://acme.example",
+		WithStyleCheck(enableStyle))
 }
 
 func responsesForCase(tc wiringCase) []string {
