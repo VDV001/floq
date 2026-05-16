@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/daniil/floq/internal/inbox/attachments"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -208,6 +209,72 @@ func TestExtractTextBody_RawFallback(t *testing.T) {
 	raw := "Just some raw text without headers"
 	result := extractTextBody([]byte(raw))
 	assert.Equal(t, "Just some raw text without headers", result)
+}
+
+// =============================================
+// processEmail with attachment analyzer
+// =============================================
+
+// stubVisionClient is a minimal VisionClient that returns a canned OCR
+// string. Lives in email_test.go because it's only used by the analyser
+// wiring tests; promote to a shared helper if a second consumer appears.
+type stubVisionClient struct {
+	resp string
+	err  error
+}
+
+func (s *stubVisionClient) AnalyzeImage(_ context.Context, _ []byte, _, _ string) (string, error) {
+	return s.resp, s.err
+}
+
+func TestProcessEmail_WithAnalyzer_AppendsAttachmentTextToQualify(t *testing.T) {
+	repo := newEmailMockLeadRepo()
+	prospectRepo := newEmailMockProspectRepo()
+	seqRepo := newMockSequenceRepo()
+	aiClient := &mockAIQualifier{result: &QualificationResult{Score: 5}}
+
+	vc := &stubVisionClient{resp: "OCR: backlog item — fix login"}
+	analyzer := attachments.New(vc)
+
+	poller := NewEmailPoller(nil, uuid.New(), "", "", "", "", repo, prospectRepo, seqRepo, aiClient, nil,
+		WithAttachmentAnalyzer(analyzer))
+
+	atts := []attachments.Attachment{
+		{Filename: "shot.png", ContentType: "image/png", Data: []byte("png-bytes")},
+	}
+	poller.processEmail(context.Background(), "Alice", "alice@example.com", "Email body text", atts)
+	waitQualifyDone(t, &repo.mockLeadRepo)
+
+	got := aiClient.lastQualifyInput()
+	assert.Contains(t, got, "Email body text", "qualifier input must contain the email body")
+	assert.Contains(t, got, "[Вложение: shot.png]", "qualifier input must label the attachment section")
+	assert.Contains(t, got, "OCR: backlog item", "qualifier input must contain the analyser's extracted text")
+
+	// lead.FirstMessage стая = body, без вложений (ephemeral context only)
+	require.Len(t, repo.mockLeadRepo.leads, 1)
+	assert.Equal(t, "Email body text", repo.mockLeadRepo.leads[0].FirstMessage)
+}
+
+func TestProcessEmail_WithAnalyzer_SkippedAttachmentNotAppended(t *testing.T) {
+	repo := newEmailMockLeadRepo()
+	prospectRepo := newEmailMockProspectRepo()
+	seqRepo := newMockSequenceRepo()
+	aiClient := &mockAIQualifier{result: &QualificationResult{Score: 5}}
+
+	// Unsupported MIME type ⇒ analyser skips, qualify-context stays
+	// equal to the body alone.
+	analyzer := attachments.New(&stubVisionClient{})
+	poller := NewEmailPoller(nil, uuid.New(), "", "", "", "", repo, prospectRepo, seqRepo, aiClient, nil,
+		WithAttachmentAnalyzer(analyzer))
+
+	atts := []attachments.Attachment{
+		{Filename: "weird.docx", ContentType: "application/vnd.openxmlformats", Data: []byte("docx")},
+	}
+	poller.processEmail(context.Background(), "Alice", "alice@example.com", "Body only", atts)
+	waitQualifyDone(t, &repo.mockLeadRepo)
+
+	got := aiClient.lastQualifyInput()
+	assert.Equal(t, "Body only", got, "skipped attachment must not pollute qualify input")
 }
 
 // =============================================
