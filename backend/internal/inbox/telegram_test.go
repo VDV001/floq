@@ -106,10 +106,25 @@ func (m *mockLeadRepo) UpdateLeadStatus(_ context.Context, id uuid.UUID, status 
 
 type mockAIQualifier struct {
 	result *QualificationResult
+
+	mu               sync.Mutex
+	lastFirstMessage string
 }
 
-func (m *mockAIQualifier) Qualify(_ context.Context, _, _, _ string) (*QualificationResult, error) {
+func (m *mockAIQualifier) Qualify(_ context.Context, _, _, firstMessage string) (*QualificationResult, error) {
+	m.mu.Lock()
+	m.lastFirstMessage = firstMessage
+	m.mu.Unlock()
 	return m.result, nil
+}
+
+// lastQualifyInput returns the firstMessage argument the mock last
+// observed. Exposed to tests that need to assert what context the
+// caller built (email body + extracted attachment text).
+func (m *mockAIQualifier) lastQualifyInput() string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.lastFirstMessage
 }
 
 func (m *mockAIQualifier) ProviderName() string {

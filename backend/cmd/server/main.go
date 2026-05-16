@@ -22,6 +22,7 @@ import (
 	"github.com/daniil/floq/internal/config"
 	"github.com/daniil/floq/internal/db"
 	"github.com/daniil/floq/internal/inbox"
+	"github.com/daniil/floq/internal/inbox/attachments"
 	"github.com/daniil/floq/internal/leads"
 	"github.com/daniil/floq/internal/notify"
 	"github.com/daniil/floq/internal/outbound"
@@ -214,8 +215,14 @@ func main() {
 		}
 	}
 
-	// 9. Email IMAP poller (reads settings from DB, falls back to .env)
-	emailPoller := inbox.NewEmailPoller(inboxCfg, ownerID, cfg.IMAPHost, cfg.IMAPPort, cfg.IMAPUser, cfg.IMAPPassword, inboxLeadAdapter, prospectAdapter, sequencesRepo, inboxAI, proxyDialer)
+	// 9. Email IMAP poller (reads settings from DB, falls back to .env).
+	// The attachment analyser is wired with the same AIClient so the
+	// underlying provider's vision capability — when available — is
+	// reused for image OCR. Text-only providers degrade gracefully
+	// (analyser returns SkipVisionError, lead is still created).
+	attachmentAnalyzer := attachments.New(aiClient)
+	emailPoller := inbox.NewEmailPoller(inboxCfg, ownerID, cfg.IMAPHost, cfg.IMAPPort, cfg.IMAPUser, cfg.IMAPPassword, inboxLeadAdapter, prospectAdapter, sequencesRepo, inboxAI, proxyDialer,
+		inbox.WithAttachmentAnalyzer(attachmentAnalyzer))
 	go emailPoller.Start(ctx)
 
 	// 10. Reminders cron (hourly, checks for stale leads)
