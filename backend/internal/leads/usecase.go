@@ -92,6 +92,17 @@ func (uc *UseCase) GetMessages(ctx context.Context, leadID uuid.UUID) ([]domain.
 	return uc.repo.ListMessages(ctx, leadID)
 }
 
+// OwnsLead returns true iff the lead exists AND belongs to userID. The
+// (nil-lead, nil-error) shape from GetLeadForUser maps to false here so
+// handlers can branch on a single boolean. Errors propagate.
+func (uc *UseCase) OwnsLead(ctx context.Context, userID, leadID uuid.UUID) (bool, error) {
+	lead, err := uc.repo.GetLeadForUser(ctx, userID, leadID)
+	if err != nil {
+		return false, err
+	}
+	return lead != nil, nil
+}
+
 func (uc *UseCase) SendMessage(ctx context.Context, leadID uuid.UUID, body string) (*domain.Message, error) {
 	lead, err := uc.repo.GetLead(ctx, leadID)
 	if err != nil {

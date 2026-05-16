@@ -55,7 +55,7 @@ func TestUseCase_GetLeadView_NoIdentity_ReturnsLeadOnly(t *testing.T) {
 	identities := newStubIdentityReader()
 
 	uc := NewUseCase(repo, nil, nil, WithIdentityReader(identities))
-	view, err := uc.GetLeadView(context.Background(), leadID)
+	view, err := uc.GetLeadView(context.Background(), lead.UserID, leadID)
 	require.NoError(t, err)
 	require.NotNil(t, view)
 	assert.Equal(t, lead, view.Lead)
@@ -74,12 +74,13 @@ func TestUseCase_GetLeadView_WithIdentity_ReturnsAggregate(t *testing.T) {
 
 	repo := newMockUCRepo()
 	repo.byID[leadID] = lead
+	repo.byID[otherLead] = &domain.Lead{ID: otherLead, UserID: userID, Channel: domain.ChannelTelegram, ContactName: "Alice", Status: domain.StatusNew}
 	identities := newStubIdentityReader()
 	identities.byLead[leadID] = identity
 	identities.linkedByIdentity[identityID] = []uuid.UUID{leadID, otherLead}
 
 	uc := NewUseCase(repo, nil, nil, WithIdentityReader(identities))
-	view, err := uc.GetLeadView(context.Background(), leadID)
+	view, err := uc.GetLeadView(context.Background(), lead.UserID, leadID)
 	require.NoError(t, err)
 	require.NotNil(t, view.Identity)
 	assert.Equal(t, identityID, view.Identity.ID)
@@ -95,7 +96,7 @@ func TestUseCase_GetLeadView_NoReader_GracefullyDegrades(t *testing.T) {
 
 	uc := NewUseCase(repo, nil, nil) // no WithIdentityReader
 
-	view, err := uc.GetLeadView(context.Background(), leadID)
+	view, err := uc.GetLeadView(context.Background(), lead.UserID, leadID)
 	require.NoError(t, err)
 	require.NotNil(t, view)
 	assert.Equal(t, lead, view.Lead)
@@ -106,7 +107,7 @@ func TestUseCase_GetLeadView_LeadNotFound(t *testing.T) {
 	repo := newMockUCRepo()
 	uc := NewUseCase(repo, nil, nil, WithIdentityReader(newStubIdentityReader()))
 
-	view, err := uc.GetLeadView(context.Background(), uuid.New())
+	view, err := uc.GetLeadView(context.Background(), uuid.New(), uuid.New())
 	require.NoError(t, err, "missing lead is a (nil, nil) contract, not an error")
 	assert.Nil(t, view)
 }
@@ -121,7 +122,7 @@ func TestUseCase_GetLeadView_IdentityFetchFails_FallsBackToLeadOnly(t *testing.T
 	identities.getErr = errors.New("identity db down")
 
 	uc := NewUseCase(repo, nil, nil, WithIdentityReader(identities))
-	view, err := uc.GetLeadView(context.Background(), leadID)
+	view, err := uc.GetLeadView(context.Background(), lead.UserID, leadID)
 	require.NoError(t, err, "identity fetch failure must not block lead detail rendering")
 	require.NotNil(t, view)
 	assert.Equal(t, lead, view.Lead)
@@ -129,30 +130,50 @@ func TestUseCase_GetLeadView_IdentityFetchFails_FallsBackToLeadOnly(t *testing.T
 }
 
 func TestUseCase_GetAggregatedMessages_NoReader_ReturnsLeadOnly(t *testing.T) {
+	userID := uuid.New()
 	leadID := uuid.New()
 	repo := newMockUCRepo()
+	repo.byID[leadID] = &domain.Lead{ID: leadID, UserID: userID}
 	repo.messagesByLead = map[uuid.UUID][]domain.Message{
 		leadID: {{ID: uuid.New(), LeadID: leadID, Body: "solo"}},
 	}
 	uc := NewUseCase(repo, nil, nil)
 
-	msgs, err := uc.GetAggregatedMessages(context.Background(), leadID)
+	msgs, err := uc.GetAggregatedMessages(context.Background(), userID, leadID)
 	require.NoError(t, err)
 	require.Len(t, msgs, 1)
 	assert.Equal(t, "solo", msgs[0].Body)
 }
 
 func TestUseCase_GetAggregatedMessages_NoIdentity_FallsBackToLeadOnly(t *testing.T) {
+	userID := uuid.New()
 	leadID := uuid.New()
 	repo := newMockUCRepo()
+	repo.byID[leadID] = &domain.Lead{ID: leadID, UserID: userID}
 	repo.messagesByLead = map[uuid.UUID][]domain.Message{
 		leadID: {{ID: uuid.New(), LeadID: leadID, Body: "solo"}},
 	}
 	uc := NewUseCase(repo, nil, nil, WithIdentityReader(newStubIdentityReader()))
 
-	msgs, err := uc.GetAggregatedMessages(context.Background(), leadID)
+	msgs, err := uc.GetAggregatedMessages(context.Background(), userID, leadID)
 	require.NoError(t, err)
 	require.Len(t, msgs, 1)
+}
+
+func TestUseCase_GetAggregatedMessages_RejectsForeignTenant(t *testing.T) {
+	ownerID := uuid.New()
+	attackerID := uuid.New()
+	leadID := uuid.New()
+	repo := newMockUCRepo()
+	repo.byID[leadID] = &domain.Lead{ID: leadID, UserID: ownerID}
+	repo.messagesByLead = map[uuid.UUID][]domain.Message{
+		leadID: {{ID: uuid.New(), LeadID: leadID, Body: "secret"}},
+	}
+	uc := NewUseCase(repo, nil, nil, WithIdentityReader(newStubIdentityReader()))
+
+	msgs, err := uc.GetAggregatedMessages(context.Background(), attackerID, leadID)
+	require.NoError(t, err)
+	assert.Nil(t, msgs, "foreign tenant must get (nil, nil); handler maps to 404")
 }
 
 func TestUseCase_GetAggregatedMessages_MergesLeadsChronologically(t *testing.T) {
@@ -166,6 +187,8 @@ func TestUseCase_GetAggregatedMessages_MergesLeadsChronologically(t *testing.T) 
 	msgA2 := domain.Message{ID: uuid.New(), LeadID: leadA, Body: "A-third", SentAt: t0.Add(2 * time.Minute)}
 
 	repo := newMockUCRepo()
+	repo.byID[leadA] = &domain.Lead{ID: leadA, UserID: userID}
+	repo.byID[leadB] = &domain.Lead{ID: leadB, UserID: userID}
 	repo.messagesByLead = map[uuid.UUID][]domain.Message{
 		leadA: {msgA1, msgA2}, // already-sorted within lead
 		leadB: {msgB1},
@@ -175,12 +198,40 @@ func TestUseCase_GetAggregatedMessages_MergesLeadsChronologically(t *testing.T) 
 	identities.linkedByIdentity[identityID] = []uuid.UUID{leadA, leadB}
 
 	uc := NewUseCase(repo, nil, nil, WithIdentityReader(identities))
-	msgs, err := uc.GetAggregatedMessages(context.Background(), leadA)
+	msgs, err := uc.GetAggregatedMessages(context.Background(), userID, leadA)
 	require.NoError(t, err)
 	require.Len(t, msgs, 3)
 	assert.Equal(t, "A-first", msgs[0].Body)
 	assert.Equal(t, "B-second", msgs[1].Body)
 	assert.Equal(t, "A-third", msgs[2].Body)
+}
+
+func TestUseCase_GetAggregatedMessages_DropsForeignLinkedLead(t *testing.T) {
+	// Defense-in-depth: even if a corrupted identity record links a
+	// foreign tenant's lead, the merge filters it out — the attacker's
+	// own lead drives the timeline, the foreign messages stay invisible.
+	userID := uuid.New()
+	foreignUser := uuid.New()
+	leadA, foreignLead := uuid.New(), uuid.New()
+	identityID := uuid.New()
+	t0 := time.Date(2026, 5, 16, 10, 0, 0, 0, time.UTC)
+
+	repo := newMockUCRepo()
+	repo.byID[leadA] = &domain.Lead{ID: leadA, UserID: userID}
+	repo.byID[foreignLead] = &domain.Lead{ID: foreignLead, UserID: foreignUser}
+	repo.messagesByLead = map[uuid.UUID][]domain.Message{
+		leadA:       {{ID: uuid.New(), LeadID: leadA, Body: "mine", SentAt: t0}},
+		foreignLead: {{ID: uuid.New(), LeadID: foreignLead, Body: "leaked-secret", SentAt: t0}},
+	}
+	identities := newStubIdentityReader()
+	identities.byLead[leadA] = &domain.Identity{ID: identityID, UserID: userID, Email: "alice@acme.com"}
+	identities.linkedByIdentity[identityID] = []uuid.UUID{leadA, foreignLead}
+
+	uc := NewUseCase(repo, nil, nil, WithIdentityReader(identities))
+	msgs, err := uc.GetAggregatedMessages(context.Background(), userID, leadA)
+	require.NoError(t, err)
+	require.Len(t, msgs, 1)
+	assert.Equal(t, "mine", msgs[0].Body)
 }
 
 func TestUseCase_GetAggregatedMessages_PartialLeadFailure_PreservesOthers(t *testing.T) {
@@ -190,6 +241,8 @@ func TestUseCase_GetAggregatedMessages_PartialLeadFailure_PreservesOthers(t *tes
 	t0 := time.Date(2026, 5, 16, 10, 0, 0, 0, time.UTC)
 
 	repo := newMockUCRepo()
+	repo.byID[leadA] = &domain.Lead{ID: leadA, UserID: userID}
+	repo.byID[leadB] = &domain.Lead{ID: leadB, UserID: userID}
 	repo.messagesByLead = map[uuid.UUID][]domain.Message{
 		leadA: {{ID: uuid.New(), LeadID: leadA, Body: "A-ok", SentAt: t0}},
 	}
@@ -202,15 +255,17 @@ func TestUseCase_GetAggregatedMessages_PartialLeadFailure_PreservesOthers(t *tes
 	identities.linkedByIdentity[identityID] = []uuid.UUID{leadA, leadB}
 
 	uc := NewUseCase(repo, nil, nil, WithIdentityReader(identities))
-	msgs, err := uc.GetAggregatedMessages(context.Background(), leadA)
+	msgs, err := uc.GetAggregatedMessages(context.Background(), userID, leadA)
 	require.NoError(t, err, "one bad lead must not abort the entire timeline")
 	require.Len(t, msgs, 1)
 	assert.Equal(t, "A-ok", msgs[0].Body)
 }
 
 func TestUseCase_GetAggregatedMessages_IdentityErrorDegradesToLeadOnly(t *testing.T) {
+	userID := uuid.New()
 	leadID := uuid.New()
 	repo := newMockUCRepo()
+	repo.byID[leadID] = &domain.Lead{ID: leadID, UserID: userID}
 	repo.messagesByLead = map[uuid.UUID][]domain.Message{
 		leadID: {{ID: uuid.New(), LeadID: leadID, Body: "solo"}},
 	}
@@ -218,7 +273,7 @@ func TestUseCase_GetAggregatedMessages_IdentityErrorDegradesToLeadOnly(t *testin
 	identities.getErr = errors.New("identity db down")
 
 	uc := NewUseCase(repo, nil, nil, WithIdentityReader(identities))
-	msgs, err := uc.GetAggregatedMessages(context.Background(), leadID)
+	msgs, err := uc.GetAggregatedMessages(context.Background(), userID, leadID)
 	require.NoError(t, err)
 	require.Len(t, msgs, 1)
 }
@@ -254,8 +309,14 @@ func (m *mockUCRepo) GetLead(_ context.Context, id uuid.UUID) (*domain.Lead, err
 func (m *mockUCRepo) ListLeads(context.Context, uuid.UUID) ([]domain.LeadWithSource, error) {
 	panic("not used")
 }
-func (m *mockUCRepo) GetLeadForUser(context.Context, uuid.UUID, uuid.UUID) (*domain.Lead, error) {
-	panic("not used")
+func (m *mockUCRepo) GetLeadForUser(_ context.Context, userID, leadID uuid.UUID) (*domain.Lead, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	l, ok := m.byID[leadID]
+	if !ok || l.UserID != userID {
+		return nil, nil
+	}
+	return l, nil
 }
 func (m *mockUCRepo) CreateLead(context.Context, *domain.Lead) error { panic("not used") }
 func (m *mockUCRepo) UpdateFirstMessage(context.Context, uuid.UUID, string) error {

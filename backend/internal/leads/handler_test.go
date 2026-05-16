@@ -21,13 +21,21 @@ import (
 // mockRepoErr is a mock repository that returns errors for specified methods.
 type mockRepoErr struct {
 	mockRepo
-	listLeadsErr      error
-	getLeadErr        error
-	listMessagesErr   error
-	createMessageErr  error
-	getQualErr        error
-	getLatestDraftErr error
-	qualifyErr        error
+	listLeadsErr       error
+	getLeadErr         error
+	getLeadForUserErr  error
+	listMessagesErr    error
+	createMessageErr   error
+	getQualErr         error
+	getLatestDraftErr  error
+	qualifyErr         error
+}
+
+func (m *mockRepoErr) GetLeadForUser(_ context.Context, userID, leadID uuid.UUID) (*domain.Lead, error) {
+	if m.getLeadForUserErr != nil {
+		return nil, m.getLeadForUserErr
+	}
+	return m.mockRepo.GetLeadForUser(context.Background(), userID, leadID)
 }
 
 func (m *mockRepoErr) ListLeads(_ context.Context, _ uuid.UUID) ([]domain.LeadWithSource, error) {
@@ -124,9 +132,11 @@ func TestHandler_ListLeads_NoAuth(t *testing.T) {
 
 func TestHandler_GetLead(t *testing.T) {
 	repo := newMockRepo()
+	userID := uuid.New()
 	leadID := uuid.New()
 	repo.leads[leadID] = &domain.Lead{
 		ID:          leadID,
+		UserID:      userID,
 		Channel:     domain.ChannelEmail,
 		ContactName: "Bob",
 		Status:      domain.StatusNew,
@@ -134,7 +144,7 @@ func TestHandler_GetLead(t *testing.T) {
 
 	r := newTestRouter(NewUseCase(repo, &mockAI{}, nil))
 	w := httptest.NewRecorder()
-	req := httptest.NewRequest("GET", fmt.Sprintf("/api/leads/%s", leadID), nil)
+	req := reqWithUser("GET", fmt.Sprintf("/api/leads/%s", leadID), nil, userID)
 	r.ServeHTTP(w, req)
 
 	assert.Equal(t, http.StatusOK, w.Code)
@@ -146,7 +156,7 @@ func TestHandler_GetLead(t *testing.T) {
 func TestHandler_GetLead_NotFound(t *testing.T) {
 	r := newTestRouter(NewUseCase(newMockRepo(), &mockAI{}, nil))
 	w := httptest.NewRecorder()
-	req := httptest.NewRequest("GET", fmt.Sprintf("/api/leads/%s", uuid.New()), nil)
+	req := reqWithUser("GET", fmt.Sprintf("/api/leads/%s", uuid.New()), nil, uuid.New())
 	r.ServeHTTP(w, req)
 
 	assert.Equal(t, http.StatusNotFound, w.Code)
@@ -155,7 +165,7 @@ func TestHandler_GetLead_NotFound(t *testing.T) {
 func TestHandler_GetLead_BadID(t *testing.T) {
 	r := newTestRouter(NewUseCase(newMockRepo(), &mockAI{}, nil))
 	w := httptest.NewRecorder()
-	req := httptest.NewRequest("GET", "/api/leads/not-a-uuid", nil)
+	req := reqWithUser("GET", "/api/leads/not-a-uuid", nil, uuid.New())
 	r.ServeHTTP(w, req)
 
 	assert.Equal(t, http.StatusBadRequest, w.Code)
@@ -163,9 +173,11 @@ func TestHandler_GetLead_BadID(t *testing.T) {
 
 func TestHandler_GetLead_IncludesIdentitySummary(t *testing.T) {
 	repo := newMockRepo()
+	userID := uuid.New()
 	leadID := uuid.New()
 	repo.leads[leadID] = &domain.Lead{
 		ID:          leadID,
+		UserID:      userID,
 		Channel:     domain.ChannelEmail,
 		ContactName: "Bob",
 		Status:      domain.StatusNew,
@@ -173,10 +185,11 @@ func TestHandler_GetLead_IncludesIdentitySummary(t *testing.T) {
 
 	identityID := uuid.New()
 	otherLead := uuid.New()
+	repo.leads[otherLead] = &domain.Lead{ID: otherLead, UserID: userID, Channel: domain.ChannelTelegram, ContactName: "Bob", Status: domain.StatusNew}
 	identities := newStubIdentityReader()
 	identities.byLead[leadID] = &domain.Identity{
 		ID:               identityID,
-		UserID:           uuid.New(),
+		UserID:           userID,
 		Email:            "bob@acme.com",
 		TelegramUsername: "bob",
 	}
@@ -184,7 +197,7 @@ func TestHandler_GetLead_IncludesIdentitySummary(t *testing.T) {
 
 	r := newTestRouter(NewUseCase(repo, &mockAI{}, nil, WithIdentityReader(identities)))
 	w := httptest.NewRecorder()
-	req := httptest.NewRequest("GET", fmt.Sprintf("/api/leads/%s", leadID), nil)
+	req := reqWithUser("GET", fmt.Sprintf("/api/leads/%s", leadID), nil, userID)
 	r.ServeHTTP(w, req)
 
 	assert.Equal(t, http.StatusOK, w.Code)
@@ -265,9 +278,11 @@ func TestHandler_ListMessages_Aggregated_ForbidsCrossTenant(t *testing.T) {
 
 func TestHandler_GetLead_OmitsIdentityWhenNoLink(t *testing.T) {
 	repo := newMockRepo()
+	userID := uuid.New()
 	leadID := uuid.New()
 	repo.leads[leadID] = &domain.Lead{
 		ID:          leadID,
+		UserID:      userID,
 		Channel:     domain.ChannelEmail,
 		ContactName: "Bob",
 		Status:      domain.StatusNew,
@@ -275,7 +290,7 @@ func TestHandler_GetLead_OmitsIdentityWhenNoLink(t *testing.T) {
 
 	r := newTestRouter(NewUseCase(repo, &mockAI{}, nil, WithIdentityReader(newStubIdentityReader())))
 	w := httptest.NewRecorder()
-	req := httptest.NewRequest("GET", fmt.Sprintf("/api/leads/%s", leadID), nil)
+	req := reqWithUser("GET", fmt.Sprintf("/api/leads/%s", leadID), nil, userID)
 	r.ServeHTTP(w, req)
 
 	assert.Equal(t, http.StatusOK, w.Code)
@@ -397,14 +412,16 @@ func TestHandler_ImportCSV_NoFile(t *testing.T) {
 
 func TestHandler_ListMessages(t *testing.T) {
 	repo := newMockRepo()
+	userID := uuid.New()
 	leadID := uuid.New()
+	repo.leads[leadID] = &domain.Lead{ID: leadID, UserID: userID}
 	repo.messages[leadID] = []domain.Message{
 		{ID: uuid.New(), LeadID: leadID, Direction: domain.DirectionInbound, Body: "hi"},
 	}
 
 	r := newTestRouter(NewUseCase(repo, &mockAI{}, nil))
 	w := httptest.NewRecorder()
-	req := httptest.NewRequest("GET", fmt.Sprintf("/api/leads/%s/messages", leadID), nil)
+	req := reqWithUser("GET", fmt.Sprintf("/api/leads/%s/messages", leadID), nil, userID)
 	r.ServeHTTP(w, req)
 
 	assert.Equal(t, http.StatusOK, w.Code)
@@ -572,19 +589,23 @@ func TestHandler_ListLeads_Error(t *testing.T) {
 }
 
 func TestHandler_GetLead_Error(t *testing.T) {
-	repo := &mockRepoErr{mockRepo: *newMockRepo(), getLeadErr: fmt.Errorf("db down")}
+	repo := &mockRepoErr{mockRepo: *newMockRepo(), getLeadForUserErr: fmt.Errorf("db down")}
 	r := newTestRouter(NewUseCase(repo, &mockAI{}, nil))
 	w := httptest.NewRecorder()
-	req := httptest.NewRequest("GET", fmt.Sprintf("/api/leads/%s", uuid.New()), nil)
+	req := reqWithUser("GET", fmt.Sprintf("/api/leads/%s", uuid.New()), nil, uuid.New())
 	r.ServeHTTP(w, req)
 	assert.Equal(t, http.StatusInternalServerError, w.Code)
 }
 
 func TestHandler_ListMessages_Error(t *testing.T) {
-	repo := &mockRepoErr{mockRepo: *newMockRepo(), listMessagesErr: fmt.Errorf("db down")}
+	userID := uuid.New()
+	leadID := uuid.New()
+	base := newMockRepo()
+	base.leads[leadID] = &domain.Lead{ID: leadID, UserID: userID}
+	repo := &mockRepoErr{mockRepo: *base, listMessagesErr: fmt.Errorf("db down")}
 	r := newTestRouter(NewUseCase(repo, &mockAI{}, nil))
 	w := httptest.NewRecorder()
-	req := httptest.NewRequest("GET", fmt.Sprintf("/api/leads/%s/messages", uuid.New()), nil)
+	req := reqWithUser("GET", fmt.Sprintf("/api/leads/%s/messages", leadID), nil, userID)
 	r.ServeHTTP(w, req)
 	assert.Equal(t, http.StatusInternalServerError, w.Code)
 }
@@ -592,7 +613,7 @@ func TestHandler_ListMessages_Error(t *testing.T) {
 func TestHandler_ListMessages_BadID(t *testing.T) {
 	r := newTestRouter(NewUseCase(newMockRepo(), &mockAI{}, nil))
 	w := httptest.NewRecorder()
-	req := httptest.NewRequest("GET", "/api/leads/bad-id/messages", nil)
+	req := reqWithUser("GET", "/api/leads/bad-id/messages", nil, uuid.New())
 	r.ServeHTTP(w, req)
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
@@ -774,9 +795,13 @@ func TestHandler_ListLeads_EmptyList(t *testing.T) {
 }
 
 func TestHandler_ListMessages_EmptyList(t *testing.T) {
-	r := newTestRouter(NewUseCase(newMockRepo(), &mockAI{}, nil))
+	repo := newMockRepo()
+	userID := uuid.New()
+	leadID := uuid.New()
+	repo.leads[leadID] = &domain.Lead{ID: leadID, UserID: userID}
+	r := newTestRouter(NewUseCase(repo, &mockAI{}, nil))
 	w := httptest.NewRecorder()
-	req := httptest.NewRequest("GET", fmt.Sprintf("/api/leads/%s/messages", uuid.New()), nil)
+	req := reqWithUser("GET", fmt.Sprintf("/api/leads/%s/messages", leadID), nil, userID)
 	r.ServeHTTP(w, req)
 
 	assert.Equal(t, http.StatusOK, w.Code)

@@ -56,12 +56,17 @@ func (h *Handler) listLeads() http.HandlerFunc {
 
 func (h *Handler) getLead() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		userID, ok := httputil.UserIDFromContext(r.Context())
+		if !ok {
+			httputil.WriteError(w, http.StatusUnauthorized, "unauthorized")
+			return
+		}
 		id, err := httputil.ParseIDParam(r, "id")
 		if err != nil {
 			httputil.WriteError(w, http.StatusBadRequest, "invalid lead id")
 			return
 		}
-		view, err := h.uc.GetLeadView(r.Context(), id)
+		view, err := h.uc.GetLeadView(r.Context(), userID, id)
 		if err != nil {
 			httputil.WriteError(w, http.StatusInternalServerError, "failed to get lead")
 			return
@@ -104,21 +109,40 @@ func (h *Handler) updateStatus() http.HandlerFunc {
 
 func (h *Handler) listMessages() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		userID, ok := httputil.UserIDFromContext(r.Context())
+		if !ok {
+			httputil.WriteError(w, http.StatusUnauthorized, "unauthorized")
+			return
+		}
 		id, err := httputil.ParseIDParam(r, "id")
 		if err != nil {
 			httputil.WriteError(w, http.StatusBadRequest, "invalid lead id")
 			return
 		}
 
+		// Pre-check ownership before invoking either timeline variant.
+		// The aggregated path also re-checks per-linked-lead, but the
+		// early 404 here keeps the foreign-lead probe indistinguishable
+		// from a non-existent leadID.
+		owned, err := h.uc.OwnsLead(r.Context(), userID, id)
+		if err != nil {
+			httputil.WriteError(w, http.StatusInternalServerError, "failed to authorize lead")
+			return
+		}
+		if !owned {
+			httputil.WriteError(w, http.StatusNotFound, "lead not found")
+			return
+		}
+
 		// ?aggregated=true switches to the identity-merged timeline,
 		// where messages from every lead sharing this lead's Identity
-		// surface in chronological order. The frontend pin the param
+		// surface in chronological order. The frontend pins the param
 		// to the user_settings.aggregated_inbox_view preference.
 		aggregated := r.URL.Query().Get("aggregated") == "true"
 
 		var msgs []domain.Message
 		if aggregated {
-			msgs, err = h.uc.GetAggregatedMessages(r.Context(), id)
+			msgs, err = h.uc.GetAggregatedMessages(r.Context(), userID, id)
 		} else {
 			msgs, err = h.uc.GetMessages(r.Context(), id)
 		}
