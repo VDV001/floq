@@ -211,6 +211,52 @@ func TestExtractTextBody_RawFallback(t *testing.T) {
 }
 
 // =============================================
+// extractAttachments tests
+// =============================================
+
+func TestExtractAttachments_PicksUpPDFAndImage(t *testing.T) {
+	// Multipart/mixed with one text/plain body part plus two attachments
+	// (PDF and PNG). extractAttachments returns the two attachments;
+	// extractTextBody handles the text part separately.
+	raw := "MIME-Version: 1.0\r\n" +
+		"Content-Type: multipart/mixed; boundary=mix1\r\n\r\n" +
+		"--mix1\r\n" +
+		"Content-Type: text/plain; charset=utf-8\r\n\r\n" +
+		"Plain body\r\n" +
+		"--mix1\r\n" +
+		"Content-Type: application/pdf\r\n" +
+		"Content-Disposition: attachment; filename=\"kp.pdf\"\r\n" +
+		"Content-Transfer-Encoding: 7bit\r\n\r\n" +
+		"<pdf-bytes>\r\n" +
+		"--mix1\r\n" +
+		"Content-Type: image/png\r\n" +
+		"Content-Disposition: attachment; filename=\"screenshot.png\"\r\n" +
+		"Content-Transfer-Encoding: 7bit\r\n\r\n" +
+		"<png-bytes>\r\n" +
+		"--mix1--\r\n"
+
+	atts := extractAttachments([]byte(raw))
+	require.Len(t, atts, 2)
+	assert.Equal(t, "kp.pdf", atts[0].Filename)
+	assert.Equal(t, "application/pdf", atts[0].ContentType)
+	assert.Contains(t, string(atts[0].Data), "pdf-bytes")
+	assert.Equal(t, "screenshot.png", atts[1].Filename)
+	assert.Equal(t, "image/png", atts[1].ContentType)
+}
+
+func TestExtractAttachments_NoAttachments_ReturnsEmpty(t *testing.T) {
+	// Plain text-only email — extractAttachments returns nil/empty.
+	raw := "Content-Type: text/plain; charset=utf-8\r\n\r\nJust text"
+	atts := extractAttachments([]byte(raw))
+	assert.Empty(t, atts)
+}
+
+func TestExtractAttachments_MalformedMIME_ReturnsEmpty(t *testing.T) {
+	atts := extractAttachments([]byte("not a valid mime body"))
+	assert.Empty(t, atts)
+}
+
+// =============================================
 // processEmail tests
 // =============================================
 
