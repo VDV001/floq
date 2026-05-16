@@ -97,7 +97,17 @@ func main() {
 
 	// 2b. AI provider (dynamic: reads provider/model/key from DB, falls back to .env)
 	aiProvider := providers.NewDynamicProvider(settingsStore, ownerID, cfg, httpClient)
-	aiClient := ai.NewAIClient(aiProvider, cfg.BookingLink, cfg.SenderName, cfg.SenderCompany, cfg.SenderPhone, cfg.SenderWebsite)
+	// Read the owner's style-check preference once at boot. We don't
+	// propagate runtime changes — switching the toggle in the UI requires
+	// a server restart, documented in docs/_tools/llm_style_check.md. The
+	// alternative (per-request settings lookup) would double our DB reads
+	// on every outbound generation.
+	styleCheckEnabled := false
+	if ownerSettings, err := settingsRepo.GetSettings(context.Background(), ownerID); err == nil {
+		styleCheckEnabled = ownerSettings.AIStyleCheckEnabled
+	}
+	aiClient := ai.NewAIClient(aiProvider, cfg.BookingLink, cfg.SenderName, cfg.SenderCompany, cfg.SenderPhone, cfg.SenderWebsite,
+		ai.WithStyleCheck(styleCheckEnabled))
 
 	// 3. Repositories
 	leadsRepo := leads.NewRepository(pool)

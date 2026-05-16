@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"strings"
 )
 
@@ -41,16 +42,39 @@ type QualificationResult struct {
 }
 
 type AIClient struct {
-	provider      Provider
-	bookingLink   string
-	senderName    string
-	senderCompany string
-	senderPhone   string
-	senderWebsite string
+	provider          Provider
+	bookingLink       string
+	senderName        string
+	senderCompany     string
+	senderPhone       string
+	senderWebsite     string
+	styleCheckEnabled bool
+	logger            *slog.Logger
 }
 
-func NewAIClient(provider Provider, bookingLink, senderName, senderCompany, senderPhone, senderWebsite string) *AIClient {
-	return &AIClient{
+// AIClientOption is a functional option for NewAIClient. Options keep the
+// configurable bits (style-check toggle, logger) outside the long fixed
+// argument list and let callers set them at construction without later
+// mutation.
+type AIClientOption func(*AIClient)
+
+// WithStyleCheck wires the boot-time style-check preference into the
+// client. Pass true to enable the post-generation style pass for all
+// outreach Generate* calls, false to leave it off. The value is fixed
+// once NewAIClient returns — there is no runtime mutator.
+func WithStyleCheck(enabled bool) AIClientOption {
+	return func(c *AIClient) { c.styleCheckEnabled = enabled }
+}
+
+// WithLogger injects a slog.Logger the client uses for warnings (today
+// only the graceful-degradation paths in applyStyleCheck). Defaults to
+// slog.Default() when omitted.
+func WithLogger(logger *slog.Logger) AIClientOption {
+	return func(c *AIClient) { c.logger = logger }
+}
+
+func NewAIClient(provider Provider, bookingLink, senderName, senderCompany, senderPhone, senderWebsite string, opts ...AIClientOption) *AIClient {
+	c := &AIClient{
 		provider:      provider,
 		bookingLink:   bookingLink,
 		senderName:    senderName,
@@ -58,6 +82,13 @@ func NewAIClient(provider Provider, bookingLink, senderName, senderCompany, send
 		senderPhone:   senderPhone,
 		senderWebsite: senderWebsite,
 	}
+	for _, opt := range opts {
+		opt(c)
+	}
+	if c.logger == nil {
+		c.logger = slog.Default()
+	}
+	return c
 }
 
 func (c *AIClient) resolveSystemPrompt(prompt string) string {
@@ -121,18 +152,23 @@ func (c *AIClient) DraftReply(ctx context.Context, contactName, company, channel
 	)
 	userPrompt := r.Replace(DraftUser)
 
-	resp, err := c.provider.Complete(ctx, CompletionRequest{
+	req := CompletionRequest{
 		Messages: []Message{
 			{Role: "system", Content: c.resolveSystemPrompt(DraftSystem)},
 			{Role: "user", Content: userPrompt},
 		},
 		MaxTokens: 1024,
 		Mode:      ModelModeExecute,
-	})
+	}
+	resp, err := c.provider.Complete(ctx, req)
 	if err != nil {
 		return "", fmt.Errorf("ai draft reply: %w", err)
 	}
-	return resp, nil
+	return c.applyStyleCheck(ctx, resp, "reply", func(ctx context.Context, fb string) (string, error) {
+		retry := req
+		retry.Messages = retryUserPrompt(req.Messages, fb)
+		return c.provider.Complete(ctx, retry)
+	}), nil
 }
 
 func (c *AIClient) GenerateFollowup(ctx context.Context, contactName, company, daysAgo, lastMessage, ourLastReply string) (string, error) {
@@ -145,18 +181,23 @@ func (c *AIClient) GenerateFollowup(ctx context.Context, contactName, company, d
 	)
 	userPrompt := r.Replace(FollowupUser)
 
-	resp, err := c.provider.Complete(ctx, CompletionRequest{
+	req := CompletionRequest{
 		Messages: []Message{
 			{Role: "system", Content: FollowupSystem},
 			{Role: "user", Content: userPrompt},
 		},
 		MaxTokens: 1024,
 		Mode:      ModelModeExecute,
-	})
+	}
+	resp, err := c.provider.Complete(ctx, req)
 	if err != nil {
 		return "", fmt.Errorf("ai generate followup: %w", err)
 	}
-	return resp, nil
+	return c.applyStyleCheck(ctx, resp, "followup", func(ctx context.Context, fb string) (string, error) {
+		retry := req
+		retry.Messages = retryUserPrompt(req.Messages, fb)
+		return c.provider.Complete(ctx, retry)
+	}), nil
 }
 
 func (c *AIClient) GenerateColdMessage(ctx context.Context, name, title, company, prospectContext, stepHint, previousMessage, source, feedbackExamples string) (string, error) {
@@ -181,18 +222,23 @@ func (c *AIClient) GenerateColdMessage(ctx context.Context, name, title, company
 		systemPrompt += "\n\n" + feedbackExamples
 	}
 
-	resp, err := c.provider.Complete(ctx, CompletionRequest{
+	req := CompletionRequest{
 		Messages: []Message{
 			{Role: "system", Content: systemPrompt},
 			{Role: "user", Content: userPrompt},
 		},
 		MaxTokens: 2048,
 		Mode:      ModelModeExecute,
-	})
+	}
+	resp, err := c.provider.Complete(ctx, req)
 	if err != nil {
 		return "", fmt.Errorf("ai cold message: %w", err)
 	}
-	return resp, nil
+	return c.applyStyleCheck(ctx, resp, "email", func(ctx context.Context, fb string) (string, error) {
+		retry := req
+		retry.Messages = retryUserPrompt(req.Messages, fb)
+		return c.provider.Complete(ctx, retry)
+	}), nil
 }
 
 func (c *AIClient) GenerateTelegramMessage(ctx context.Context, name, title, company, prospectContext, stepHint, previousMessage, source, feedbackExamples string) (string, error) {
@@ -217,18 +263,23 @@ func (c *AIClient) GenerateTelegramMessage(ctx context.Context, name, title, com
 		systemPrompt += "\n\n" + feedbackExamples
 	}
 
-	resp, err := c.provider.Complete(ctx, CompletionRequest{
+	req := CompletionRequest{
 		Messages: []Message{
 			{Role: "system", Content: systemPrompt},
 			{Role: "user", Content: r.Replace(TelegramOutreachUser)},
 		},
 		MaxTokens: 2048,
 		Mode:      ModelModeExecute,
-	})
+	}
+	resp, err := c.provider.Complete(ctx, req)
 	if err != nil {
 		return "", fmt.Errorf("ai telegram message: %w", err)
 	}
-	return resp, nil
+	return c.applyStyleCheck(ctx, resp, "telegram", func(ctx context.Context, fb string) (string, error) {
+		retry := req
+		retry.Messages = retryUserPrompt(req.Messages, fb)
+		return c.provider.Complete(ctx, retry)
+	}), nil
 }
 
 // TelegramReplyResult holds the AI response and whether escalation to a manager is needed.

@@ -22,9 +22,10 @@ type SettingsInput struct {
 	SMTPPort          string `json:"smtp_port"`
 	SMTPUser          string `json:"smtp_user"`
 	SMTPPassword      string `json:"smtp_password"`
-	AIProvider        string `json:"ai_provider"`
-	AIModel           string `json:"ai_model"`
-	AIAPIKey          string `json:"ai_api_key"`
+	AIProvider          string `json:"ai_provider"`
+	AIModel             string `json:"ai_model"`
+	AIAPIKey            string `json:"ai_api_key"`
+	AIStyleCheckEnabled bool   `json:"ai_style_check_enabled"`
 	NotifyTelegram    bool   `json:"notify_telegram"`
 	NotifyEmailDigest bool   `json:"notify_email_digest"`
 	AutoQualify       bool   `json:"auto_qualify"`
@@ -118,6 +119,9 @@ func (uc *UseCase) UpdateSettings(ctx context.Context, userID uuid.UUID, raw map
 	}
 	if _, ok := raw["ai_api_key"]; ok {
 		fields["ai_api_key"] = input.AIAPIKey
+	}
+	if _, ok := raw["ai_style_check_enabled"]; ok {
+		fields["ai_style_check_enabled"] = input.AIStyleCheckEnabled
 	}
 	if _, ok := raw["notify_telegram"]; ok {
 		fields["notify_telegram"] = input.NotifyTelegram

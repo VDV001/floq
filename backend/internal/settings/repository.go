@@ -38,20 +38,23 @@ func (r *Repository) GetSettings(ctx context.Context, userID uuid.UUID) (*domain
 		return nil, fmt.Errorf("load user profile: %w", err)
 	}
 
-	// Defaults.
+	// Defaults applied when no user_settings row exists yet (pgx.ErrNoRows
+	// path below). AIStyleCheckEnabled also has DEFAULT TRUE in migration
+	// 025 — keep the two in sync if you change the policy.
 	s := &domain.Settings{
-		FullName:           fullName,
-		Email:              email,
-		IMAPPort:           "993",
-		AIProvider:         "ollama",
-		AIModel:            "gemma3:4b",
-		NotifyTelegram:     true,
-		AutoQualify:        true,
-		AutoDraft:          true,
-		AutoFollowup:       true,
-		AutoFollowupDays:   2,
-		AutoSendDelayMin:   5,
-		AutoProspectToLead: true,
+		FullName:            fullName,
+		Email:               email,
+		IMAPPort:            "993",
+		AIProvider:          "ollama",
+		AIModel:             "gemma3:4b",
+		AIStyleCheckEnabled: true,
+		NotifyTelegram:      true,
+		AutoQualify:         true,
+		AutoDraft:           true,
+		AutoFollowup:        true,
+		AutoFollowupDays:    2,
+		AutoSendDelayMin:    5,
+		AutoProspectToLead:  true,
 	}
 
 	err = r.q.QueryRow(ctx,
@@ -62,7 +65,8 @@ func (r *Repository) GetSettings(ctx context.Context, userID uuid.UUID) (*domain
 		        ai_provider, ai_model, ai_api_key,
 		        notify_telegram, notify_email_digest,
 		        auto_qualify, auto_draft, auto_send, auto_send_delay_min,
-		        auto_followup, auto_followup_days, auto_prospect_to_lead, auto_verify_import
+		        auto_followup, auto_followup_days, auto_prospect_to_lead, auto_verify_import,
+		        ai_style_check_enabled
 		 FROM user_settings WHERE user_id = $1`, userID,
 	).Scan(
 		&s.TelegramBotToken, &s.TelegramBotActive,
@@ -73,6 +77,7 @@ func (r *Repository) GetSettings(ctx context.Context, userID uuid.UUID) (*domain
 		&s.NotifyTelegram, &s.NotifyEmailDigest,
 		&s.AutoQualify, &s.AutoDraft, &s.AutoSend, &s.AutoSendDelayMin,
 		&s.AutoFollowup, &s.AutoFollowupDays, &s.AutoProspectToLead, &s.AutoVerifyImport,
+		&s.AIStyleCheckEnabled,
 	)
 	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return nil, fmt.Errorf("load settings: %w", err)

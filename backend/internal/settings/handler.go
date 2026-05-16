@@ -77,9 +77,10 @@ type Settings struct {
 	SMTPActive   bool   `json:"smtp_active"`
 
 	// AI
-	AIProvider string `json:"ai_provider"`
-	AIModel    string `json:"ai_model"`
-	AIAPIKey   string `json:"ai_api_key"`
+	AIProvider          string `json:"ai_provider"`
+	AIModel             string `json:"ai_model"`
+	AIAPIKey            string `json:"ai_api_key"`
+	AIStyleCheckEnabled bool   `json:"ai_style_check_enabled"`
 
 	// Connection statuses (computed, read-only)
 	IMAPActive   bool `json:"imap_active"`
@@ -167,9 +168,10 @@ func domainToDTO(ds *domain.Settings) Settings {
 		SMTPUser:           ds.SMTPUser,
 		SMTPPassword:       ds.SMTPPassword,
 		SMTPActive:         ds.SMTPHost != "" && ds.SMTPUser != "" && ds.SMTPPassword != "",
-		AIProvider:         ds.AIProvider,
-		AIModel:            ds.AIModel,
-		AIAPIKey:           ds.AIAPIKey,
+		AIProvider:          ds.AIProvider,
+		AIModel:             ds.AIModel,
+		AIAPIKey:            ds.AIAPIKey,
+		AIStyleCheckEnabled: ds.AIStyleCheckEnabled,
 		IMAPActive:         ds.IMAPHost != "" && ds.IMAPUser != "" && ds.IMAPPassword != "",
 		ResendActive:       ds.ResendAPIKey != "",
 		AIActive:           aiActive,
