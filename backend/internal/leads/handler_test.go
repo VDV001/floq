@@ -197,6 +197,72 @@ func TestHandler_GetLead_IncludesIdentitySummary(t *testing.T) {
 	assert.ElementsMatch(t, []uuid.UUID{leadID, otherLead}, resp.Identity.LinkedLeadIDs)
 }
 
+func TestHandler_GetLead_ForbidsCrossTenant(t *testing.T) {
+	repo := newMockRepo()
+	ownerID := uuid.New()
+	attackerID := uuid.New()
+	leadID := uuid.New()
+	repo.leads[leadID] = &domain.Lead{
+		ID:          leadID,
+		UserID:      ownerID,
+		Channel:     domain.ChannelEmail,
+		ContactName: "Owner-private",
+		Status:      domain.StatusNew,
+	}
+
+	r := newTestRouter(NewUseCase(repo, &mockAI{}, nil, WithIdentityReader(newStubIdentityReader())))
+	w := httptest.NewRecorder()
+	req := reqWithUser("GET", fmt.Sprintf("/api/leads/%s", leadID), nil, attackerID)
+	r.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusNotFound, w.Code,
+		"a user must not be able to read another tenant's lead — indistinguishable from non-existent")
+}
+
+func TestHandler_ListMessages_ForbidsCrossTenant(t *testing.T) {
+	repo := newMockRepo()
+	ownerID := uuid.New()
+	attackerID := uuid.New()
+	leadID := uuid.New()
+	repo.leads[leadID] = &domain.Lead{
+		ID:          leadID,
+		UserID:      ownerID,
+		Channel:     domain.ChannelEmail,
+		ContactName: "Owner-private",
+		Status:      domain.StatusNew,
+	}
+
+	r := newTestRouter(NewUseCase(repo, &mockAI{}, nil))
+	w := httptest.NewRecorder()
+	req := reqWithUser("GET", fmt.Sprintf("/api/leads/%s/messages", leadID), nil, attackerID)
+	r.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusNotFound, w.Code,
+		"cross-tenant message read must 404 (per-tenant boundary, no info leak)")
+}
+
+func TestHandler_ListMessages_Aggregated_ForbidsCrossTenant(t *testing.T) {
+	repo := newMockRepo()
+	ownerID := uuid.New()
+	attackerID := uuid.New()
+	leadID := uuid.New()
+	repo.leads[leadID] = &domain.Lead{
+		ID:          leadID,
+		UserID:      ownerID,
+		Channel:     domain.ChannelEmail,
+		ContactName: "Owner-private",
+		Status:      domain.StatusNew,
+	}
+
+	r := newTestRouter(NewUseCase(repo, &mockAI{}, nil, WithIdentityReader(newStubIdentityReader())))
+	w := httptest.NewRecorder()
+	req := reqWithUser("GET", fmt.Sprintf("/api/leads/%s/messages?aggregated=true", leadID), nil, attackerID)
+	r.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusNotFound, w.Code,
+		"aggregated variant must enforce ownership before crossing into the identity-merged timeline")
+}
+
 func TestHandler_GetLead_OmitsIdentityWhenNoLink(t *testing.T) {
 	repo := newMockRepo()
 	leadID := uuid.New()
