@@ -5,6 +5,7 @@ package leads_test
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/daniil/floq/internal/leads"
 	"github.com/daniil/floq/internal/leads/domain"
@@ -30,6 +31,7 @@ func TestIdentityRepository_SaveAndFindByEmail(t *testing.T) {
 	assert.Equal(t, "alice@acme.com", got.Email)
 	assert.Equal(t, "+79991234567", got.Phone)
 	assert.Equal(t, "alice_bot", got.TelegramUsername)
+	assert.WithinDuration(t, id.CreatedAt, got.CreatedAt, time.Second, "CreatedAt must round-trip")
 }
 
 func TestIdentityRepository_FindByPhone_AndTelegram(t *testing.T) {

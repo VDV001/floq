@@ -46,37 +46,43 @@ func (r *IdentityRepository) Save(ctx context.Context, id *domain.Identity) erro
 	return nil
 }
 
+const findIdentitySelect = `SELECT id, user_id, COALESCE(email, ''), COALESCE(phone, ''), COALESCE(telegram_username, ''), created_at
+ FROM identities WHERE user_id = $1 AND `
+
 func (r *IdentityRepository) FindByEmail(ctx context.Context, userID uuid.UUID, email string) (*domain.Identity, error) {
-	return r.findByColumn(ctx, userID, "email", email)
+	if email == "" {
+		return nil, nil
+	}
+	return r.scanIdentity(ctx, findIdentitySelect+`email = $2`, userID, email, "email")
 }
 
 func (r *IdentityRepository) FindByPhone(ctx context.Context, userID uuid.UUID, phone string) (*domain.Identity, error) {
-	return r.findByColumn(ctx, userID, "phone", phone)
+	if phone == "" {
+		return nil, nil
+	}
+	return r.scanIdentity(ctx, findIdentitySelect+`phone = $2`, userID, phone, "phone")
 }
 
 func (r *IdentityRepository) FindByTelegramUsername(ctx context.Context, userID uuid.UUID, tg string) (*domain.Identity, error) {
-	return r.findByColumn(ctx, userID, "telegram_username", tg)
-}
-
-// findByColumn factors the three FindByX queries — only the column name
-// differs and it comes from a fixed allowlist controlled by the caller,
-// so string interpolation here is safe (no user-supplied table/column).
-func (r *IdentityRepository) findByColumn(ctx context.Context, userID uuid.UUID, column, value string) (*domain.Identity, error) {
-	if value == "" {
+	if tg == "" {
 		return nil, nil
 	}
-	query := fmt.Sprintf(
-		`SELECT id, user_id, COALESCE(email, ''), COALESCE(phone, ''), COALESCE(telegram_username, ''), created_at
-		 FROM identities WHERE user_id = $1 AND %s = $2`, column)
+	return r.scanIdentity(ctx, findIdentitySelect+`telegram_username = $2`, userID, tg, "telegram_username")
+}
 
+// scanIdentity runs a single-row identity SELECT and unifies the
+// (nil, nil) on-not-found contract plus the error-wrapping label. The
+// SQL argument is built from compile-time literals only (no runtime
+// interpolation reaches the query string).
+func (r *IdentityRepository) scanIdentity(ctx context.Context, sql string, userID uuid.UUID, value, label string) (*domain.Identity, error) {
 	var id domain.Identity
-	err := r.q(ctx).QueryRow(ctx, query, userID, value).
+	err := r.q(ctx).QueryRow(ctx, sql, userID, value).
 		Scan(&id.ID, &id.UserID, &id.Email, &id.Phone, &id.TelegramUsername, &id.CreatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
 	}
 	if err != nil {
-		return nil, fmt.Errorf("find identity by %s: %w", column, err)
+		return nil, fmt.Errorf("find identity by %s: %w", label, err)
 	}
 	return &id, nil
 }

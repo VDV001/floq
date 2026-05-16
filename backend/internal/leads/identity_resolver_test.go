@@ -165,23 +165,66 @@ func TestIdentityResolver_Resolve_RejectsEmptyInputs(t *testing.T) {
 }
 
 // TestIdentityResolver_Resolve_LookupPriority documents the deterministic
-// lookup order: email > phone > tg. When two distinct identities exist
-// (one keyed by email, another by tg) and the caller supplies both, the
-// resolver returns the email match.
+// lookup order: email > phone > tg. For each pair of identifiers that
+// could match distinct existing identities, the higher-priority one
+// wins and the resolver does not Save a new row.
 func TestIdentityResolver_Resolve_LookupPriority(t *testing.T) {
-	repo := newInMemoryIdentityRepo()
+	cases := []struct {
+		name     string
+		winner   func(t *testing.T) *domain.Identity
+		loser    func(t *testing.T) *domain.Identity
+		email    string
+		phone    string
+		tg       string
+		winLabel string
+	}{
+		{
+			name:     "email wins over phone",
+			winner:   func(t *testing.T) *domain.Identity { return mustIdentity(t, "alice@acme.com", "", "") },
+			loser:    func(t *testing.T) *domain.Identity { return mustIdentity(t, "", "+79991234567", "") },
+			email:    "alice@acme.com",
+			phone:    "+79991234567",
+			winLabel: "email",
+		},
+		{
+			name:     "email wins over telegram",
+			winner:   func(t *testing.T) *domain.Identity { return mustIdentity(t, "alice@acme.com", "", "") },
+			loser:    func(t *testing.T) *domain.Identity { return mustIdentity(t, "", "", "alice_bot") },
+			email:    "alice@acme.com",
+			tg:       "alice_bot",
+			winLabel: "email",
+		},
+		{
+			name:     "phone wins over telegram",
+			winner:   func(t *testing.T) *domain.Identity { return mustIdentity(t, "", "+79991234567", "") },
+			loser:    func(t *testing.T) *domain.Identity { return mustIdentity(t, "", "", "alice_bot") },
+			phone:    "+79991234567",
+			tg:       "alice_bot",
+			winLabel: "phone",
+		},
+	}
 
-	byEmail, err := domain.NewIdentity(uuid.New(), "alice@acme.com", "", "")
-	require.NoError(t, err)
-	byTg, err := domain.NewIdentity(uuid.New(), "", "", "alice_bot")
-	require.NoError(t, err)
-	repo.preset(byEmail)
-	repo.preset(byTg)
-	require.NotEqual(t, byEmail.ID, byTg.ID)
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			repo := newInMemoryIdentityRepo()
+			winner := c.winner(t)
+			loser := c.loser(t)
+			repo.preset(winner)
+			repo.preset(loser)
+			require.NotEqual(t, winner.ID, loser.ID)
 
-	resolver := NewIdentityResolver(repo)
-	got, err := resolver.Resolve(context.Background(), uuid.New(), "alice@acme.com", "", "alice_bot")
+			resolver := NewIdentityResolver(repo)
+			got, err := resolver.Resolve(context.Background(), uuid.New(), c.email, c.phone, c.tg)
+			require.NoError(t, err)
+			assert.Equal(t, winner.ID, got.ID, "%s match must win", c.winLabel)
+			assert.Empty(t, repo.saved, "match must not trigger Save")
+		})
+	}
+}
+
+func mustIdentity(t *testing.T, email, phone, tg string) *domain.Identity {
+	t.Helper()
+	id, err := domain.NewIdentity(uuid.New(), email, phone, tg)
 	require.NoError(t, err)
-	assert.Equal(t, byEmail.ID, got.ID, "email match wins over tg match")
-	assert.Empty(t, repo.saved)
+	return id
 }
