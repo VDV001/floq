@@ -408,7 +408,7 @@ func (e *EmailPoller) processEmail(ctx context.Context, fromName, fromEmail, bod
 		}
 
 		go func() {
-			qCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			qCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 			defer cancel()
 			result, err := e.aiClient.Qualify(qCtx, fromName, string(lead.Channel), qualifyText)
 			if err != nil {

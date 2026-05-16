@@ -154,7 +154,7 @@ func (t *TelegramBot) handleMessage(ctx context.Context, msg *tgbotapi.Message) 
 	{
 		qualifyText := text // use latest message for qualification
 		go func() {
-			qCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			qCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 			defer cancel()
 			result, err := t.aiClient.Qualify(qCtx, contactName, string(lead.Channel), qualifyText)
 			if err != nil {
