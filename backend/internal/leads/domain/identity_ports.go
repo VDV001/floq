@@ -16,6 +16,10 @@ import (
 // LinkLead and LinkProspect MUST be idempotent — repeated calls with
 // the same arguments produce a single row, so backfill goroutines can
 // re-run without duplicating links.
+//
+// Reader methods (GetByLeadID, LinkedLeadIDs) return (nil, nil) /
+// empty slice on missing rows — sentinel errors are reserved for IO
+// failures, not for "no such association".
 type IdentityRepository interface {
 	FindByEmail(ctx context.Context, userID uuid.UUID, email string) (*Identity, error)
 	FindByPhone(ctx context.Context, userID uuid.UUID, phone string) (*Identity, error)
@@ -23,6 +27,13 @@ type IdentityRepository interface {
 	Save(ctx context.Context, id *Identity) error
 	LinkLead(ctx context.Context, leadID, identityID uuid.UUID) error
 	LinkProspect(ctx context.Context, prospectID, identityID uuid.UUID) error
+
+	// GetByLeadID returns the Identity linked to the given lead, or
+	// (nil, nil) if the lead has no identity attached.
+	GetByLeadID(ctx context.Context, leadID uuid.UUID) (*Identity, error)
+	// LinkedLeadIDs lists every lead pointing at the identity (including
+	// the original triggering lead, if any). Order is unspecified.
+	LinkedLeadIDs(ctx context.Context, identityID uuid.UUID) ([]uuid.UUID, error)
 }
 
 // IdentityResolver maps a (possibly partial, possibly raw) tuple of
