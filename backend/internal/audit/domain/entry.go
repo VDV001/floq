@@ -98,5 +98,65 @@ type EntryParams struct {
 // derived Entry (ID generated, CreatedAt set to UTC now, TotalTokens
 // computed) safe to persist.
 func NewEntry(p EntryParams) (*Entry, error) {
-	return nil, errors.New("not implemented")
+	if p.UserID == uuid.Nil {
+		return nil, ErrInvalidUserID
+	}
+	if p.Provider == "" {
+		return nil, ErrInvalidProvider
+	}
+	if p.Model == "" {
+		return nil, ErrInvalidModel
+	}
+	if !p.RequestType.valid() {
+		return nil, ErrInvalidRequestType
+	}
+	if !p.Status.valid() {
+		return nil, ErrInvalidStatus
+	}
+	if p.InputTokens < 0 || p.OutputTokens < 0 {
+		return nil, ErrNegativeTokens
+	}
+	if p.CostUSDMicro < 0 {
+		return nil, ErrNegativeCost
+	}
+	if p.LatencyMS < 0 {
+		return nil, ErrNegativeLatency
+	}
+	if p.Status == StatusSuccess && p.ErrorMessage != "" {
+		return nil, ErrErrorMessageOnSuccess
+	}
+	if p.Status == StatusError && p.ErrorMessage == "" {
+		return nil, ErrMissingErrorMessage
+	}
+	return &Entry{
+		ID:           uuid.New(),
+		UserID:       p.UserID,
+		LeadID:       p.LeadID,
+		ProspectID:   p.ProspectID,
+		RequestType:  p.RequestType,
+		Provider:     p.Provider,
+		Model:        p.Model,
+		InputTokens:  p.InputTokens,
+		OutputTokens: p.OutputTokens,
+		TotalTokens:  p.InputTokens + p.OutputTokens,
+		CostUSDMicro: p.CostUSDMicro,
+		LatencyMS:    p.LatencyMS,
+		Status:       p.Status,
+		ErrorMessage: p.ErrorMessage,
+		CreatedAt:    time.Now().UTC(),
+	}, nil
+}
+
+func (rt RequestType) valid() bool {
+	switch rt {
+	case RequestTypeQualification, RequestTypeDraftReply, RequestTypeColdMessage,
+		RequestTypeTelegramMessage, RequestTypeTelegramReply, RequestTypeCallBrief,
+		RequestTypeFollowup, RequestTypeImageAnalysis, RequestTypeStyleCheck:
+		return true
+	}
+	return false
+}
+
+func (s Status) valid() bool {
+	return s == StatusSuccess || s == StatusError
 }
