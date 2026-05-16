@@ -6,9 +6,11 @@ import (
 	"crypto/tls"
 	"io"
 	"log"
+	"log/slog"
 	"strings"
 	"time"
 
+	"github.com/daniil/floq/internal/inbox/attachments"
 	"github.com/daniil/floq/internal/proxy"
 	"github.com/emersion/go-imap/v2"
 	"github.com/emersion/go-imap/v2/imapclient"
@@ -17,12 +19,16 @@ import (
 )
 
 // EmailPoller polls an IMAP mailbox for new emails and creates leads.
+// When analyzer is non-nil, attachments on each inbound message are
+// extracted and their text content is appended to the qualification
+// context. A nil analyzer keeps the legacy text-only behaviour.
 type EmailPoller struct {
 	store        ConfigStore
 	repo         LeadRepository
 	prospectRepo ProspectRepository
 	seqRepo      SequenceRepository
 	aiClient     AIQualifier
+	analyzer     *attachments.Analyzer
 	ownerID      uuid.UUID
 	dialer       proxy.ContextDialer
 
@@ -32,8 +38,8 @@ type EmailPoller struct {
 	fallbackPassword string
 }
 
-func NewEmailPoller(store ConfigStore, ownerID uuid.UUID, fallbackHost, fallbackPort, fallbackUser, fallbackPassword string, repo LeadRepository, prospectRepo ProspectRepository, seqRepo SequenceRepository, aiClient AIQualifier, dialer proxy.ContextDialer) *EmailPoller {
-	return &EmailPoller{
+func NewEmailPoller(store ConfigStore, ownerID uuid.UUID, fallbackHost, fallbackPort, fallbackUser, fallbackPassword string, repo LeadRepository, prospectRepo ProspectRepository, seqRepo SequenceRepository, aiClient AIQualifier, dialer proxy.ContextDialer, opts ...EmailPollerOption) *EmailPoller {
+	p := &EmailPoller{
 		store:            store,
 		repo:             repo,
 		prospectRepo:     prospectRepo,
@@ -46,6 +52,23 @@ func NewEmailPoller(store ConfigStore, ownerID uuid.UUID, fallbackHost, fallback
 		fallbackUser:     fallbackUser,
 		fallbackPassword: fallbackPassword,
 	}
+	for _, opt := range opts {
+		opt(p)
+	}
+	return p
+}
+
+// EmailPollerOption configures optional EmailPoller behaviour. The
+// existing call sites in cmd/server keep working unchanged; new
+// capabilities (currently only the attachments analyzer) plug in
+// through variadic options.
+type EmailPollerOption func(*EmailPoller)
+
+// WithAttachmentAnalyzer wires the analyzer used to extract text from
+// PDFs and screenshots so it reaches the AI qualification step. Pass
+// nil to disable; the poller silently degrades to text-only.
+func WithAttachmentAnalyzer(a *attachments.Analyzer) EmailPollerOption {
+	return func(p *EmailPoller) { p.analyzer = a }
 }
 
 func (e *EmailPoller) Start(ctx context.Context) {
@@ -177,14 +200,19 @@ func (e *EmailPoller) poll(ctx context.Context) {
 			continue
 		}
 
-		// Extract text body from body section
+		// Extract text body + any non-inline attachments. Both share the
+		// same raw body bytes, so we parse the MIME structure twice for
+		// clarity rather than threading a more complex helper through
+		// the existing test surface.
 		var bodyText string
+		var atts []attachments.Attachment
 		if len(buf.BodySection) > 0 {
 			bodyText = extractTextBody(buf.BodySection[0].Bytes)
+			atts = extractAttachments(buf.BodySection[0].Bytes)
 		}
 
 		if fromEmail != "" && bodyText != "" {
-			e.processEmail(ctx, fromName, fromEmail, bodyText)
+			e.processEmail(ctx, fromName, fromEmail, bodyText, atts)
 			processedUIDs = append(processedUIDs, buf.UID)
 		}
 	}
@@ -236,6 +264,42 @@ func shouldSkipEmail(email string) bool {
 	return false
 }
 
+// extractAttachments walks the multipart MIME tree of raw and returns
+// every non-inline part — i.e. real attachments — as attachments.Attachment
+// records the analyser can consume. Inline body parts (text/plain,
+// text/html) are handled by extractTextBody and skipped here. A
+// malformed or non-MIME body yields an empty slice rather than an
+// error; the caller treats no-attachments and parse-failed identically.
+func extractAttachments(raw []byte) []attachments.Attachment {
+	mr, err := mail.CreateReader(bytes.NewReader(raw))
+	if err != nil {
+		return nil
+	}
+	var atts []attachments.Attachment
+	for {
+		p, err := mr.NextPart()
+		if err != nil {
+			break
+		}
+		ah, ok := p.Header.(*mail.AttachmentHeader)
+		if !ok {
+			continue
+		}
+		data, err := io.ReadAll(p.Body)
+		if err != nil {
+			continue
+		}
+		filename, _ := ah.Filename()
+		contentType, _, _ := ah.ContentType()
+		atts = append(atts, attachments.Attachment{
+			Filename:    filename,
+			ContentType: contentType,
+			Data:        data,
+		})
+	}
+	return atts
+}
+
 func extractTextBody(raw []byte) string {
 	mr, err := mail.CreateReader(bytes.NewReader(raw))
 	if err != nil {
@@ -264,7 +328,7 @@ func extractTextBody(raw []byte) string {
 	return textBody
 }
 
-func (e *EmailPoller) processEmail(ctx context.Context, fromName, fromEmail, body string) {
+func (e *EmailPoller) processEmail(ctx context.Context, fromName, fromEmail, body string, atts []attachments.Attachment) {
 	existing, err := e.repo.GetLeadByEmailAddress(ctx, e.ownerID, fromEmail)
 	if err != nil {
 		log.Printf("[email-poller] error looking up lead for %s: %v", fromEmail, err)
@@ -327,10 +391,26 @@ func (e *EmailPoller) processEmail(ctx context.Context, fromName, fromEmail, bod
 	}
 
 	if isNewLead {
+		// Build the text the AI qualifier sees: the email body plus any
+		// extracted attachment content. We don't mutate lead.FirstMessage
+		// (that's the conversation record) — qualifyText is ephemeral.
+		qualifyText := body
+		if e.analyzer != nil {
+			for _, att := range atts {
+				res := e.analyzer.Analyze(ctx, att)
+				if res.Skipped != "" {
+					slog.WarnContext(ctx, "inbox: attachment skipped",
+						"filename", att.Filename, "reason", res.Skipped, "err", res.Err)
+					continue
+				}
+				qualifyText += "\n\n[Вложение: " + att.Filename + "]\n" + res.Text
+			}
+		}
+
 		go func() {
 			qCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 			defer cancel()
-			result, err := e.aiClient.Qualify(qCtx, fromName, string(lead.Channel), lead.FirstMessage)
+			result, err := e.aiClient.Qualify(qCtx, fromName, string(lead.Channel), qualifyText)
 			if err != nil {
 				log.Printf("[email-poller] qualification error for lead %s: %v", lead.ID, err)
 				return

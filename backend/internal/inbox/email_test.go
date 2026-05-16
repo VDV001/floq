@@ -273,7 +273,7 @@ func TestProcessEmail_NewLead_NoProspect(t *testing.T) {
 	ownerID := uuid.New()
 	poller := newTestEmailPoller(repo, prospectRepo, seqRepo, aiClient, ownerID)
 
-	poller.processEmail(context.Background(), "John Doe", "john@example.com", "I need a website built")
+	poller.processEmail(context.Background(), "John Doe", "john@example.com", "I need a website built", nil)
 
 	// Wait for async qualification.
 	waitQualifyDone(t, &repo.mockLeadRepo)
@@ -337,7 +337,7 @@ func TestProcessEmail_NewLead_WithProspectMatch(t *testing.T) {
 	poller := newTestEmailPoller(repo, prospectRepo, seqRepo, aiClient, ownerID)
 
 	// Use email as fromName to test name override from prospect.
-	poller.processEmail(context.Background(), "prospect@company.com", "prospect@company.com", "Interested in your service")
+	poller.processEmail(context.Background(), "prospect@company.com", "prospect@company.com", "Interested in your service", nil)
 
 	waitQualifyDone(t, &repo.mockLeadRepo)
 
@@ -387,7 +387,7 @@ func TestProcessEmail_ExistingLead_AddsMessage(t *testing.T) {
 
 	poller := newTestEmailPoller(repo, prospectRepo, seqRepo, aiClient, ownerID)
 
-	poller.processEmail(context.Background(), "Existing User", "existing@example.com", "Follow-up message")
+	poller.processEmail(context.Background(), "Existing User", "existing@example.com", "Follow-up message", nil)
 
 	// For existing leads, no async qualification — give a short moment just in case.
 	// Actually processEmail only qualifies new leads, so no waitQualifyDone needed.
@@ -430,7 +430,7 @@ func TestProcessEmail_ProspectAlreadyConverted_SkipsConversion(t *testing.T) {
 
 	poller := newTestEmailPoller(repo, prospectRepo, seqRepo, aiClient, ownerID)
 
-	poller.processEmail(context.Background(), "Someone", "converted@example.com", "Hello again")
+	poller.processEmail(context.Background(), "Someone", "converted@example.com", "Hello again", nil)
 
 	waitQualifyDone(t, &repo.mockLeadRepo)
 
@@ -472,7 +472,7 @@ func TestProcessEmail_NewLead_ProspectNameNotOverriddenWhenFromNameDiffers(t *te
 	poller := newTestEmailPoller(repo, prospectRepo, seqRepo, aiClient, ownerID)
 
 	// fromName != fromEmail, so prospect name should NOT override.
-	poller.processEmail(context.Background(), "John D.", "john@company.com", "Hello")
+	poller.processEmail(context.Background(), "John D.", "john@company.com", "Hello", nil)
 
 	waitQualifyDone(t, &repo.mockLeadRepo)
 
@@ -496,7 +496,7 @@ func TestProcessEmail_GetLeadByEmailError(t *testing.T) {
 
 	poller := newTestEmailPoller(repo, prospectRepo, seqRepo, aiClient, ownerID)
 
-	poller.processEmail(context.Background(), "Test", "test@example.com", "Hello")
+	poller.processEmail(context.Background(), "Test", "test@example.com", "Hello", nil)
 
 	repo.mu.Lock()
 	defer repo.mu.Unlock()
@@ -516,7 +516,7 @@ func TestProcessEmail_CreateLeadError(t *testing.T) {
 
 	poller := newTestEmailPoller(repo, prospectRepo, seqRepo, aiClient, ownerID)
 
-	poller.processEmail(context.Background(), "Test", "test@example.com", "Hello")
+	poller.processEmail(context.Background(), "Test", "test@example.com", "Hello", nil)
 
 	repo.mu.Lock()
 	defer repo.mu.Unlock()
@@ -547,7 +547,7 @@ func TestProcessEmail_CreateMessageError(t *testing.T) {
 
 	poller := newTestEmailPoller(repo, prospectRepo, seqRepo, aiClient, ownerID)
 
-	poller.processEmail(context.Background(), "Existing", "err@example.com", "Follow-up")
+	poller.processEmail(context.Background(), "Existing", "err@example.com", "Follow-up", nil)
 
 	repo.mu.Lock()
 	defer repo.mu.Unlock()
@@ -565,7 +565,7 @@ func TestProcessEmail_AIQualificationError(t *testing.T) {
 
 	poller := newTestEmailPoller(repo, prospectRepo, seqRepo, aiClient, ownerID)
 
-	poller.processEmail(context.Background(), "Test", "test@example.com", "Hello")
+	poller.processEmail(context.Background(), "Test", "test@example.com", "Hello", nil)
 
 	// Give goroutine time to finish (returns early on error).
 	time.Sleep(200 * time.Millisecond)
@@ -599,7 +599,7 @@ func TestProcessEmail_ProspectConvertError(t *testing.T) {
 
 	poller := newTestEmailPoller(repo, prospectRepo, seqRepo, aiClient, ownerID)
 
-	poller.processEmail(context.Background(), "conv-err@example.com", "conv-err@example.com", "Hello")
+	poller.processEmail(context.Background(), "conv-err@example.com", "conv-err@example.com", "Hello", nil)
 
 	waitQualifyDone(t, &repo.mockLeadRepo)
 
@@ -644,7 +644,7 @@ func TestProcessEmail_NewLeadError_EmptyName(t *testing.T) {
 	poller := newTestEmailPoller(repo, prospectRepo, seqRepo, aiClient, ownerID)
 
 	// Empty fromName triggers NewInboxLead error (contactName required).
-	poller.processEmail(context.Background(), "", "empty@example.com", "Hello")
+	poller.processEmail(context.Background(), "", "empty@example.com", "Hello", nil)
 
 	repo.mu.Lock()
 	defer repo.mu.Unlock()
@@ -662,7 +662,7 @@ func TestProcessEmail_UpsertQualificationError(t *testing.T) {
 
 	poller := newTestEmailPoller(repo, prospectRepo, seqRepo, aiClient, ownerID)
 
-	poller.processEmail(context.Background(), "Test", "test@example.com", "Hello")
+	poller.processEmail(context.Background(), "Test", "test@example.com", "Hello", nil)
 
 	waitQualifyDone(t, &repo.mockLeadRepo)
 
@@ -694,7 +694,7 @@ func TestProcessEmail_UpdateLeadStatusError(t *testing.T) {
 
 	poller := newTestEmailPoller(repo, prospectRepo, seqRepo, aiClient, ownerID)
 
-	poller.processEmail(context.Background(), "Test", "test@example.com", "Hello")
+	poller.processEmail(context.Background(), "Test", "test@example.com", "Hello", nil)
 
 	waitQualifyDone(t, &repo.mockLeadRepo)
 

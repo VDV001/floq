@@ -2,6 +2,7 @@ package providers
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -11,6 +12,11 @@ import (
 	"github.com/openai/openai-go/option"
 	"github.com/openai/openai-go/packages/param"
 )
+
+// Compile-time check: OpenAIProvider satisfies ai.VisionProvider so
+// AIClient.AnalyzeImage (which type-asserts the provider) reaches the
+// implementation below in production.
+var _ ai.VisionProvider = (*OpenAIProvider)(nil)
 
 type OpenAIProvider struct {
 	client openai.Client
@@ -113,4 +119,29 @@ func (p *OpenAIProvider) Complete(ctx context.Context, req ai.CompletionRequest)
 	}
 
 	return "", nil
+}
+
+// AnalyzeImage sends imageData together with prompt as a multimodal
+// chat-completion request and returns the assistant's text response.
+// Always uses Budget mode (gpt-4o-mini by default) — vision passes are
+// volume-driven, cost dominates reasoning depth.
+func (p *OpenAIProvider) AnalyzeImage(ctx context.Context, imageData []byte, mimeType, prompt string) (string, error) {
+	dataURI := fmt.Sprintf("data:%s;base64,%s", mimeType, base64.StdEncoding.EncodeToString(imageData))
+	parts := []openai.ChatCompletionContentPartUnionParam{
+		openai.TextContentPart(prompt),
+		openai.ImageContentPart(openai.ChatCompletionContentPartImageImageURLParam{URL: dataURI}),
+	}
+
+	resp, err := p.client.Chat.Completions.New(ctx, openai.ChatCompletionNewParams{
+		Model:     p.modelForMode(ai.ModelModeBudget),
+		Messages:  []openai.ChatCompletionMessageParamUnion{openai.UserMessage(parts)},
+		MaxTokens: param.NewOpt(int64(1024)),
+	})
+	if err != nil {
+		return "", fmt.Errorf("analyze image: %w", err)
+	}
+	if len(resp.Choices) == 0 {
+		return "", fmt.Errorf("analyze image: no choices in response")
+	}
+	return resp.Choices[0].Message.Content, nil
 }
