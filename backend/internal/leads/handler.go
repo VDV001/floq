@@ -10,10 +10,42 @@ import (
 	"github.com/daniil/floq/internal/httputil"
 	"github.com/daniil/floq/internal/leads/domain"
 	"github.com/go-chi/chi/v5"
+	"github.com/google/uuid"
 )
 
 type Handler struct {
 	uc *UseCase
+}
+
+// authorizeLead is the shared front-door for every /api/leads/{id}/*
+// endpoint: it (a) demands a userID in the request context, (b) parses
+// the lead-id path parameter, and (c) gates on UseCase.OwnsLead so a
+// foreign tenant gets a uniform 404 — indistinguishable from a
+// non-existent leadID, no info leak.
+//
+// On any failure the helper writes the response and returns ok=false;
+// callers must early-return without touching w/r further.
+func (h *Handler) authorizeLead(w http.ResponseWriter, r *http.Request) (userID, leadID uuid.UUID, ok bool) {
+	userID, present := httputil.UserIDFromContext(r.Context())
+	if !present {
+		httputil.WriteError(w, http.StatusUnauthorized, "unauthorized")
+		return uuid.Nil, uuid.Nil, false
+	}
+	leadID, err := httputil.ParseIDParam(r, "id")
+	if err != nil {
+		httputil.WriteError(w, http.StatusBadRequest, "invalid lead id")
+		return uuid.Nil, uuid.Nil, false
+	}
+	owned, err := h.uc.OwnsLead(r.Context(), userID, leadID)
+	if err != nil {
+		httputil.WriteError(w, http.StatusInternalServerError, "failed to authorize lead")
+		return uuid.Nil, uuid.Nil, false
+	}
+	if !owned {
+		httputil.WriteError(w, http.StatusNotFound, "lead not found")
+		return uuid.Nil, uuid.Nil, false
+	}
+	return userID, leadID, true
 }
 
 func RegisterRoutes(r chi.Router, uc *UseCase) {
@@ -81,9 +113,8 @@ func (h *Handler) getLead() http.HandlerFunc {
 
 func (h *Handler) updateStatus() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		id, err := httputil.ParseIDParam(r, "id")
-		if err != nil {
-			httputil.WriteError(w, http.StatusBadRequest, "invalid lead id")
+		_, id, ok := h.authorizeLead(w, r)
+		if !ok {
 			return
 		}
 
@@ -109,38 +140,22 @@ func (h *Handler) updateStatus() http.HandlerFunc {
 
 func (h *Handler) listMessages() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		userID, ok := httputil.UserIDFromContext(r.Context())
+		userID, id, ok := h.authorizeLead(w, r)
 		if !ok {
-			httputil.WriteError(w, http.StatusUnauthorized, "unauthorized")
-			return
-		}
-		id, err := httputil.ParseIDParam(r, "id")
-		if err != nil {
-			httputil.WriteError(w, http.StatusBadRequest, "invalid lead id")
-			return
-		}
-
-		// Pre-check ownership before invoking either timeline variant.
-		// The aggregated path also re-checks per-linked-lead, but the
-		// early 404 here keeps the foreign-lead probe indistinguishable
-		// from a non-existent leadID.
-		owned, err := h.uc.OwnsLead(r.Context(), userID, id)
-		if err != nil {
-			httputil.WriteError(w, http.StatusInternalServerError, "failed to authorize lead")
-			return
-		}
-		if !owned {
-			httputil.WriteError(w, http.StatusNotFound, "lead not found")
 			return
 		}
 
 		// ?aggregated=true switches to the identity-merged timeline,
 		// where messages from every lead sharing this lead's Identity
 		// surface in chronological order. The frontend pins the param
-		// to the user_settings.aggregated_inbox_view preference.
+		// to the user_settings.aggregated_inbox_view preference. The
+		// aggregated path also re-filters linked leads through the
+		// same userID so a future operator-driven cross-tenant merge
+		// (Phase 3) cannot expose foreign messages.
 		aggregated := r.URL.Query().Get("aggregated") == "true"
 
 		var msgs []domain.Message
+		var err error
 		if aggregated {
 			msgs, err = h.uc.GetAggregatedMessages(r.Context(), userID, id)
 		} else {
@@ -159,9 +174,8 @@ func (h *Handler) listMessages() http.HandlerFunc {
 
 func (h *Handler) sendMessage() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		id, err := httputil.ParseIDParam(r, "id")
-		if err != nil {
-			httputil.WriteError(w, http.StatusBadRequest, "invalid lead id")
+		_, id, ok := h.authorizeLead(w, r)
+		if !ok {
 			return
 		}
 
@@ -188,9 +202,8 @@ func (h *Handler) sendMessage() http.HandlerFunc {
 
 func (h *Handler) getQualification() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		id, err := httputil.ParseIDParam(r, "id")
-		if err != nil {
-			httputil.WriteError(w, http.StatusBadRequest, "invalid lead id")
+		_, id, ok := h.authorizeLead(w, r)
+		if !ok {
 			return
 		}
 		q, err := h.uc.GetQualification(r.Context(), id)
@@ -208,9 +221,8 @@ func (h *Handler) getQualification() http.HandlerFunc {
 
 func (h *Handler) qualifyLead() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		id, err := httputil.ParseIDParam(r, "id")
-		if err != nil {
-			httputil.WriteError(w, http.StatusBadRequest, "invalid lead id")
+		_, id, ok := h.authorizeLead(w, r)
+		if !ok {
 			return
 		}
 		q, err := h.uc.QualifyLead(r.Context(), id)
@@ -224,9 +236,8 @@ func (h *Handler) qualifyLead() http.HandlerFunc {
 
 func (h *Handler) getDraft() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		id, err := httputil.ParseIDParam(r, "id")
-		if err != nil {
-			httputil.WriteError(w, http.StatusBadRequest, "invalid lead id")
+		_, id, ok := h.authorizeLead(w, r)
+		if !ok {
 			return
 		}
 		d, err := h.uc.GetDraft(r.Context(), id)
@@ -244,9 +255,8 @@ func (h *Handler) getDraft() http.HandlerFunc {
 
 func (h *Handler) regenerateDraft() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		id, err := httputil.ParseIDParam(r, "id")
-		if err != nil {
-			httputil.WriteError(w, http.StatusBadRequest, "invalid lead id")
+		_, id, ok := h.authorizeLead(w, r)
+		if !ok {
 			return
 		}
 		d, err := h.uc.RegenerateDraft(r.Context(), id)

@@ -356,16 +356,18 @@ func TestHandler_GetLead_OmitsIdentityWhenNoLink(t *testing.T) {
 
 func TestHandler_UpdateStatus(t *testing.T) {
 	repo := newMockRepo()
+	userID := uuid.New()
 	leadID := uuid.New()
 	repo.leads[leadID] = &domain.Lead{
 		ID:     leadID,
+		UserID: userID,
 		Status: domain.StatusNew,
 	}
 
 	r := newTestRouter(NewUseCase(repo, &mockAI{}, nil))
 	body := bytes.NewBufferString(`{"status":"qualified"}`)
 	w := httptest.NewRecorder()
-	req := httptest.NewRequest("PATCH", fmt.Sprintf("/api/leads/%s/status", leadID), body)
+	req := reqWithUser("PATCH", fmt.Sprintf("/api/leads/%s/status", leadID), body, userID)
 	req.Header.Set("Content-Type", "application/json")
 	r.ServeHTTP(w, req)
 
@@ -376,10 +378,14 @@ func TestHandler_UpdateStatus(t *testing.T) {
 }
 
 func TestHandler_UpdateStatus_EmptyStatus(t *testing.T) {
-	r := newTestRouter(NewUseCase(newMockRepo(), &mockAI{}, nil))
+	repo := newMockRepo()
+	userID := uuid.New()
+	leadID := uuid.New()
+	repo.leads[leadID] = &domain.Lead{ID: leadID, UserID: userID, Status: domain.StatusNew}
+	r := newTestRouter(NewUseCase(repo, &mockAI{}, nil))
 	body := bytes.NewBufferString(`{"status":""}`)
 	w := httptest.NewRecorder()
-	req := httptest.NewRequest("PATCH", fmt.Sprintf("/api/leads/%s/status", uuid.New()), body)
+	req := reqWithUser("PATCH", fmt.Sprintf("/api/leads/%s/status", leadID), body, userID)
 	req.Header.Set("Content-Type", "application/json")
 	r.ServeHTTP(w, req)
 
@@ -387,10 +393,14 @@ func TestHandler_UpdateStatus_EmptyStatus(t *testing.T) {
 }
 
 func TestHandler_UpdateStatus_InvalidJSON(t *testing.T) {
-	r := newTestRouter(NewUseCase(newMockRepo(), &mockAI{}, nil))
+	repo := newMockRepo()
+	userID := uuid.New()
+	leadID := uuid.New()
+	repo.leads[leadID] = &domain.Lead{ID: leadID, UserID: userID, Status: domain.StatusNew}
+	r := newTestRouter(NewUseCase(repo, &mockAI{}, nil))
 	body := bytes.NewBufferString(`not json`)
 	w := httptest.NewRecorder()
-	req := httptest.NewRequest("PATCH", fmt.Sprintf("/api/leads/%s/status", uuid.New()), body)
+	req := reqWithUser("PATCH", fmt.Sprintf("/api/leads/%s/status", leadID), body, userID)
 	req.Header.Set("Content-Type", "application/json")
 	r.ServeHTTP(w, req)
 
@@ -488,9 +498,11 @@ func TestHandler_ListMessages(t *testing.T) {
 
 func TestHandler_SendMessage(t *testing.T) {
 	repo := newMockRepo()
+	userID := uuid.New()
 	leadID := uuid.New()
 	repo.leads[leadID] = &domain.Lead{
 		ID:      leadID,
+		UserID:  userID,
 		Channel: domain.ChannelEmail,
 		Status:  domain.StatusInConversation,
 	}
@@ -498,7 +510,7 @@ func TestHandler_SendMessage(t *testing.T) {
 	r := newTestRouter(NewUseCase(repo, &mockAI{}, nil))
 	body := bytes.NewBufferString(`{"body":"Hello!"}`)
 	w := httptest.NewRecorder()
-	req := httptest.NewRequest("POST", fmt.Sprintf("/api/leads/%s/send", leadID), body)
+	req := reqWithUser("POST", fmt.Sprintf("/api/leads/%s/send", leadID), body, userID)
 	req.Header.Set("Content-Type", "application/json")
 	r.ServeHTTP(w, req)
 
@@ -509,10 +521,14 @@ func TestHandler_SendMessage(t *testing.T) {
 }
 
 func TestHandler_SendMessage_EmptyBody(t *testing.T) {
-	r := newTestRouter(NewUseCase(newMockRepo(), &mockAI{}, nil))
+	repo := newMockRepo()
+	userID := uuid.New()
+	leadID := uuid.New()
+	repo.leads[leadID] = &domain.Lead{ID: leadID, UserID: userID, Status: domain.StatusInConversation}
+	r := newTestRouter(NewUseCase(repo, &mockAI{}, nil))
 	body := bytes.NewBufferString(`{"body":""}`)
 	w := httptest.NewRecorder()
-	req := httptest.NewRequest("POST", fmt.Sprintf("/api/leads/%s/send", uuid.New()), body)
+	req := reqWithUser("POST", fmt.Sprintf("/api/leads/%s/send", leadID), body, userID)
 	req.Header.Set("Content-Type", "application/json")
 	r.ServeHTTP(w, req)
 
@@ -521,7 +537,9 @@ func TestHandler_SendMessage_EmptyBody(t *testing.T) {
 
 func TestHandler_GetQualification(t *testing.T) {
 	repo := newMockRepo()
+	userID := uuid.New()
 	leadID := uuid.New()
+	repo.leads[leadID] = &domain.Lead{ID: leadID, UserID: userID, Status: domain.StatusNew}
 	repo.qualifications[leadID] = &domain.Qualification{
 		ID:             uuid.New(),
 		LeadID:         leadID,
@@ -531,7 +549,7 @@ func TestHandler_GetQualification(t *testing.T) {
 
 	r := newTestRouter(NewUseCase(repo, &mockAI{}, nil))
 	w := httptest.NewRecorder()
-	req := httptest.NewRequest("GET", fmt.Sprintf("/api/leads/%s/qualification", leadID), nil)
+	req := reqWithUser("GET", fmt.Sprintf("/api/leads/%s/qualification", leadID), nil, userID)
 	r.ServeHTTP(w, req)
 
 	assert.Equal(t, http.StatusOK, w.Code)
@@ -541,9 +559,13 @@ func TestHandler_GetQualification(t *testing.T) {
 }
 
 func TestHandler_GetQualification_NotFound(t *testing.T) {
-	r := newTestRouter(NewUseCase(newMockRepo(), &mockAI{}, nil))
+	repo := newMockRepo()
+	userID := uuid.New()
+	leadID := uuid.New()
+	repo.leads[leadID] = &domain.Lead{ID: leadID, UserID: userID, Status: domain.StatusNew}
+	r := newTestRouter(NewUseCase(repo, &mockAI{}, nil))
 	w := httptest.NewRecorder()
-	req := httptest.NewRequest("GET", fmt.Sprintf("/api/leads/%s/qualification", uuid.New()), nil)
+	req := reqWithUser("GET", fmt.Sprintf("/api/leads/%s/qualification", leadID), nil, userID)
 	r.ServeHTTP(w, req)
 
 	assert.Equal(t, http.StatusNotFound, w.Code)
@@ -551,7 +573,9 @@ func TestHandler_GetQualification_NotFound(t *testing.T) {
 
 func TestHandler_GetDraft(t *testing.T) {
 	repo := newMockRepo()
+	userID := uuid.New()
 	leadID := uuid.New()
+	repo.leads[leadID] = &domain.Lead{ID: leadID, UserID: userID, Status: domain.StatusInConversation}
 	repo.drafts[leadID] = &domain.Draft{
 		ID:     uuid.New(),
 		LeadID: leadID,
@@ -560,7 +584,7 @@ func TestHandler_GetDraft(t *testing.T) {
 
 	r := newTestRouter(NewUseCase(repo, &mockAI{}, nil))
 	w := httptest.NewRecorder()
-	req := httptest.NewRequest("GET", fmt.Sprintf("/api/leads/%s/draft", leadID), nil)
+	req := reqWithUser("GET", fmt.Sprintf("/api/leads/%s/draft", leadID), nil, userID)
 	r.ServeHTTP(w, req)
 
 	assert.Equal(t, http.StatusOK, w.Code)
@@ -570,9 +594,13 @@ func TestHandler_GetDraft(t *testing.T) {
 }
 
 func TestHandler_GetDraft_NotFound(t *testing.T) {
-	r := newTestRouter(NewUseCase(newMockRepo(), &mockAI{}, nil))
+	repo := newMockRepo()
+	userID := uuid.New()
+	leadID := uuid.New()
+	repo.leads[leadID] = &domain.Lead{ID: leadID, UserID: userID, Status: domain.StatusInConversation}
+	r := newTestRouter(NewUseCase(repo, &mockAI{}, nil))
 	w := httptest.NewRecorder()
-	req := httptest.NewRequest("GET", fmt.Sprintf("/api/leads/%s/draft", uuid.New()), nil)
+	req := reqWithUser("GET", fmt.Sprintf("/api/leads/%s/draft", leadID), nil, userID)
 	r.ServeHTTP(w, req)
 
 	assert.Equal(t, http.StatusNotFound, w.Code)
@@ -580,9 +608,11 @@ func TestHandler_GetDraft_NotFound(t *testing.T) {
 
 func TestHandler_QualifyLead(t *testing.T) {
 	repo := newMockRepo()
+	userID := uuid.New()
 	leadID := uuid.New()
 	repo.leads[leadID] = &domain.Lead{
 		ID:           leadID,
+		UserID:       userID,
 		ContactName:  "Ivan",
 		Channel:      domain.ChannelTelegram,
 		FirstMessage: "Need CRM",
@@ -602,7 +632,7 @@ func TestHandler_QualifyLead(t *testing.T) {
 
 	r := newTestRouter(NewUseCase(repo, aiSvc, nil))
 	w := httptest.NewRecorder()
-	req := httptest.NewRequest("POST", fmt.Sprintf("/api/leads/%s/qualify", leadID), nil)
+	req := reqWithUser("POST", fmt.Sprintf("/api/leads/%s/qualify", leadID), nil, userID)
 	r.ServeHTTP(w, req)
 
 	assert.Equal(t, http.StatusOK, w.Code)
@@ -613,9 +643,11 @@ func TestHandler_QualifyLead(t *testing.T) {
 
 func TestHandler_RegenerateDraft(t *testing.T) {
 	repo := newMockRepo()
+	userID := uuid.New()
 	leadID := uuid.New()
 	repo.leads[leadID] = &domain.Lead{
 		ID:           leadID,
+		UserID:       userID,
 		ContactName:  "Anna",
 		FirstMessage: "Looking for help",
 	}
@@ -623,7 +655,7 @@ func TestHandler_RegenerateDraft(t *testing.T) {
 	aiSvc := &mockAI{draftBody: "Dear Anna, ..."}
 	r := newTestRouter(NewUseCase(repo, aiSvc, nil))
 	w := httptest.NewRecorder()
-	req := httptest.NewRequest("POST", fmt.Sprintf("/api/leads/%s/draft/regen", leadID), nil)
+	req := reqWithUser("POST", fmt.Sprintf("/api/leads/%s/draft/regen", leadID), nil, userID)
 	r.ServeHTTP(w, req)
 
 	assert.Equal(t, http.StatusOK, w.Code)
@@ -677,17 +709,21 @@ func TestHandler_SendMessage_BadID(t *testing.T) {
 	r := newTestRouter(NewUseCase(newMockRepo(), &mockAI{}, nil))
 	body := bytes.NewBufferString(`{"body":"hi"}`)
 	w := httptest.NewRecorder()
-	req := httptest.NewRequest("POST", "/api/leads/bad-id/send", body)
+	req := reqWithUser("POST", "/api/leads/bad-id/send", body, uuid.New())
 	req.Header.Set("Content-Type", "application/json")
 	r.ServeHTTP(w, req)
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
 func TestHandler_SendMessage_InvalidJSON(t *testing.T) {
-	r := newTestRouter(NewUseCase(newMockRepo(), &mockAI{}, nil))
+	repo := newMockRepo()
+	userID := uuid.New()
+	leadID := uuid.New()
+	repo.leads[leadID] = &domain.Lead{ID: leadID, UserID: userID, Status: domain.StatusInConversation}
+	r := newTestRouter(NewUseCase(repo, &mockAI{}, nil))
 	body := bytes.NewBufferString(`not json`)
 	w := httptest.NewRecorder()
-	req := httptest.NewRequest("POST", fmt.Sprintf("/api/leads/%s/send", uuid.New()), body)
+	req := reqWithUser("POST", fmt.Sprintf("/api/leads/%s/send", leadID), body, userID)
 	req.Header.Set("Content-Type", "application/json")
 	r.ServeHTTP(w, req)
 	assert.Equal(t, http.StatusBadRequest, w.Code)
@@ -696,16 +732,20 @@ func TestHandler_SendMessage_InvalidJSON(t *testing.T) {
 func TestHandler_GetQualification_BadID(t *testing.T) {
 	r := newTestRouter(NewUseCase(newMockRepo(), &mockAI{}, nil))
 	w := httptest.NewRecorder()
-	req := httptest.NewRequest("GET", "/api/leads/bad-id/qualification", nil)
+	req := reqWithUser("GET", "/api/leads/bad-id/qualification", nil, uuid.New())
 	r.ServeHTTP(w, req)
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
 func TestHandler_GetQualification_Error(t *testing.T) {
-	repo := &mockRepoErr{mockRepo: *newMockRepo(), getQualErr: fmt.Errorf("db down")}
+	userID := uuid.New()
+	leadID := uuid.New()
+	base := newMockRepo()
+	base.leads[leadID] = &domain.Lead{ID: leadID, UserID: userID, Status: domain.StatusNew}
+	repo := &mockRepoErr{mockRepo: *base, getQualErr: fmt.Errorf("db down")}
 	r := newTestRouter(NewUseCase(repo, &mockAI{}, nil))
 	w := httptest.NewRecorder()
-	req := httptest.NewRequest("GET", fmt.Sprintf("/api/leads/%s/qualification", uuid.New()), nil)
+	req := reqWithUser("GET", fmt.Sprintf("/api/leads/%s/qualification", leadID), nil, userID)
 	r.ServeHTTP(w, req)
 	assert.Equal(t, http.StatusInternalServerError, w.Code)
 }
@@ -713,16 +753,25 @@ func TestHandler_GetQualification_Error(t *testing.T) {
 func TestHandler_QualifyLead_BadID(t *testing.T) {
 	r := newTestRouter(NewUseCase(newMockRepo(), &mockAI{}, nil))
 	w := httptest.NewRecorder()
-	req := httptest.NewRequest("POST", "/api/leads/bad-id/qualify", nil)
+	req := reqWithUser("POST", "/api/leads/bad-id/qualify", nil, uuid.New())
 	r.ServeHTTP(w, req)
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
 func TestHandler_QualifyLead_Error(t *testing.T) {
-	// Lead not found => error from usecase
-	r := newTestRouter(NewUseCase(newMockRepo(), &mockAI{}, nil))
+	// authorizeLead passes, then QualifyLead fails because the AI
+	// stub has no result configured — usecase derefs nil aiResult.
+	userID := uuid.New()
+	leadID := uuid.New()
+	repo := newMockRepo()
+	repo.leads[leadID] = &domain.Lead{
+		ID: leadID, UserID: userID, Channel: domain.ChannelEmail,
+		ContactName: "X", FirstMessage: "hi", Status: domain.StatusNew,
+	}
+	ai := &mockAI{qualifyErr: fmt.Errorf("ai down")}
+	r := newTestRouter(NewUseCase(repo, ai, nil))
 	w := httptest.NewRecorder()
-	req := httptest.NewRequest("POST", fmt.Sprintf("/api/leads/%s/qualify", uuid.New()), nil)
+	req := reqWithUser("POST", fmt.Sprintf("/api/leads/%s/qualify", leadID), nil, userID)
 	r.ServeHTTP(w, req)
 	assert.Equal(t, http.StatusInternalServerError, w.Code)
 }
@@ -730,16 +779,20 @@ func TestHandler_QualifyLead_Error(t *testing.T) {
 func TestHandler_GetDraft_BadID(t *testing.T) {
 	r := newTestRouter(NewUseCase(newMockRepo(), &mockAI{}, nil))
 	w := httptest.NewRecorder()
-	req := httptest.NewRequest("GET", "/api/leads/bad-id/draft", nil)
+	req := reqWithUser("GET", "/api/leads/bad-id/draft", nil, uuid.New())
 	r.ServeHTTP(w, req)
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
 func TestHandler_GetDraft_Error(t *testing.T) {
-	repo := &mockRepoErr{mockRepo: *newMockRepo(), getLatestDraftErr: fmt.Errorf("db down")}
+	userID := uuid.New()
+	leadID := uuid.New()
+	base := newMockRepo()
+	base.leads[leadID] = &domain.Lead{ID: leadID, UserID: userID, Status: domain.StatusInConversation}
+	repo := &mockRepoErr{mockRepo: *base, getLatestDraftErr: fmt.Errorf("db down")}
 	r := newTestRouter(NewUseCase(repo, &mockAI{}, nil))
 	w := httptest.NewRecorder()
-	req := httptest.NewRequest("GET", fmt.Sprintf("/api/leads/%s/draft", uuid.New()), nil)
+	req := reqWithUser("GET", fmt.Sprintf("/api/leads/%s/draft", leadID), nil, userID)
 	r.ServeHTTP(w, req)
 	assert.Equal(t, http.StatusInternalServerError, w.Code)
 }
@@ -747,16 +800,24 @@ func TestHandler_GetDraft_Error(t *testing.T) {
 func TestHandler_RegenerateDraft_BadID(t *testing.T) {
 	r := newTestRouter(NewUseCase(newMockRepo(), &mockAI{}, nil))
 	w := httptest.NewRecorder()
-	req := httptest.NewRequest("POST", "/api/leads/bad-id/draft/regen", nil)
+	req := reqWithUser("POST", "/api/leads/bad-id/draft/regen", nil, uuid.New())
 	r.ServeHTTP(w, req)
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
 func TestHandler_RegenerateDraft_Error(t *testing.T) {
-	// Lead not found
-	r := newTestRouter(NewUseCase(newMockRepo(), &mockAI{}, nil))
+	// authorizeLead passes; the AI stub errors so regenerate fails downstream.
+	userID := uuid.New()
+	leadID := uuid.New()
+	repo := newMockRepo()
+	repo.leads[leadID] = &domain.Lead{
+		ID: leadID, UserID: userID, Channel: domain.ChannelEmail,
+		ContactName: "X", FirstMessage: "hi", Status: domain.StatusNew,
+	}
+	ai := &mockAI{draftErr: fmt.Errorf("ai down")}
+	r := newTestRouter(NewUseCase(repo, ai, nil))
 	w := httptest.NewRecorder()
-	req := httptest.NewRequest("POST", fmt.Sprintf("/api/leads/%s/draft/regen", uuid.New()), nil)
+	req := reqWithUser("POST", fmt.Sprintf("/api/leads/%s/draft/regen", leadID), nil, userID)
 	r.ServeHTTP(w, req)
 	assert.Equal(t, http.StatusInternalServerError, w.Code)
 }
@@ -765,20 +826,24 @@ func TestHandler_UpdateStatus_BadID(t *testing.T) {
 	r := newTestRouter(NewUseCase(newMockRepo(), &mockAI{}, nil))
 	body := bytes.NewBufferString(`{"status":"qualified"}`)
 	w := httptest.NewRecorder()
-	req := httptest.NewRequest("PATCH", "/api/leads/bad-id/status", body)
+	req := reqWithUser("PATCH", "/api/leads/bad-id/status", body, uuid.New())
 	req.Header.Set("Content-Type", "application/json")
 	r.ServeHTTP(w, req)
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
 func TestHandler_SendMessage_UCError(t *testing.T) {
-	// GetLead returns nil => SendMessage calls repo.GetLead which returns nil, then tries to access nil lead
-	// Actually, sendMessage handler calls uc.SendMessage which will fail on nil lead
-	repo := &mockRepoErr{mockRepo: *newMockRepo(), getLeadErr: fmt.Errorf("db error")}
+	// authorizeLead passes; the use case-level GetLead inside SendMessage
+	// returns an error (db blip) — the handler maps to 500.
+	userID := uuid.New()
+	leadID := uuid.New()
+	base := newMockRepo()
+	base.leads[leadID] = &domain.Lead{ID: leadID, UserID: userID, Status: domain.StatusInConversation}
+	repo := &mockRepoErr{mockRepo: *base, getLeadErr: fmt.Errorf("db error")}
 	r := newTestRouter(NewUseCase(repo, &mockAI{}, nil))
 	body := bytes.NewBufferString(`{"body":"hi"}`)
 	w := httptest.NewRecorder()
-	req := httptest.NewRequest("POST", fmt.Sprintf("/api/leads/%s/send", uuid.New()), body)
+	req := reqWithUser("POST", fmt.Sprintf("/api/leads/%s/send", leadID), body, userID)
 	req.Header.Set("Content-Type", "application/json")
 	r.ServeHTTP(w, req)
 	assert.Equal(t, http.StatusInternalServerError, w.Code)
@@ -826,12 +891,13 @@ func TestHandler_ExportCSV_Error(t *testing.T) {
 func TestHandler_UpdateStatus_UCError(t *testing.T) {
 	// Invalid status in the UC
 	repo := newMockRepo()
+	userID := uuid.New()
 	leadID := uuid.New()
-	repo.leads[leadID] = &domain.Lead{ID: leadID, Status: domain.StatusNew}
+	repo.leads[leadID] = &domain.Lead{ID: leadID, UserID: userID, Status: domain.StatusNew}
 	r := newTestRouter(NewUseCase(repo, &mockAI{}, nil))
 	body := bytes.NewBufferString(`{"status":"won"}`) // invalid transition new->won
 	w := httptest.NewRecorder()
-	req := httptest.NewRequest("PATCH", fmt.Sprintf("/api/leads/%s/status", leadID), body)
+	req := reqWithUser("PATCH", fmt.Sprintf("/api/leads/%s/status", leadID), body, userID)
 	req.Header.Set("Content-Type", "application/json")
 	r.ServeHTTP(w, req)
 	assert.Equal(t, http.StatusBadRequest, w.Code)
