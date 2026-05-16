@@ -3,6 +3,7 @@ package inbox
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"sync"
 	"testing"
 	"time"
@@ -130,6 +131,7 @@ func newTestEmailPoller(repo LeadRepository, prospectRepo ProspectRepository, se
 		seqRepo:      seqRepo,
 		aiClient:     aiClient,
 		ownerID:      ownerID,
+		logger:       slog.Default(),
 	}
 }
 

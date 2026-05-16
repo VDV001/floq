@@ -31,6 +31,7 @@ type EmailPoller struct {
 	aiClient       AIQualifier
 	analyzer       *attachments.Analyzer
 	identityLinker IdentityLinker
+	logger         *slog.Logger
 	ownerID        uuid.UUID
 	dialer         proxy.ContextDialer
 
@@ -49,6 +50,7 @@ func NewEmailPoller(store ConfigStore, ownerID uuid.UUID, fallbackHost, fallback
 		aiClient:         aiClient,
 		ownerID:          ownerID,
 		dialer:           dialer,
+		logger:           slog.Default(),
 		fallbackHost:     fallbackHost,
 		fallbackPort:     fallbackPort,
 		fallbackUser:     fallbackUser,
@@ -80,6 +82,17 @@ func WithAttachmentAnalyzer(a *attachments.Analyzer) EmailPollerOption {
 // flow must never block on identity-aggregation backend hiccups.
 func WithIdentityLinker(l IdentityLinker) EmailPollerOption {
 	return func(p *EmailPoller) { p.identityLinker = l }
+}
+
+// WithLogger overrides the default slog.Logger so the email poller
+// emits structured warnings to the same handler as the rest of the
+// server. Pass nil to keep slog.Default().
+func WithLogger(l *slog.Logger) EmailPollerOption {
+	return func(p *EmailPoller) {
+		if l != nil {
+			p.logger = l
+		}
+	}
 }
 
 func (e *EmailPoller) Start(ctx context.Context) {
@@ -384,7 +397,7 @@ func (e *EmailPoller) processEmail(ctx context.Context, fromName, fromEmail, bod
 
 		if e.identityLinker != nil {
 			if err := e.identityLinker.LinkLeadToIdentity(ctx, e.ownerID, lead.ID, fromEmail, "", ""); err != nil {
-				slog.WarnContext(ctx, "inbox: identity link failed",
+				e.logger.WarnContext(ctx, "inbox: identity link failed",
 					"lead", lead.ID, "channel", "email", "err", err)
 			}
 		}
@@ -418,7 +431,7 @@ func (e *EmailPoller) processEmail(ctx context.Context, fromName, fromEmail, bod
 			for _, att := range atts {
 				res := e.analyzer.Analyze(ctx, att)
 				if res.Skipped != "" {
-					slog.WarnContext(ctx, "inbox: attachment skipped",
+					e.logger.WarnContext(ctx, "inbox: attachment skipped",
 						"filename", att.Filename, "reason", res.Skipped, "err", res.Err)
 					continue
 				}

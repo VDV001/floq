@@ -11,6 +11,12 @@ import (
 // LeadIdentifierRow is the minimal projection of a leads row that the
 // backfill needs: lead identity + the channel-native identifier the
 // row currently carries.
+//
+// This is a flat read-projection DTO — no behaviour, no invariants. The
+// `*Row` suffix is the package-local convention for such projections
+// (analogous to the `*DTO` suffix in dto.go files elsewhere in the
+// codebase); the type stays in this file because it is only meaningful
+// to the BackfillSource port.
 type LeadIdentifierRow struct {
 	LeadID uuid.UUID
 	UserID uuid.UUID
@@ -19,6 +25,7 @@ type LeadIdentifierRow struct {
 
 // ProspectIdentifierRow is the prospect-side analogue. Prospects can
 // carry up to three identifiers, so all three are passed through.
+// Read-projection DTO; see LeadIdentifierRow for the naming convention.
 type ProspectIdentifierRow struct {
 	ProspectID       uuid.UUID
 	UserID           uuid.UUID

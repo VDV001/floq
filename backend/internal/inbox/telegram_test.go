@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"log/slog"
 	"net"
 	"net/http"
 	"sync"
@@ -150,6 +151,7 @@ func newTestBotWithProspects(repo LeadRepository, prospectRepo ProspectRepositor
 		aiClient:     aiClient,
 		ownerID:      ownerID,
 		bookingLink:  bookingLink,
+		logger:       slog.Default(),
 	}
 }
 

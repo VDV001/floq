@@ -66,10 +66,11 @@ type UseCase struct {
 	repo           domain.Repository
 	leadChecker    LeadChecker
 	identityLinker IdentityLinker
+	logger         *slog.Logger
 }
 
 func NewUseCase(repo domain.Repository, opts ...func(*UseCase)) *UseCase {
-	uc := &UseCase{repo: repo}
+	uc := &UseCase{repo: repo, logger: slog.Default()}
 	for _, opt := range opts {
 		opt(uc)
 	}
@@ -86,6 +87,17 @@ func WithLeadChecker(lc LeadChecker) func(*UseCase) {
 // flow.
 func WithIdentityLinker(l IdentityLinker) func(*UseCase) {
 	return func(uc *UseCase) { uc.identityLinker = l }
+}
+
+// WithLogger overrides the default slog.Logger so the use case routes
+// structured warnings through the server-wide handler. Pass nil to keep
+// slog.Default().
+func WithLogger(l *slog.Logger) func(*UseCase) {
+	return func(uc *UseCase) {
+		if l != nil {
+			uc.logger = l
+		}
+	}
 }
 
 func (uc *UseCase) ListProspects(ctx context.Context, userID uuid.UUID) ([]domain.ProspectWithSource, error) {
@@ -280,7 +292,7 @@ func (uc *UseCase) ImportCSV(ctx context.Context, userID uuid.UUID, csvData []by
 	if uc.identityLinker != nil {
 		for _, p := range prospects {
 			if err := uc.identityLinker.LinkProspectToIdentity(ctx, userID, p.ID, p.Email, p.Phone, p.TelegramUsername); err != nil {
-				slog.WarnContext(ctx, "prospects: identity link failed",
+				uc.logger.WarnContext(ctx, "prospects: identity link failed",
 					"prospect", p.ID, "err", err)
 			}
 		}

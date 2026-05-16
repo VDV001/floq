@@ -19,6 +19,7 @@ type TelegramBot struct {
 	prospectRepo   ProspectRepository
 	aiClient       AIQualifier
 	identityLinker IdentityLinker
+	logger         *slog.Logger
 	ownerID        uuid.UUID
 	bookingLink    string
 }
@@ -41,6 +42,17 @@ func WithTelegramIdentityLinker(l IdentityLinker) TelegramBotOption {
 	return func(b *TelegramBot) { b.identityLinker = l }
 }
 
+// WithTelegramLogger overrides the default slog.Logger so the bot
+// emits structured warnings to the same handler as the rest of the
+// server. Pass nil to keep slog.Default().
+func WithTelegramLogger(l *slog.Logger) TelegramBotOption {
+	return func(b *TelegramBot) {
+		if l != nil {
+			b.logger = l
+		}
+	}
+}
+
 // NewTelegramBot creates a new TelegramBot with the given token and dependencies.
 func NewTelegramBot(token string, repo LeadRepository, prospectRepo ProspectRepository, aiClient AIQualifier, ownerID uuid.UUID, bookingLink string, httpClient *http.Client, opts ...TelegramBotOption) (*TelegramBot, error) {
 	if httpClient == nil {
@@ -50,7 +62,7 @@ func NewTelegramBot(token string, repo LeadRepository, prospectRepo ProspectRepo
 	if err != nil {
 		return nil, err
 	}
-	b := &TelegramBot{bot: bot, repo: repo, prospectRepo: prospectRepo, aiClient: aiClient, ownerID: ownerID, bookingLink: bookingLink}
+	b := &TelegramBot{bot: bot, repo: repo, prospectRepo: prospectRepo, aiClient: aiClient, ownerID: ownerID, bookingLink: bookingLink, logger: slog.Default()}
 	for _, opt := range opts {
 		opt(b)
 	}
@@ -140,7 +152,7 @@ func (t *TelegramBot) handleMessage(ctx context.Context, msg *tgbotapi.Message) 
 
 		if t.identityLinker != nil && username != "" {
 			if err := t.identityLinker.LinkLeadToIdentity(ctx, t.ownerID, lead.ID, "", "", username); err != nil {
-				slog.WarnContext(ctx, "inbox: identity link failed",
+				t.logger.WarnContext(ctx, "inbox: identity link failed",
 					"lead", lead.ID, "channel", "telegram", "err", err)
 			}
 		}
