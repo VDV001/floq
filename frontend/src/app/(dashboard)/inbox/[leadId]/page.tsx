@@ -5,6 +5,7 @@ import { useParams } from "next/navigation";
 import Link from "next/link";
 import { ArrowLeft, Clock, Archive, ArrowRightLeft, Send } from "lucide-react";
 import { ProspectSuggestionBanner } from "@/components/leads/ProspectSuggestionBanner";
+import { IdentityBadge } from "@/components/leads/IdentityBadge";
 import { api, Lead, Message, Qualification, Draft } from "@/lib/api";
 import { getTimeAgo, getInitials } from "@/components/inbox/helpers";
 import { QualificationCard } from "@/components/inbox/QualificationCard";
@@ -73,8 +74,9 @@ export default function LeadDetailPage() {
                 {lead.channel === "telegram" && <span className="flex size-6 items-center justify-center rounded-md bg-[#0088cc] text-white"><Send className="size-3.5" /></span>}
               </div>
               <p className="font-medium text-[#434655]">{lead.company ? <>в <span className="font-bold text-[#004ac6]">{lead.company}</span></> : "—"}</p>
-              <div className="mt-3 flex gap-4">
+              <div className="mt-3 flex flex-wrap items-center gap-2">
                 <span className="flex items-center gap-1.5 rounded-full bg-[#eff4ff] px-3 py-1 text-xs text-[#737686]"><Clock className="size-3.5" />{getTimeAgo(lead.updated_at)} назад</span>
+                <IdentityBadge identity={lead.identity} currentLeadId={leadId} />
               </div>
             </div>
           </div>
