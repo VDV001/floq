@@ -24,14 +24,15 @@ import (
 // extracted and their text content is appended to the qualification
 // context. A nil analyzer keeps the legacy text-only behaviour.
 type EmailPoller struct {
-	store        ConfigStore
-	repo         LeadRepository
-	prospectRepo ProspectRepository
-	seqRepo      SequenceRepository
-	aiClient     AIQualifier
-	analyzer     *attachments.Analyzer
-	ownerID      uuid.UUID
-	dialer       proxy.ContextDialer
+	store          ConfigStore
+	repo           LeadRepository
+	prospectRepo   ProspectRepository
+	seqRepo        SequenceRepository
+	aiClient       AIQualifier
+	analyzer       *attachments.Analyzer
+	identityLinker IdentityLinker
+	ownerID        uuid.UUID
+	dialer         proxy.ContextDialer
 
 	fallbackHost     string
 	fallbackPort     string
@@ -70,6 +71,15 @@ type EmailPollerOption func(*EmailPoller)
 // nil to disable; the poller silently degrades to text-only.
 func WithAttachmentAnalyzer(a *attachments.Analyzer) EmailPollerOption {
 	return func(p *EmailPoller) { p.analyzer = a }
+}
+
+// WithIdentityLinker wires the IdentityLinker used to resolve and
+// link each newly created lead to a unified Identity. Pass nil (or
+// omit the option) to disable; the poller continues to create leads
+// untouched. Linker errors are logged and swallowed — the inbound
+// flow must never block on identity-aggregation backend hiccups.
+func WithIdentityLinker(l IdentityLinker) EmailPollerOption {
+	return func(p *EmailPoller) { p.identityLinker = l }
 }
 
 func (e *EmailPoller) Start(ctx context.Context) {
@@ -371,6 +381,13 @@ func (e *EmailPoller) processEmail(ctx context.Context, fromName, fromEmail, bod
 			return
 		}
 		log.Printf("[email-poller] new lead created for %s (%s)", fromEmail, contactName)
+
+		if e.identityLinker != nil {
+			if err := e.identityLinker.LinkLeadToIdentity(ctx, e.ownerID, lead.ID, fromEmail, "", ""); err != nil {
+				slog.WarnContext(ctx, "inbox: identity link failed",
+					"lead", lead.ID, "channel", "email", "err", err)
+			}
+		}
 
 		// Auto-convert matched prospect to lead
 		if hasProspectMatch {
