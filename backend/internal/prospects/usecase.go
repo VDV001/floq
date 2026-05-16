@@ -8,9 +8,28 @@ import (
 	"io"
 	"strings"
 
+	"github.com/daniil/floq/internal/normalize"
 	"github.com/daniil/floq/internal/prospects/domain"
 	"github.com/google/uuid"
 )
+
+// SkippedRow records a single CSV row that ImportCSV was unable to import.
+// Line is 1-indexed and counts the header (so the first data row is line 2),
+// matching what a user sees in a spreadsheet editor.
+type SkippedRow struct {
+	Line   int
+	Reason string
+}
+
+// ImportReport is the structured result of a CSV import. Imported holds the
+// number of prospects successfully persisted; Skipped enumerates rows that
+// were not imported together with a human-readable reason. The transport
+// layer maps this to a JSON DTO — the use case stays free of presentation
+// concerns (no JSON tags, no empty-slice coercion).
+type ImportReport struct {
+	Imported int
+	Skipped  []SkippedRow
+}
 
 var columnAliases = map[string]string{
 	"name": "name", "имя": "name", "имя в tg": "name", "full_name": "name",
@@ -78,8 +97,9 @@ func (uc *UseCase) CreateProspect(ctx context.Context, input CreateProspectInput
 	if input.Name == "" {
 		return nil, fmt.Errorf("prospect name is required")
 	}
-	if input.Email != "" {
-		existing, err := uc.repo.FindByEmail(ctx, input.UserID, input.Email)
+	email := normalize.Email(input.Email)
+	if email != "" {
+		existing, err := uc.repo.FindByEmail(ctx, input.UserID, email)
 		if err != nil {
 			return nil, fmt.Errorf("prospect dedup: %w", err)
 		}
@@ -87,8 +107,8 @@ func (uc *UseCase) CreateProspect(ctx context.Context, input CreateProspectInput
 			return nil, fmt.Errorf("проспект с таким email уже существует")
 		}
 	}
-	if input.Email != "" && uc.leadChecker != nil {
-		exists, err := uc.leadChecker.LeadExistsByEmail(ctx, input.UserID, input.Email)
+	if email != "" && uc.leadChecker != nil {
+		exists, err := uc.leadChecker.LeadExistsByEmail(ctx, input.UserID, email)
 		if err != nil {
 			return nil, fmt.Errorf("lead check: %w", err)
 		}
@@ -96,13 +116,13 @@ func (uc *UseCase) CreateProspect(ctx context.Context, input CreateProspectInput
 			return nil, fmt.Errorf("лид с таким email уже существует")
 		}
 	}
-	p, err := domain.NewProspect(input.UserID, input.Name, input.Company, input.Title, input.Email, "manual")
+	p, err := domain.NewProspect(input.UserID, input.Name, input.Company, input.Title, email, "manual")
 	if err != nil {
 		return nil, fmt.Errorf("construct prospect: %w", err)
 	}
-	p.Phone = input.Phone
+	p.SetPhone(input.Phone)
 	p.WhatsApp = input.WhatsApp
-	p.TelegramUsername = input.TelegramUsername
+	p.SetTelegramUsername(input.TelegramUsername)
 	p.Industry = input.Industry
 	p.CompanySize = input.CompanySize
 	p.Context = input.Context
@@ -117,7 +137,14 @@ func (uc *UseCase) DeleteProspect(ctx context.Context, id uuid.UUID) error {
 	return uc.repo.DeleteProspect(ctx, id)
 }
 
-func (uc *UseCase) ImportCSV(ctx context.Context, userID uuid.UUID, csvData []byte) (int, error) {
+// ImportCSV parses a CSV payload and persists one prospect per non-skipped
+// data row. When a row lacks an explicit contact name, the importer falls
+// back to the company column, then to the email, so a CSV that only carries
+// company-level identifiers (e.g. "info@acme.com") still produces an
+// addressable prospect instead of being silently dropped. Rows without any
+// identifier are recorded in the returned ImportReport so the UI can show
+// the user exactly which lines were ignored and why.
+func (uc *UseCase) ImportCSV(ctx context.Context, userID uuid.UUID, csvData []byte) (*ImportReport, error) {
 	csvData = stripBOM(csvData)
 	delimiter := detectDelimiter(csvData)
 
@@ -127,12 +154,12 @@ func (uc *UseCase) ImportCSV(ctx context.Context, userID uuid.UUID, csvData []by
 
 	header, err := reader.Read()
 	if err != nil {
-		return 0, fmt.Errorf("read csv header: %w", err)
+		return nil, fmt.Errorf("read csv header: %w", err)
 	}
 
 	colMap := mapColumns(header)
 	if _, ok := colMap["name"]; !ok {
-		return 0, fmt.Errorf("invalid csv header: required column 'name' (or alias: имя, имя в tg) not found")
+		return nil, fmt.Errorf("invalid csv header: required column 'name' (or alias: имя, имя в tg) not found")
 	}
 
 	getCol := func(record []string, canonical string) string {
@@ -142,23 +169,50 @@ func (uc *UseCase) ImportCSV(ctx context.Context, userID uuid.UUID, csvData []by
 		return ""
 	}
 
-	var prospects []domain.Prospect
+	var (
+		prospects []domain.Prospect
+		skipped   []SkippedRow
+		lineNum   = 1 // header consumed; first data row will become line 2
+	)
 	for {
 		record, err := reader.Read()
 		if err == io.EOF {
 			break
 		}
 		if err != nil {
-			return 0, fmt.Errorf("read csv record: %w", err)
+			return nil, fmt.Errorf("read csv record: %w", err)
+		}
+		lineNum++
+
+		email := normalize.Email(getCol(record, "email"))
+		tgUsername := normalize.TelegramUsername(getCol(record, "telegram_username"))
+		company := getCol(record, "company")
+
+		// Fallback chain for the contact name. Domain invariant
+		// (prospect.name != "") is enforced by the factory; the use case
+		// supplies a sensible identifier when the CSV did not.
+		name := getCol(record, "name")
+		if name == "" {
+			switch {
+			case company != "":
+				name = company
+			case email != "":
+				name = email
+			}
 		}
 
-		email := getCol(record, "email")
-		tgUsername := strings.TrimPrefix(getCol(record, "telegram_username"), "@")
+		if name == "" {
+			skipped = append(skipped, SkippedRow{
+				Line:   lineNum,
+				Reason: "row has no identifier (name, company, or email is required)",
+			})
+			continue
+		}
 
 		if email != "" {
 			dup, err := uc.repo.FindByEmail(ctx, userID, email)
 			if err != nil {
-				return 0, fmt.Errorf("dedup prospect check: %w", err)
+				return nil, fmt.Errorf("dedup prospect check: %w", err)
 			}
 			if dup != nil {
 				continue
@@ -166,7 +220,7 @@ func (uc *UseCase) ImportCSV(ctx context.Context, userID uuid.UUID, csvData []by
 			if uc.leadChecker != nil {
 				exists, err := uc.leadChecker.LeadExistsByEmail(ctx, userID, email)
 				if err != nil {
-					return 0, fmt.Errorf("dedup lead check: %w", err)
+					return nil, fmt.Errorf("dedup lead check: %w", err)
 				}
 				if exists {
 					continue
@@ -175,21 +229,21 @@ func (uc *UseCase) ImportCSV(ctx context.Context, userID uuid.UUID, csvData []by
 		} else if tgUsername != "" {
 			dup, err := uc.repo.FindByTelegramUsername(ctx, userID, tgUsername)
 			if err != nil {
-				return 0, fmt.Errorf("dedup prospect tg check: %w", err)
+				return nil, fmt.Errorf("dedup prospect tg check: %w", err)
 			}
 			if dup != nil {
 				continue
 			}
 		}
 
-		name := getCol(record, "name")
-		p, err := domain.NewProspect(userID, name, getCol(record, "company"), getCol(record, "title"), email, "csv")
+		p, err := domain.NewProspect(userID, name, company, getCol(record, "title"), email, "csv")
 		if err != nil {
+			skipped = append(skipped, SkippedRow{Line: lineNum, Reason: err.Error()})
 			continue
 		}
-		p.Phone = getCol(record, "phone")
+		p.SetPhone(getCol(record, "phone"))
 		p.WhatsApp = getCol(record, "whatsapp")
-		p.TelegramUsername = tgUsername
+		p.SetTelegramUsername(tgUsername)
 		p.Industry = getCol(record, "industry")
 		p.CompanySize = getCol(record, "company_size")
 		p.Context = getCol(record, "context")
@@ -197,10 +251,10 @@ func (uc *UseCase) ImportCSV(ctx context.Context, userID uuid.UUID, csvData []by
 	}
 
 	if err := uc.repo.CreateProspectsBatch(ctx, prospects); err != nil {
-		return 0, err
+		return nil, err
 	}
 
-	return len(prospects), nil
+	return &ImportReport{Imported: len(prospects), Skipped: skipped}, nil
 }
 
 func stripBOM(data []byte) []byte {

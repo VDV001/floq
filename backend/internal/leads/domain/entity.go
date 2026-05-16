@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/daniil/floq/internal/normalize"
 	"github.com/google/uuid"
 )
 
@@ -110,6 +111,11 @@ func NewLead(userID uuid.UUID, channel Channel, contactName, company, firstMessa
 		return nil, fmt.Errorf("contact name is required")
 	}
 	now := time.Now().UTC()
+	var normalizedEmail *string
+	if emailAddress != nil {
+		canon := normalize.Email(*emailAddress)
+		normalizedEmail = &canon
+	}
 	return &Lead{
 		ID:             uuid.New(),
 		UserID:         userID,
@@ -119,7 +125,7 @@ func NewLead(userID uuid.UUID, channel Channel, contactName, company, firstMessa
 		FirstMessage:   firstMessage,
 		Status:         StatusNew,
 		TelegramChatID: telegramChatID,
-		EmailAddress:   emailAddress,
+		EmailAddress:   normalizedEmail,
 		CreatedAt:      now,
 		UpdatedAt:      now,
 	}, nil

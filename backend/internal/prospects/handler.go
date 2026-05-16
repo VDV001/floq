@@ -111,7 +111,7 @@ func (h *Handler) importCSV() http.HandlerFunc {
 			httputil.WriteError(w, http.StatusUnauthorized, "unauthorized")
 			return
 		}
-		count, err := h.uc.ImportCSV(r.Context(), userID, data)
+		report, err := h.uc.ImportCSV(r.Context(), userID, data)
 		if err != nil {
 			msg := err.Error()
 			if strings.Contains(msg, "csv header") || strings.Contains(msg, "csv record") {
@@ -121,8 +121,7 @@ func (h *Handler) importCSV() http.HandlerFunc {
 			}
 			return
 		}
-
-		httputil.WriteJSON(w, http.StatusOK, map[string]int{"imported": count})
+		httputil.WriteJSON(w, http.StatusOK, ImportReportToResponse(report))
 	}
 }
 

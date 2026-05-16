@@ -289,9 +289,10 @@ func TestHandler_ImportCSV_OK(t *testing.T) {
 	router.ServeHTTP(w, req)
 
 	assert.Equal(t, http.StatusOK, w.Code)
-	var resp map[string]int
+	var resp ImportReportResponse
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
-	assert.Equal(t, 1, resp["imported"])
+	assert.Equal(t, 1, resp.Imported)
+	assert.Empty(t, resp.Skipped)
 }
 
 func TestHandler_ImportCSV_MissingFile(t *testing.T) {
