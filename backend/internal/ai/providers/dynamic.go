@@ -13,6 +13,16 @@ import (
 	"github.com/openai/openai-go/option"
 )
 
+// Compile-time assertion that DynamicProvider satisfies VisionProvider.
+// Loss of this assertion is the bug that hid behind issue #25 PR3's
+// first review pass: type assertion in the audit recording wrapper
+// silently fell through to ErrVisionUnsupported in production while
+// the acceptance test wrapped a vision-capable stub directly.
+var (
+	_ ai.Provider       = (*DynamicProvider)(nil)
+	_ ai.VisionProvider = (*DynamicProvider)(nil)
+)
+
 // DynamicProvider reads AI settings from user_settings DB on each call,
 // caching the underlying provider until settings change.
 type DynamicProvider struct {
@@ -50,6 +60,23 @@ func (d *DynamicProvider) Complete(ctx context.Context, req ai.CompletionRequest
 		return nil, err
 	}
 	return provider.Complete(ctx, req)
+}
+
+// AnalyzeImage proxies vision calls through to the resolved provider
+// when the latter supports VisionProvider. Without this, an audit-
+// layer type assertion on the production AIClient (which wraps a
+// DynamicProvider) would always fail and image_analysis attachments
+// would never reach OpenAI — see issue #25 acceptance.
+func (d *DynamicProvider) AnalyzeImage(ctx context.Context, imageData []byte, mimeType, prompt string) (*ai.CompletionResult, error) {
+	provider, err := d.resolve(ctx)
+	if err != nil {
+		return nil, err
+	}
+	vp, ok := provider.(ai.VisionProvider)
+	if !ok {
+		return nil, ai.ErrVisionUnsupported
+	}
+	return vp.AnalyzeImage(ctx, imageData, mimeType, prompt)
 }
 
 func (d *DynamicProvider) resolve(ctx context.Context) (ai.Provider, error) {

@@ -15,7 +15,7 @@ captures:
 - **What** it was about: `lead_id` and `prospect_id` (both nullable).
 - **Why**: `request_type` enum — qualification, draft_reply, cold_message,
   telegram_message, telegram_reply, call_brief, followup, image_analysis,
-  style_check.
+  style_check, chat_assist.
 - **What it ran**: `provider` (matches `Provider.Name()` verbatim) and
   `model` (the concrete resolved model, not the per-mode default).
 - **What it cost**: `input_tokens`, `output_tokens`, `total_tokens`,

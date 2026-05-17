@@ -18,6 +18,15 @@ import (
 // Splitting attribution into the context — instead of every provider
 // method signature — keeps Provider's interface lean and lets the
 // recording wrapper stay transparent to the business code.
+//
+// CROSS-CONTEXT IMPORT NOTE: business packages (leads, sequences,
+// inbox, reminders, chat) import this package directly. That looks
+// like a CA "cross-bounded-context" violation but is allowed here
+// for the same reason a use case is allowed to import "log/slog":
+// audit is a cross-cutting concern (observability), not a peer domain.
+// The DTO surface is intentionally tiny — a struct + two helpers — so
+// the dependency stays one-way and side-effect-free. Resist the urge
+// to expose business types from this package back into consumers.
 type CallMeta struct {
 	UserID      uuid.UUID
 	LeadID      *uuid.UUID

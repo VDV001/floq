@@ -135,6 +135,7 @@ func TestRequestType_AllKnownConstantsValid(t *testing.T) {
 		domain.RequestTypeFollowup,
 		domain.RequestTypeImageAnalysis,
 		domain.RequestTypeStyleCheck,
+		domain.RequestTypeChatAssist,
 	}
 	for _, rt := range known {
 		t.Run(string(rt), func(t *testing.T) {
