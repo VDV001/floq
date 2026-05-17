@@ -349,7 +349,10 @@ func TestHandleMessage_CallAgreement_EnqueuesForApproval(t *testing.T) {
 	bookingLink := "https://cal.com/booking"
 	proposer := &spyPendingProposer{}
 	bot := newTestBot(repo, aiClient, ownerID, bookingLink)
-	bot.pendingProposer = proposer
+	// Wire through the public setter that the composition root uses,
+	// not the private field — keeps the test honest about the
+	// production seam.
+	bot.SetPendingProposer(proposer)
 
 	// "давайте созвон" triggers call agreement detection — under HITL
 	// this must NOT send the booking link immediately; it must enqueue
