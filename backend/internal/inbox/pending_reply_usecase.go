@@ -48,11 +48,21 @@ type PendingReplyUseCase struct {
 	dispatcher ReplyDispatcher
 }
 
-// NewPendingReplyUseCase wires the usecase with its persistence and
-// dispatch ports. Both are required — the usecase does not start
-// without a way to send approved replies.
+// NewPendingReplyUseCase wires the usecase with its persistence port.
+// The dispatcher may be nil at construction so the composition root
+// can register HTTP routes that reference the usecase before the
+// Telegram bot (and therefore the dispatcher built from its
+// *tgbotapi.BotAPI) is initialised. Call SetDispatcher once the bot
+// is up; Approve returns an explicit error if invoked before then.
 func NewPendingReplyUseCase(repo PendingReplyRepository, dispatcher ReplyDispatcher) *PendingReplyUseCase {
 	return &PendingReplyUseCase{repo: repo, dispatcher: dispatcher}
+}
+
+// SetDispatcher injects the ReplyDispatcher at runtime. Mirrors the
+// existing leadsUC.SetSender pattern; necessary to break the
+// bot -> usecase -> dispatcher -> bot cycle in the composition root.
+func (uc *PendingReplyUseCase) SetDispatcher(d ReplyDispatcher) {
+	uc.dispatcher = d
 }
 
 // Propose constructs a new PendingReply through the domain factory
@@ -95,6 +105,9 @@ func (uc *PendingReplyUseCase) Approve(ctx context.Context, userID, id uuid.UUID
 	}
 	if err := uc.repo.Update(ctx, pr); err != nil {
 		return fmt.Errorf("persist approved pending reply: %w", err)
+	}
+	if uc.dispatcher == nil {
+		return errors.New("pending reply: dispatcher not configured")
 	}
 	if err := uc.dispatcher.Dispatch(ctx, pr); err != nil {
 		return fmt.Errorf("dispatch approved pending reply: %w", err)
