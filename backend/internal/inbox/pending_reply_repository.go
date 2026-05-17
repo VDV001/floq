@@ -71,6 +71,16 @@ func (r *PendingReplyRepo) GetByID(ctx context.Context, userID, id uuid.UUID) (*
 	return &pr, nil
 }
 
+// FindPendingByContent locates the existing pending row whose
+// (user_id, lead_id, kind, body) matches — used by the usecase after a
+// Save collides with the partial unique dedup index. Returns nil
+// without error when no such row exists. STUB: SQL impl arrives with
+// migration 031; this method is wired now so the interface contract
+// stays satisfied while the usecase is built out under TDD.
+func (r *PendingReplyRepo) FindPendingByContent(ctx context.Context, userID, leadID uuid.UUID, kind PendingReplyKind, body string) (*PendingReply, error) {
+	return nil, nil
+}
+
 func (r *PendingReplyRepo) ListByLead(ctx context.Context, userID, leadID uuid.UUID) ([]*PendingReply, error) {
 	rows, err := r.q(ctx).Query(ctx,
 		`SELECT `+pendingReplyColumns+`

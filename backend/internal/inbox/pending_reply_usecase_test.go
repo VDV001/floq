@@ -3,6 +3,7 @@ package inbox
 import (
 	"context"
 	"errors"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -13,12 +14,19 @@ import (
 // --- in-memory fakes ---
 
 type fakePendingReplyRepo struct {
-	mu      sync.Mutex
-	rows    map[uuid.UUID]*PendingReply
-	saveErr error
-	getErr  error
-	updErr  error
-	listErr error
+	mu       sync.Mutex
+	rows     map[uuid.UUID]*PendingReply
+	saveErr  error
+	getErr   error
+	updErr   error
+	listErr  error
+	findErr  error
+	// dedupOnSave mirrors the partial unique index that production
+	// installs in migration 031: when true, Save returns
+	// ErrPendingReplyDuplicatePending if a pending row already exists
+	// for the same (user_id, lead_id, kind, body) tuple. Off by default
+	// so existing tests are unaffected.
+	dedupOnSave bool
 }
 
 func newFakeRepo() *fakePendingReplyRepo {
@@ -31,9 +39,40 @@ func (f *fakePendingReplyRepo) Save(_ context.Context, pr *PendingReply) error {
 	if f.saveErr != nil {
 		return f.saveErr
 	}
+	if f.dedupOnSave {
+		for _, row := range f.rows {
+			if row.UserID == pr.UserID &&
+				row.LeadID == pr.LeadID &&
+				row.Kind == pr.Kind &&
+				row.Body == pr.Body &&
+				row.Status == PendingReplyStatusPending {
+				return ErrPendingReplyDuplicatePending
+			}
+		}
+	}
 	copy := *pr
 	f.rows[pr.ID] = &copy
 	return nil
+}
+
+func (f *fakePendingReplyRepo) FindPendingByContent(_ context.Context, userID, leadID uuid.UUID, kind PendingReplyKind, body string) (*PendingReply, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.findErr != nil {
+		return nil, f.findErr
+	}
+	trimmed := strings.TrimSpace(body)
+	for _, row := range f.rows {
+		if row.UserID == userID &&
+			row.LeadID == leadID &&
+			row.Kind == kind &&
+			row.Body == trimmed &&
+			row.Status == PendingReplyStatusPending {
+			copy := *row
+			return &copy, nil
+		}
+	}
+	return nil, nil
 }
 
 func (f *fakePendingReplyRepo) GetByID(_ context.Context, userID, id uuid.UUID) (*PendingReply, error) {
@@ -159,6 +198,111 @@ func TestPendingReplyUseCase_Propose_PropagatesRepoError(t *testing.T) {
 	_, err := uc.Propose(context.Background(), uuid.New(), uuid.New(), ChannelTelegram, PendingReplyKindBookingLink, "ok")
 	if err == nil || !errors.Is(err, repo.saveErr) {
 		t.Fatalf("want save error wrapped, got %v", err)
+	}
+}
+
+func TestPendingReplyUseCase_Propose_DuplicateReturnsExistingEntity(t *testing.T) {
+	repo := newFakeRepo()
+	repo.dedupOnSave = true
+	uc := NewPendingReplyUseCase(repo, &spyDispatcher{})
+	ctx := context.Background()
+	userID := uuid.New()
+	leadID := uuid.New()
+
+	first, err := uc.Propose(ctx, userID, leadID, ChannelTelegram, PendingReplyKindBookingLink, "book me")
+	if err != nil {
+		t.Fatalf("first Propose error: %v", err)
+	}
+
+	second, err := uc.Propose(ctx, userID, leadID, ChannelTelegram, PendingReplyKindBookingLink, "book me")
+	if err != nil {
+		t.Fatalf("second Propose must be silently idempotent, got error: %v", err)
+	}
+	if second == nil {
+		t.Fatal("second Propose returned nil entity — caller expects the already-enqueued row")
+	}
+	if second.ID != first.ID {
+		t.Errorf("second Propose returned a different entity ID (%v vs %v) — the dedup contract is that the SAME row surfaces both times", second.ID, first.ID)
+	}
+
+	// Repo invariant: exactly one row stored.
+	listed, err := uc.ListByLead(ctx, userID, leadID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(listed) != 1 {
+		t.Errorf("rows persisted = %d, want 1 (dedup must collapse the second insert)", len(listed))
+	}
+}
+
+func TestPendingReplyUseCase_Propose_DuplicateWhitespaceVariantStillDedups(t *testing.T) {
+	// Body is trimmed by the domain factory, so whitespace-only
+	// variations on the same content must still hit the dedup index.
+	repo := newFakeRepo()
+	repo.dedupOnSave = true
+	uc := NewPendingReplyUseCase(repo, &spyDispatcher{})
+	ctx := context.Background()
+	userID := uuid.New()
+	leadID := uuid.New()
+
+	first, err := uc.Propose(ctx, userID, leadID, ChannelTelegram, PendingReplyKindBookingLink, "book me")
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := uc.Propose(ctx, userID, leadID, ChannelTelegram, PendingReplyKindBookingLink, "  book me  ")
+	if err != nil {
+		t.Fatalf("trimmed-equivalent Propose must dedup, got error: %v", err)
+	}
+	if second.ID != first.ID {
+		t.Errorf("trimmed-equivalent Propose returned different ID — factory trim + dedup must agree")
+	}
+}
+
+func TestPendingReplyUseCase_Propose_DifferentBodyAllowedAlongside(t *testing.T) {
+	repo := newFakeRepo()
+	repo.dedupOnSave = true
+	uc := NewPendingReplyUseCase(repo, &spyDispatcher{})
+	ctx := context.Background()
+	userID := uuid.New()
+	leadID := uuid.New()
+
+	first, err := uc.Propose(ctx, userID, leadID, ChannelTelegram, PendingReplyKindBookingLink, "book me")
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := uc.Propose(ctx, userID, leadID, ChannelTelegram, PendingReplyKindBookingLink, "book me, please")
+	if err != nil {
+		t.Fatalf("Propose with different body must NOT be deduped, got error: %v", err)
+	}
+	if second.ID == first.ID {
+		t.Error("different bodies must produce different entities")
+	}
+
+	listed, err := uc.ListByLead(ctx, userID, leadID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(listed) != 2 {
+		t.Errorf("rows persisted = %d, want 2 (different bodies are not duplicates)", len(listed))
+	}
+}
+
+func TestPendingReplyUseCase_Propose_DuplicateButRowDisappearedSurfacesError(t *testing.T) {
+	// Save returns ErrPendingReplyDuplicatePending but FindPendingByContent
+	// finds nothing — race anomaly: the dedup-causing row was removed
+	// between Save and Find. The usecase must NOT silently swallow this;
+	// caller deserves an explicit error so the bot logs and humans can
+	// investigate.
+	repo := newFakeRepo()
+	repo.saveErr = ErrPendingReplyDuplicatePending // dedup hit, but no row in store
+	uc := NewPendingReplyUseCase(repo, &spyDispatcher{})
+
+	_, err := uc.Propose(context.Background(), uuid.New(), uuid.New(), ChannelTelegram, PendingReplyKindBookingLink, "ok")
+	if err == nil {
+		t.Fatal("dup-without-find-match must surface an error")
+	}
+	if !errors.Is(err, ErrPendingReplyDuplicatePending) {
+		t.Errorf("anomaly error must wrap ErrPendingReplyDuplicatePending so caller can branch, got %v", err)
 	}
 }
 
