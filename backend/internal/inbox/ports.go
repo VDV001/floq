@@ -175,9 +175,21 @@ type PendingReplyProposer interface {
 // "not found OR not owned" and answer 404 to keep the two
 // indistinguishable on the wire.
 type PendingReplyRepository interface {
+	// Save persists a new PendingReply. Returns
+	// ErrPendingReplyDuplicatePending if a row with the same
+	// (user_id, lead_id, kind, body) tuple already exists in the
+	// pending status — the partial unique dedup index catches the
+	// Telegram-reconnect duplicate-Propose case at the DB level.
 	Save(ctx context.Context, pr *PendingReply) error
 	GetByID(ctx context.Context, userID, id uuid.UUID) (*PendingReply, error)
 	ListByLead(ctx context.Context, userID, leadID uuid.UUID) ([]*PendingReply, error)
+	// FindPendingByContent returns the existing pending row whose
+	// (user_id, lead_id, kind, body) tuple matches, or nil if none.
+	// Used by the usecase after Save returns
+	// ErrPendingReplyDuplicatePending to surface the previously-
+	// enqueued entity to the caller. body is matched against the
+	// trimmed value the factory stored.
+	FindPendingByContent(ctx context.Context, userID, leadID uuid.UUID, kind PendingReplyKind, body string) (*PendingReply, error)
 	// Update writes pr only when the persisted row still matches the
 	// expectedStatus the caller observed at load time — an optimistic
 	// lock that prevents two operators from concurrently approving

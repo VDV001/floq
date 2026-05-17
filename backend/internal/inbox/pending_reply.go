@@ -84,6 +84,12 @@ var (
 	ErrPendingReplyInvalidKind      = errors.New("pending reply: invalid kind")
 	ErrPendingReplyEmptyBody        = errors.New("pending reply: body is required")
 	ErrPendingReplyInvalidTransition = errors.New("pending reply: invalid status transition")
+	// ErrPendingReplyDuplicatePending signals that a Save attempt
+	// collided with the partial-unique dedup index for an in-flight
+	// pending row with identical (user_id, lead_id, kind, body). The
+	// usecase translates this into a silent return of the previously-
+	// enqueued entity so the caller treats re-Propose as idempotent.
+	ErrPendingReplyDuplicatePending = errors.New("pending reply: duplicate pending row for same content")
 )
 
 // PendingReply is an inbox-originated outbound message awaiting human

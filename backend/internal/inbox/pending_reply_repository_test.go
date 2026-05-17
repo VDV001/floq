@@ -194,6 +194,141 @@ func TestPendingReplyRepository_Update_OptimisticLock_RejectsWhenStatusMoved(t *
 		"second Update with the same expected-status must fail — the row is no longer pending")
 }
 
+func TestPendingReplyRepository_Save_DuplicatePendingReturnsSentinel(t *testing.T) {
+	pool := testutil.TestDB(t)
+	userID := testutil.SeedUser(t, pool)
+	leadID := seedLeadForUser(t, pool, userID)
+	repo := inbox.NewPendingReplyRepository(pool)
+	ctx := context.Background()
+
+	first, err := inbox.NewPendingReply(userID, leadID, inbox.ChannelTelegram, inbox.PendingReplyKindBookingLink, "book me")
+	require.NoError(t, err)
+	require.NoError(t, repo.Save(ctx, first))
+
+	second, err := inbox.NewPendingReply(userID, leadID, inbox.ChannelTelegram, inbox.PendingReplyKindBookingLink, "book me")
+	require.NoError(t, err)
+	err = repo.Save(ctx, second)
+	require.Error(t, err, "second Save with identical pending content must fail at the dedup index")
+	require.ErrorIs(t, err, inbox.ErrPendingReplyDuplicatePending,
+		"23505 on the dedup partial-unique index must translate to ErrPendingReplyDuplicatePending so the usecase can branch")
+
+	listed, err := repo.ListByLead(ctx, userID, leadID)
+	require.NoError(t, err)
+	assert.Len(t, listed, 1, "dedup index must prevent the duplicate row from landing")
+	assert.Equal(t, first.ID, listed[0].ID)
+}
+
+func TestPendingReplyRepository_Save_DifferentBodyAllowedAlongside(t *testing.T) {
+	pool := testutil.TestDB(t)
+	userID := testutil.SeedUser(t, pool)
+	leadID := seedLeadForUser(t, pool, userID)
+	repo := inbox.NewPendingReplyRepository(pool)
+	ctx := context.Background()
+
+	first, err := inbox.NewPendingReply(userID, leadID, inbox.ChannelTelegram, inbox.PendingReplyKindBookingLink, "book me")
+	require.NoError(t, err)
+	require.NoError(t, repo.Save(ctx, first))
+
+	second, err := inbox.NewPendingReply(userID, leadID, inbox.ChannelTelegram, inbox.PendingReplyKindBookingLink, "book me, please")
+	require.NoError(t, err)
+	require.NoError(t, repo.Save(ctx, second), "different body must NOT trigger dedup")
+
+	listed, err := repo.ListByLead(ctx, userID, leadID)
+	require.NoError(t, err)
+	assert.Len(t, listed, 2)
+}
+
+func TestPendingReplyRepository_Save_AllowsRePeoposeAfterRejection(t *testing.T) {
+	// Partial unique index is scoped to status='pending'. Once the
+	// operator rejects the first draft, the same content can be
+	// proposed again — the original row is no longer competing for
+	// the dedup slot.
+	pool := testutil.TestDB(t)
+	userID := testutil.SeedUser(t, pool)
+	leadID := seedLeadForUser(t, pool, userID)
+	repo := inbox.NewPendingReplyRepository(pool)
+	ctx := context.Background()
+
+	first, err := inbox.NewPendingReply(userID, leadID, inbox.ChannelTelegram, inbox.PendingReplyKindBookingLink, "book me")
+	require.NoError(t, err)
+	require.NoError(t, repo.Save(ctx, first))
+	require.NoError(t, first.Reject(time.Now().UTC()))
+	require.NoError(t, repo.Update(ctx, first, inbox.PendingReplyStatusPending))
+
+	second, err := inbox.NewPendingReply(userID, leadID, inbox.ChannelTelegram, inbox.PendingReplyKindBookingLink, "book me")
+	require.NoError(t, err)
+	require.NoError(t, repo.Save(ctx, second),
+		"after rejection, the same content must be re-proposable — partial index excludes non-pending rows")
+}
+
+func TestPendingReplyRepository_FindPendingByContent_ReturnsExisting(t *testing.T) {
+	pool := testutil.TestDB(t)
+	userID := testutil.SeedUser(t, pool)
+	leadID := seedLeadForUser(t, pool, userID)
+	repo := inbox.NewPendingReplyRepository(pool)
+	ctx := context.Background()
+
+	first, err := inbox.NewPendingReply(userID, leadID, inbox.ChannelTelegram, inbox.PendingReplyKindBookingLink, "book me")
+	require.NoError(t, err)
+	require.NoError(t, repo.Save(ctx, first))
+
+	got, err := repo.FindPendingByContent(ctx, userID, leadID, inbox.PendingReplyKindBookingLink, "book me")
+	require.NoError(t, err)
+	require.NotNil(t, got, "FindPendingByContent must locate the existing pending row")
+	assert.Equal(t, first.ID, got.ID)
+	assert.Equal(t, inbox.PendingReplyStatusPending, got.Status)
+}
+
+func TestPendingReplyRepository_FindPendingByContent_NoMatchReturnsNil(t *testing.T) {
+	pool := testutil.TestDB(t)
+	userID := testutil.SeedUser(t, pool)
+	leadID := seedLeadForUser(t, pool, userID)
+	repo := inbox.NewPendingReplyRepository(pool)
+	ctx := context.Background()
+
+	got, err := repo.FindPendingByContent(ctx, userID, leadID, inbox.PendingReplyKindBookingLink, "nothing here")
+	require.NoError(t, err, "missing match is not an error")
+	assert.Nil(t, got)
+}
+
+func TestPendingReplyRepository_FindPendingByContent_IgnoresDecidedRows(t *testing.T) {
+	// After Reject, the matching row should NOT be returned —
+	// FindPendingByContent is the dedup-recovery path, scoped to the
+	// same status='pending' slice as the partial unique index.
+	pool := testutil.TestDB(t)
+	userID := testutil.SeedUser(t, pool)
+	leadID := seedLeadForUser(t, pool, userID)
+	repo := inbox.NewPendingReplyRepository(pool)
+	ctx := context.Background()
+
+	pr, err := inbox.NewPendingReply(userID, leadID, inbox.ChannelTelegram, inbox.PendingReplyKindBookingLink, "book me")
+	require.NoError(t, err)
+	require.NoError(t, repo.Save(ctx, pr))
+	require.NoError(t, pr.Reject(time.Now().UTC()))
+	require.NoError(t, repo.Update(ctx, pr, inbox.PendingReplyStatusPending))
+
+	got, err := repo.FindPendingByContent(ctx, userID, leadID, inbox.PendingReplyKindBookingLink, "book me")
+	require.NoError(t, err)
+	assert.Nil(t, got, "FindPendingByContent must skip rejected/sent/approved rows — only the pending slice is dedup-relevant")
+}
+
+func TestPendingReplyRepository_FindPendingByContent_ScopedByUser(t *testing.T) {
+	pool := testutil.TestDB(t)
+	userA := testutil.SeedUser(t, pool)
+	userB := testutil.SeedUser(t, pool)
+	leadA := seedLeadForUser(t, pool, userA)
+	repo := inbox.NewPendingReplyRepository(pool)
+	ctx := context.Background()
+
+	pr, err := inbox.NewPendingReply(userA, leadA, inbox.ChannelTelegram, inbox.PendingReplyKindBookingLink, "owned by A")
+	require.NoError(t, err)
+	require.NoError(t, repo.Save(ctx, pr))
+
+	got, err := repo.FindPendingByContent(ctx, userB, leadA, inbox.PendingReplyKindBookingLink, "owned by A")
+	require.NoError(t, err, "cross-tenant lookup must not error")
+	assert.Nil(t, got, "cross-tenant FindPendingByContent must return nil — never another user's row")
+}
+
 func TestPendingReplyRepository_Update_PersistsStatusAndTimestamps(t *testing.T) {
 	pool := testutil.TestDB(t)
 	userID := testutil.SeedUser(t, pool)
