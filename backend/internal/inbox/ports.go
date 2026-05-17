@@ -154,3 +154,37 @@ type ConfigStore interface {
 type IdentityLinker interface {
 	LinkLeadToIdentity(ctx context.Context, userID, leadID uuid.UUID, email, phone, telegramUsername string) error
 }
+
+// PendingReplyProposer enqueues an auto-drafted reply for human
+// approval. It is the inversion-of-control seam between the inbox
+// pollers (Telegram bot, future email auto-replies) and the HITL
+// usecase: the poller knows only the abstract action "park this draft
+// for the operator", never how the queue is persisted.
+//
+// Implementations MUST be safe to call from background goroutines and
+// MUST NOT block on dispatch — actual delivery happens after operator
+// approval, not at Propose time.
+type PendingReplyProposer interface {
+	Propose(ctx context.Context, userID, leadID uuid.UUID, channel Channel, kind PendingReplyKind, body string) (*PendingReply, error)
+}
+
+// PendingReplyRepository persists the HITL approval queue. Every read
+// method is scoped by userID — the repository never returns a row that
+// belongs to another tenant, so an attacker who guesses or enumerates
+// IDs still gets nil/empty. Callers SHOULD treat nil-without-error as
+// "not found OR not owned" and answer 404 to keep the two
+// indistinguishable on the wire.
+type PendingReplyRepository interface {
+	Save(ctx context.Context, pr *PendingReply) error
+	GetByID(ctx context.Context, userID, id uuid.UUID) (*PendingReply, error)
+	ListByLead(ctx context.Context, userID, leadID uuid.UUID) ([]*PendingReply, error)
+	// Update writes pr only when the persisted row still matches the
+	// expectedStatus the caller observed at load time — an optimistic
+	// lock that prevents two operators from concurrently approving
+	// the same pending reply (and therefore double-firing the
+	// dispatcher). On mismatch (or missing/cross-tenant row) the
+	// caller receives ErrPendingReplyNotFound; the usecase layer maps
+	// this to ErrPendingReplyAlreadyDecided when the row was loaded
+	// in the same operation.
+	Update(ctx context.Context, pr *PendingReply, expectedStatus PendingReplyStatus) error
+}

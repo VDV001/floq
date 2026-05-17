@@ -36,7 +36,10 @@ async function apiFetch<T>(path: string, options?: RequestInit): Promise<T> {
               ...options?.headers,
             },
           });
-          if (retryRes.ok) return retryRes.json();
+          if (retryRes.ok) {
+            if (retryRes.status === 204) return undefined as T;
+            return retryRes.json();
+          }
         }
       } catch {
         // refresh failed
@@ -51,6 +54,11 @@ async function apiFetch<T>(path: string, options?: RequestInit): Promise<T> {
     throw new Error(`API error: ${res.status} ${res.statusText}`);
   }
 
+  // 204 No Content has an empty body — calling .json() throws
+  // SyntaxError. The HITL approve/reject endpoints answer 204 on
+  // success; callers expect undefined (the generic T is typically
+  // void at the call site).
+  if (res.status === 204) return undefined as T;
   return res.json();
 }
 
@@ -168,6 +176,21 @@ export const api = {
     apiFetch<Draft>(`/api/leads/${leadId}/draft`),
   regenerateDraft: (leadId: string) =>
     apiFetch<Draft>(`/api/leads/${leadId}/draft/regen`, { method: "POST" }),
+
+  // Pending replies (HITL approval queue)
+  //
+  // The inbox flow parks auto-drafted replies that would otherwise
+  // reach the customer (currently the booking-link branch in the
+  // Telegram bot) until an operator approves them. List per lead,
+  // approve to dispatch and mark sent, reject to terminate the
+  // draft. Approve / reject return 204; status flips are visible by
+  // re-listing.
+  getPendingReplies: (leadId: string) =>
+    apiFetch<PendingReply[]>(`/api/leads/${leadId}/pending-replies`),
+  approvePendingReply: (id: string) =>
+    apiFetch<void>(`/api/pending-replies/${id}/approve`, { method: "POST" }),
+  rejectPendingReply: (id: string) =>
+    apiFetch<void>(`/api/pending-replies/${id}/reject`, { method: "POST" }),
 
   // Reminders
   getReminders: () => apiFetch<Reminder[]>("/api/reminders"),
@@ -411,6 +434,21 @@ export interface Draft {
   lead_id: string;
   body: string;
   created_at: string;
+}
+
+export type PendingReplyStatus = "pending" | "approved" | "sent" | "rejected";
+export type PendingReplyKind = "booking_link";
+
+export interface PendingReply {
+  id: string;
+  lead_id: string;
+  channel: "telegram" | "email";
+  kind: PendingReplyKind;
+  body: string;
+  status: PendingReplyStatus;
+  created_at: string;
+  decided_at?: string;
+  sent_at?: string;
 }
 
 export interface Reminder {

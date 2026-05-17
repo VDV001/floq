@@ -98,6 +98,28 @@ describe("api module", () => {
 
       await expect(api.getLeads()).rejects.toThrow("API error: 500 Internal Server Error");
     });
+
+    it("returns undefined on 204 No Content without calling json()", async () => {
+      // A real fetch Response with empty body throws SyntaxError when
+      // .json() is called. The mock pins the same shape by rejecting
+      // json() with the same error the browser would surface — any
+      // implementation that unconditionally invokes res.json() on a
+      // 204 fails this test, matching the real-world bug operators
+      // would hit on approve/reject (HTTP 204) in production.
+      const jsonMock = vi.fn().mockRejectedValue(new SyntaxError("Unexpected end of JSON input"));
+      fetchMock.mockResolvedValueOnce({
+        ok: true,
+        status: 204,
+        statusText: "No Content",
+        headers: new Headers(),
+        json: jsonMock,
+      } as unknown as Response);
+
+      const result = await api.approvePendingReply("pr-1");
+
+      expect(result).toBeUndefined();
+      expect(jsonMock).not.toHaveBeenCalled();
+    });
   });
 
   // ── 401 refresh token flow ───────────────────────────────────────
@@ -331,6 +353,26 @@ describe("api module", () => {
       await api.qualifyLead("lead-2");
       const [url, opts] = fetchMock.mock.calls[0];
       expect(url).toBe("http://localhost:8080/api/leads/lead-2/qualify");
+      expect(opts.method).toBe("POST");
+    });
+
+    it("getPendingReplies → GET /api/leads/:id/pending-replies", async () => {
+      await api.getPendingReplies("lead-7");
+      expect(fetchMock.mock.calls[0][0]).toBe("http://localhost:8080/api/leads/lead-7/pending-replies");
+      expect(fetchMock.mock.calls[0][1].method).toBeUndefined();
+    });
+
+    it("approvePendingReply → POST /api/pending-replies/:id/approve", async () => {
+      await api.approvePendingReply("pr-1");
+      const [url, opts] = fetchMock.mock.calls[0];
+      expect(url).toBe("http://localhost:8080/api/pending-replies/pr-1/approve");
+      expect(opts.method).toBe("POST");
+    });
+
+    it("rejectPendingReply → POST /api/pending-replies/:id/reject", async () => {
+      await api.rejectPendingReply("pr-2");
+      const [url, opts] = fetchMock.mock.calls[0];
+      expect(url).toBe("http://localhost:8080/api/pending-replies/pr-2/reject");
       expect(opts.method).toBe("POST");
     });
   });
