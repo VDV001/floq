@@ -4,12 +4,22 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/daniil/floq/internal/db"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
+
+// pendingReplyDedupIndex is the constraint name the partial-unique
+// dedup index ships under in migration 031. The repository checks
+// against this exact name when translating a 23505 unique_violation
+// to the domain sentinel — any OTHER unique violation on this table
+// must still propagate as a raw error so future indexes don't get
+// silently flattened into dedup semantics.
+const pendingReplyDedupIndex = "idx_pending_replies_dedup_pending"
 
 // Compile-time check that *PendingReplyRepo satisfies the port.
 var _ PendingReplyRepository = (*PendingReplyRepo)(nil)
@@ -44,6 +54,10 @@ func (r *PendingReplyRepo) Save(ctx context.Context, pr *PendingReply) error {
 		pr.ID, pr.UserID, pr.LeadID, string(pr.Channel), string(pr.Kind), pr.Body,
 		string(pr.Status), pr.CreatedAt, pr.DecidedAt, pr.SentAt)
 	if err != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "23505" && pgErr.ConstraintName == pendingReplyDedupIndex {
+			return ErrPendingReplyDuplicatePending
+		}
 		return fmt.Errorf("save pending reply: %w", err)
 	}
 	return nil
@@ -73,12 +87,32 @@ func (r *PendingReplyRepo) GetByID(ctx context.Context, userID, id uuid.UUID) (*
 
 // FindPendingByContent locates the existing pending row whose
 // (user_id, lead_id, kind, body) matches — used by the usecase after a
-// Save collides with the partial unique dedup index. Returns nil
-// without error when no such row exists. STUB: SQL impl arrives with
-// migration 031; this method is wired now so the interface contract
-// stays satisfied while the usecase is built out under TDD.
+// Save collides with the partial-unique dedup index installed in
+// migration 031. Returns nil without error when no such row exists.
+// Body is trimmed to match the factory's storage normalisation so
+// callers passing raw whitespace-padded content still hit the row.
 func (r *PendingReplyRepo) FindPendingByContent(ctx context.Context, userID, leadID uuid.UUID, kind PendingReplyKind, body string) (*PendingReply, error) {
-	return nil, nil
+	trimmed := strings.TrimSpace(body)
+	var pr PendingReply
+	var channel, kindStr, status string
+	err := r.q(ctx).QueryRow(ctx,
+		`SELECT `+pendingReplyColumns+`
+		 FROM pending_replies
+		 WHERE user_id = $1 AND lead_id = $2 AND kind = $3 AND body = $4 AND status = 'pending'
+		 LIMIT 1`,
+		userID, leadID, string(kind), trimmed).
+		Scan(&pr.ID, &pr.UserID, &pr.LeadID, &channel, &kindStr, &pr.Body, &status,
+			&pr.CreatedAt, &pr.DecidedAt, &pr.SentAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("find pending by content: %w", err)
+	}
+	pr.Channel = Channel(channel)
+	pr.Kind = PendingReplyKind(kindStr)
+	pr.Status = PendingReplyStatus(status)
+	return &pr, nil
 }
 
 func (r *PendingReplyRepo) ListByLead(ctx context.Context, userID, leadID uuid.UUID) ([]*PendingReply, error) {
