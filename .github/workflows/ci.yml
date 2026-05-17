@@ -98,7 +98,7 @@ jobs:
       - uses: actions/checkout@v5
 
       # Pure functions in bin/release.sh are exercised by a self-contained
-      # bash harness — no extra deps beyond perl (preinstalled on ubuntu).
+      # bash harness. Requires perl + jq, both preinstalled on ubuntu-latest.
       # Keeps release tooling from rotting between releases: if a sync
       # point shifts, the test fails here before a real bump fails in
       # someone's hands.

@@ -212,9 +212,14 @@ main() {
 
   # Once we start pushing to origin, partial failure leaves state on remote.
   # Each error message names exactly what's stuck so a human can finish by hand.
+  # (Re-running release.sh after a partial push will refuse: VERSION already at
+  # new_version. Recovery is always: finish manually with the printed commands.)
   if ! git -C "$root" push origin main; then
-    echo "ERROR: failed to push main. Bump commit is local-only; retry: git push origin main" >&2
-    echo "       then re-run: bin/release.sh $new_version (it will resume from tag push)." >&2
+    echo "ERROR: failed to push main. Bump commit is local-only." >&2
+    echo "       Recover:" >&2
+    echo "         git push origin main && \\" >&2
+    echo "         git push origin v$new_version && \\" >&2
+    echo "         gh release create v$new_version --title v$new_version --generate-notes" >&2
     exit 11
   fi
   if ! git -C "$root" push origin "v$new_version"; then
@@ -225,7 +230,12 @@ main() {
   fi
 
   local notes_file
-  notes_file="$(mktemp -t "release-notes-v${new_version}.XXXXXX").md"
+  # mktemp + .md rename: keeps editor markdown highlighting without leaking
+  # the mktemp-created file (a "$(mktemp ...).md" pattern would leak the
+  # original mktemp file as an orphan).
+  notes_file="$(mktemp -t release-notes-XXXXXX)"
+  mv -- "$notes_file" "${notes_file}.md"
+  notes_file="${notes_file}.md"
   trap 'rm -f "$notes_file"' EXIT
   local last_tag
   last_tag="$(git -C "$root" describe --tags --abbrev=0 "v${new_version}^" 2>/dev/null || true)"
