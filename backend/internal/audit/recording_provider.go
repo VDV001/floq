@@ -1,0 +1,132 @@
+package audit
+
+import (
+	"context"
+	"log/slog"
+	"time"
+
+	"github.com/daniil/floq/internal/ai"
+	"github.com/daniil/floq/internal/audit/domain"
+)
+
+// RecordingProvider wraps an ai.Provider (and, if the inner one supports
+// it, ai.VisionProvider) and hands every call's metadata off to a
+// Recorder. The decorator pulls attribution out of the request ctx via
+// CallMetaFromContext, computes cost from the audit pricing table, and
+// fires-and-forgets a Record call — Recorder is expected to be
+// non-blocking.
+//
+// Inner failures propagate verbatim: this is a passive observer, not a
+// retry or fallback layer. The audit row is recorded for both success
+// and error outcomes so the spend distribution stays honest (failed-
+// but-billed calls do happen with some providers).
+type RecordingProvider struct {
+	inner    ai.Provider
+	recorder domain.Recorder
+	logger   *slog.Logger
+}
+
+// Compile-time assertions: RecordingProvider always satisfies Provider;
+// it also satisfies VisionProvider, but degrades gracefully via
+// ErrVisionUnsupported when the wrapped Provider does not.
+var (
+	_ ai.Provider       = (*RecordingProvider)(nil)
+	_ ai.VisionProvider = (*RecordingProvider)(nil)
+)
+
+// NewRecordingProvider wires the decorator. Pass nil logger to use
+// slog.Default(). The recorder is mandatory — there is no sensible
+// "no-op" mode for the audit layer.
+func NewRecordingProvider(inner ai.Provider, recorder domain.Recorder, logger *slog.Logger) *RecordingProvider {
+	if logger == nil {
+		logger = slog.Default()
+	}
+	return &RecordingProvider{inner: inner, recorder: recorder, logger: logger}
+}
+
+func (r *RecordingProvider) Name() string { return r.inner.Name() }
+
+func (r *RecordingProvider) Complete(ctx context.Context, req ai.CompletionRequest) (*ai.CompletionResult, error) {
+	start := time.Now()
+	resp, err := r.inner.Complete(ctx, req)
+	r.record(ctx, resp, err, time.Since(start))
+	return resp, err
+}
+
+// AnalyzeImage routes through the inner provider's VisionProvider
+// implementation when present; returns ai.ErrVisionUnsupported when
+// the wrapped provider is text-only. The audit row is still recorded
+// on success and on a hard provider error — but skipped when the
+// vision capability itself is missing (no AI call happened, nothing
+// to audit).
+func (r *RecordingProvider) AnalyzeImage(ctx context.Context, imageData []byte, mimeType, prompt string) (*ai.CompletionResult, error) {
+	vp, ok := r.inner.(ai.VisionProvider)
+	if !ok {
+		return nil, ai.ErrVisionUnsupported
+	}
+	start := time.Now()
+	resp, err := vp.AnalyzeImage(ctx, imageData, mimeType, prompt)
+	r.record(ctx, resp, err, time.Since(start))
+	return resp, err
+}
+
+// record builds the audit Entry from the call outcome and hands it to
+// the Recorder. Missing CallMeta is logged at warn and the entry is
+// dropped — without attribution the row is useless. Domain validation
+// failures (e.g. an unknown request_type) are also warn-logged; we
+// never panic the AI hot path on an audit problem.
+func (r *RecordingProvider) record(ctx context.Context, resp *ai.CompletionResult, callErr error, latency time.Duration) {
+	meta, ok := CallMetaFromContext(ctx)
+	if !ok {
+		r.logger.WarnContext(ctx, "audit: AI call missing meta context, skipping audit row",
+			"provider", r.inner.Name())
+		return
+	}
+
+	status := domain.StatusSuccess
+	errMsg := ""
+	if callErr != nil {
+		status = domain.StatusError
+		errMsg = callErr.Error()
+	}
+
+	var (
+		model           string
+		input, output   int
+	)
+	if resp != nil {
+		model = resp.Model
+		input = resp.Usage.InputTokens
+		output = resp.Usage.OutputTokens
+	}
+	if model == "" {
+		// On a hard provider error the inner adapter may not have
+		// resolved the concrete model. "unknown" keeps the row valid
+		// (model is required) and signals the missing attribution to
+		// downstream cost reports.
+		model = "unknown"
+	}
+
+	cost, _ := CostMicroUSD(r.inner.Name(), model, input, output)
+
+	entry, entryErr := domain.NewEntry(domain.EntryParams{
+		UserID:       meta.UserID,
+		LeadID:       meta.LeadID,
+		ProspectID:   meta.ProspectID,
+		RequestType:  meta.RequestType,
+		Provider:     r.inner.Name(),
+		Model:        model,
+		InputTokens:  input,
+		OutputTokens: output,
+		CostUSDMicro: cost,
+		LatencyMS:    int(latency.Milliseconds()),
+		Status:       status,
+		ErrorMessage: errMsg,
+	})
+	if entryErr != nil {
+		r.logger.WarnContext(ctx, "audit: entry construction failed, skipping row",
+			"err", entryErr, "provider", r.inner.Name(), "model", model)
+		return
+	}
+	r.recorder.Record(ctx, entry)
+}
