@@ -356,6 +356,47 @@ func TestPendingReplyUseCase_Reject_NotFoundReturnsSentinel(t *testing.T) {
 	}
 }
 
+func TestPendingReplyUseCase_Approve_WithoutDispatcherReturnsError(t *testing.T) {
+	repo := newFakeRepo()
+	uc := NewPendingReplyUseCase(repo, nil) // nil dispatcher allowed at construction time
+	ctx := context.Background()
+	userID := uuid.New()
+
+	pr, err := uc.Propose(ctx, userID, uuid.New(), ChannelTelegram, PendingReplyKindBookingLink, "ok")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	err = uc.Approve(ctx, userID, pr.ID)
+	if err == nil {
+		t.Fatal("Approve must error when no dispatcher is wired")
+	}
+	stored, _ := repo.GetByID(ctx, userID, pr.ID)
+	if stored.Status == PendingReplyStatusSent {
+		t.Error("entity must NOT reach sent state without a dispatcher")
+	}
+}
+
+func TestPendingReplyUseCase_SetDispatcher_InjectsAtRuntime(t *testing.T) {
+	repo := newFakeRepo()
+	disp := &spyDispatcher{}
+	uc := NewPendingReplyUseCase(repo, nil)
+	uc.SetDispatcher(disp)
+	ctx := context.Background()
+	userID := uuid.New()
+
+	pr, err := uc.Propose(ctx, userID, uuid.New(), ChannelTelegram, PendingReplyKindBookingLink, "ok")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := uc.Approve(ctx, userID, pr.ID); err != nil {
+		t.Fatalf("Approve after SetDispatcher must succeed, got %v", err)
+	}
+	if len(disp.Calls()) != 1 {
+		t.Errorf("dispatcher injected via setter should receive the call, got %d calls", len(disp.Calls()))
+	}
+}
+
 func TestPendingReplyUseCase_Reject_AlreadyDecided(t *testing.T) {
 	repo := newFakeRepo()
 	uc := NewPendingReplyUseCase(repo, &spyDispatcher{})
