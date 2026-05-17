@@ -5,6 +5,7 @@ import { useParams } from "next/navigation";
 import Link from "next/link";
 import { ArrowLeft, Clock, Archive, ArrowRightLeft, Send } from "lucide-react";
 import { ProspectSuggestionBanner } from "@/components/leads/ProspectSuggestionBanner";
+import { PendingReplySection } from "@/components/leads/PendingReplySection";
 import { IdentityBadge } from "@/components/leads/IdentityBadge";
 import { api, Lead, Message, Qualification, Draft } from "@/lib/api";
 import { getTimeAgo, getInitials } from "@/components/inbox/helpers";
@@ -113,6 +114,12 @@ export default function LeadDetailPage() {
         </section>
 
         <ProspectSuggestionBanner leadId={leadId} onChanged={() => { api.getLead(leadId).then(setLead).catch(() => {}); }} />
+        <PendingReplySection
+          leadId={leadId}
+          onApproved={() => {
+            api.getMessages(leadId, { aggregated: aggregated ?? true }).then(setMessages).catch(() => {});
+          }}
+        />
         <QualificationCard qualification={qualification} loading={qualLoading} />
 
         <section className="max-w-4xl">
