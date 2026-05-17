@@ -89,3 +89,18 @@ jobs:
 
       - name: Build
         run: npm run build
+
+  tooling:
+    name: Tooling (bin/)
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v5
+
+      # Pure functions in bin/release.sh are exercised by a self-contained
+      # bash harness. Requires perl + jq, both preinstalled on ubuntu-latest.
+      # Keeps release tooling from rotting between releases: if a sync
+      # point shifts, the test fails here before a real bump fails in
+      # someone's hands.
+      - name: Release script test harness
+        run: bin/release_test.sh
