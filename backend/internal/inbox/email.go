@@ -10,6 +10,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/daniil/floq/internal/audit"
+	auditdomain "github.com/daniil/floq/internal/audit/domain"
 	"github.com/daniil/floq/internal/inbox/attachments"
 	"github.com/daniil/floq/internal/normalize"
 	"github.com/daniil/floq/internal/proxy"
@@ -428,8 +430,14 @@ func (e *EmailPoller) processEmail(ctx context.Context, fromName, fromEmail, bod
 		// (that's the conversation record) — qualifyText is ephemeral.
 		qualifyText := body
 		if e.analyzer != nil {
+			imgLeadID := lead.ID
+			imgCtx := audit.ContextWithCallMeta(ctx, audit.CallMeta{
+				UserID:      lead.UserID,
+				LeadID:      &imgLeadID,
+				RequestType: auditdomain.RequestTypeImageAnalysis,
+			})
 			for _, att := range atts {
-				res := e.analyzer.Analyze(ctx, att)
+				res := e.analyzer.Analyze(imgCtx, att)
 				if res.Skipped != "" {
 					e.logger.WarnContext(ctx, "inbox: attachment skipped",
 						"filename", att.Filename, "reason", res.Skipped, "err", res.Err)
@@ -442,6 +450,12 @@ func (e *EmailPoller) processEmail(ctx context.Context, fromName, fromEmail, bod
 		go func() {
 			qCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 			defer cancel()
+			qLeadID := lead.ID
+			qCtx = audit.ContextWithCallMeta(qCtx, audit.CallMeta{
+				UserID:      lead.UserID,
+				LeadID:      &qLeadID,
+				RequestType: auditdomain.RequestTypeQualification,
+			})
 			result, err := e.aiClient.Qualify(qCtx, fromName, string(lead.Channel), qualifyText)
 			if err != nil {
 				log.Printf("[email-poller] qualification error for lead %s: %v", lead.ID, err)

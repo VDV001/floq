@@ -10,6 +10,8 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/daniil/floq/internal/audit"
+	auditdomain "github.com/daniil/floq/internal/audit/domain"
 	"github.com/daniil/floq/internal/leads/domain"
 	"github.com/google/uuid"
 )
@@ -147,7 +149,13 @@ func (uc *UseCase) QualifyLead(ctx context.Context, leadID uuid.UUID) (*domain.Q
 		return nil, fmt.Errorf("lead not found")
 	}
 
-	aiResult, err := uc.ai.Qualify(ctx, lead.ContactName, lead.Channel, lead.FirstMessage)
+	auditLeadID := lead.ID
+	auditCtx := audit.ContextWithCallMeta(ctx, audit.CallMeta{
+		UserID:      lead.UserID,
+		LeadID:      &auditLeadID,
+		RequestType: auditdomain.RequestTypeQualification,
+	})
+	aiResult, err := uc.ai.Qualify(auditCtx, lead.ContactName, lead.Channel, lead.FirstMessage)
 	if err != nil {
 		return nil, err
 	}
@@ -193,7 +201,13 @@ func (uc *UseCase) RegenerateDraft(ctx context.Context, leadID uuid.UUID) (*doma
 		}
 	}
 
-	body, err := uc.ai.DraftReply(ctx, lead.ContactName, firstMsg)
+	auditLeadID := lead.ID
+	auditCtx := audit.ContextWithCallMeta(ctx, audit.CallMeta{
+		UserID:      lead.UserID,
+		LeadID:      &auditLeadID,
+		RequestType: auditdomain.RequestTypeDraftReply,
+	})
+	body, err := uc.ai.DraftReply(auditCtx, lead.ContactName, firstMsg)
 	if err != nil {
 		return nil, err
 	}
