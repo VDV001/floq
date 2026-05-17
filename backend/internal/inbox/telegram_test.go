@@ -825,12 +825,15 @@ func newTestBotWithErrorHTTP(repo LeadRepository, aiClient AIQualifier, ownerID 
 	}
 }
 
-// Pre-HITL this test exercised the bot.Send failure path. Under HITL
-// no proposer is wired here, so the booking branch is suppressed
-// entirely — the assertion that no outbound message lands in the repo
-// is the same invariant viewed from a different angle (secure default
-// holds even when the underlying bot transport is broken).
-func TestHandleMessage_CallAgreement_SendError(t *testing.T) {
+// TestHandleMessage_CallAgreement_BrokenBotTransport_DoesNotEscape pins
+// the secure-default invariant under a hostile bot transport: even
+// when bot.Send is doomed to fail (broken HTTP client), and no
+// PendingReplyProposer is wired, the booking-link branch must NOT
+// produce an outbound InboxMessage in the repository. Together with
+// TestHandleMessage_CallAgreement_NoProposerSuppressesBookingLink
+// this guards against any regression that re-introduces a direct
+// bot.Send fallback in the booking branch.
+func TestHandleMessage_CallAgreement_BrokenBotTransport_DoesNotEscape(t *testing.T) {
 	repo := newMockLeadRepo()
 	aiClient := &mockAIQualifier{result: &QualificationResult{Score: 9}}
 	ownerID := uuid.New()

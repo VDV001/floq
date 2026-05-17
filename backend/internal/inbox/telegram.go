@@ -90,6 +90,16 @@ func (t *TelegramBot) Bot() *tgbotapi.BotAPI {
 	return t.bot
 }
 
+// SetPendingProposer wires the HITL queue after construction. Used by
+// the composition root to break the
+// bot -> usecase -> dispatcher -> bot dependency cycle: the usecase
+// needs a dispatcher built from tgBot.Bot(), and the bot needs the
+// resulting usecase as proposer. Mirrors the existing leadsUC
+// .SetSender pattern in main.go.
+func (t *TelegramBot) SetPendingProposer(p PendingReplyProposer) {
+	t.pendingProposer = p
+}
+
 // Start begins listening for Telegram updates and processing them.
 // It blocks until ctx is cancelled.
 func (t *TelegramBot) Start(ctx context.Context) {
