@@ -103,6 +103,56 @@ type PendingReply struct {
 	SentAt    *time.Time
 }
 
+// TransitionTo validates and applies a status change, rejecting transitions
+// that violate the PendingReply state machine. Callers should prefer the
+// dedicated Approve / Reject / MarkSent methods, which also stamp the
+// relevant timestamp atomically with the status change.
+func (p *PendingReply) TransitionTo(target PendingReplyStatus) error {
+	if !target.IsValid() {
+		return fmt.Errorf("%w: unknown target %q", ErrPendingReplyInvalidTransition, target)
+	}
+	if !p.Status.CanTransitionTo(target) {
+		return fmt.Errorf("%w: %q -> %q", ErrPendingReplyInvalidTransition, p.Status, target)
+	}
+	p.Status = target
+	return nil
+}
+
+// Approve moves a pending reply into the Approved status and stamps
+// DecidedAt. Use this when the operator confirms the draft should be sent;
+// the actual delivery is a separate step (MarkSent) so that a failed send
+// does not leave the entity in an inconsistent state.
+func (p *PendingReply) Approve(at time.Time) error {
+	if err := p.TransitionTo(PendingReplyStatusApproved); err != nil {
+		return err
+	}
+	t := at
+	p.DecidedAt = &t
+	return nil
+}
+
+// Reject moves a pending reply into the terminal Rejected status and stamps
+// DecidedAt. The draft body is preserved for audit / future reference.
+func (p *PendingReply) Reject(at time.Time) error {
+	if err := p.TransitionTo(PendingReplyStatusRejected); err != nil {
+		return err
+	}
+	t := at
+	p.DecidedAt = &t
+	return nil
+}
+
+// MarkSent moves an approved reply into the terminal Sent status and
+// records when delivery succeeded. Only valid from Approved.
+func (p *PendingReply) MarkSent(at time.Time) error {
+	if err := p.TransitionTo(PendingReplyStatusSent); err != nil {
+		return err
+	}
+	t := at
+	p.SentAt = &t
+	return nil
+}
+
 // NewPendingReply constructs a PendingReply in the Pending status with a
 // generated ID and timestamp, enforcing required invariants. Body is trimmed
 // of surrounding whitespace; an entirely whitespace-only body is rejected.
