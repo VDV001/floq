@@ -7,6 +7,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/daniil/floq/internal/audit"
+	auditdomain "github.com/daniil/floq/internal/audit/domain"
 	"github.com/daniil/floq/internal/httputil"
 	"github.com/go-chi/chi/v5"
 )
@@ -91,7 +93,11 @@ func (h *Handler) Chat(w http.ResponseWriter, r *http.Request) {
 	}
 	messages = append(messages, ChatMessage{Role: "user", Content: req.Message})
 
-	reply, err := h.aiClient.Complete(r.Context(), ChatCompletionRequest{
+	auditCtx := audit.ContextWithCallMeta(r.Context(), audit.CallMeta{
+		UserID:      userID,
+		RequestType: auditdomain.RequestTypeChatAssist,
+	})
+	reply, err := h.aiClient.Complete(auditCtx, ChatCompletionRequest{
 		Messages:  messages,
 		MaxTokens: 4096,
 	})

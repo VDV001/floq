@@ -19,7 +19,7 @@ var ErrVisionUnsupported = errors.New("ai provider does not support vision")
 // Ollama and any text-only providers should NOT implement it; the
 // AIClient detects this via type assertion and degrades gracefully.
 type VisionProvider interface {
-	AnalyzeImage(ctx context.Context, imageData []byte, mimeType, prompt string) (string, error)
+	AnalyzeImage(ctx context.Context, imageData []byte, mimeType, prompt string) (*CompletionResult, error)
 }
 
 // AnalyzeImage sends imageData (raw bytes, e.g. PNG or JPEG) together
@@ -32,9 +32,9 @@ func (c *AIClient) AnalyzeImage(ctx context.Context, imageData []byte, mimeType,
 	if !ok {
 		return "", ErrVisionUnsupported
 	}
-	text, err := vp.AnalyzeImage(ctx, imageData, mimeType, prompt)
+	result, err := vp.AnalyzeImage(ctx, imageData, mimeType, prompt)
 	if err != nil {
 		return "", fmt.Errorf("analyze image: %w", err)
 	}
-	return text, nil
+	return result.Text, nil
 }

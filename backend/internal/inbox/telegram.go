@@ -7,6 +7,8 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/daniil/floq/internal/audit"
+	auditdomain "github.com/daniil/floq/internal/audit/domain"
 	"github.com/daniil/floq/internal/normalize"
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 	"github.com/google/uuid"
@@ -200,6 +202,12 @@ func (t *TelegramBot) handleMessage(ctx context.Context, msg *tgbotapi.Message) 
 		go func() {
 			qCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 			defer cancel()
+			qLeadID := lead.ID
+			qCtx = audit.ContextWithCallMeta(qCtx, audit.CallMeta{
+				UserID:      lead.UserID,
+				LeadID:      &qLeadID,
+				RequestType: auditdomain.RequestTypeQualification,
+			})
 			result, err := t.aiClient.Qualify(qCtx, contactName, string(lead.Channel), qualifyText)
 			if err != nil {
 				log.Printf("telegram inbox: qualification error for lead %s: %v", lead.ID, err)

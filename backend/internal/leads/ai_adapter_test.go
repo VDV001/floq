@@ -17,8 +17,11 @@ type fakeProvider struct {
 }
 
 func (f *fakeProvider) Name() string { return f.name }
-func (f *fakeProvider) Complete(_ context.Context, _ ai.CompletionRequest) (string, error) {
-	return f.resp, f.err
+func (f *fakeProvider) Complete(_ context.Context, _ ai.CompletionRequest) (*ai.CompletionResult, error) {
+	if f.err != nil {
+		return nil, f.err
+	}
+	return &ai.CompletionResult{Text: f.resp, Model: f.name}, nil
 }
 
 func TestAIAdapter_ProviderName(t *testing.T) {

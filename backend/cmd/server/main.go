@@ -18,6 +18,7 @@ import (
 
 	"github.com/daniil/floq/internal/ai"
 	"github.com/daniil/floq/internal/ai/providers"
+	"github.com/daniil/floq/internal/audit"
 	"github.com/daniil/floq/internal/auth"
 	"github.com/daniil/floq/internal/chat"
 	"github.com/daniil/floq/internal/config"
@@ -99,6 +100,17 @@ func main() {
 
 	// 2b. AI provider (dynamic: reads provider/model/key from DB, falls back to .env)
 	aiProvider := providers.NewDynamicProvider(settingsStore, ownerID, cfg, httpClient)
+
+	// 2c. Audit log: every provider call goes through a RecordingProvider
+	// that drops a cost-attributed row into audit_log via an async
+	// AsyncRecorder. Buffer overflow drops with a metric counter —
+	// audit must never block the AI hot path.
+	auditRepo := audit.NewRepository(pool)
+	auditRecorder := audit.NewAsyncRecorder(auditRepo,
+		audit.WithLogger(slog.Default()))
+	auditRecorder.Start()
+	wrappedProvider := audit.NewRecordingProvider(aiProvider, auditRecorder, slog.Default())
+
 	// Read the owner's style-check preference once at boot. We don't
 	// propagate runtime changes — switching the toggle in the UI requires
 	// a server restart, documented in docs/_tools/llm_style_check.md. The
@@ -108,7 +120,7 @@ func main() {
 	if ownerSettings, err := settingsRepo.GetSettings(context.Background(), ownerID); err == nil {
 		styleCheckEnabled = ownerSettings.AIStyleCheckEnabled
 	}
-	aiClient := ai.NewAIClient(aiProvider, cfg.BookingLink, cfg.SenderName, cfg.SenderCompany, cfg.SenderPhone, cfg.SenderWebsite,
+	aiClient := ai.NewAIClient(wrappedProvider, cfg.BookingLink, cfg.SenderName, cfg.SenderCompany, cfg.SenderPhone, cfg.SenderWebsite,
 		ai.WithStyleCheck(styleCheckEnabled))
 
 	// 3. Repositories
@@ -287,6 +299,14 @@ func main() {
 
 	if err := srv.Shutdown(shutdownCtx); err != nil {
 		log.Fatalf("server shutdown: %v", err)
+	}
+
+	// Flush remaining audit entries within the same shutdown budget.
+	// Stop drains the buffer and writes one final batch via the repo;
+	// ctx-cancel returns ctx.Err but does NOT panic on remaining
+	// entries (they're dropped silently for the next process to miss).
+	if err := auditRecorder.Stop(shutdownCtx); err != nil {
+		log.Printf("audit recorder stop: %v", err)
 	}
 	log.Println("server stopped")
 }

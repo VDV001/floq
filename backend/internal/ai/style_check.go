@@ -49,9 +49,9 @@ func (c *AIClient) StyleCheck(ctx context.Context, draft, channel string) (*Styl
 	}
 
 	var result StyleResult
-	cleaned := extractJSON(resp)
+	cleaned := extractJSON(resp.Text)
 	if err := json.Unmarshal([]byte(cleaned), &result); err != nil {
-		return nil, fmt.Errorf("style check: parse response: %w (raw: %s)", err, resp[:min(len(resp), 200)])
+		return nil, fmt.Errorf("style check: parse response: %w (raw: %s)", err, resp.Text[:min(len(resp.Text), 200)])
 	}
 	return &result, nil
 }

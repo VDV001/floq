@@ -73,7 +73,7 @@ func NewOpenAICompatibleProvider(apiKey, model, baseURL string, httpClient *http
 
 func (p *OpenAIProvider) Name() string { return "openai" }
 
-func (p *OpenAIProvider) Complete(ctx context.Context, req ai.CompletionRequest) (string, error) {
+func (p *OpenAIProvider) Complete(ctx context.Context, req ai.CompletionRequest) (*ai.CompletionResult, error) {
 	var messages []openai.ChatCompletionMessageParamUnion
 
 	for _, msg := range req.Messages {
@@ -87,22 +87,28 @@ func (p *OpenAIProvider) Complete(ctx context.Context, req ai.CompletionRequest)
 		}
 	}
 
+	model := p.modelForMode(req.Mode)
 	resp, err := p.client.Chat.Completions.New(ctx, openai.ChatCompletionNewParams{
-		Model:     p.modelForMode(req.Mode),
+		Model:     model,
 		Messages:  messages,
 		MaxTokens: param.NewOpt(int64(req.MaxTokens)),
 	})
 	if err != nil {
-		return "", fmt.Errorf("openai complete: %w", err)
+		return nil, fmt.Errorf("openai complete: %w", err)
 	}
 
 	if len(resp.Choices) == 0 {
-		return "", fmt.Errorf("openai complete: no choices in response")
+		return nil, fmt.Errorf("openai complete: no choices in response")
+	}
+
+	usage := ai.TokenUsage{
+		InputTokens:  int(resp.Usage.PromptTokens),
+		OutputTokens: int(resp.Usage.CompletionTokens),
 	}
 
 	content := resp.Choices[0].Message.Content
 	if content != "" {
-		return content, nil
+		return &ai.CompletionResult{Text: content, Usage: usage, Model: model}, nil
 	}
 
 	// Reasoning models (e.g. gpt-oss on Groq) may return empty content
@@ -114,34 +120,42 @@ func (p *OpenAIProvider) Complete(ctx context.Context, req ai.CompletionRequest)
 			Reasoning string `json:"reasoning"`
 		}
 		if err := json.Unmarshal([]byte(rawJSON), &msgFields); err == nil && msgFields.Reasoning != "" {
-			return msgFields.Reasoning, nil
+			return &ai.CompletionResult{Text: msgFields.Reasoning, Usage: usage, Model: model}, nil
 		}
 	}
 
-	return "", nil
+	return &ai.CompletionResult{Text: "", Usage: usage, Model: model}, nil
 }
 
 // AnalyzeImage sends imageData together with prompt as a multimodal
 // chat-completion request and returns the assistant's text response.
 // Always uses Budget mode (gpt-4o-mini by default) — vision passes are
 // volume-driven, cost dominates reasoning depth.
-func (p *OpenAIProvider) AnalyzeImage(ctx context.Context, imageData []byte, mimeType, prompt string) (string, error) {
+func (p *OpenAIProvider) AnalyzeImage(ctx context.Context, imageData []byte, mimeType, prompt string) (*ai.CompletionResult, error) {
 	dataURI := fmt.Sprintf("data:%s;base64,%s", mimeType, base64.StdEncoding.EncodeToString(imageData))
 	parts := []openai.ChatCompletionContentPartUnionParam{
 		openai.TextContentPart(prompt),
 		openai.ImageContentPart(openai.ChatCompletionContentPartImageImageURLParam{URL: dataURI}),
 	}
 
+	model := p.modelForMode(ai.ModelModeBudget)
 	resp, err := p.client.Chat.Completions.New(ctx, openai.ChatCompletionNewParams{
-		Model:     p.modelForMode(ai.ModelModeBudget),
+		Model:     model,
 		Messages:  []openai.ChatCompletionMessageParamUnion{openai.UserMessage(parts)},
 		MaxTokens: param.NewOpt(int64(1024)),
 	})
 	if err != nil {
-		return "", fmt.Errorf("analyze image: %w", err)
+		return nil, fmt.Errorf("analyze image: %w", err)
 	}
 	if len(resp.Choices) == 0 {
-		return "", fmt.Errorf("analyze image: no choices in response")
+		return nil, fmt.Errorf("analyze image: no choices in response")
 	}
-	return resp.Choices[0].Message.Content, nil
+	return &ai.CompletionResult{
+		Text:  resp.Choices[0].Message.Content,
+		Usage: ai.TokenUsage{
+			InputTokens:  int(resp.Usage.PromptTokens),
+			OutputTokens: int(resp.Usage.CompletionTokens),
+		},
+		Model: model,
+	}, nil
 }

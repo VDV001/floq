@@ -14,8 +14,8 @@ type fakeAIProvider struct {
 }
 
 func (f *fakeAIProvider) Name() string { return "test" }
-func (f *fakeAIProvider) Complete(_ context.Context, _ ai.CompletionRequest) (string, error) {
-	return f.resp, nil
+func (f *fakeAIProvider) Complete(_ context.Context, _ ai.CompletionRequest) (*ai.CompletionResult, error) {
+	return &ai.CompletionResult{Text: f.resp, Model: "test"}, nil
 }
 
 func TestAIMessageGeneratorAdapter_GenerateColdMessage(t *testing.T) {

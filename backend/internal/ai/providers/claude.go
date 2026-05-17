@@ -61,7 +61,7 @@ func (p *ClaudeProvider) modelForMode(mode ai.ModelMode) string {
 	return claudeModelByMode[ai.ModelModeExecute]
 }
 
-func (p *ClaudeProvider) Complete(ctx context.Context, req ai.CompletionRequest) (string, error) {
+func (p *ClaudeProvider) Complete(ctx context.Context, req ai.CompletionRequest) (*ai.CompletionResult, error) {
 	var system []anthropic.TextBlockParam
 	var messages []anthropic.MessageParam
 
@@ -76,19 +76,27 @@ func (p *ClaudeProvider) Complete(ctx context.Context, req ai.CompletionRequest)
 		}
 	}
 
+	model := p.modelForMode(req.Mode)
 	resp, err := p.client.Messages.New(ctx, anthropic.MessageNewParams{
-		Model:     anthropic.Model(p.modelForMode(req.Mode)),
+		Model:     anthropic.Model(model),
 		MaxTokens: int64(req.MaxTokens),
 		System:    system,
 		Messages:  messages,
 	})
 	if err != nil {
-		return "", fmt.Errorf("claude complete: %w", err)
+		return nil, fmt.Errorf("claude complete: %w", err)
 	}
 
 	if len(resp.Content) == 0 {
-		return "", fmt.Errorf("claude complete: empty response")
+		return nil, fmt.Errorf("claude complete: empty response")
 	}
 
-	return resp.Content[0].AsText().Text, nil
+	return &ai.CompletionResult{
+		Text:  resp.Content[0].AsText().Text,
+		Usage: ai.TokenUsage{
+			InputTokens:  int(resp.Usage.InputTokens),
+			OutputTokens: int(resp.Usage.OutputTokens),
+		},
+		Model: model,
+	}, nil
 }

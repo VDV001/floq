@@ -114,15 +114,16 @@ type mockProvider struct {
 	calls     int // total Complete invocations, for assertions
 }
 
-func (m *mockProvider) Complete(_ context.Context, _ CompletionRequest) (string, error) {
+func (m *mockProvider) Complete(_ context.Context, _ CompletionRequest) (*CompletionResult, error) {
 	m.calls++
+	text := m.response
 	if len(m.responses) > 0 {
 		if m.calls-1 >= len(m.responses) {
-			return "", m.err
+			return &CompletionResult{Text: ""}, m.err
 		}
-		return m.responses[m.calls-1], m.err
+		text = m.responses[m.calls-1]
 	}
-	return m.response, m.err
+	return &CompletionResult{Text: text, Model: m.name}, m.err
 }
 
 func (m *mockProvider) Name() string {

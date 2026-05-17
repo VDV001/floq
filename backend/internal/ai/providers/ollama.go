@@ -39,7 +39,7 @@ func (p *OllamaProvider) modelForMode(_ ai.ModelMode) string {
 	return p.model
 }
 
-func (p *OllamaProvider) Complete(ctx context.Context, req ai.CompletionRequest) (string, error) {
+func (p *OllamaProvider) Complete(ctx context.Context, req ai.CompletionRequest) (*ai.CompletionResult, error) {
 	var messages []openai.ChatCompletionMessageParamUnion
 
 	for _, msg := range req.Messages {
@@ -53,18 +53,30 @@ func (p *OllamaProvider) Complete(ctx context.Context, req ai.CompletionRequest)
 		}
 	}
 
+	model := p.modelForMode(req.Mode)
 	resp, err := p.client.Chat.Completions.New(ctx, openai.ChatCompletionNewParams{
-		Model:     p.modelForMode(req.Mode),
+		Model:     model,
 		Messages:  messages,
 		MaxTokens: param.NewOpt(int64(req.MaxTokens)),
 	})
 	if err != nil {
-		return "", fmt.Errorf("ollama complete: %w", err)
+		return nil, fmt.Errorf("ollama complete: %w", err)
 	}
 
 	if len(resp.Choices) == 0 {
-		return "", fmt.Errorf("ollama complete: no choices in response")
+		return nil, fmt.Errorf("ollama complete: no choices in response")
 	}
 
-	return resp.Choices[0].Message.Content, nil
+	// Ollama's /v1 endpoint mirrors the OpenAI schema, including the
+	// Usage block. Local back-ends sometimes leave it zero — we record
+	// what the response says, the pricing layer special-cases the
+	// "ollama" provider name to cost=0 regardless of token counts.
+	return &ai.CompletionResult{
+		Text: resp.Choices[0].Message.Content,
+		Usage: ai.TokenUsage{
+			InputTokens:  int(resp.Usage.PromptTokens),
+			OutputTokens: int(resp.Usage.CompletionTokens),
+		},
+		Model: model,
+	}, nil
 }
