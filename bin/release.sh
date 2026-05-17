@@ -25,32 +25,40 @@ validate_semver() {
 }
 
 # verify_version_sync <repo_root> <expected_version>
-# Returns 0 iff all four sync points are at expected_version.
+# Returns 0 iff all four sync points are at expected_version. Uses jq for
+# structural matching on the npm JSON files so transitive deps that happen
+# to share the version string don't fool the check.
 verify_version_sync() {
   local root="$1" expected="$2"
-  local file_version
-  file_version="$(<"$root/VERSION")"
-  file_version="${file_version%$'\n'}"
-  [[ "$file_version" == "$expected" ]] || return 1
+  [[ "$(<"$root/VERSION")" == "$expected" ]] || return 1
   grep -q "img.shields.io/badge/version-${expected}-blue" "$root/README.md" || return 1
-  grep -q "\"version\": \"${expected}\"" "$root/frontend/package.json" || return 1
-  local lock_count
-  lock_count="$(grep -c "\"version\": \"${expected}\"" "$root/frontend/package-lock.json" || true)"
-  [[ "$lock_count" == "2" ]] || return 1
+  [[ "$(jq -r '.version' "$root/frontend/package.json")" == "$expected" ]] || return 1
+  local lock_root lock_pkg
+  lock_root="$(jq -r '.version' "$root/frontend/package-lock.json")"
+  lock_pkg="$(jq -r '.packages[""].version' "$root/frontend/package-lock.json")"
+  [[ "$lock_root" == "$expected" ]] || return 1
+  [[ "$lock_pkg" == "$expected" ]] || return 1
 }
 
 # bump_version_files <repo_root> <old> <new>
-# Rewrites all four sync points from old → new. Caller is responsible for
-# pre-flight verify_version_sync at <old> and post-flight verify at <new>.
+# Rewrites all four sync points from old → new. Uses jq for structural
+# updates on package.json / package-lock.json (only root .version and
+# packages[""].version are touched — transitive dep versions never).
+# Caller is responsible for pre-flight verify_version_sync at <old> and
+# post-flight verify at <new>.
 bump_version_files() {
   local root="$1" old="$2" new="$3"
   printf "%s\n" "$new" > "$root/VERSION"
   perl -i -pe "s|img\\.shields\\.io/badge/version-\\Q${old}\\E-blue|img.shields.io/badge/version-${new}-blue|g" \
     "$root/README.md"
-  perl -i -pe "s|\"version\": \"\\Q${old}\\E\"|\"version\": \"${new}\"|g" \
-    "$root/frontend/package.json"
-  perl -i -pe "s|\"version\": \"\\Q${old}\\E\"|\"version\": \"${new}\"|g" \
-    "$root/frontend/package-lock.json"
+  local tmp
+  tmp="$(mktemp)"
+  jq --arg new "$new" '.version = $new' "$root/frontend/package.json" > "$tmp"
+  mv "$tmp" "$root/frontend/package.json"
+  tmp="$(mktemp)"
+  jq --arg new "$new" '.version = $new | .packages[""].version = $new' \
+    "$root/frontend/package-lock.json" > "$tmp"
+  mv "$tmp" "$root/frontend/package-lock.json"
 }
 
 # ---------- orchestration ----------
@@ -100,6 +108,37 @@ require_in_sync_with_origin() {
   fi
 }
 
+require_tag_absent() {
+  local root="$1" tag="$2"
+  if git -C "$root" rev-parse "$tag" >/dev/null 2>&1; then
+    echo "ERROR: tag '$tag' already exists locally — delete it first or pick a new version." >&2
+    exit 8
+  fi
+  git -C "$root" fetch origin --tags --quiet
+  if git -C "$root" ls-remote --tags origin "refs/tags/$tag" | grep -q .; then
+    echo "ERROR: tag '$tag' already exists on origin — release was already published, or partial." >&2
+    exit 8
+  fi
+}
+
+require_gh_authenticated() {
+  if ! command -v gh >/dev/null 2>&1; then
+    echo "ERROR: 'gh' CLI not found. Install from https://cli.github.com/." >&2
+    exit 9
+  fi
+  if ! gh auth status >/dev/null 2>&1; then
+    echo "ERROR: 'gh' not authenticated. Run: gh auth login" >&2
+    exit 9
+  fi
+}
+
+require_jq() {
+  if ! command -v jq >/dev/null 2>&1; then
+    echo "ERROR: 'jq' not found. Install via brew (macOS) or apt (linux)." >&2
+    exit 10
+  fi
+}
+
 main() {
   set -e
   local new_version="${1:-}"
@@ -123,16 +162,19 @@ main() {
     exit 2
   fi
 
+  require_jq
+  require_gh_authenticated
+
   local root
   root="$(git rev-parse --show-toplevel)"
 
   require_clean_tree "$root"
   require_branch "$root" "main"
   require_in_sync_with_origin "$root" "main"
+  require_tag_absent "$root" "v$new_version"
 
   local current_version
   current_version="$(<"$root/VERSION")"
-  current_version="${current_version%$'\n'}"
 
   if [[ "$current_version" == "$new_version" ]]; then
     echo "ERROR: VERSION already at $new_version — nothing to do." >&2
@@ -141,8 +183,8 @@ main() {
 
   if ! verify_version_sync "$root" "$current_version"; then
     echo "ERROR: version files out of sync with VERSION=$current_version." >&2
-    echo "  Expected all of VERSION, README badge, frontend/package.json," >&2
-    echo "  frontend/package-lock.json (x2 occurrences) to be at $current_version." >&2
+    echo "  Expected all of VERSION, README badge, frontend/package.json (.version)," >&2
+    echo "  frontend/package-lock.json (.version + .packages[\"\"].version) to be at $current_version." >&2
     exit 3
   fi
 
@@ -167,11 +209,24 @@ main() {
   git -C "$root" add VERSION README.md frontend/package.json frontend/package-lock.json
   git -C "$root" commit -m "chore: bump to v$new_version"
   git -C "$root" tag -a "v$new_version" -m "v$new_version"
-  git -C "$root" push origin main
-  git -C "$root" push origin "v$new_version"
+
+  # Once we start pushing to origin, partial failure leaves state on remote.
+  # Each error message names exactly what's stuck so a human can finish by hand.
+  if ! git -C "$root" push origin main; then
+    echo "ERROR: failed to push main. Bump commit is local-only; retry: git push origin main" >&2
+    echo "       then re-run: bin/release.sh $new_version (it will resume from tag push)." >&2
+    exit 11
+  fi
+  if ! git -C "$root" push origin "v$new_version"; then
+    echo "ERROR: failed to push tag v$new_version. main is pushed but tag is local-only." >&2
+    echo "       Recover: git push origin v$new_version" >&2
+    echo "       Then run: gh release create v$new_version --title v$new_version --generate-notes" >&2
+    exit 12
+  fi
 
   local notes_file
   notes_file="$(mktemp -t "release-notes-v${new_version}.XXXXXX").md"
+  trap 'rm -f "$notes_file"' EXIT
   local last_tag
   last_tag="$(git -C "$root" describe --tags --abbrev=0 "v${new_version}^" 2>/dev/null || true)"
   {
@@ -191,8 +246,12 @@ main() {
 
   "${EDITOR:-vi}" "$notes_file"
 
-  gh release create "v$new_version" --title "v$new_version" --notes-file "$notes_file"
-  rm -f "$notes_file"
+  if ! gh release create "v$new_version" --title "v$new_version" --notes-file "$notes_file"; then
+    echo "ERROR: gh release create failed. Tag v$new_version is published; finish manually:" >&2
+    echo "       gh release create v$new_version --title v$new_version --notes-file $notes_file" >&2
+    trap - EXIT
+    exit 13
+  fi
 
   echo "Released v$new_version."
 }
