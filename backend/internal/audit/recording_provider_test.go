@@ -82,7 +82,7 @@ func TestRecordingProvider_CompleteSuccessRecordsEntry(t *testing.T) {
 
 	userID := uuid.New()
 	leadID := uuid.New()
-	ctx := audit.ContextWithCallMeta(context.Background(), audit.CallMeta{
+	ctx := domain.ContextWithCallMeta(context.Background(), domain.CallMeta{
 		UserID:      userID,
 		LeadID:      &leadID,
 		RequestType: domain.RequestTypeQualification,
@@ -120,7 +120,7 @@ func TestRecordingProvider_CompleteErrorRecordsErrorEntry(t *testing.T) {
 	rec := &fakeRecorder{}
 	rp := audit.NewRecordingProvider(inner, rec, silentDiscardLogger())
 
-	ctx := audit.ContextWithCallMeta(context.Background(), audit.CallMeta{
+	ctx := domain.ContextWithCallMeta(context.Background(), domain.CallMeta{
 		UserID:      uuid.New(),
 		RequestType: domain.RequestTypeDraftReply,
 	})
@@ -172,7 +172,7 @@ func TestRecordingProvider_AnalyzeImageRecordsImageAnalysisType(t *testing.T) {
 
 	userID := uuid.New()
 	leadID := uuid.New()
-	ctx := audit.ContextWithCallMeta(context.Background(), audit.CallMeta{
+	ctx := domain.ContextWithCallMeta(context.Background(), domain.CallMeta{
 		UserID:      userID,
 		LeadID:      &leadID,
 		RequestType: domain.RequestTypeImageAnalysis,
@@ -198,7 +198,7 @@ func TestRecordingProvider_AnalyzeImageOnNonVisionProviderReturnsUnsupported(t *
 	rec := &fakeRecorder{}
 	rp := audit.NewRecordingProvider(inner, rec, silentDiscardLogger())
 
-	ctx := audit.ContextWithCallMeta(context.Background(), audit.CallMeta{
+	ctx := domain.ContextWithCallMeta(context.Background(), domain.CallMeta{
 		UserID:      uuid.New(),
 		RequestType: domain.RequestTypeImageAnalysis,
 	})

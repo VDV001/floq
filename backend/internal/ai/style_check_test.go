@@ -5,8 +5,11 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	auditdomain "github.com/daniil/floq/internal/audit/domain"
 )
 
 func TestStyleCheck_HighScore(t *testing.T) {
@@ -84,20 +87,91 @@ func TestStyleCheck_UsesBudgetMode(t *testing.T) {
 	assert.Equal(t, ModelModeBudget, rec.lastRequest.Mode, "style check should use Budget mode for cost")
 }
 
-// recordingProvider captures the most recent CompletionRequest so tests can
-// assert on its content (prompt body, mode). Lives in style_check_test.go
-// because that's the only file using it today; promote if shared.
+// TestStyleCheck_OverridesRequestTypeToStyleCheck locks the production
+// invariant that the inner Complete call fires under a ctx carrying
+// RequestTypeStyleCheck while preserving the parent's user/lead
+// attribution. Without this test, a typo in style_check.go's
+// WithRequestType wiring (or a refactor that drops the call) would
+// silently re-tag style-check spend under the parent's RequestType.
+func TestStyleCheck_OverridesRequestTypeToStyleCheck(t *testing.T) {
+	rec := &recordingProvider{response: `{"score":8,"issues":[],"feedback":""}`}
+	c := NewAIClient(rec, "", "", "", "", "")
+
+	userID := uuid.New()
+	leadID := uuid.New()
+	parentCtx := auditdomain.ContextWithCallMeta(context.Background(), auditdomain.CallMeta{
+		UserID:      userID,
+		LeadID:      &leadID,
+		RequestType: auditdomain.RequestTypeDraftReply,
+	})
+
+	_, err := c.StyleCheck(parentCtx, "draft body", "email")
+	require.NoError(t, err)
+	require.NotNil(t, rec.lastCtx, "provider Complete was never invoked")
+
+	meta, ok := auditdomain.CallMetaFromContext(rec.lastCtx)
+	require.True(t, ok, "style-check inner Complete must keep audit meta in ctx")
+	assert.Equal(t, userID, meta.UserID, "user attribution must survive")
+	require.NotNil(t, meta.LeadID)
+	assert.Equal(t, leadID, *meta.LeadID, "lead attribution must survive")
+	assert.Equal(t, auditdomain.RequestTypeStyleCheck, meta.RequestType,
+		"inner call must be re-tagged as style_check, not draft_reply")
+}
+
+func TestGenerateTelegramReply_OverridesRequestTypeToTelegramReply(t *testing.T) {
+	rec := &recordingProvider{response: "Hello!"}
+	c := NewAIClient(rec, "", "", "", "", "")
+
+	userID := uuid.New()
+	prospectID := uuid.New()
+	parentCtx := auditdomain.ContextWithCallMeta(context.Background(), auditdomain.CallMeta{
+		UserID:      userID,
+		ProspectID:  &prospectID,
+		RequestType: auditdomain.RequestTypeColdMessage,
+	})
+
+	_, err := c.GenerateTelegramReply(parentCtx, "Ivan", "CEO", "Corp", "ctx", "history", "last msg")
+	require.NoError(t, err)
+	require.NotNil(t, rec.lastCtx)
+
+	meta, ok := auditdomain.CallMetaFromContext(rec.lastCtx)
+	require.True(t, ok)
+	assert.Equal(t, userID, meta.UserID)
+	require.NotNil(t, meta.ProspectID)
+	assert.Equal(t, prospectID, *meta.ProspectID)
+	assert.Equal(t, auditdomain.RequestTypeTelegramReply, meta.RequestType,
+		"reply pass must be re-tagged as telegram_reply, not cold_message")
+}
+
+func TestStyleCheck_NoParentMetaLeavesCtxClean(t *testing.T) {
+	rec := &recordingProvider{response: `{"score":8,"issues":[],"feedback":""}`}
+	c := NewAIClient(rec, "", "", "", "", "")
+
+	_, err := c.StyleCheck(context.Background(), "draft body", "email")
+	require.NoError(t, err)
+	require.NotNil(t, rec.lastCtx)
+
+	_, ok := auditdomain.CallMetaFromContext(rec.lastCtx)
+	assert.False(t, ok, "WithRequestType must NOT synthesize meta when none present")
+}
+
+// recordingProvider captures the most recent CompletionRequest and ctx
+// so tests can assert on prompt body, mode, and audit attribution.
+// Lives in style_check_test.go because that's the only file using it
+// today; promote if shared.
 type recordingProvider struct {
 	response    string
 	err         error
 	lastRequest *CompletionRequest
+	lastCtx     context.Context
 	calls       int
 }
 
-func (r *recordingProvider) Complete(_ context.Context, req CompletionRequest) (*CompletionResult, error) {
+func (r *recordingProvider) Complete(ctx context.Context, req CompletionRequest) (*CompletionResult, error) {
 	r.calls++
 	cp := req
 	r.lastRequest = &cp
+	r.lastCtx = ctx
 	return &CompletionResult{Text: r.response, Model: "recording"}, r.err
 }
 

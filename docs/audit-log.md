@@ -57,7 +57,7 @@ inner ai.Provider (OpenAI / Anthropic / Ollama)                                 
 | `internal/audit/repository.go` | pgx impl using `pgx.CopyFrom` for atomic bulk insert. |
 | `internal/audit/recorder.go` | `AsyncRecorder`: bounded chan + single worker + drop-on-full. |
 | `internal/audit/recording_provider.go` | Decorator over `ai.Provider` (+ `ai.VisionProvider` when inner supports it). Pulls `CallMeta` from ctx, computes cost, hands an `Entry` to the recorder. |
-| `internal/audit/context.go` | `CallMeta` struct + ctx-value helpers. |
+| `internal/audit/domain/call_meta.go` | `CallMeta` struct + ctx-value helpers (`ContextWithCallMeta`, `CallMetaFromContext`, `WithRequestType`). Lives in `domain/` so business packages can import the DTO surface without pulling in the recording machinery. |
 | `internal/audit/pricing.go` | Static (provider, model) → unit price table. |
 
 ### CA / DDD positioning
@@ -149,6 +149,83 @@ Documented trade-off: observed-cost ledger, not financial truth.
   a user" access pattern; partial indexes per `lead_id` /
   `prospect_id` for per-entity drilldowns.
 
+## Style-check sub-call attribution
+
+When `AIClient.GenerateColdMessage` (or the Telegram / followup variants)
+is called with style-check enabled, the inner second LLM pass that
+judges the draft fires under a derived ctx:
+`auditdomain.WithRequestType(ctx, RequestTypeStyleCheck)`. Attribution
+inherits user/lead/prospect from the parent but stamps
+`request_type='style_check'` so cost reports break down "how much of
+this user's spend is the style critic vs. the actual draft."
+
+## Operations runbook
+
+### "Audit rows are missing for user X"
+
+1. **Did `auditdomain.ContextWithCallMeta` run before the AI call?**
+   `grep -rn "ContextWithCallMeta" internal/` must show one wrapper per
+   call site (leads, sequences, inbox, reminders, chat). When meta is
+   absent, `RecordingProvider.record` logs `"audit: AI call missing
+   meta context, skipping audit row"` at warn. Search prod logs for
+   that exact string.
+2. **Did the recorder buffer fill up?** Look for `"audit recorder:
+   buffer full, dropping entry"` with a `dropped_total` counter in the
+   structured log. If non-zero, raise `WithBufferSize` in
+   `cmd/server/main.go` and redeploy.
+3. **Did the repo write fail?** Look for `"audit recorder: save
+   failed"` warnings — Postgres timeout / connection reset. The worker
+   keeps running; that batch is lost.
+
+### "Cost numbers look wrong"
+
+- Pricing constants live in `internal/audit/pricing.go` — diff against
+  the provider's public pricing page; the file header records the
+  capture date.
+- Floor-division means very small calls round to 0 — observed cost is
+  always an under-report, never an over-report.
+- Unknown (provider, model) pair → cost=0 with `model="unknown"`
+  written to the row. Filter on that condition to spot attribution
+  gaps to fix.
+
+### "Shutdown takes too long"
+
+- `AsyncRecorder.Stop` drains the buffer inside the HTTP server's 10s
+  shutdown context. If you see `audit recorder stop: context deadline
+  exceeded`, the buffer was full **and** a repo write was in flight at
+  SIGTERM. Increase the shutdown budget in `cmd/server/main.go` or
+  accept the loss (audit log is the observed-cost ledger, not
+  financial truth).
+
+### Privacy & retention
+
+- `error_message` is sanitised before storage. `sanitizeErrorMessage`
+  in `internal/audit/recording_provider.go` runs these regex
+  redactions, each replacing matches with `[REDACTED]`:
+  - email addresses;
+  - E.164-ish phone numbers (`+` prefix, 7–15 digits);
+  - `sk-…` API keys (OpenAI-style);
+  - `Bearer …` tokens;
+  - `AKIA…` AWS access keys;
+  - `Authorization: …` header values (case-insensitive);
+  - basic-auth userinfo in URLs (`https://user:pass@host`);
+  - bare IPv4 addresses.
+
+  The redacted string is then capped at 256 bytes, walking back to a
+  rune boundary so non-ASCII errors don't break mid-codepoint.
+
+  **Residual risk (not redacted):** free-form names, postal addresses,
+  CRM identifiers (lead IDs, ticket numbers), IPv6 addresses, structured
+  org names. The assumption is that providers do not echo those in error
+  strings. If a real incident contradicts that, add a regex to
+  `piiPatterns` and a covering case to `sanitize_test.go`.
+- No prompt or response content is stored — privacy hazard + row-size
+  blowup.
+- `DELETE FROM users WHERE id = ?` cascades to `audit_log` (GDPR
+  erasure). Lead / prospect deletion leaves the row with NULL FK so
+  per-user totals stay correct. Locked by integration test
+  `TestAcceptance_UserDeletionCascadesToAuditLog`.
+
 ## Phase 3 backlog
 
 Out of scope for issue #25 closure, on the roadmap once usage justifies:
@@ -163,10 +240,10 @@ Out of scope for issue #25 closure, on the roadmap once usage justifies:
   returning `SUM(cost) GROUP BY (provider, model, request_type)`.
 - **Prometheus metrics** — `audit_recorder_dropped_total`,
   `audit_recorder_batch_size`, `audit_recorder_flush_latency_seconds`.
-- **Style-check sub-call attribution** — when a Generate* call enters
-  the style-check second pass, the inner Complete should record under
-  `style_check` rather than the parent request_type. Today both passes
-  end up under the parent type; one row but two underlying calls.
+- **Inbound Telegram conversation replies wiring** — `AIClient.Generate-
+  TelegramReply` attribution is in place (RequestTypeTelegramReply +
+  WithRequestType override) but no production caller invokes it yet.
+  Reserved for the inbound-bot conversation flow.
 - **Conversation forensics table** — opt-in store for prompt/response
   text linked back to `audit_log.id`, ringed by retention + access
   controls separate from cost data.

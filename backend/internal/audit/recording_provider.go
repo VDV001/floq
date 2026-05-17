@@ -3,7 +3,9 @@ package audit
 import (
 	"context"
 	"log/slog"
+	"regexp"
 	"time"
+	"unicode/utf8"
 
 	"github.com/daniil/floq/internal/ai"
 	"github.com/daniil/floq/internal/audit/domain"
@@ -76,7 +78,7 @@ func (r *RecordingProvider) AnalyzeImage(ctx context.Context, imageData []byte, 
 // failures (e.g. an unknown request_type) are also warn-logged; we
 // never panic the AI hot path on an audit problem.
 func (r *RecordingProvider) record(ctx context.Context, resp *ai.CompletionResult, callErr error, latency time.Duration) {
-	meta, ok := CallMetaFromContext(ctx)
+	meta, ok := domain.CallMetaFromContext(ctx)
 	if !ok {
 		r.logger.WarnContext(ctx, "audit: AI call missing meta context, skipping audit row",
 			"provider", r.inner.Name())
@@ -87,7 +89,11 @@ func (r *RecordingProvider) record(ctx context.Context, resp *ai.CompletionResul
 	errMsg := ""
 	if callErr != nil {
 		status = domain.StatusError
-		errMsg = callErr.Error()
+		// First strip PII patterns (emails, phones, API keys) — some
+		// providers quote the offending prompt fragment verbatim in
+		// 4xx errors. Then cap at 256 bytes so a runaway SDK can't
+		// stick entire payloads into a persistent column.
+		errMsg = truncate(sanitizeErrorMessage(callErr.Error()), 256)
 	}
 
 	var (
@@ -129,4 +135,75 @@ func (r *RecordingProvider) record(ctx context.Context, resp *ai.CompletionResul
 		return
 	}
 	r.recorder.Record(ctx, entry)
+}
+
+// piiPatterns strip the most common user-content tokens that providers
+// echo back in their error strings (we've seen OpenAI's 4xx responses
+// quote the offending prompt fragment verbatim). Run before truncation
+// so the redaction tokens don't get cut mid-substitution.
+//
+// Residual-risk note (also in docs/audit-log.md privacy section): we
+// scrub the high-frequency classes (email, phone, sk-/Bearer/AWS-key
+// prefixes, basic-auth URLs, raw IPv4). Free-form names, addresses,
+// and structured CRM identifiers (lead IDs, ticket numbers) are NOT
+// redacted — the assumption is that providers do not echo those in
+// error strings. Add patterns here if a real incident proves otherwise.
+var piiPatterns = []*regexp.Regexp{
+	// Email addresses
+	regexp.MustCompile(`[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}`),
+	// E.164-ish phone numbers (+ followed by 7-15 digits, optional spaces/dashes inside)
+	regexp.MustCompile(`\+\d[\d\s\-()]{6,18}\d`),
+	// Bearer / sk- API keys / AWS access keys / generic Authorization headers
+	regexp.MustCompile(`sk-[A-Za-z0-9_\-]{16,}`),
+	regexp.MustCompile(`Bearer\s+[A-Za-z0-9._\-]{16,}`),
+	regexp.MustCompile(`AKIA[0-9A-Z]{16}`),
+	regexp.MustCompile(`(?i)authorization:\s*[A-Za-z0-9._\-=]{16,}`),
+	// Basic-auth URLs (creds in the userinfo segment)
+	regexp.MustCompile(`https?://[^/\s:@]+:[^/\s@]+@`),
+	// Bare IPv4 (rough — won't catch IPv6, but covers the common case)
+	regexp.MustCompile(`\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b`),
+}
+
+func sanitizeErrorMessage(s string) string {
+	for _, p := range piiPatterns {
+		s = p.ReplaceAllString(s, "[REDACTED]")
+	}
+	return s
+}
+
+// truncate returns s when its byte length fits max, otherwise the
+// longest valid-UTF-8 prefix that, with an appended '…' marker, stays
+// within max bytes. Walks back from the cap to a rune boundary so a
+// non-ASCII error (Russian / Chinese / emoji) does not split mid-
+// codepoint and produce invalid UTF-8 downstream. max ≤ 0 returns "".
+// When max is too small to fit even the marker, returns the longest
+// rune-aligned prefix of s that fits — never invalid UTF-8.
+func truncate(s string, max int) string {
+	if max <= 0 {
+		return ""
+	}
+	if len(s) <= max {
+		return s
+	}
+	const marker = "…"
+	if max < len(marker) {
+		// No room for the ellipsis — fall back to a rune-aligned
+		// prefix of s, which keeps the output valid UTF-8.
+		return runeAlignedPrefix(s, max)
+	}
+	return runeAlignedPrefix(s, max-len(marker)) + marker
+}
+
+func runeAlignedPrefix(s string, limit int) string {
+	if limit <= 0 {
+		return ""
+	}
+	if limit >= len(s) {
+		return s
+	}
+	// Walk back to the previous rune start within [0, limit].
+	for limit > 0 && !utf8.RuneStart(s[limit]) {
+		limit--
+	}
+	return s[:limit]
 }

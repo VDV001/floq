@@ -10,7 +10,6 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/daniil/floq/internal/audit"
 	auditdomain "github.com/daniil/floq/internal/audit/domain"
 	"github.com/daniil/floq/internal/leads/domain"
 	"github.com/google/uuid"
@@ -150,7 +149,7 @@ func (uc *UseCase) QualifyLead(ctx context.Context, leadID uuid.UUID) (*domain.Q
 	}
 
 	auditLeadID := lead.ID
-	auditCtx := audit.ContextWithCallMeta(ctx, audit.CallMeta{
+	auditCtx := auditdomain.ContextWithCallMeta(ctx, auditdomain.CallMeta{
 		UserID:      lead.UserID,
 		LeadID:      &auditLeadID,
 		RequestType: auditdomain.RequestTypeQualification,
@@ -202,7 +201,7 @@ func (uc *UseCase) RegenerateDraft(ctx context.Context, leadID uuid.UUID) (*doma
 	}
 
 	auditLeadID := lead.ID
-	auditCtx := audit.ContextWithCallMeta(ctx, audit.CallMeta{
+	auditCtx := auditdomain.ContextWithCallMeta(ctx, auditdomain.CallMeta{
 		UserID:      lead.UserID,
 		LeadID:      &auditLeadID,
 		RequestType: auditdomain.RequestTypeDraftReply,

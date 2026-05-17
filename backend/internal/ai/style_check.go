@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+
+	auditdomain "github.com/daniil/floq/internal/audit/domain"
 )
 
 // StyleResult holds the outcome of a style-check pass over AI-generated
@@ -36,7 +38,13 @@ func (c *AIClient) StyleCheck(ctx context.Context, draft, channel string) (*Styl
 		"{{draft}}", draft,
 	).Replace(StyleCheckUser)
 
-	resp, err := c.provider.Complete(ctx, CompletionRequest{
+	// Re-tag the audit attribution for this inner call: same user/lead
+	// as the parent Generate*, but RequestType=style_check so cost
+	// reports can break down "how much of this user's spend is the
+	// style critic vs. the actual draft". WithRequestType is a no-op
+	// when no parent meta is attached (e.g. tests).
+	styleCtx := auditdomain.WithRequestType(ctx, auditdomain.RequestTypeStyleCheck)
+	resp, err := c.provider.Complete(styleCtx, CompletionRequest{
 		Messages: []Message{
 			{Role: "system", Content: StyleCheckSystem},
 			{Role: "user", Content: user},

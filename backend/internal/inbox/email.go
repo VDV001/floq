@@ -10,7 +10,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/daniil/floq/internal/audit"
 	auditdomain "github.com/daniil/floq/internal/audit/domain"
 	"github.com/daniil/floq/internal/inbox/attachments"
 	"github.com/daniil/floq/internal/normalize"
@@ -431,7 +430,7 @@ func (e *EmailPoller) processEmail(ctx context.Context, fromName, fromEmail, bod
 		qualifyText := body
 		if e.analyzer != nil {
 			imgLeadID := lead.ID
-			imgCtx := audit.ContextWithCallMeta(ctx, audit.CallMeta{
+			imgCtx := auditdomain.ContextWithCallMeta(ctx, auditdomain.CallMeta{
 				UserID:      lead.UserID,
 				LeadID:      &imgLeadID,
 				RequestType: auditdomain.RequestTypeImageAnalysis,
@@ -451,7 +450,7 @@ func (e *EmailPoller) processEmail(ctx context.Context, fromName, fromEmail, bod
 			qCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 			defer cancel()
 			qLeadID := lead.ID
-			qCtx = audit.ContextWithCallMeta(qCtx, audit.CallMeta{
+			qCtx = auditdomain.ContextWithCallMeta(qCtx, auditdomain.CallMeta{
 				UserID:      lead.UserID,
 				LeadID:      &qLeadID,
 				RequestType: auditdomain.RequestTypeQualification,

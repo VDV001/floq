@@ -6,7 +6,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/daniil/floq/internal/audit"
 	auditdomain "github.com/daniil/floq/internal/audit/domain"
 	"github.com/daniil/floq/internal/sequences/domain"
 	"github.com/google/uuid"
@@ -166,7 +165,7 @@ func (uc *UseCase) launchInner(ctx context.Context, sequenceID uuid.UUID, prospe
 			var genErr error
 
 			prospectID := prospect.ID
-			baseMeta := audit.CallMeta{
+			baseMeta := auditdomain.CallMeta{
 				UserID:     prospect.UserID,
 				ProspectID: &prospectID,
 			}
@@ -174,15 +173,15 @@ func (uc *UseCase) launchInner(ctx context.Context, sequenceID uuid.UUID, prospe
 			case domain.StepChannelTelegram:
 				meta := baseMeta
 				meta.RequestType = auditdomain.RequestTypeTelegramMessage
-				body, genErr = uc.aiGenerator.GenerateTelegramMessage(audit.ContextWithCallMeta(ctx, meta), prospect.Name, prospect.Title, prospect.Company, prospect.Context, step.PromptHint, prevCtx, prospect.Source, feedbackExamples)
+				body, genErr = uc.aiGenerator.GenerateTelegramMessage(auditdomain.ContextWithCallMeta(ctx, meta), prospect.Name, prospect.Title, prospect.Company, prospect.Context, step.PromptHint, prevCtx, prospect.Source, feedbackExamples)
 			case domain.StepChannelPhoneCall:
 				meta := baseMeta
 				meta.RequestType = auditdomain.RequestTypeCallBrief
-				body, genErr = uc.aiGenerator.GenerateCallBrief(audit.ContextWithCallMeta(ctx, meta), prospect.Name, prospect.Title, prospect.Company, prospect.Context, step.PromptHint, prevCtx)
+				body, genErr = uc.aiGenerator.GenerateCallBrief(auditdomain.ContextWithCallMeta(ctx, meta), prospect.Name, prospect.Title, prospect.Company, prospect.Context, step.PromptHint, prevCtx)
 			default: // "email" or empty
 				meta := baseMeta
 				meta.RequestType = auditdomain.RequestTypeColdMessage
-				body, genErr = uc.aiGenerator.GenerateColdMessage(audit.ContextWithCallMeta(ctx, meta), prospect.Name, prospect.Title, prospect.Company, prospect.Context, step.PromptHint, prevCtx, prospect.Source, feedbackExamples)
+				body, genErr = uc.aiGenerator.GenerateColdMessage(auditdomain.ContextWithCallMeta(ctx, meta), prospect.Name, prospect.Title, prospect.Company, prospect.Context, step.PromptHint, prevCtx, prospect.Source, feedbackExamples)
 			}
 			if genErr != nil {
 				return fmt.Errorf("launch: generate message for prospect %s step %d: %w", pid, step.StepOrder, genErr)
