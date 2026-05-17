@@ -303,16 +303,57 @@ func TestHandleMessage_ExistingLead(t *testing.T) {
 	assert.Equal(t, DirectionInbound, repo.messages[0].Direction)
 }
 
-func TestHandleMessage_CallAgreement(t *testing.T) {
+// spyPendingProposer captures Propose calls so tests can assert that
+// the booking-link branch in handleMessage routes through the HITL
+// approval queue instead of firing bot.Send directly.
+type spyPendingProposer struct {
+	mu    sync.Mutex
+	calls []proposeCall
+	err   error
+}
+
+type proposeCall struct {
+	UserID  uuid.UUID
+	LeadID  uuid.UUID
+	Channel Channel
+	Kind    PendingReplyKind
+	Body    string
+}
+
+func (s *spyPendingProposer) Propose(_ context.Context, userID, leadID uuid.UUID, channel Channel, kind PendingReplyKind, body string) (*PendingReply, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.calls = append(s.calls, proposeCall{userID, leadID, channel, kind, body})
+	if s.err != nil {
+		return nil, s.err
+	}
+	pr, err := NewPendingReply(userID, leadID, channel, kind, body)
+	if err != nil {
+		return nil, err
+	}
+	return pr, nil
+}
+
+func (s *spyPendingProposer) Calls() []proposeCall {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]proposeCall{}, s.calls...)
+}
+
+func TestHandleMessage_CallAgreement_EnqueuesForApproval(t *testing.T) {
 	repo := newMockLeadRepo()
 	aiClient := &mockAIQualifier{
 		result: &QualificationResult{Score: 9},
 	}
 	ownerID := uuid.New()
 	bookingLink := "https://cal.com/booking"
+	proposer := &spyPendingProposer{}
 	bot := newTestBot(repo, aiClient, ownerID, bookingLink)
+	bot.pendingProposer = proposer
 
-	// "давайте созвон" triggers call agreement detection.
+	// "давайте созвон" triggers call agreement detection — under HITL
+	// this must NOT send the booking link immediately; it must enqueue
+	// a pending reply for operator approval.
 	msg := makeTgMessage(77777, "Anna", "", "Звучит интересно, давайте созвон проведём!")
 	bot.handleMessage(context.Background(), msg)
 
@@ -327,7 +368,9 @@ func TestHandleMessage_CallAgreement(t *testing.T) {
 	lead := repo.leads[0]
 	assert.Equal(t, "Anna", lead.ContactName)
 
-	// We expect the inbound message + an outbound booking link message.
+	// Only the inbound message is recorded. The booking-link outbound
+	// is parked in the pending-replies queue, not in messages, until
+	// the operator approves it.
 	var inbound, outbound []*InboxMessage
 	for _, m := range repo.messages {
 		switch m.Direction {
@@ -339,10 +382,35 @@ func TestHandleMessage_CallAgreement(t *testing.T) {
 	}
 	require.Len(t, inbound, 1)
 	assert.Equal(t, lead.ID, inbound[0].LeadID)
+	assert.Empty(t, outbound, "booking link must NOT be sent immediately — HITL gate")
 
-	require.Len(t, outbound, 1)
-	assert.Equal(t, lead.ID, outbound[0].LeadID)
-	assert.Contains(t, outbound[0].Body, bookingLink)
+	// Proposer received exactly one enqueue call with the booking body.
+	calls := proposer.Calls()
+	require.Len(t, calls, 1)
+	assert.Equal(t, lead.UserID, calls[0].UserID)
+	assert.Equal(t, lead.ID, calls[0].LeadID)
+	assert.Equal(t, ChannelTelegram, calls[0].Channel)
+	assert.Equal(t, PendingReplyKindBookingLink, calls[0].Kind)
+	assert.Contains(t, calls[0].Body, bookingLink)
+}
+
+func TestHandleMessage_CallAgreement_NoProposerSuppressesBookingLink(t *testing.T) {
+	repo := newMockLeadRepo()
+	aiClient := &mockAIQualifier{result: &QualificationResult{Score: 9}}
+	ownerID := uuid.New()
+	bot := newTestBot(repo, aiClient, ownerID, "https://cal.com/booking")
+	// No proposer wired — secure-default: skip rather than fall back
+	// to instant send.
+
+	msg := makeTgMessage(88888, "Bob", "", "давайте созвон")
+	bot.handleMessage(context.Background(), msg)
+	waitQualifyDone(t, repo)
+
+	repo.mu.Lock()
+	defer repo.mu.Unlock()
+	for _, m := range repo.messages {
+		assert.NotEqual(t, DirectionOutbound, m.Direction, "no proposer must NOT trigger instant send")
+	}
 }
 
 func TestHandleMessage_EmptyText(t *testing.T) {
