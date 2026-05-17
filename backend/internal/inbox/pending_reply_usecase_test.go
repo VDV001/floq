@@ -368,8 +368,8 @@ func TestPendingReplyUseCase_Approve_WithoutDispatcherReturnsError(t *testing.T)
 	}
 
 	err = uc.Approve(ctx, userID, pr.ID)
-	if err == nil {
-		t.Fatal("Approve must error when no dispatcher is wired")
+	if !errors.Is(err, ErrPendingReplyDispatcherNotConfigured) {
+		t.Fatalf("want ErrPendingReplyDispatcherNotConfigured, got %v", err)
 	}
 	stored, _ := repo.GetByID(ctx, userID, pr.ID)
 	if stored.Status == PendingReplyStatusSent {

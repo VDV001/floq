@@ -123,6 +123,49 @@ func TestPendingReplyRepository_ListByLead_ScopedByUser(t *testing.T) {
 	assert.Empty(t, cross, "cross-tenant ListByLead must return empty")
 }
 
+func TestPendingReplyRepository_Update_RowMissingReturnsNotFoundSentinel(t *testing.T) {
+	pool := testutil.TestDB(t)
+	userID := testutil.SeedUser(t, pool)
+	leadID := seedLeadForUser(t, pool, userID)
+	repo := inbox.NewPendingReplyRepository(pool)
+	ctx := context.Background()
+
+	// Construct an entity that was never persisted: Update must
+	// surface ErrPendingReplyNotFound so the usecase layer can map
+	// it to a uniform 404 (or to ErrPendingReplyAlreadyDecided once
+	// the WHERE clause adds the status filter for optimistic lock).
+	pr, err := inbox.NewPendingReply(userID, leadID, inbox.ChannelTelegram, inbox.PendingReplyKindBookingLink, "ghost")
+	require.NoError(t, err)
+	require.NoError(t, pr.Approve(time.Now().UTC()))
+
+	err = repo.Update(ctx, pr)
+	require.Error(t, err)
+	require.ErrorIs(t, err, inbox.ErrPendingReplyNotFound,
+		"Update must return ErrPendingReplyNotFound for a missing row, not a bare error")
+}
+
+func TestPendingReplyRepository_Update_CrossTenantReturnsNotFoundSentinel(t *testing.T) {
+	pool := testutil.TestDB(t)
+	userA := testutil.SeedUser(t, pool)
+	userB := testutil.SeedUser(t, pool)
+	leadA := seedLeadForUser(t, pool, userA)
+	repo := inbox.NewPendingReplyRepository(pool)
+	ctx := context.Background()
+
+	pr, err := inbox.NewPendingReply(userA, leadA, inbox.ChannelTelegram, inbox.PendingReplyKindBookingLink, "owned by A")
+	require.NoError(t, err)
+	require.NoError(t, repo.Save(ctx, pr))
+
+	// userB attempting an Update on userA's row must NOT silently
+	// no-op; it must surface ErrPendingReplyNotFound (same observable
+	// as a missing row — uniform 404 contract).
+	stolen := *pr
+	stolen.UserID = userB
+	require.NoError(t, stolen.Reject(time.Now().UTC()))
+	err = repo.Update(ctx, &stolen)
+	require.ErrorIs(t, err, inbox.ErrPendingReplyNotFound)
+}
+
 func TestPendingReplyRepository_Update_PersistsStatusAndTimestamps(t *testing.T) {
 	pool := testutil.TestDB(t)
 	userID := testutil.SeedUser(t, pool)
