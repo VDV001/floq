@@ -1,10 +1,25 @@
 # Env
 .env
 
-# Claude Code
+# Claude Code / AI assistant tooling
 CLAUDE.md
-frontend/CLAUDE.md
-frontend/AGENTS.md
+**/CLAUDE.md
+.claude/
+**/.claude/
+AGENTS.md
+**/AGENTS.md
+.cursorrules
+.cursor/
+.aider*
+.github/copilot-instructions.md
+
+# MCP servers
+.mcp.json
+.mcp/
+**/.mcp/
+*-mcp/
+**/.playwright-mcp/
+.serena/
 
 # Go binary
 backend/server
@@ -12,11 +27,8 @@ backend/tmp/
 backend/vendor/
 
 # Node
-frontend/node_modules/
+node_modules/
 frontend/.next/
-
-# Playwright MCP logs/snapshots
-.playwright-mcp/
 
 # Screenshots from testing
 *.png
@@ -37,9 +49,6 @@ docs/
 
 # Docker
 docker-compose.override.yml
-
-# Serena MCP
-.serena/
 
 # Misc
 *.pdf
