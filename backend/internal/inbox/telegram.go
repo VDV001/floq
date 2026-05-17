@@ -2,6 +2,7 @@ package inbox
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"log/slog"
 	"net/http"
@@ -12,6 +13,13 @@ import (
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 	"github.com/google/uuid"
 )
+
+// bookingLinkReplyTemplate is the user-facing body the HITL queue
+// enqueues when DetectCallAgreement triggers. Kept as a single
+// package-level constant so any future copy change is one edit,
+// not a hunt through handleMessage. The %s placeholder is the
+// configured booking URL — never interpolate untrusted input here.
+const bookingLinkReplyTemplate = "Отлично! Вот ссылка для выбора удобного времени для звонка: %s\n\nВыберите слот и я получу уведомление. До связи!"
 
 // TelegramBot listens for incoming Telegram messages and creates leads.
 type TelegramBot struct {
@@ -217,7 +225,7 @@ func (t *TelegramBot) handleMessage(ctx context.Context, msg *tgbotapi.Message) 
 			t.logger.WarnContext(ctx, "booking link suppressed: no pending reply proposer wired",
 				slog.Int64("chat_id", chatID), slog.String("lead_id", lead.ID.String()))
 		} else {
-			bookingMsg := "Отлично! Вот ссылка для выбора удобного времени для звонка: " + t.bookingLink + "\n\nВыберите слот и я получу уведомление. До связи!"
+			bookingMsg := fmt.Sprintf(bookingLinkReplyTemplate, t.bookingLink)
 			if _, err := t.pendingProposer.Propose(ctx, lead.UserID, lead.ID, ChannelTelegram, PendingReplyKindBookingLink, bookingMsg); err != nil {
 				t.logger.WarnContext(ctx, "failed to enqueue booking reply for approval",
 					slog.String("lead_id", lead.ID.String()), slog.Any("error", err))

@@ -3,6 +3,7 @@ package inbox
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"net/http"
 	"time"
 
@@ -115,6 +116,14 @@ func (h *pendingReplyHandler) decide(op func(uc PendingReplyUseCaseAPI, ctx cont
 			case errors.Is(err, ErrPendingReplyAlreadyDecided):
 				httputil.WriteError(w, http.StatusConflict, "pending reply already decided")
 			default:
+				// 500-class errors carry production-actionable
+				// detail (dispatcher misconfig, telegram 5xx,
+				// db hiccup); log before answering so the
+				// operator-visible 500 has a trail to follow.
+				slog.ErrorContext(r.Context(), "pending reply decide failed",
+					slog.String("pending_reply_id", id.String()),
+					slog.String("user_id", userID.String()),
+					slog.Any("err", err))
 				httputil.WriteError(w, http.StatusInternalServerError, "failed to process pending reply")
 			}
 			return
