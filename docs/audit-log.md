@@ -199,15 +199,32 @@ this user's spend is the style critic vs. the actual draft."
 
 ### Privacy & retention
 
-- `error_message` is sanitised before storage: emails, phones, and
-  `Bearer` / `sk-` API keys are replaced with `[REDACTED]`. Then
-  capped at 256 bytes. See `sanitizeErrorMessage` in
-  `internal/audit/recording_provider.go`.
+- `error_message` is sanitised before storage. `sanitizeErrorMessage`
+  in `internal/audit/recording_provider.go` runs these regex
+  redactions, each replacing matches with `[REDACTED]`:
+  - email addresses;
+  - E.164-ish phone numbers (`+` prefix, 7–15 digits);
+  - `sk-…` API keys (OpenAI-style);
+  - `Bearer …` tokens;
+  - `AKIA…` AWS access keys;
+  - `Authorization: …` header values (case-insensitive);
+  - basic-auth userinfo in URLs (`https://user:pass@host`);
+  - bare IPv4 addresses.
+
+  The redacted string is then capped at 256 bytes, walking back to a
+  rune boundary so non-ASCII errors don't break mid-codepoint.
+
+  **Residual risk (not redacted):** free-form names, postal addresses,
+  CRM identifiers (lead IDs, ticket numbers), IPv6 addresses, structured
+  org names. The assumption is that providers do not echo those in error
+  strings. If a real incident contradicts that, add a regex to
+  `piiPatterns` and a covering case to `sanitize_test.go`.
 - No prompt or response content is stored — privacy hazard + row-size
   blowup.
 - `DELETE FROM users WHERE id = ?` cascades to `audit_log` (GDPR
   erasure). Lead / prospect deletion leaves the row with NULL FK so
-  per-user totals stay correct.
+  per-user totals stay correct. Locked by integration test
+  `TestAcceptance_UserDeletionCascadesToAuditLog`.
 
 ## Phase 3 backlog
 
