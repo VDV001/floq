@@ -166,6 +166,34 @@ func TestPendingReplyRepository_Update_CrossTenantReturnsNotFoundSentinel(t *tes
 	require.ErrorIs(t, err, inbox.ErrPendingReplyNotFound)
 }
 
+func TestPendingReplyRepository_Update_OptimisticLock_RejectsWhenStatusMoved(t *testing.T) {
+	pool := testutil.TestDB(t)
+	userID := testutil.SeedUser(t, pool)
+	leadID := seedLeadForUser(t, pool, userID)
+	repo := inbox.NewPendingReplyRepository(pool)
+	ctx := context.Background()
+
+	pr, err := inbox.NewPendingReply(userID, leadID, inbox.ChannelTelegram, inbox.PendingReplyKindBookingLink, "race")
+	require.NoError(t, err)
+	require.NoError(t, repo.Save(ctx, pr))
+
+	// Simulate the race: operator A loaded the row at status=pending
+	// and is about to push status=approved. Meanwhile operator B
+	// already approved it — the persisted row is now status=approved.
+	bSnap := *pr
+	require.NoError(t, bSnap.Approve(time.Now().UTC()))
+	require.NoError(t, repo.Update(ctx, &bSnap, inbox.PendingReplyStatusPending))
+
+	// Operator A's stale snapshot, still expecting status=pending,
+	// must fail the optimistic check rather than overwriting B's
+	// decision.
+	aSnap := *pr
+	require.NoError(t, aSnap.Approve(time.Now().UTC()))
+	err = repo.Update(ctx, &aSnap, inbox.PendingReplyStatusPending)
+	require.ErrorIs(t, err, inbox.ErrPendingReplyNotFound,
+		"second Update with the same expected-status must fail — the row is no longer pending")
+}
+
 func TestPendingReplyRepository_Update_PersistsStatusAndTimestamps(t *testing.T) {
 	pool := testutil.TestDB(t)
 	userID := testutil.SeedUser(t, pool)
