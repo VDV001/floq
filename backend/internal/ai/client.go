@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+
+	auditdomain "github.com/daniil/floq/internal/audit/domain"
 )
 
 // extractJSON strips markdown code fences (```json ... ```) that some models wrap around JSON.
@@ -310,7 +312,11 @@ func (c *AIClient) GenerateTelegramReply(ctx context.Context, name, title, compa
 	systemPrompt := c.resolveSystemPrompt(TelegramConversationSystem)
 	systemPrompt = c.resolveSenderVars(systemPrompt)
 
-	resp, err := c.provider.Complete(ctx, CompletionRequest{
+	// Re-tag attribution for the conversational reply pass. Callers
+	// stamp the parent meta (user + prospect); this call site decides
+	// the RequestType. WithRequestType no-ops when no parent meta.
+	replyCtx := auditdomain.WithRequestType(ctx, auditdomain.RequestTypeTelegramReply)
+	resp, err := c.provider.Complete(replyCtx, CompletionRequest{
 		Messages: []Message{
 			{Role: "system", Content: systemPrompt},
 			{Role: "user", Content: r.Replace(TelegramConversationUser)},
