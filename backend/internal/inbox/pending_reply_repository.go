@@ -103,12 +103,12 @@ func (r *PendingReplyRepo) ListByLead(ctx context.Context, userID, leadID uuid.U
 // somebody else's row even if the caller forgets to re-check ownership.
 // Body, channel, kind and created_at are immutable after Save by
 // contract — the entity exposes no setters for them.
-func (r *PendingReplyRepo) Update(ctx context.Context, pr *PendingReply) error {
+func (r *PendingReplyRepo) Update(ctx context.Context, pr *PendingReply, expectedStatus PendingReplyStatus) error {
 	tag, err := r.q(ctx).Exec(ctx,
 		`UPDATE pending_replies
 		 SET status = $1, decided_at = $2, sent_at = $3
-		 WHERE id = $4 AND user_id = $5`,
-		string(pr.Status), pr.DecidedAt, pr.SentAt, pr.ID, pr.UserID)
+		 WHERE id = $4 AND user_id = $5 AND status = $6`,
+		string(pr.Status), pr.DecidedAt, pr.SentAt, pr.ID, pr.UserID, string(expectedStatus))
 	if err != nil {
 		return fmt.Errorf("update pending reply: %w", err)
 	}

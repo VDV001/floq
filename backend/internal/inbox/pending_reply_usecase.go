@@ -112,7 +112,13 @@ func (uc *PendingReplyUseCase) Approve(ctx context.Context, userID, id uuid.UUID
 		}
 		return err
 	}
-	if err := uc.repo.Update(ctx, pr); err != nil {
+	// Optimistic lock: we just loaded the row at status=pending; if
+	// the Update returns NotFound the row has been decided by
+	// somebody else in the meantime — surface as AlreadyDecided.
+	if err := uc.repo.Update(ctx, pr, PendingReplyStatusPending); err != nil {
+		if errors.Is(err, ErrPendingReplyNotFound) {
+			return ErrPendingReplyAlreadyDecided
+		}
 		return fmt.Errorf("persist approved pending reply: %w", err)
 	}
 	if uc.dispatcher == nil {
@@ -124,7 +130,10 @@ func (uc *PendingReplyUseCase) Approve(ctx context.Context, userID, id uuid.UUID
 	if err := pr.MarkSent(time.Now().UTC()); err != nil {
 		return fmt.Errorf("mark pending reply sent: %w", err)
 	}
-	if err := uc.repo.Update(ctx, pr); err != nil {
+	// The persisted row should still be at status=approved (we just
+	// set it). A NotFound here would be a serious anomaly — log it
+	// rather than convert to AlreadyDecided.
+	if err := uc.repo.Update(ctx, pr, PendingReplyStatusApproved); err != nil {
 		return fmt.Errorf("persist sent pending reply: %w", err)
 	}
 	return nil
@@ -144,7 +153,10 @@ func (uc *PendingReplyUseCase) Reject(ctx context.Context, userID, id uuid.UUID)
 		}
 		return err
 	}
-	if err := uc.repo.Update(ctx, pr); err != nil {
+	if err := uc.repo.Update(ctx, pr, PendingReplyStatusPending); err != nil {
+		if errors.Is(err, ErrPendingReplyNotFound) {
+			return ErrPendingReplyAlreadyDecided
+		}
 		return fmt.Errorf("persist rejected pending reply: %w", err)
 	}
 	return nil

@@ -66,14 +66,18 @@ func (f *fakePendingReplyRepo) ListByLead(_ context.Context, userID, leadID uuid
 	return out, nil
 }
 
-func (f *fakePendingReplyRepo) Update(_ context.Context, pr *PendingReply) error {
+func (f *fakePendingReplyRepo) Update(_ context.Context, pr *PendingReply, expectedStatus PendingReplyStatus) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.updErr != nil {
 		return f.updErr
 	}
-	if _, ok := f.rows[pr.ID]; !ok {
-		return errors.New("update: row not found")
+	existing, ok := f.rows[pr.ID]
+	if !ok || existing.Status != expectedStatus {
+		// Either missing row or the optimistic lock failed — both
+		// surface as ErrPendingReplyNotFound to mirror the real
+		// repository's uniform-404 contract.
+		return ErrPendingReplyNotFound
 	}
 	copy := *pr
 	f.rows[pr.ID] = &copy
@@ -291,6 +295,36 @@ func TestPendingReplyUseCase_Approve_DispatcherFailureKeepsApprovedAndPropagates
 	}
 	if stored.SentAt != nil {
 		t.Error("SentAt must remain nil when dispatch failed")
+	}
+}
+
+func TestPendingReplyUseCase_Approve_LosesRaceToAnotherOperator_MapsToAlreadyDecided(t *testing.T) {
+	repo := newFakeRepo()
+	disp := &spyDispatcher{}
+	uc := NewPendingReplyUseCase(repo, disp)
+	ctx := context.Background()
+	userID := uuid.New()
+
+	pr, err := uc.Propose(ctx, userID, uuid.New(), ChannelTelegram, PendingReplyKindBookingLink, "racey")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Pre-flip the persisted row to status=approved as if another
+	// operator beat us to it. fakeRepo.Update with expected=pending
+	// will then fail the optimistic check, and the usecase must
+	// translate that into ErrPendingReplyAlreadyDecided so the
+	// handler answers 409 instead of 500.
+	repo.mu.Lock()
+	repo.rows[pr.ID].Status = PendingReplyStatusApproved
+	repo.mu.Unlock()
+
+	err = uc.Approve(ctx, userID, pr.ID)
+	if !errors.Is(err, ErrPendingReplyAlreadyDecided) {
+		t.Fatalf("want ErrPendingReplyAlreadyDecided after lost race, got %v", err)
+	}
+	if len(disp.Calls()) != 0 {
+		t.Error("dispatcher MUST NOT fire when the optimistic lock was lost")
 	}
 }
 

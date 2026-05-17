@@ -178,5 +178,13 @@ type PendingReplyRepository interface {
 	Save(ctx context.Context, pr *PendingReply) error
 	GetByID(ctx context.Context, userID, id uuid.UUID) (*PendingReply, error)
 	ListByLead(ctx context.Context, userID, leadID uuid.UUID) ([]*PendingReply, error)
-	Update(ctx context.Context, pr *PendingReply) error
+	// Update writes pr only when the persisted row still matches the
+	// expectedStatus the caller observed at load time — an optimistic
+	// lock that prevents two operators from concurrently approving
+	// the same pending reply (and therefore double-firing the
+	// dispatcher). On mismatch (or missing/cross-tenant row) the
+	// caller receives ErrPendingReplyNotFound; the usecase layer maps
+	// this to ErrPendingReplyAlreadyDecided when the row was loaded
+	// in the same operation.
+	Update(ctx context.Context, pr *PendingReply, expectedStatus PendingReplyStatus) error
 }

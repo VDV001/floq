@@ -138,7 +138,7 @@ func TestPendingReplyRepository_Update_RowMissingReturnsNotFoundSentinel(t *test
 	require.NoError(t, err)
 	require.NoError(t, pr.Approve(time.Now().UTC()))
 
-	err = repo.Update(ctx, pr)
+	err = repo.Update(ctx, pr, inbox.PendingReplyStatusPending)
 	require.Error(t, err)
 	require.ErrorIs(t, err, inbox.ErrPendingReplyNotFound,
 		"Update must return ErrPendingReplyNotFound for a missing row, not a bare error")
@@ -162,7 +162,7 @@ func TestPendingReplyRepository_Update_CrossTenantReturnsNotFoundSentinel(t *tes
 	stolen := *pr
 	stolen.UserID = userB
 	require.NoError(t, stolen.Reject(time.Now().UTC()))
-	err = repo.Update(ctx, &stolen)
+	err = repo.Update(ctx, &stolen, inbox.PendingReplyStatusPending)
 	require.ErrorIs(t, err, inbox.ErrPendingReplyNotFound)
 }
 
@@ -207,7 +207,7 @@ func TestPendingReplyRepository_Update_PersistsStatusAndTimestamps(t *testing.T)
 
 	decidedAt := time.Now().UTC().Truncate(time.Microsecond)
 	require.NoError(t, pr.Approve(decidedAt))
-	require.NoError(t, repo.Update(ctx, pr))
+	require.NoError(t, repo.Update(ctx, pr, inbox.PendingReplyStatusPending))
 
 	got, err := repo.GetByID(ctx, userID, pr.ID)
 	require.NoError(t, err)
@@ -219,7 +219,7 @@ func TestPendingReplyRepository_Update_PersistsStatusAndTimestamps(t *testing.T)
 
 	sentAt := time.Now().UTC().Truncate(time.Microsecond)
 	require.NoError(t, pr.MarkSent(sentAt))
-	require.NoError(t, repo.Update(ctx, pr))
+	require.NoError(t, repo.Update(ctx, pr, inbox.PendingReplyStatusApproved))
 
 	got2, err := repo.GetByID(ctx, userID, pr.ID)
 	require.NoError(t, err)
