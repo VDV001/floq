@@ -215,3 +215,60 @@ func TestAcceptance_ImageAnalysisThroughProductionProviderChain(t *testing.T) {
 	assert.Equal(t, 500, dbOut)
 	assert.Equal(t, int64(450), dbCost, "pricing applied through production wiring")
 }
+
+// TestAcceptance_UserDeletionCascadesToAuditLog locks the GDPR
+// contract documented in docs/audit-log.md: deleting a user must
+// remove all of that user's audit rows, regardless of which lead or
+// prospect attribution they carry. Without this test, a future
+// migration that silently changes the FK action (e.g. SET NULL or
+// RESTRICT) would break the erasure pathway without breaking any
+// unit test.
+func TestAcceptance_UserDeletionCascadesToAuditLog(t *testing.T) {
+	pool := testutil.TestDB(t)
+	userID := testutil.SeedUser(t, pool)
+	ctx := context.Background()
+
+	// Seed a lead + audit row attached to it.
+	leadID := uuid.New()
+	_, err := pool.Exec(ctx,
+		`INSERT INTO leads (id, user_id, contact_name, channel, email_address, first_message)
+		   VALUES ($1, $2, $3, $4, $5, $6)`,
+		leadID, userID, "alice", "email", "alice@acme.com", "hi")
+	require.NoError(t, err)
+
+	repo := audit.NewRepository(pool)
+	row1, err := domain.NewEntry(domain.EntryParams{
+		UserID: userID, LeadID: &leadID,
+		RequestType: domain.RequestTypeQualification,
+		Provider:    "openai", Model: "gpt-4o-mini",
+		InputTokens: 10, OutputTokens: 5,
+		CostUSDMicro: 50, LatencyMS: 100,
+		Status: domain.StatusSuccess,
+	})
+	require.NoError(t, err)
+	row2, err := domain.NewEntry(domain.EntryParams{
+		UserID: userID,
+		RequestType: domain.RequestTypeChatAssist,
+		Provider:    "openai", Model: "gpt-4o-mini",
+		InputTokens: 20, OutputTokens: 10,
+		CostUSDMicro: 100, LatencyMS: 200,
+		Status: domain.StatusSuccess,
+	})
+	require.NoError(t, err)
+	require.NoError(t, repo.Save(ctx, []*domain.Entry{row1, row2}))
+
+	// Sanity: two rows exist for this user before deletion.
+	var before int
+	require.NoError(t, pool.QueryRow(ctx,
+		`SELECT COUNT(*) FROM audit_log WHERE user_id = $1`, userID).Scan(&before))
+	require.Equal(t, 2, before)
+
+	// GDPR erasure pathway.
+	_, err = pool.Exec(ctx, `DELETE FROM users WHERE id = $1`, userID)
+	require.NoError(t, err)
+
+	var after int
+	require.NoError(t, pool.QueryRow(ctx,
+		`SELECT COUNT(*) FROM audit_log WHERE user_id = $1`, userID).Scan(&after))
+	assert.Equal(t, 0, after, "audit_log rows must CASCADE-delete when their user is removed")
+}
