@@ -89,7 +89,12 @@ type spyDispatcher struct {
 func (s *spyDispatcher) Dispatch(_ context.Context, pr *PendingReply) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.calls = append(s.calls, pr)
+	// Snapshot at dispatch time — the usecase mutates the entity to
+	// Sent immediately after a successful dispatch returns, so storing
+	// a pointer would lose the "what did the dispatcher actually see"
+	// signal that the test wants to assert.
+	snapshot := *pr
+	s.calls = append(s.calls, &snapshot)
 	return s.failErr
 }
 

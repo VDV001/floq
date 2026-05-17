@@ -1,0 +1,143 @@
+package inbox
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"time"
+
+	"github.com/google/uuid"
+)
+
+// ReplyDispatcher delivers an approved PendingReply to the customer
+// through the channel-native transport (Telegram Bot API, future
+// SMTP/IMAP, etc.). Implementations live in the composition root —
+// the usecase only knows the abstract port so the inbox package
+// stays free of transport-layer imports.
+//
+// Returning an error here keeps the entity in the Approved status so
+// the operator can retry; the usecase will NOT mark it sent on
+// failure.
+type ReplyDispatcher interface {
+	Dispatch(ctx context.Context, pr *PendingReply) error
+}
+
+// --- Sentinels ---
+
+var (
+	// ErrPendingReplyNotFound covers both "row does not exist" and
+	// "row exists but belongs to another tenant". The two are
+	// indistinguishable on purpose so the handler can answer a
+	// uniform 404 and not leak existence to attackers.
+	ErrPendingReplyNotFound = errors.New("pending reply: not found")
+
+	// ErrPendingReplyAlreadyDecided is returned when the operator
+	// tries to Approve or Reject a reply that is no longer in the
+	// Pending state. The state machine in the domain rejects the
+	// transition itself; this wrapper surfaces a stable sentinel for
+	// the handler layer.
+	ErrPendingReplyAlreadyDecided = errors.New("pending reply: already decided")
+)
+
+// PendingReplyUseCase orchestrates the HITL approval flow for inbox
+// auto-drafts. It is the only collaborator that mutates PendingReply
+// rows after Save — handlers parse input, call into the usecase, and
+// map the response/error to HTTP.
+type PendingReplyUseCase struct {
+	repo       PendingReplyRepository
+	dispatcher ReplyDispatcher
+}
+
+// NewPendingReplyUseCase wires the usecase with its persistence and
+// dispatch ports. Both are required — the usecase does not start
+// without a way to send approved replies.
+func NewPendingReplyUseCase(repo PendingReplyRepository, dispatcher ReplyDispatcher) *PendingReplyUseCase {
+	return &PendingReplyUseCase{repo: repo, dispatcher: dispatcher}
+}
+
+// Propose constructs a new PendingReply through the domain factory
+// (so invariants are enforced) and persists it. Dispatch is
+// deliberately skipped — that is the whole point of the HITL gate.
+func (uc *PendingReplyUseCase) Propose(ctx context.Context, userID, leadID uuid.UUID, channel Channel, kind PendingReplyKind, body string) (*PendingReply, error) {
+	pr, err := NewPendingReply(userID, leadID, channel, kind, body)
+	if err != nil {
+		return nil, err
+	}
+	if err := uc.repo.Save(ctx, pr); err != nil {
+		return nil, fmt.Errorf("propose pending reply: %w", err)
+	}
+	return pr, nil
+}
+
+// ListByLead returns every pending-or-decided reply tied to the given
+// lead for the given user. The repository scope guarantees no
+// cross-tenant leakage.
+func (uc *PendingReplyUseCase) ListByLead(ctx context.Context, userID, leadID uuid.UUID) ([]*PendingReply, error) {
+	return uc.repo.ListByLead(ctx, userID, leadID)
+}
+
+// Approve transitions the reply into Approved, persists the decision,
+// dispatches through the channel-native transport, and (on success)
+// marks the entity Sent. A dispatch failure leaves the entity in
+// Approved so the operator can retry; the error propagates so the
+// handler can surface it. Cross-tenant or missing IDs collapse to
+// ErrPendingReplyNotFound (uniform 404).
+func (uc *PendingReplyUseCase) Approve(ctx context.Context, userID, id uuid.UUID) error {
+	pr, err := uc.loadOwned(ctx, userID, id)
+	if err != nil {
+		return err
+	}
+	if err := pr.Approve(time.Now().UTC()); err != nil {
+		if errors.Is(err, ErrPendingReplyInvalidTransition) {
+			return ErrPendingReplyAlreadyDecided
+		}
+		return err
+	}
+	if err := uc.repo.Update(ctx, pr); err != nil {
+		return fmt.Errorf("persist approved pending reply: %w", err)
+	}
+	if err := uc.dispatcher.Dispatch(ctx, pr); err != nil {
+		return fmt.Errorf("dispatch approved pending reply: %w", err)
+	}
+	if err := pr.MarkSent(time.Now().UTC()); err != nil {
+		return fmt.Errorf("mark pending reply sent: %w", err)
+	}
+	if err := uc.repo.Update(ctx, pr); err != nil {
+		return fmt.Errorf("persist sent pending reply: %w", err)
+	}
+	return nil
+}
+
+// Reject transitions the reply into the terminal Rejected status and
+// persists the decision. No dispatch is performed. Cross-tenant or
+// missing IDs collapse to ErrPendingReplyNotFound.
+func (uc *PendingReplyUseCase) Reject(ctx context.Context, userID, id uuid.UUID) error {
+	pr, err := uc.loadOwned(ctx, userID, id)
+	if err != nil {
+		return err
+	}
+	if err := pr.Reject(time.Now().UTC()); err != nil {
+		if errors.Is(err, ErrPendingReplyInvalidTransition) {
+			return ErrPendingReplyAlreadyDecided
+		}
+		return err
+	}
+	if err := uc.repo.Update(ctx, pr); err != nil {
+		return fmt.Errorf("persist rejected pending reply: %w", err)
+	}
+	return nil
+}
+
+// loadOwned fetches a reply scoped by user_id and collapses
+// "not found" and "not owned" into ErrPendingReplyNotFound so callers
+// cannot leak existence cross-tenant by inspecting the error.
+func (uc *PendingReplyUseCase) loadOwned(ctx context.Context, userID, id uuid.UUID) (*PendingReply, error) {
+	pr, err := uc.repo.GetByID(ctx, userID, id)
+	if err != nil {
+		return nil, fmt.Errorf("load pending reply: %w", err)
+	}
+	if pr == nil {
+		return nil, ErrPendingReplyNotFound
+	}
+	return pr, nil
+}
