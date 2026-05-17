@@ -17,6 +17,13 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
+// Compile-time check that *leads.UseCase satisfies the structural
+// port inbox.LeadOwnershipChecker. Pinned here so a future signature
+// drift on leads.UseCase.OwnsLead breaks the build at the wiring
+// edge instead of silently breaking the structural conformance
+// inbox.RegisterPendingReplyRoutes relies on.
+var _ inbox.LeadOwnershipChecker = (*leads.UseCase)(nil)
+
 // --- LeadChecker adapter (prospects → leads boundary) ---
 
 type leadCheckerAdapter struct {

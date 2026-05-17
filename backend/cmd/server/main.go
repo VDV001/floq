@@ -253,6 +253,13 @@ func main() {
 			// Set the telegram sender on the leads use case
 			leadsUC.SetSender(leads.NewTelegramSender(tgBot.Bot()))
 		}
+	} else {
+		// No Telegram token = no bot = no dispatcher. The HITL routes
+		// are still registered so the operator UI doesn't 404, but
+		// any Approve call will surface ErrPendingReplyDispatcher
+		// NotConfigured at runtime. Emit a startup warning so the
+		// silent-500-on-approve failure mode is visible in logs.
+		log.Println("WARN: telegram token not configured; HITL approve route will return 500 (dispatcher not wired)")
 	}
 
 	// 9. Email IMAP poller (reads settings from DB, falls back to .env).
