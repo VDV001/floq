@@ -86,6 +86,12 @@ cat > "$TMP/frontend/package-lock.json" <<'EOF'
     },
     "node_modules/some-dep": {
       "version": "4.4.4"
+    },
+    "node_modules/colliding-dep": {
+      "version": "0.20.0"
+    },
+    "node_modules/another-colliding": {
+      "version": "0.20.0"
     }
   }
 }
@@ -115,9 +121,49 @@ assert_eq    "$(cat "$TMP/VERSION")" "0.20.0" "VERSION rewritten"
 assert_eq    "$(grep -c 'version-0.20.0-blue' "$TMP/README.md")" "1" "README badge updated"
 assert_eq    "$(grep -c '0.19.0' "$TMP/README.md")" "0" "README no stale 0.19.0"
 assert_eq    "$(grep -c '"version": "0.20.0"' "$TMP/frontend/package.json")" "1" "pkg.json updated"
-assert_eq    "$(grep -c '"version": "0.20.0"' "$TMP/frontend/package-lock.json")" "2" "pkg-lock.json 2 occurrences"
+assert_eq    "$(grep -c '"version": "0.20.0"' "$TMP/frontend/package-lock.json")" "4" "pkg-lock.json 4 occurrences (2 project + 2 colliding deps)"
 # Ensure unrelated dep version untouched
 assert_eq    "$(grep -c '"version": "4.4.4"' "$TMP/frontend/package-lock.json")" "1" "unrelated dep version preserved"
+# Ensure colliding-dep versions NOT bumped (they happen to equal new project version, but they're transitive deps)
+assert_eq    "$(grep -c 'colliding-dep' "$TMP/frontend/package-lock.json")" "1" "colliding-dep key preserved"
+assert_eq    "$(grep -c 'another-colliding' "$TMP/frontend/package-lock.json")" "1" "another-colliding key preserved"
+# The colliding deps started at 0.20.0 and must STILL be at 0.20.0 (we want stability — bump must not invent versions).
+# What we cannot accept: the bump removing their 0.20.0 entries or otherwise corrupting them.
+# Structural rewrite contract: only root "version" and packages[""].version get touched.
+# Verify by reconstructing expected file and diffing whole file content.
+cat > "$TMP/frontend/expected-package-lock.json" <<'EOF'
+{
+  "name": "frontend",
+  "version": "0.20.0",
+  "lockfileVersion": 3,
+  "packages": {
+    "": {
+      "name": "frontend",
+      "version": "0.20.0",
+      "dependencies": {}
+    },
+    "node_modules/some-dep": {
+      "version": "4.4.4"
+    },
+    "node_modules/colliding-dep": {
+      "version": "0.20.0"
+    },
+    "node_modules/another-colliding": {
+      "version": "0.20.0"
+    }
+  }
+}
+EOF
+if diff -q "$TMP/frontend/package-lock.json" "$TMP/frontend/expected-package-lock.json" >/dev/null; then
+  pass "pkg-lock.json structural fidelity"
+else
+  fail "pkg-lock.json structural fidelity" "$(diff "$TMP/frontend/expected-package-lock.json" "$TMP/frontend/package-lock.json")"
+fi
+
+# Also: verify_version_sync at the new version must return exactly true when project version
+# coincidentally matches transitive dep versions (the magic-count-2 invariant must use structural
+# matching, not raw grep count).
+assert_ok    "verify_version_sync robust to dep collision" verify_version_sync "$TMP" "0.20.0"
 
 echo
 if [[ "$failures" -gt 0 ]]; then
