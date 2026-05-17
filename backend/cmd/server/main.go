@@ -129,6 +129,13 @@ func main() {
 	sourcesRepo := sources.NewRepository(pool)
 	sequencesRepo := sequences.NewRepository(pool)
 	identityRepo := leads.NewIdentityRepository(pool)
+	pendingReplyRepo := inbox.NewPendingReplyRepository(pool)
+	// pendingReplyUC is constructed early (dispatcher nil) so the
+	// protected route registration below can reference it. The
+	// dispatcher is injected after the Telegram bot is up (see the
+	// "telegram inbox bot" block) — this breaks the
+	// bot -> usecase -> dispatcher -> bot cycle.
+	pendingReplyUC := inbox.NewPendingReplyUseCase(pendingReplyRepo, nil)
 
 	// 4. Adapters
 	leadsAI := leads.NewAIAdapter(aiClient)
@@ -185,6 +192,7 @@ func main() {
 		parser.RegisterRoutes(r, cfg.TwoGISAPIKey, httpClient)
 		settings.RegisterRoutes(r, settingsUC, buildAITester(cfg, httpClient), buildSMTPTester(proxyDialer), buildResendTester(httpClient), buildUsageCounter(leadsRepo))
 		chat.RegisterRoutes(r, chat.NewHandler(chat.NewRepository(pool), newChatAIAdapter(aiClient)))
+		inbox.RegisterPendingReplyRoutes(r, pendingReplyUC, leadsUC)
 		tgOpts := []tgclient.Option{}
 		if proxyDialer != nil {
 			tgOpts = append(tgOpts, tgclient.WithDialer(proxyDialer))
@@ -231,6 +239,16 @@ func main() {
 		if err != nil {
 			log.Printf("telegram bot init failed: %v", err)
 		} else {
+			// Wire HITL approval: dispatcher uses the bot to deliver
+			// approved replies, and the bot uses the usecase to enqueue
+			// new proposals. Order matters — SetDispatcher MUST happen
+			// before SetPendingProposer so that any inbound message
+			// arriving in the gap between bot start and approval flow
+			// being fully wired finds at worst a missing dispatcher
+			// error (logged) rather than a partially-initialised cycle.
+			dispatcher := newTelegramReplyDispatcher(tgBot.Bot(), leadsRepo, inboxLeadAdapter)
+			pendingReplyUC.SetDispatcher(dispatcher)
+			tgBot.SetPendingProposer(pendingReplyUC)
 			go tgBot.Start(ctx)
 			// Set the telegram sender on the leads use case
 			leadsUC.SetSender(leads.NewTelegramSender(tgBot.Bot()))
