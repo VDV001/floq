@@ -77,15 +77,38 @@ func (uc *PendingReplyUseCase) SetDispatcher(d ReplyDispatcher) {
 // Propose constructs a new PendingReply through the domain factory
 // (so invariants are enforced) and persists it. Dispatch is
 // deliberately skipped — that is the whole point of the HITL gate.
+//
+// Idempotent against the partial-unique dedup index: if Save reports
+// ErrPendingReplyDuplicatePending (a pending row with the same
+// content already exists), Propose looks up the previously-enqueued
+// entity and returns it instead of failing. This handles the
+// Telegram-reconnect double-fire case at the repository boundary so
+// callers (the bot, future email auto-reply) do not need their own
+// retry-and-suppress logic.
 func (uc *PendingReplyUseCase) Propose(ctx context.Context, userID, leadID uuid.UUID, channel Channel, kind PendingReplyKind, body string) (*PendingReply, error) {
 	pr, err := NewPendingReply(userID, leadID, channel, kind, body)
 	if err != nil {
 		return nil, err
 	}
-	if err := uc.repo.Save(ctx, pr); err != nil {
-		return nil, fmt.Errorf("propose pending reply: %w", err)
+	saveErr := uc.repo.Save(ctx, pr)
+	if saveErr == nil {
+		return pr, nil
 	}
-	return pr, nil
+	if !errors.Is(saveErr, ErrPendingReplyDuplicatePending) {
+		return nil, fmt.Errorf("propose pending reply: %w", saveErr)
+	}
+	// Dedup hit: surface the already-enqueued row. Trimmed body matches
+	// what the factory stored on the original Save.
+	existing, ferr := uc.repo.FindPendingByContent(ctx, userID, leadID, kind, pr.Body)
+	if ferr != nil {
+		return nil, fmt.Errorf("propose pending reply: lookup after dedup: %w", ferr)
+	}
+	if existing == nil {
+		// Index said duplicate but the row is gone — race or anomaly.
+		// Wrap the sentinel so callers can branch and humans can grep.
+		return nil, fmt.Errorf("propose pending reply: dedup hit but no pending row found: %w", saveErr)
+	}
+	return existing, nil
 }
 
 // ListByLead returns every pending-or-decided reply tied to the given
