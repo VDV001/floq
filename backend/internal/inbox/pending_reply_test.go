@@ -104,3 +104,130 @@ func TestNewPendingReply_TrimsBodyWhitespace(t *testing.T) {
 		t.Errorf("Body = %q, want %q", pr.Body, "hi")
 	}
 }
+
+func freshPendingReply(t *testing.T) *PendingReply {
+	t.Helper()
+	pr, err := NewPendingReply(uuid.New(), uuid.New(), ChannelTelegram, PendingReplyKindBookingLink, "body")
+	if err != nil {
+		t.Fatalf("unexpected error building fixture: %v", err)
+	}
+	return pr
+}
+
+func TestPendingReply_Approve_FromPending(t *testing.T) {
+	pr := freshPendingReply(t)
+	at := time.Now().UTC()
+	if err := pr.Approve(at); err != nil {
+		t.Fatalf("Approve from pending should succeed, got %v", err)
+	}
+	if pr.Status != PendingReplyStatusApproved {
+		t.Errorf("Status = %v, want approved", pr.Status)
+	}
+	if pr.DecidedAt == nil || !pr.DecidedAt.Equal(at) {
+		t.Errorf("DecidedAt = %v, want %v", pr.DecidedAt, at)
+	}
+}
+
+func TestPendingReply_Reject_FromPending(t *testing.T) {
+	pr := freshPendingReply(t)
+	at := time.Now().UTC()
+	if err := pr.Reject(at); err != nil {
+		t.Fatalf("Reject from pending should succeed, got %v", err)
+	}
+	if pr.Status != PendingReplyStatusRejected {
+		t.Errorf("Status = %v, want rejected", pr.Status)
+	}
+	if pr.DecidedAt == nil || !pr.DecidedAt.Equal(at) {
+		t.Errorf("DecidedAt = %v, want %v", pr.DecidedAt, at)
+	}
+}
+
+func TestPendingReply_MarkSent_FromApproved(t *testing.T) {
+	pr := freshPendingReply(t)
+	if err := pr.Approve(time.Now().UTC()); err != nil {
+		t.Fatalf("Approve setup failed: %v", err)
+	}
+	sentAt := time.Now().UTC().Add(time.Second)
+	if err := pr.MarkSent(sentAt); err != nil {
+		t.Fatalf("MarkSent from approved should succeed, got %v", err)
+	}
+	if pr.Status != PendingReplyStatusSent {
+		t.Errorf("Status = %v, want sent", pr.Status)
+	}
+	if pr.SentAt == nil || !pr.SentAt.Equal(sentAt) {
+		t.Errorf("SentAt = %v, want %v", pr.SentAt, sentAt)
+	}
+}
+
+func TestPendingReply_IllegalTransitions(t *testing.T) {
+	cases := []struct {
+		name string
+		op   func(*PendingReply) error
+		seed func(t *testing.T) *PendingReply
+	}{
+		{
+			name: "MarkSent from pending is illegal",
+			op:   func(pr *PendingReply) error { return pr.MarkSent(time.Now().UTC()) },
+			seed: freshPendingReply,
+		},
+		{
+			name: "Approve from approved is illegal",
+			op:   func(pr *PendingReply) error { return pr.Approve(time.Now().UTC()) },
+			seed: func(t *testing.T) *PendingReply {
+				pr := freshPendingReply(t)
+				if err := pr.Approve(time.Now().UTC()); err != nil {
+					t.Fatalf("seed Approve failed: %v", err)
+				}
+				return pr
+			},
+		},
+		{
+			name: "Reject from approved is illegal",
+			op:   func(pr *PendingReply) error { return pr.Reject(time.Now().UTC()) },
+			seed: func(t *testing.T) *PendingReply {
+				pr := freshPendingReply(t)
+				if err := pr.Approve(time.Now().UTC()); err != nil {
+					t.Fatalf("seed Approve failed: %v", err)
+				}
+				return pr
+			},
+		},
+		{
+			name: "Approve from rejected is illegal",
+			op:   func(pr *PendingReply) error { return pr.Approve(time.Now().UTC()) },
+			seed: func(t *testing.T) *PendingReply {
+				pr := freshPendingReply(t)
+				if err := pr.Reject(time.Now().UTC()); err != nil {
+					t.Fatalf("seed Reject failed: %v", err)
+				}
+				return pr
+			},
+		},
+		{
+			name: "MarkSent from sent is illegal",
+			op:   func(pr *PendingReply) error { return pr.MarkSent(time.Now().UTC()) },
+			seed: func(t *testing.T) *PendingReply {
+				pr := freshPendingReply(t)
+				if err := pr.Approve(time.Now().UTC()); err != nil {
+					t.Fatalf("seed Approve failed: %v", err)
+				}
+				if err := pr.MarkSent(time.Now().UTC()); err != nil {
+					t.Fatalf("seed MarkSent failed: %v", err)
+				}
+				return pr
+			},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			pr := tc.seed(t)
+			before := pr.Status
+			if err := tc.op(pr); !errors.Is(err, ErrPendingReplyInvalidTransition) {
+				t.Fatalf("want ErrPendingReplyInvalidTransition, got %v", err)
+			}
+			if pr.Status != before {
+				t.Errorf("status mutated on rejected transition: %v -> %v", before, pr.Status)
+			}
+		})
+	}
+}
