@@ -113,7 +113,10 @@ func (r *PendingReplyRepo) Update(ctx context.Context, pr *PendingReply) error {
 		return fmt.Errorf("update pending reply: %w", err)
 	}
 	if tag.RowsAffected() == 0 {
-		return fmt.Errorf("update pending reply: row not found or not owned")
+		// Either the row never existed, was deleted, or belongs to
+		// another tenant — all three are indistinguishable on
+		// purpose so callers cannot leak existence cross-tenant.
+		return ErrPendingReplyNotFound
 	}
 	return nil
 }

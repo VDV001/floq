@@ -37,6 +37,15 @@ var (
 	// transition itself; this wrapper surfaces a stable sentinel for
 	// the handler layer.
 	ErrPendingReplyAlreadyDecided = errors.New("pending reply: already decided")
+
+	// ErrPendingReplyDispatcherNotConfigured surfaces a runtime
+	// misconfiguration: the usecase was constructed (or post-init
+	// SetDispatcher was never called) without a ReplyDispatcher. It
+	// is a deliberate sentinel rather than a bare error so the
+	// handler maps it to 500 explicitly and ops dashboards can
+	// alert on it. In production this should never fire — main.go
+	// wires SetDispatcher before SetPendingProposer.
+	ErrPendingReplyDispatcherNotConfigured = errors.New("pending reply: dispatcher not configured")
 )
 
 // PendingReplyUseCase orchestrates the HITL approval flow for inbox
@@ -107,7 +116,7 @@ func (uc *PendingReplyUseCase) Approve(ctx context.Context, userID, id uuid.UUID
 		return fmt.Errorf("persist approved pending reply: %w", err)
 	}
 	if uc.dispatcher == nil {
-		return errors.New("pending reply: dispatcher not configured")
+		return ErrPendingReplyDispatcherNotConfigured
 	}
 	if err := uc.dispatcher.Dispatch(ctx, pr); err != nil {
 		return fmt.Errorf("dispatch approved pending reply: %w", err)
