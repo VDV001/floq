@@ -118,6 +118,31 @@ func TestStyleCheck_OverridesRequestTypeToStyleCheck(t *testing.T) {
 		"inner call must be re-tagged as style_check, not draft_reply")
 }
 
+func TestGenerateTelegramReply_OverridesRequestTypeToTelegramReply(t *testing.T) {
+	rec := &recordingProvider{response: "Hello!"}
+	c := NewAIClient(rec, "", "", "", "", "")
+
+	userID := uuid.New()
+	prospectID := uuid.New()
+	parentCtx := auditdomain.ContextWithCallMeta(context.Background(), auditdomain.CallMeta{
+		UserID:      userID,
+		ProspectID:  &prospectID,
+		RequestType: auditdomain.RequestTypeColdMessage,
+	})
+
+	_, err := c.GenerateTelegramReply(parentCtx, "Ivan", "CEO", "Corp", "ctx", "history", "last msg")
+	require.NoError(t, err)
+	require.NotNil(t, rec.lastCtx)
+
+	meta, ok := auditdomain.CallMetaFromContext(rec.lastCtx)
+	require.True(t, ok)
+	assert.Equal(t, userID, meta.UserID)
+	require.NotNil(t, meta.ProspectID)
+	assert.Equal(t, prospectID, *meta.ProspectID)
+	assert.Equal(t, auditdomain.RequestTypeTelegramReply, meta.RequestType,
+		"reply pass must be re-tagged as telegram_reply, not cold_message")
+}
+
 func TestStyleCheck_NoParentMetaLeavesCtxClean(t *testing.T) {
 	rec := &recordingProvider{response: `{"score":8,"issues":[],"feedback":""}`}
 	c := NewAIClient(rec, "", "", "", "", "")
