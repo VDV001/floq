@@ -57,7 +57,7 @@ inner ai.Provider (OpenAI / Anthropic / Ollama)                                 
 | `internal/audit/repository.go` | pgx impl using `pgx.CopyFrom` for atomic bulk insert. |
 | `internal/audit/recorder.go` | `AsyncRecorder`: bounded chan + single worker + drop-on-full. |
 | `internal/audit/recording_provider.go` | Decorator over `ai.Provider` (+ `ai.VisionProvider` when inner supports it). Pulls `CallMeta` from ctx, computes cost, hands an `Entry` to the recorder. |
-| `internal/audit/context.go` | `CallMeta` struct + ctx-value helpers. |
+| `internal/audit/domain/call_meta.go` | `CallMeta` struct + ctx-value helpers (`ContextWithCallMeta`, `CallMetaFromContext`, `WithRequestType`). Lives in `domain/` so business packages can import the DTO surface without pulling in the recording machinery. |
 | `internal/audit/pricing.go` | Static (provider, model) → unit price table. |
 
 ### CA / DDD positioning
@@ -223,9 +223,10 @@ Out of scope for issue #25 closure, on the roadmap once usage justifies:
   returning `SUM(cost) GROUP BY (provider, model, request_type)`.
 - **Prometheus metrics** — `audit_recorder_dropped_total`,
   `audit_recorder_batch_size`, `audit_recorder_flush_latency_seconds`.
-- **Inbound Telegram conversation replies** — `RequestTypeTelegramReply`
-  + `AIClient.GenerateTelegramReply` exist but no production caller is
-  wired yet. Reserved for the inbound-bot conversation flow.
+- **Inbound Telegram conversation replies wiring** — `AIClient.Generate-
+  TelegramReply` attribution is in place (RequestTypeTelegramReply +
+  WithRequestType override) but no production caller invokes it yet.
+  Reserved for the inbound-bot conversation flow.
 - **Conversation forensics table** — opt-in store for prompt/response
   text linked back to `audit_log.id`, ringed by retention + access
   controls separate from cost data.
