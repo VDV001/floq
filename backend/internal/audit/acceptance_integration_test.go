@@ -4,6 +4,8 @@ package audit_test
 
 import (
 	"context"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 
@@ -12,6 +14,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/daniil/floq/internal/ai"
+	"github.com/daniil/floq/internal/ai/providers"
 	"github.com/daniil/floq/internal/audit"
 	"github.com/daniil/floq/internal/audit/domain"
 	"github.com/daniil/floq/internal/testutil"
@@ -78,7 +81,7 @@ func TestAcceptance_ImageAttachmentCostLoggedToAuditLog(t *testing.T) {
 	wrapped := audit.NewRecordingProvider(stub, recorder, nil)
 	aiClient := ai.NewAIClient(wrapped, "", "", "", "", "")
 
-	imgCtx := audit.ContextWithCallMeta(ctx, audit.CallMeta{
+	imgCtx := domain.ContextWithCallMeta(ctx, domain.CallMeta{
 		UserID:      userID,
 		LeadID:      &leadID,
 		RequestType: domain.RequestTypeImageAnalysis,
@@ -129,4 +132,86 @@ func TestAcceptance_ImageAttachmentCostLoggedToAuditLog(t *testing.T) {
 	assert.Equal(t, int64(450), dbCost, "cost computed from pricing table")
 	assert.Equal(t, "success", dbStatus)
 	assert.GreaterOrEqual(t, dbLatency, 0)
+}
+
+// TestAcceptance_ImageAnalysisThroughProductionProviderChain exercises
+// the real OpenAI-compatible provider against a httptest server that
+// mimics the chat-completions schema (incl. the usage object). This is
+// the regression guard for the first-pass review bug: production type
+// assertion in RecordingProvider must reach the inner OpenAIProvider's
+// AnalyzeImage method, not silently fall through to ErrVisionUnsupported.
+func TestAcceptance_ImageAnalysisThroughProductionProviderChain(t *testing.T) {
+	pool := testutil.TestDB(t)
+	userID := testutil.SeedUser(t, pool)
+	ctx := context.Background()
+
+	leadID := uuid.New()
+	_, err := pool.Exec(ctx,
+		`INSERT INTO leads (id, user_id, contact_name, channel, email_address, first_message)
+		   VALUES ($1, $2, $3, $4, $5, $6)`,
+		leadID, userID, "alice", "email", "alice@acme.com", "see screenshot")
+	require.NoError(t, err)
+
+	// httptest emulating OpenAI's POST /chat/completions with a usage
+	// block — the cost calculation downstream is deterministic.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+			"id":"x","object":"chat.completion","model":"gpt-4o-mini",
+			"choices":[{"message":{"role":"assistant","content":"OCR: backlog fix login"}}],
+			"usage":{"prompt_tokens":1000,"completion_tokens":500,"total_tokens":1500}
+		}`))
+	}))
+	defer srv.Close()
+
+	innerProvider := providers.NewOpenAICompatibleProvider("test-key", "gpt-4o-mini", srv.URL+"/", nil)
+
+	repo := audit.NewRepository(pool)
+	recorder := audit.NewAsyncRecorder(repo,
+		audit.WithBatchSize(1),
+		audit.WithFlushInterval(50*time.Millisecond))
+	recorder.Start()
+	t.Cleanup(func() {
+		stopCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		_ = recorder.Stop(stopCtx)
+	})
+
+	wrapped := audit.NewRecordingProvider(innerProvider, recorder, nil)
+	aiClient := ai.NewAIClient(wrapped, "", "", "", "", "")
+
+	imgCtx := domain.ContextWithCallMeta(ctx, domain.CallMeta{
+		UserID:      userID,
+		LeadID:      &leadID,
+		RequestType: domain.RequestTypeImageAnalysis,
+	})
+
+	text, err := aiClient.AnalyzeImage(imgCtx, []byte("png-bytes"), "image/png", "OCR")
+	require.NoError(t, err)
+	assert.Equal(t, "OCR: backlog fix login", text, "vision response propagates through decorator")
+
+	require.Eventually(t, func() bool {
+		var count int
+		err := pool.QueryRow(ctx,
+			`SELECT COUNT(*) FROM audit_log WHERE user_id = $1 AND request_type = 'image_analysis'`,
+			userID).Scan(&count)
+		return err == nil && count == 1
+	}, 2*time.Second, 25*time.Millisecond, "production-chain image_analysis row missing")
+
+	var (
+		dbProvider  string
+		dbModel     string
+		dbIn, dbOut int
+		dbCost      int64
+	)
+	err = pool.QueryRow(ctx,
+		`SELECT provider, model, input_tokens, output_tokens, cost_usd_micro
+		   FROM audit_log WHERE user_id = $1`, userID).
+		Scan(&dbProvider, &dbModel, &dbIn, &dbOut, &dbCost)
+	require.NoError(t, err)
+	assert.Equal(t, "openai", dbProvider, "Provider.Name() reaches audit row")
+	assert.Equal(t, "gpt-4o-mini", dbModel)
+	assert.Equal(t, 1000, dbIn)
+	assert.Equal(t, 500, dbOut)
+	assert.Equal(t, int64(450), dbCost, "pricing applied through production wiring")
 }

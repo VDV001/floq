@@ -6,7 +6,6 @@ import (
 	"log"
 	"time"
 
-	"github.com/daniil/floq/internal/audit"
 	auditdomain "github.com/daniil/floq/internal/audit/domain"
 )
 
@@ -68,7 +67,7 @@ func (c *Cron) check(ctx context.Context) {
 		// Generate a follow-up message using AI.
 		daysAgo := fmt.Sprintf("%d", c.staleDays)
 		leadID := lead.ID
-		auditCtx := audit.ContextWithCallMeta(ctx, audit.CallMeta{
+		auditCtx := auditdomain.ContextWithCallMeta(ctx, auditdomain.CallMeta{
 			UserID:      lead.UserID,
 			LeadID:      &leadID,
 			RequestType: auditdomain.RequestTypeFollowup,

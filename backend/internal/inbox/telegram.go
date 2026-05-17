@@ -7,7 +7,6 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/daniil/floq/internal/audit"
 	auditdomain "github.com/daniil/floq/internal/audit/domain"
 	"github.com/daniil/floq/internal/normalize"
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
@@ -203,7 +202,7 @@ func (t *TelegramBot) handleMessage(ctx context.Context, msg *tgbotapi.Message) 
 			qCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 			defer cancel()
 			qLeadID := lead.ID
-			qCtx = audit.ContextWithCallMeta(qCtx, audit.CallMeta{
+			qCtx = auditdomain.ContextWithCallMeta(qCtx, auditdomain.CallMeta{
 				UserID:      lead.UserID,
 				LeadID:      &qLeadID,
 				RequestType: auditdomain.RequestTypeQualification,

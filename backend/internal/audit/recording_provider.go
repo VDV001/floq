@@ -3,6 +3,7 @@ package audit
 import (
 	"context"
 	"log/slog"
+	"regexp"
 	"time"
 
 	"github.com/daniil/floq/internal/ai"
@@ -76,7 +77,7 @@ func (r *RecordingProvider) AnalyzeImage(ctx context.Context, imageData []byte, 
 // failures (e.g. an unknown request_type) are also warn-logged; we
 // never panic the AI hot path on an audit problem.
 func (r *RecordingProvider) record(ctx context.Context, resp *ai.CompletionResult, callErr error, latency time.Duration) {
-	meta, ok := CallMetaFromContext(ctx)
+	meta, ok := domain.CallMetaFromContext(ctx)
 	if !ok {
 		r.logger.WarnContext(ctx, "audit: AI call missing meta context, skipping audit row",
 			"provider", r.inner.Name())
@@ -87,7 +88,11 @@ func (r *RecordingProvider) record(ctx context.Context, resp *ai.CompletionResul
 	errMsg := ""
 	if callErr != nil {
 		status = domain.StatusError
-		errMsg = callErr.Error()
+		// First strip PII patterns (emails, phones, API keys) — some
+		// providers quote the offending prompt fragment verbatim in
+		// 4xx errors. Then cap at 256 bytes so a runaway SDK can't
+		// stick entire payloads into a persistent column.
+		errMsg = truncate(sanitizeErrorMessage(callErr.Error()), 256)
 	}
 
 	var (
@@ -129,4 +134,39 @@ func (r *RecordingProvider) record(ctx context.Context, resp *ai.CompletionResul
 		return
 	}
 	r.recorder.Record(ctx, entry)
+}
+
+// piiPatterns strip the most common user-content tokens that providers
+// echo back in their error strings (we've seen OpenAI's 4xx responses
+// quote the offending prompt fragment verbatim). Run before truncation
+// so the redaction tokens don't get cut mid-substitution.
+var piiPatterns = []*regexp.Regexp{
+	// Email addresses
+	regexp.MustCompile(`[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}`),
+	// E.164-ish phone numbers (+ followed by 7-15 digits, optional spaces/dashes inside)
+	regexp.MustCompile(`\+\d[\d\s\-()]{6,18}\d`),
+	// Bearer / sk- API keys
+	regexp.MustCompile(`sk-[A-Za-z0-9_\-]{16,}`),
+	regexp.MustCompile(`Bearer\s+[A-Za-z0-9._\-]{16,}`),
+}
+
+func sanitizeErrorMessage(s string) string {
+	for _, p := range piiPatterns {
+		s = p.ReplaceAllString(s, "[REDACTED]")
+	}
+	return s
+}
+
+// truncate returns s if len(s) <= max, otherwise the first max-1 bytes
+// followed by a single '…' marker. Operates on bytes rather than runes
+// to keep the implementation cheap; multi-byte sequences may break at
+// the cap, which is acceptable for an error breadcrumb.
+func truncate(s string, max int) string {
+	if len(s) <= max {
+		return s
+	}
+	if max <= 1 {
+		return "…"
+	}
+	return s[:max-1] + "…"
 }
