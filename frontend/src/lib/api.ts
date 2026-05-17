@@ -36,7 +36,10 @@ async function apiFetch<T>(path: string, options?: RequestInit): Promise<T> {
               ...options?.headers,
             },
           });
-          if (retryRes.ok) return retryRes.json();
+          if (retryRes.ok) {
+            if (retryRes.status === 204) return undefined as T;
+            return retryRes.json();
+          }
         }
       } catch {
         // refresh failed
@@ -51,6 +54,11 @@ async function apiFetch<T>(path: string, options?: RequestInit): Promise<T> {
     throw new Error(`API error: ${res.status} ${res.statusText}`);
   }
 
+  // 204 No Content has an empty body — calling .json() throws
+  // SyntaxError. The HITL approve/reject endpoints answer 204 on
+  // success; callers expect undefined (the generic T is typically
+  // void at the call site).
+  if (res.status === 204) return undefined as T;
   return res.json();
 }
 
