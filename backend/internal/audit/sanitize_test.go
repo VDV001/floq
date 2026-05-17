@@ -39,6 +39,30 @@ func TestSanitizeErrorMessage(t *testing.T) {
 			wantMatch:    []string{"[REDACTED]"},
 		},
 		{
+			name:         "strips AWS access key",
+			in:           "S3 error: invalid access key AKIAIOSFODNN7EXAMPLE used by client",
+			wantNotMatch: []string{"AKIAIOSFODNN7EXAMPLE"},
+			wantMatch:    []string{"[REDACTED]", "S3 error"},
+		},
+		{
+			name:         "strips raw Authorization header value",
+			in:           "401: backend rejected Authorization: abcdef1234567890ABCDEF",
+			wantNotMatch: []string{"abcdef1234567890ABCDEF"},
+			wantMatch:    []string{"[REDACTED]"},
+		},
+		{
+			name:         "strips basic-auth userinfo in URL",
+			in:           "connection to postgres://admin:hunter2@db.internal:5432/x refused",
+			wantNotMatch: []string{"admin:hunter2"},
+			wantMatch:    []string{"[REDACTED]"},
+		},
+		{
+			name:         "strips bare IPv4",
+			in:           "connection from 192.168.1.42 failed during handshake",
+			wantNotMatch: []string{"192.168.1.42"},
+			wantMatch:    []string{"[REDACTED]"},
+		},
+		{
 			name:         "leaves clean error untouched",
 			in:           "openai 429 rate_limit_exceeded",
 			wantNotMatch: []string{"[REDACTED]"},
