@@ -94,11 +94,11 @@ type recordingProvider struct {
 	calls       int
 }
 
-func (r *recordingProvider) Complete(_ context.Context, req CompletionRequest) (string, error) {
+func (r *recordingProvider) Complete(_ context.Context, req CompletionRequest) (*CompletionResult, error) {
 	r.calls++
 	cp := req
 	r.lastRequest = &cp
-	return r.response, r.err
+	return &CompletionResult{Text: r.response, Model: "recording"}, r.err
 }
 
 func (r *recordingProvider) Name() string { return "recording" }
@@ -117,11 +117,14 @@ type visionMockProvider struct {
 	lastBytes  int
 }
 
-func (v *visionMockProvider) AnalyzeImage(_ context.Context, data []byte, mimeType, prompt string) (string, error) {
+func (v *visionMockProvider) AnalyzeImage(_ context.Context, data []byte, mimeType, prompt string) (*CompletionResult, error) {
 	v.lastMime = mimeType
 	v.lastPrompt = prompt
 	v.lastBytes = len(data)
-	return v.visionResp, v.visionErr
+	if v.visionErr != nil {
+		return nil, v.visionErr
+	}
+	return &CompletionResult{Text: v.visionResp, Model: "gpt-4o-mini"}, nil
 }
 
 func TestAIClient_AnalyzeImage_Success(t *testing.T) {

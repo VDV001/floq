@@ -44,10 +44,10 @@ func (d *DynamicProvider) Name() string {
 	return d.fallbackCfg.AIProvider
 }
 
-func (d *DynamicProvider) Complete(ctx context.Context, req ai.CompletionRequest) (string, error) {
+func (d *DynamicProvider) Complete(ctx context.Context, req ai.CompletionRequest) (*ai.CompletionResult, error) {
 	provider, err := d.resolve(ctx)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 	return provider.Complete(ctx, req)
 }

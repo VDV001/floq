@@ -29,8 +29,10 @@ func TestCostMicroUSD_KnownModels(t *testing.T) {
 		{"o1 medium call", "openai", "o1", 10_000, 5_000, 150_000 + 300_000},
 
 		// Anthropic Claude
-		{"claude-3-5-haiku 1M each", "anthropic", "claude-3-5-haiku-20241022", 1_000_000, 1_000_000, 1_000_000 + 5_000_000},
-		{"claude-sonnet-4 small", "anthropic", "claude-sonnet-4-20250514", 1_000, 500, 3_000 + 7_500},
+		{"claude-3-5-haiku 1M each", "claude", "claude-3-5-haiku-20241022", 1_000_000, 1_000_000, 1_000_000 + 5_000_000},
+		{"claude-sonnet-4 small", "claude", "claude-sonnet-4-20250514", 1_000, 500, 3_000 + 7_500},
+		{"claude-sonnet-4-6 (default Execute) 10k each", "claude", "claude-sonnet-4-6", 10_000, 10_000, 30_000 + 150_000},
+		{"claude-haiku-4-5 (default Budget) 100k each", "claude", "claude-haiku-4-5-20251001", 100_000, 100_000, 80_000 + 400_000},
 
 		// Ollama is local — provider cost is 0 regardless of model.
 		{"ollama llama3 1k+1k", "ollama", "llama3", 1_000, 1_000, 0},
@@ -60,7 +62,8 @@ func TestCostMicroUSD_UnknownModel(t *testing.T) {
 		model    string
 	}{
 		{"openai", "gpt-99"},
-		{"anthropic", "claude-future"},
+		{"claude", "claude-future"},
+		{"anthropic", "anything"}, // unknown provider — we key on "claude"
 		{"groq", "anything"},      // unknown provider altogether
 		{"", "gpt-4o"},             // empty provider
 		{"openai", ""},             // empty model

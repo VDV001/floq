@@ -33,9 +33,9 @@ type modeRecordingProvider struct {
 	recordedMode ModelMode
 }
 
-func (m *modeRecordingProvider) Complete(_ context.Context, req CompletionRequest) (string, error) {
+func (m *modeRecordingProvider) Complete(_ context.Context, req CompletionRequest) (*CompletionResult, error) {
 	m.recordedMode = req.Mode
-	return m.response, nil
+	return &CompletionResult{Text: m.response, Model: m.name}, nil
 }
 
 func (m *modeRecordingProvider) Name() string { return m.name }

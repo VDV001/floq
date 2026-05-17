@@ -109,9 +109,16 @@ func (c *AIClient) ProviderName() string {
 	return c.provider.Name()
 }
 
-// Complete exposes the underlying provider's Complete method for direct use.
+// Complete exposes the underlying provider's Complete method for direct
+// use. Returns only the text — call sites that need usage/cost go
+// through the audit-aware RecordingProvider wrapper, not the bare
+// AIClient.
 func (c *AIClient) Complete(ctx context.Context, req CompletionRequest) (string, error) {
-	return c.provider.Complete(ctx, req)
+	resp, err := c.provider.Complete(ctx, req)
+	if err != nil {
+		return "", err
+	}
+	return resp.Text, nil
 }
 
 func (c *AIClient) Qualify(ctx context.Context, contactName, channel, firstMessage string) (*QualificationResult, error) {
@@ -135,9 +142,9 @@ func (c *AIClient) Qualify(ctx context.Context, contactName, channel, firstMessa
 	}
 
 	var result QualificationResult
-	cleaned := extractJSON(resp)
+	cleaned := extractJSON(resp.Text)
 	if err := json.Unmarshal([]byte(cleaned), &result); err != nil {
-		return nil, fmt.Errorf("ai qualify parse response: %w (raw: %s)", err, resp[:min(len(resp), 200)])
+		return nil, fmt.Errorf("ai qualify parse response: %w (raw: %s)", err, resp.Text[:min(len(resp.Text), 200)])
 	}
 	return &result, nil
 }
@@ -164,11 +171,7 @@ func (c *AIClient) DraftReply(ctx context.Context, contactName, company, channel
 	if err != nil {
 		return "", fmt.Errorf("ai draft reply: %w", err)
 	}
-	return c.applyStyleCheck(ctx, resp, "reply", func(ctx context.Context, fb string) (string, error) {
-		retry := req
-		retry.Messages = retryUserPrompt(req.Messages, fb)
-		return c.provider.Complete(ctx, retry)
-	}), nil
+	return c.applyStyleCheck(ctx, resp.Text, "reply", c.retryText(req)), nil
 }
 
 func (c *AIClient) GenerateFollowup(ctx context.Context, contactName, company, daysAgo, lastMessage, ourLastReply string) (string, error) {
@@ -193,11 +196,7 @@ func (c *AIClient) GenerateFollowup(ctx context.Context, contactName, company, d
 	if err != nil {
 		return "", fmt.Errorf("ai generate followup: %w", err)
 	}
-	return c.applyStyleCheck(ctx, resp, "followup", func(ctx context.Context, fb string) (string, error) {
-		retry := req
-		retry.Messages = retryUserPrompt(req.Messages, fb)
-		return c.provider.Complete(ctx, retry)
-	}), nil
+	return c.applyStyleCheck(ctx, resp.Text, "followup", c.retryText(req)), nil
 }
 
 func (c *AIClient) GenerateColdMessage(ctx context.Context, name, title, company, prospectContext, stepHint, previousMessage, source, feedbackExamples string) (string, error) {
@@ -234,11 +233,7 @@ func (c *AIClient) GenerateColdMessage(ctx context.Context, name, title, company
 	if err != nil {
 		return "", fmt.Errorf("ai cold message: %w", err)
 	}
-	return c.applyStyleCheck(ctx, resp, "email", func(ctx context.Context, fb string) (string, error) {
-		retry := req
-		retry.Messages = retryUserPrompt(req.Messages, fb)
-		return c.provider.Complete(ctx, retry)
-	}), nil
+	return c.applyStyleCheck(ctx, resp.Text, "email", c.retryText(req)), nil
 }
 
 func (c *AIClient) GenerateTelegramMessage(ctx context.Context, name, title, company, prospectContext, stepHint, previousMessage, source, feedbackExamples string) (string, error) {
@@ -275,11 +270,24 @@ func (c *AIClient) GenerateTelegramMessage(ctx context.Context, name, title, com
 	if err != nil {
 		return "", fmt.Errorf("ai telegram message: %w", err)
 	}
-	return c.applyStyleCheck(ctx, resp, "telegram", func(ctx context.Context, fb string) (string, error) {
+	return c.applyStyleCheck(ctx, resp.Text, "telegram", c.retryText(req)), nil
+}
+
+// retryText is the shared style-check regenerate callback: it folds the
+// reviewer's feedback into the original system+user prompt and asks the
+// provider for a second draft, returning the text only (the style-check
+// loop has no use for the usage stats — they're already captured by the
+// recording layer wrapping each Complete call).
+func (c *AIClient) retryText(req CompletionRequest) func(context.Context, string) (string, error) {
+	return func(ctx context.Context, feedback string) (string, error) {
 		retry := req
-		retry.Messages = retryUserPrompt(req.Messages, fb)
-		return c.provider.Complete(ctx, retry)
-	}), nil
+		retry.Messages = retryUserPrompt(req.Messages, feedback)
+		resp, err := c.provider.Complete(ctx, retry)
+		if err != nil {
+			return "", err
+		}
+		return resp.Text, nil
+	}
 }
 
 // TelegramReplyResult holds the AI response and whether escalation to a manager is needed.
@@ -314,10 +322,11 @@ func (c *AIClient) GenerateTelegramReply(ctx context.Context, name, title, compa
 		return nil, fmt.Errorf("ai telegram reply: %w", err)
 	}
 
-	result := &TelegramReplyResult{Text: resp}
-	if strings.Contains(resp, "[ТРЕБУЕТСЯ МЕНЕДЖЕР]") {
+	text := resp.Text
+	result := &TelegramReplyResult{Text: text}
+	if strings.Contains(text, "[ТРЕБУЕТСЯ МЕНЕДЖЕР]") {
 		result.NeedsEscalation = true
-		result.EscalationNote = strings.TrimPrefix(resp, "[ТРЕБУЕТСЯ МЕНЕДЖЕР]")
+		result.EscalationNote = strings.TrimPrefix(text, "[ТРЕБУЕТСЯ МЕНЕДЖЕР]")
 		result.EscalationNote = strings.TrimSpace(result.EscalationNote)
 	}
 	return result, nil
@@ -349,5 +358,5 @@ func (c *AIClient) GenerateCallBrief(ctx context.Context, name, title, company, 
 	if err != nil {
 		return "", fmt.Errorf("ai call brief: %w", err)
 	}
-	return resp, nil
+	return resp.Text, nil
 }

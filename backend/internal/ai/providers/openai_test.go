@@ -32,7 +32,9 @@ func TestOpenAIProvider_AnalyzeImage_Success(t *testing.T) {
 
 	got, err := p.AnalyzeImage(context.Background(), []byte("png-bytes"), "image/png", "Transcribe this")
 	require.NoError(t, err)
-	assert.Equal(t, "OCR result text", got)
+	require.NotNil(t, got)
+	assert.Equal(t, "OCR result text", got.Text)
+	assert.Equal(t, "gpt-4o-mini", got.Model)
 
 	// Verify request shape: messages[0].content is an array with both an
 	// image_url part (data URI) and a text part with the prompt.

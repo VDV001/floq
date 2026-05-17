@@ -17,15 +17,22 @@ type modelPrice struct {
 	outputPerMillionMicro int64
 }
 
+// pricingTable's outer key matches Provider.Name() verbatim so the
+// recording layer can look up prices without any string translation.
+// "claude" intentionally collides with Anthropic's vendor name in our
+// public API surface (settings AIProvider field, frontend display).
 var pricingTable = map[string]map[string]modelPrice{
 	"openai": {
 		"gpt-4o":      {inputPerMillionMicro: 5_000_000, outputPerMillionMicro: 20_000_000},
 		"gpt-4o-mini": {inputPerMillionMicro: 150_000, outputPerMillionMicro: 600_000},
 		"o1":          {inputPerMillionMicro: 15_000_000, outputPerMillionMicro: 60_000_000},
 	},
-	"anthropic": {
+	"claude": {
 		"claude-3-5-haiku-20241022": {inputPerMillionMicro: 1_000_000, outputPerMillionMicro: 5_000_000},
 		"claude-sonnet-4-20250514":  {inputPerMillionMicro: 3_000_000, outputPerMillionMicro: 15_000_000},
+		"claude-haiku-4-5-20251001": {inputPerMillionMicro: 800_000, outputPerMillionMicro: 4_000_000},
+		"claude-opus-4-7":           {inputPerMillionMicro: 15_000_000, outputPerMillionMicro: 75_000_000},
+		"claude-sonnet-4-6":         {inputPerMillionMicro: 3_000_000, outputPerMillionMicro: 15_000_000},
 	},
 }
 
