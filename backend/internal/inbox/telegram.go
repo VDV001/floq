@@ -15,14 +15,15 @@ import (
 
 // TelegramBot listens for incoming Telegram messages and creates leads.
 type TelegramBot struct {
-	bot            *tgbotapi.BotAPI
-	repo           LeadRepository
-	prospectRepo   ProspectRepository
-	aiClient       AIQualifier
-	identityLinker IdentityLinker
-	logger         *slog.Logger
-	ownerID        uuid.UUID
-	bookingLink    string
+	bot             *tgbotapi.BotAPI
+	repo            LeadRepository
+	prospectRepo    ProspectRepository
+	aiClient        AIQualifier
+	identityLinker  IdentityLinker
+	pendingProposer PendingReplyProposer
+	logger          *slog.Logger
+	ownerID         uuid.UUID
+	bookingLink     string
 }
 
 // TelegramBotOption configures a *TelegramBot at construction. Used for
@@ -52,6 +53,20 @@ func WithTelegramLogger(l *slog.Logger) TelegramBotOption {
 			b.logger = l
 		}
 	}
+}
+
+// WithTelegramPendingReplyProposer wires the HITL queue used by the
+// booking-link branch in handleMessage. When set, DetectCallAgreement
+// enqueues a pending reply for operator approval instead of sending
+// the booking URL directly. When nil (or omitted), the booking-link
+// branch is suppressed entirely — a secure default that never falls
+// back to instant send.
+//
+// Named asymmetrically to its email-poller sibling for the same
+// reason as WithTelegramIdentityLinker — Go does not allow option-name
+// collisions across different option types in the same package.
+func WithTelegramPendingReplyProposer(p PendingReplyProposer) TelegramBotOption {
+	return func(b *TelegramBot) { b.pendingProposer = p }
 }
 
 // NewTelegramBot creates a new TelegramBot with the given token and dependencies.
@@ -181,17 +196,22 @@ func (t *TelegramBot) handleMessage(ctx context.Context, msg *tgbotapi.Message) 
 		return
 	}
 
-	// Auto-reply with booking link if lead agrees to a call
+	// HITL gate for booking link: when DetectCallAgreement triggers,
+	// the bot enqueues a pending reply for operator approval rather
+	// than sending the calendar URL directly. A misfired detector
+	// would otherwise leak a booking link to a lead who never asked,
+	// so the secure default when no proposer is wired is to suppress
+	// the branch entirely — we do NOT fall back to instant send.
 	if DetectCallAgreement(text) {
-		bookingMsg := "Отлично! Вот ссылка для выбора удобного времени для звонка: " + t.bookingLink + "\n\nВыберите слот и я получу уведомление. До связи!"
-		tgReply := tgbotapi.NewMessage(chatID, bookingMsg)
-		if _, err := t.bot.Send(tgReply); err != nil {
-			log.Printf("telegram inbox: error sending booking link: %v", err)
+		if t.pendingProposer == nil {
+			t.logger.WarnContext(ctx, "booking link suppressed: no pending reply proposer wired",
+				slog.Int64("chat_id", chatID), slog.String("lead_id", lead.ID.String()))
 		} else {
-			// Save as outbound message
-			outMsg := NewInboxMessage(lead.ID, DirectionOutbound, bookingMsg)
-			t.repo.CreateMessage(ctx, outMsg)
-			log.Printf("telegram inbox: sent booking link to chat %d", chatID)
+			bookingMsg := "Отлично! Вот ссылка для выбора удобного времени для звонка: " + t.bookingLink + "\n\nВыберите слот и я получу уведомление. До связи!"
+			if _, err := t.pendingProposer.Propose(ctx, lead.UserID, lead.ID, ChannelTelegram, PendingReplyKindBookingLink, bookingMsg); err != nil {
+				t.logger.WarnContext(ctx, "failed to enqueue booking reply for approval",
+					slog.String("lead_id", lead.ID.String()), slog.Any("error", err))
+			}
 		}
 	}
 

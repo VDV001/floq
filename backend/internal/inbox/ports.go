@@ -155,6 +155,19 @@ type IdentityLinker interface {
 	LinkLeadToIdentity(ctx context.Context, userID, leadID uuid.UUID, email, phone, telegramUsername string) error
 }
 
+// PendingReplyProposer enqueues an auto-drafted reply for human
+// approval. It is the inversion-of-control seam between the inbox
+// pollers (Telegram bot, future email auto-replies) and the HITL
+// usecase: the poller knows only the abstract action "park this draft
+// for the operator", never how the queue is persisted.
+//
+// Implementations MUST be safe to call from background goroutines and
+// MUST NOT block on dispatch — actual delivery happens after operator
+// approval, not at Propose time.
+type PendingReplyProposer interface {
+	Propose(ctx context.Context, userID, leadID uuid.UUID, channel Channel, kind PendingReplyKind, body string) (*PendingReply, error)
+}
+
 // PendingReplyRepository persists the HITL approval queue. Every read
 // method is scoped by userID — the repository never returns a row that
 // belongs to another tenant, so an attacker who guesses or enumerates
