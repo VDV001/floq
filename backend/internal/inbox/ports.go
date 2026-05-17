@@ -154,3 +154,16 @@ type ConfigStore interface {
 type IdentityLinker interface {
 	LinkLeadToIdentity(ctx context.Context, userID, leadID uuid.UUID, email, phone, telegramUsername string) error
 }
+
+// PendingReplyRepository persists the HITL approval queue. Every read
+// method is scoped by userID — the repository never returns a row that
+// belongs to another tenant, so an attacker who guesses or enumerates
+// IDs still gets nil/empty. Callers SHOULD treat nil-without-error as
+// "not found OR not owned" and answer 404 to keep the two
+// indistinguishable on the wire.
+type PendingReplyRepository interface {
+	Save(ctx context.Context, pr *PendingReply) error
+	GetByID(ctx context.Context, userID, id uuid.UUID) (*PendingReply, error)
+	ListByLead(ctx context.Context, userID, leadID uuid.UUID) ([]*PendingReply, error)
+	Update(ctx context.Context, pr *PendingReply) error
+}
