@@ -87,6 +87,78 @@ func TestSendViaResend_SendsIdempotencyKeyHeader(t *testing.T) {
 		"every Resend POST must carry the supplied Idempotency-Key verbatim — Resend dedups retries by this header")
 }
 
+func TestSendViaResend_RetriesOn5xxAndSucceeds(t *testing.T) {
+	// First attempt: 503 (transient). Second: 200. With a stable
+	// Idempotency-Key on both attempts, Resend dedups server-side —
+	// our retry is safe. Test pins: success returned, exactly 2 calls,
+	// same key on both.
+	attempt := 0
+	c, cleanup := stubResend(t, func(w http.ResponseWriter, _ *http.Request) {
+		attempt++
+		if attempt == 1 {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+		fmt.Fprint(w, `{"id":"msg_x"}`)
+	})
+	defer cleanup()
+
+	cfgStore := &mockConfigStore{cfg: &settingsdomain.UserConfig{}}
+	s := NewSender(cfgStore, uuid.New(), "test-key", "from@test.com", "",
+		"", "", "", "",
+		nil, nil, nil, nil, nil, nil)
+
+	err := s.sendViaResend(context.Background(), "to@test.com", "subj", "body", "outbound:retry-1")
+	require.NoError(t, err, "second attempt must succeed; retry loop must absorb the transient 503")
+	assert.Equal(t, 2, c.calls(), "expected exactly 2 attempts (1 fail + 1 success)")
+
+	keys := c.idempotencyKeys()
+	require.Len(t, keys, 2)
+	assert.Equal(t, keys[0], keys[1],
+		"Idempotency-Key MUST be stable across retry attempts — otherwise Resend cannot dedup and we lose the safety we just added")
+	assert.Equal(t, "outbound:retry-1", keys[0])
+}
+
+func TestSendViaResend_StopsAfterMaxAttemptsOn5xx(t *testing.T) {
+	c, cleanup := stubResend(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	})
+	defer cleanup()
+
+	cfgStore := &mockConfigStore{cfg: &settingsdomain.UserConfig{}}
+	s := NewSender(cfgStore, uuid.New(), "test-key", "from@test.com", "",
+		"", "", "", "",
+		nil, nil, nil, nil, nil, nil)
+
+	err := s.sendViaResend(context.Background(), "to@test.com", "subj", "body", "outbound:stuck")
+	require.Error(t, err, "consecutive 5xx must surface after max attempts; retry cannot loop forever")
+
+	got := c.calls()
+	if got != 3 {
+		t.Errorf("expected 3 attempts before giving up, got %d", got)
+	}
+}
+
+func TestSendViaResend_DoesNotRetryOn4xx(t *testing.T) {
+	// 4xx is a client error (bad payload, bad auth, etc.) — retrying
+	// with the same Idempotency-Key and the same body cannot fix
+	// the client mistake and just burns rate-limit budget on Resend.
+	c, cleanup := stubResend(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+	})
+	defer cleanup()
+
+	cfgStore := &mockConfigStore{cfg: &settingsdomain.UserConfig{}}
+	s := NewSender(cfgStore, uuid.New(), "test-key", "from@test.com", "",
+		"", "", "", "",
+		nil, nil, nil, nil, nil, nil)
+
+	err := s.sendViaResend(context.Background(), "to@test.com", "subj", "body", "outbound:bad")
+	require.Error(t, err)
+	assert.Equal(t, 1, c.calls(), "4xx must NOT retry — same body + same key cannot succeed on attempt 2")
+}
+
 func TestSendPending_UsesMessageIDAsIdempotencyKey(t *testing.T) {
 	// SendPending end-to-end: drains one approved outbound row, calls
 	// sendViaResend with an Idempotency-Key derived from the row ID.
