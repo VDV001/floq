@@ -395,6 +395,9 @@ func TestPendingReplyUseCase_Approve_TransitionsThenDispatchesThenMarksSent(t *t
 	if stored.SentAt == nil {
 		t.Error("SentAt should be set after successful dispatch")
 	}
+	if stored.DecidedBy == nil || *stored.DecidedBy != userID {
+		t.Errorf("DecidedBy = %v, want userID %v — usecase must pass operator id into domain stamp", stored.DecidedBy, userID)
+	}
 }
 
 func TestPendingReplyUseCase_Approve_NotFoundReturnsSentinel(t *testing.T) {
@@ -530,6 +533,9 @@ func TestPendingReplyUseCase_Reject_HappyPath(t *testing.T) {
 	}
 	if stored.DecidedAt == nil || stored.DecidedAt.Before(before) || stored.DecidedAt.After(after) {
 		t.Errorf("DecidedAt = %v, want within [%v, %v]", stored.DecidedAt, before, after)
+	}
+	if stored.DecidedBy == nil || *stored.DecidedBy != userID {
+		t.Errorf("DecidedBy = %v, want userID %v — usecase must pass operator id into domain stamp on Reject too", stored.DecidedBy, userID)
 	}
 	if len(disp.Calls()) != 0 {
 		t.Error("Reject must NOT dispatch")
