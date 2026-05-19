@@ -117,6 +117,21 @@ func (f *fakePendingReplyRepo) ListByLead(_ context.Context, userID, leadID uuid
 	return out, nil
 }
 
+func (f *fakePendingReplyRepo) UpdateBody(_ context.Context, pr *PendingReply, expectedStatus PendingReplyStatus) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.updErr != nil {
+		return f.updErr
+	}
+	existing, ok := f.rows[pr.ID]
+	if !ok || existing.Status != expectedStatus {
+		return ErrPendingReplyNotFound
+	}
+	// Mirror real repo: body-only column write; do not stamp decided_*.
+	existing.Body = pr.Body
+	return nil
+}
+
 func (f *fakePendingReplyRepo) Update(_ context.Context, pr *PendingReply, expectedStatus PendingReplyStatus) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -610,5 +625,117 @@ func TestPendingReplyUseCase_Reject_AlreadyDecided(t *testing.T) {
 	err = uc.Reject(ctx, userID, pr.ID)
 	if !errors.Is(err, ErrPendingReplyAlreadyDecided) {
 		t.Fatalf("second Reject must return ErrPendingReplyAlreadyDecided, got %v", err)
+	}
+}
+
+// --- UpdateBody (#48) ---
+
+func TestPendingReplyUseCase_UpdateBody_HappyPath(t *testing.T) {
+	repo := newFakeRepo()
+	uc := NewPendingReplyUseCase(repo, &spyDispatcher{})
+	ctx := context.Background()
+	userID := uuid.New()
+
+	pr, err := uc.Propose(ctx, userID, uuid.New(), ChannelTelegram, PendingReplyKindBookingLink, "original")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	updated, err := uc.UpdateBody(ctx, userID, pr.ID, "  edited  ")
+	if err != nil {
+		t.Fatalf("UpdateBody returned error: %v", err)
+	}
+	if updated.Body != "edited" {
+		t.Fatalf("returned body = %q, want trimmed 'edited'", updated.Body)
+	}
+	// Persistence side-effect: refetch shows new body and unchanged status.
+	stored, err := repo.GetByID(ctx, userID, pr.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.Body != "edited" {
+		t.Fatalf("stored body = %q, want 'edited'", stored.Body)
+	}
+	if stored.Status != PendingReplyStatusPending {
+		t.Fatalf("status changed during edit: got %v", stored.Status)
+	}
+}
+
+func TestPendingReplyUseCase_UpdateBody_NotFound(t *testing.T) {
+	repo := newFakeRepo()
+	uc := NewPendingReplyUseCase(repo, &spyDispatcher{})
+	ctx := context.Background()
+
+	_, err := uc.UpdateBody(ctx, uuid.New(), uuid.New(), "anything")
+	if !errors.Is(err, ErrPendingReplyNotFound) {
+		t.Fatalf("want ErrPendingReplyNotFound, got %v", err)
+	}
+}
+
+func TestPendingReplyUseCase_UpdateBody_CrossTenantIsNotFound(t *testing.T) {
+	// Cross-tenant access must collapse to NotFound — never leak existence.
+	repo := newFakeRepo()
+	uc := NewPendingReplyUseCase(repo, &spyDispatcher{})
+	ctx := context.Background()
+	owner := uuid.New()
+	attacker := uuid.New()
+
+	pr, err := uc.Propose(ctx, owner, uuid.New(), ChannelTelegram, PendingReplyKindBookingLink, "victim body")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = uc.UpdateBody(ctx, attacker, pr.ID, "tampered")
+	if !errors.Is(err, ErrPendingReplyNotFound) {
+		t.Fatalf("cross-tenant must return ErrPendingReplyNotFound, got %v", err)
+	}
+	// Body must remain untouched.
+	stored, _ := repo.GetByID(ctx, owner, pr.ID)
+	if stored.Body != "victim body" {
+		t.Fatalf("body tampered to %q", stored.Body)
+	}
+}
+
+func TestPendingReplyUseCase_UpdateBody_AlreadyDecidedMapsTo409(t *testing.T) {
+	// Domain returns ErrPendingReplyNotEditable on non-Pending; usecase
+	// must surface that as ErrPendingReplyAlreadyDecided so the handler
+	// answers a single 409 for both "decided too late" cases (transition
+	// race and edit race).
+	repo := newFakeRepo()
+	uc := NewPendingReplyUseCase(repo, &spyDispatcher{})
+	ctx := context.Background()
+	userID := uuid.New()
+
+	pr, err := uc.Propose(ctx, userID, uuid.New(), ChannelTelegram, PendingReplyKindBookingLink, "original")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := uc.Reject(ctx, userID, pr.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = uc.UpdateBody(ctx, userID, pr.ID, "too late")
+	if !errors.Is(err, ErrPendingReplyAlreadyDecided) {
+		t.Fatalf("want ErrPendingReplyAlreadyDecided, got %v", err)
+	}
+}
+
+func TestPendingReplyUseCase_UpdateBody_EmptyBodyBubbles(t *testing.T) {
+	// Domain factory invariant must bubble unchanged so handler can map
+	// to 400 (not 409). The handler distinguishes empty-body input from
+	// already-decided.
+	repo := newFakeRepo()
+	uc := NewPendingReplyUseCase(repo, &spyDispatcher{})
+	ctx := context.Background()
+	userID := uuid.New()
+
+	pr, err := uc.Propose(ctx, userID, uuid.New(), ChannelTelegram, PendingReplyKindBookingLink, "original")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = uc.UpdateBody(ctx, userID, pr.ID, "   ")
+	if !errors.Is(err, ErrPendingReplyEmptyBody) {
+		t.Fatalf("want ErrPendingReplyEmptyBody, got %v", err)
 	}
 }
