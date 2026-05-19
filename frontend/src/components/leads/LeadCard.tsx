@@ -57,13 +57,15 @@ export function LeadCard({
           <p className="mt-1 text-xs font-medium text-[#737686]">
             {channel === "email" ? "по email" : "через Telegram"} · {contact}
           </p>
-          {sourceName && (
-            <div className="mt-2 flex items-center gap-2">
+          {/* Wrapper is unconditional to preserve mt-2 spacing even when
+              sourceName is absent — matches the pre-refactor inbox JSX. */}
+          <div className="mt-2 flex items-center gap-2">
+            {sourceName && (
               <span className="rounded-full bg-[#eff4ff] px-2 py-0.5 text-[10px] font-semibold text-[#004ac6]">
                 {sourceName}
               </span>
-            </div>
-          )}
+            )}
+          </div>
           <p className="mt-1 line-clamp-2 text-sm leading-relaxed text-[#434655]">
             {preview}
           </p>
