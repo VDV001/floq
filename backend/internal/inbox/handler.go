@@ -20,6 +20,7 @@ type PendingReplyUseCaseAPI interface {
 	ListByLead(ctx context.Context, userID, leadID uuid.UUID) ([]*PendingReply, error)
 	Approve(ctx context.Context, userID, id uuid.UUID) error
 	Reject(ctx context.Context, userID, id uuid.UUID) error
+	UpdateBody(ctx context.Context, userID, id uuid.UUID, body string) (*PendingReply, error)
 }
 
 // LeadOwnershipChecker is the narrow port the handler needs to gate

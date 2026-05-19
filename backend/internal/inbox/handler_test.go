@@ -21,9 +21,10 @@ import (
 type fakePendingReplyUseCase struct {
 	mu sync.Mutex
 
-	listFn    func(ctx context.Context, userID, leadID uuid.UUID) ([]*PendingReply, error)
-	approveFn func(ctx context.Context, userID, id uuid.UUID) error
-	rejectFn  func(ctx context.Context, userID, id uuid.UUID) error
+	listFn       func(ctx context.Context, userID, leadID uuid.UUID) ([]*PendingReply, error)
+	approveFn    func(ctx context.Context, userID, id uuid.UUID) error
+	rejectFn     func(ctx context.Context, userID, id uuid.UUID) error
+	updateBodyFn func(ctx context.Context, userID, id uuid.UUID, body string) (*PendingReply, error)
 }
 
 func (f *fakePendingReplyUseCase) ListByLead(ctx context.Context, userID, leadID uuid.UUID) ([]*PendingReply, error) {
@@ -45,6 +46,13 @@ func (f *fakePendingReplyUseCase) Reject(ctx context.Context, userID, id uuid.UU
 		return f.rejectFn(ctx, userID, id)
 	}
 	return nil
+}
+
+func (f *fakePendingReplyUseCase) UpdateBody(ctx context.Context, userID, id uuid.UUID, body string) (*PendingReply, error) {
+	if f.updateBodyFn != nil {
+		return f.updateBodyFn(ctx, userID, id, body)
+	}
+	return nil, nil
 }
 
 type fakeLeadOwnership struct {
@@ -385,6 +393,100 @@ func TestHandler_Reject_NotFoundAlreadyDecidedAuthAndInvalidID(t *testing.T) {
 			srv.ServeHTTP(rec, req)
 			if rec.Code != tc.wantStatus {
 				t.Fatalf("status = %d, want %d, body=%s", rec.Code, tc.wantStatus, rec.Body.String())
+			}
+		})
+	}
+}
+
+// --- UpdateBody (#48) PATCH /api/pending-replies/{id} ---
+
+func TestHandler_UpdateBody_HappyPath_Returns200WithBody(t *testing.T) {
+	userID := uuid.New()
+	prID := uuid.New()
+
+	uc := &fakePendingReplyUseCase{
+		updateBodyFn: func(_ context.Context, _, id uuid.UUID, body string) (*PendingReply, error) {
+			if id != prID {
+				t.Fatalf("path id = %v, want %v", id, prID)
+			}
+			if body != "edited body" {
+				t.Fatalf("body = %q, want 'edited body'", body)
+			}
+			return &PendingReply{
+				ID:        prID,
+				UserID:    userID,
+				LeadID:    uuid.New(),
+				Channel:   ChannelTelegram,
+				Kind:      PendingReplyKindBookingLink,
+				Body:      body,
+				Status:    PendingReplyStatusPending,
+				CreatedAt: time.Now().UTC(),
+			}, nil
+		},
+	}
+	srv := newTestServer(uc, &fakeLeadOwnership{})
+
+	req := httptest.NewRequest(http.MethodPatch, "/api/pending-replies/"+prID.String(), strings.NewReader(`{"body":"edited body"}`))
+	req.Header.Set("Content-Type", "application/json")
+	req = req.WithContext(httputil.WithUserID(req.Context(), userID))
+	rec := httptest.NewRecorder()
+	srv.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200, body=%s", rec.Code, rec.Body.String())
+	}
+	var got PendingReplyResponse
+	if err := json.NewDecoder(rec.Body).Decode(&got); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if got.Body != "edited body" {
+		t.Errorf("response body = %q, want 'edited body'", got.Body)
+	}
+	if got.Status != string(PendingReplyStatusPending) {
+		t.Errorf("response status = %q, want pending", got.Status)
+	}
+}
+
+func TestHandler_UpdateBody_ErrorMatrix(t *testing.T) {
+	// Table-driven over the 400/404/409/401/400-id matrix. Mirrors the
+	// existing Approve/Reject ErrorMatrix style.
+	type tc struct {
+		name       string
+		ucErr      error
+		body       string
+		userID     uuid.UUID
+		pathID     string
+		wantStatus int
+	}
+	cases := []tc{
+		{name: "not found -> 404", ucErr: ErrPendingReplyNotFound, body: `{"body":"x"}`, userID: uuid.New(), pathID: uuid.New().String(), wantStatus: http.StatusNotFound},
+		{name: "already decided -> 409", ucErr: ErrPendingReplyAlreadyDecided, body: `{"body":"x"}`, userID: uuid.New(), pathID: uuid.New().String(), wantStatus: http.StatusConflict},
+		{name: "empty body domain error -> 400", ucErr: ErrPendingReplyEmptyBody, body: `{"body":"   "}`, userID: uuid.New(), pathID: uuid.New().String(), wantStatus: http.StatusBadRequest},
+		{name: "internal -> 500", ucErr: errors.New("boom"), body: `{"body":"x"}`, userID: uuid.New(), pathID: uuid.New().String(), wantStatus: http.StatusInternalServerError},
+		{name: "no user -> 401", ucErr: nil, body: `{"body":"x"}`, userID: uuid.Nil, pathID: uuid.New().String(), wantStatus: http.StatusUnauthorized},
+		{name: "invalid id -> 400", ucErr: nil, body: `{"body":"x"}`, userID: uuid.New(), pathID: "not-a-uuid", wantStatus: http.StatusBadRequest},
+		{name: "malformed JSON -> 400", ucErr: nil, body: `not json`, userID: uuid.New(), pathID: uuid.New().String(), wantStatus: http.StatusBadRequest},
+		{name: "missing body field -> 400", ucErr: nil, body: `{"other":"x"}`, userID: uuid.New(), pathID: uuid.New().String(), wantStatus: http.StatusBadRequest},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			uc := &fakePendingReplyUseCase{
+				updateBodyFn: func(_ context.Context, _, _ uuid.UUID, _ string) (*PendingReply, error) {
+					return nil, c.ucErr
+				},
+			}
+			srv := newTestServer(uc, &fakeLeadOwnership{})
+
+			path := "/api/pending-replies/" + c.pathID
+			req := httptest.NewRequest(http.MethodPatch, path, strings.NewReader(c.body))
+			req.Header.Set("Content-Type", "application/json")
+			if c.userID != uuid.Nil {
+				req = req.WithContext(httputil.WithUserID(req.Context(), c.userID))
+			}
+			rec := httptest.NewRecorder()
+			srv.ServeHTTP(rec, req)
+			if rec.Code != c.wantStatus {
+				t.Fatalf("status = %d, want %d, body=%s", rec.Code, c.wantStatus, rec.Body.String())
 			}
 		})
 	}
