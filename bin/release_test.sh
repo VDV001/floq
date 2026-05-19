@@ -166,6 +166,50 @@ fi
 assert_ok    "verify_version_sync robust to dep collision" verify_version_sync "$TMP" "0.20.0"
 
 echo
+echo "notes_file EXIT trap (issue #70):"
+# The release.sh main() registers an EXIT trap to clean up the temp notes
+# file. The trap is set INSIDE main() where notes_file is `local`. Under
+# `set -u`, if the trap body defers the variable lookup until fire time
+# (after main returns and the local is out of scope), the script exits
+# with "notes_file: unbound variable" — observed in production on
+# v0.24.1 release.
+#
+# This test replays the EXACT trap line from release.sh in an isolated
+# subshell so the regression is caught at the source.
+NOTES_TRAP_LINE="$(grep -E "^  trap [\"'].*rm " "$SCRIPT_DIR/release.sh" | head -1)"
+[[ -n "$NOTES_TRAP_LINE" ]] || { echo "ERROR: could not locate trap line in release.sh" >&2; exit 1; }
+
+NOTES_TMP="$(mktemp -t floq-notes-trap.XXXXXX)"
+mv -- "$NOTES_TMP" "${NOTES_TMP}.md"
+NOTES_TMP="${NOTES_TMP}.md"
+
+# Reproduce the main()-shaped scope: notes_file is local; trap is set;
+# function returns; script exits.
+notes_stderr="$(
+  bash -c "
+set -uo pipefail
+f() {
+  local notes_file='$NOTES_TMP'
+  $NOTES_TRAP_LINE
+}
+f
+" 2>&1
+)"
+
+if [[ -z "$notes_stderr" ]]; then
+  pass "no unbound variable after function returns"
+else
+  fail "no unbound variable after function returns" "stderr: $notes_stderr"
+fi
+
+if [[ ! -e "$NOTES_TMP" ]]; then
+  pass "trap removes notes_file on exit"
+else
+  fail "trap removes notes_file on exit" "file still exists: $NOTES_TMP"
+  rm -f "$NOTES_TMP"
+fi
+
+echo
 if [[ "$failures" -gt 0 ]]; then
   printf "FAIL: %d test(s) failed\n" "$failures" >&2
   exit 1
