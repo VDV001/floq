@@ -185,6 +185,36 @@ func (uc *PendingReplyUseCase) Reject(ctx context.Context, userID, id uuid.UUID)
 	return nil
 }
 
+// UpdateBody applies a body-only edit on a pending reply scoped by
+// user_id. Returns the updated entity on success so the handler can
+// surface the new body without a second round-trip. Error contract:
+//   - ErrPendingReplyNotFound: missing or cross-tenant id (uniform 404)
+//   - ErrPendingReplyAlreadyDecided: row left Pending (transition or
+//     edit race; 409 in the handler)
+//   - ErrPendingReplyEmptyBody: domain invariant (400 in the handler)
+//
+// Persistence is optimistic-locked on status=Pending so a concurrent
+// approve/reject cannot be silently overwritten.
+func (uc *PendingReplyUseCase) UpdateBody(ctx context.Context, userID, id uuid.UUID, body string) (*PendingReply, error) {
+	pr, err := uc.loadOwned(ctx, userID, id)
+	if err != nil {
+		return nil, err
+	}
+	if err := pr.UpdateBody(body); err != nil {
+		if errors.Is(err, ErrPendingReplyNotEditable) {
+			return nil, ErrPendingReplyAlreadyDecided
+		}
+		return nil, err
+	}
+	if err := uc.repo.UpdateBody(ctx, pr, PendingReplyStatusPending); err != nil {
+		if errors.Is(err, ErrPendingReplyNotFound) {
+			return nil, ErrPendingReplyAlreadyDecided
+		}
+		return nil, fmt.Errorf("persist pending reply body: %w", err)
+	}
+	return pr, nil
+}
+
 // loadOwned fetches a reply scoped by user_id and collapses
 // "not found" and "not owned" into ErrPendingReplyNotFound so callers
 // cannot leak existence cross-tenant by inspecting the error.
