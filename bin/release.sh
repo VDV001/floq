@@ -236,7 +236,9 @@ main() {
   notes_file="$(mktemp -t release-notes-XXXXXX)"
   mv -- "$notes_file" "${notes_file}.md"
   notes_file="${notes_file}.md"
-  trap 'rm -f "$notes_file"' EXIT
+  # Single-eval the path into the trap body so cleanup survives main()'s
+  # local going out of scope when the function returns (issue #70).
+  trap "rm -f -- '$notes_file'" EXIT
   local last_tag
   last_tag="$(git -C "$root" describe --tags --abbrev=0 "v${new_version}^" 2>/dev/null || true)"
   {
