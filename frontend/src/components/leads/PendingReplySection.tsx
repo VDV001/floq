@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { ShieldCheck, X, AlertCircle } from "lucide-react";
+import { ShieldCheck, X, AlertCircle, Pencil } from "lucide-react";
 import { api, PendingReply } from "@/lib/api";
 
 interface Props {
@@ -22,11 +22,17 @@ interface Props {
  * already either visible in the conversation thread (sent) or
  * terminated (rejected), so re-displaying them adds noise without
  * value.
+ *
+ * Each row exposes Approve / Reject / Edit. Edit (#48) flips the row
+ * into a textarea + Save/Cancel; Save calls PATCH and refetches so
+ * the row reflects whatever the server stored.
  */
 export function PendingReplySection({ leadId, onApproved }: Props) {
   const [replies, setReplies] = useState<PendingReply[] | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [draft, setDraft] = useState("");
 
   useEffect(() => {
     let cancelled = false;
@@ -47,12 +53,6 @@ export function PendingReplySection({ leadId, onApproved }: Props) {
   const pending = replies.filter((r) => r.status === "pending");
   if (pending.length === 0) return null;
 
-  // refreshFromServer replaces local state with the server's view of
-  // the queue. Costs one extra round-trip per decision but closes the
-  // 'list reflects truth' invariant: if the dispatcher silently kept
-  // the row at 'approved' (Update→approved succeeded, Update→sent
-  // didn't), the operator sees the row back instead of an
-  // optimistically-stale UI.
   async function refreshFromServer() {
     try {
       const fresh = await api.getPendingReplies(leadId);
@@ -91,6 +91,35 @@ export function PendingReplySection({ leadId, onApproved }: Props) {
     }
   }
 
+  function startEdit(r: PendingReply) {
+    setEditingId(r.id);
+    setDraft(r.body);
+    setError(null);
+  }
+
+  function cancelEdit() {
+    setEditingId(null);
+    setDraft("");
+  }
+
+  async function handleSave(id: string) {
+    const trimmed = draft.trim();
+    if (trimmed === "") return; // Save button is also disabled — belt + suspenders.
+    setBusyId(id);
+    setError(null);
+    try {
+      await api.updatePendingReply(id, trimmed);
+      await refreshFromServer();
+      setEditingId(null);
+      setDraft("");
+    } catch {
+      setError("Не удалось сохранить — попробуйте ещё раз");
+      // Stay in edit mode so the operator can retry without re-typing.
+    } finally {
+      setBusyId(null);
+    }
+  }
+
   return (
     <section
       className="mb-8 rounded-xl border border-[#f5b73c]/40 bg-[#fff8e1] p-5 shadow-sm"
@@ -119,38 +148,80 @@ export function PendingReplySection({ leadId, onApproved }: Props) {
       <ul className="space-y-3">
         {pending.map((r) => {
           const isBusy = busyId === r.id;
+          const isEditing = editingId === r.id;
           return (
             <li
               key={r.id}
               className="rounded-lg border border-[#f5b73c]/30 bg-white p-4"
             >
-              <p className="mb-3 whitespace-pre-wrap text-sm text-[#0d1c2e]">
-                {r.body}
-              </p>
+              {isEditing ? (
+                <textarea
+                  value={draft}
+                  onChange={(e) => setDraft(e.target.value)}
+                  disabled={isBusy}
+                  rows={Math.max(3, draft.split("\n").length)}
+                  className="mb-3 w-full resize-y rounded-md border border-[#c3c6d7]/50 bg-white px-3 py-2 text-sm text-[#0d1c2e] focus:border-[#0d7a2c] focus:outline-none disabled:opacity-50"
+                  aria-label="Тело сообщения"
+                />
+              ) : (
+                <p className="mb-3 whitespace-pre-wrap text-sm text-[#0d1c2e]">
+                  {r.body}
+                </p>
+              )}
               <div className="flex items-center justify-between gap-3">
                 <span className="text-[0.65rem] font-medium uppercase tracking-wide text-[#737686]">
                   {kindLabel(r.kind)} · {channelLabel(r.channel)}
                 </span>
-                <div className="flex gap-2">
-                  <button
-                    type="button"
-                    onClick={() => handleReject(r.id)}
-                    disabled={isBusy}
-                    className="inline-flex items-center gap-1.5 rounded-lg border border-[#c3c6d7]/50 bg-white px-3 py-1.5 text-xs font-semibold text-[#434655] transition-colors hover:bg-[#f7f9fd] disabled:opacity-50"
-                  >
-                    <X className="size-3.5" />
-                    Отклонить
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => handleApprove(r.id)}
-                    disabled={isBusy}
-                    className="inline-flex items-center gap-1.5 rounded-lg bg-[#0d7a2c] px-3 py-1.5 text-xs font-semibold text-white transition-colors hover:bg-[#0a6324] disabled:opacity-50"
-                  >
-                    <ShieldCheck className="size-3.5" />
-                    Одобрить и отправить
-                  </button>
-                </div>
+                {isEditing ? (
+                  <div className="flex gap-2">
+                    <button
+                      type="button"
+                      onClick={cancelEdit}
+                      disabled={isBusy}
+                      className="inline-flex items-center gap-1.5 rounded-lg border border-[#c3c6d7]/50 bg-white px-3 py-1.5 text-xs font-semibold text-[#434655] transition-colors hover:bg-[#f7f9fd] disabled:opacity-50"
+                    >
+                      Отмена
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleSave(r.id)}
+                      disabled={isBusy || draft.trim() === ""}
+                      className="inline-flex items-center gap-1.5 rounded-lg bg-[#0d7a2c] px-3 py-1.5 text-xs font-semibold text-white transition-colors hover:bg-[#0a6324] disabled:opacity-50"
+                    >
+                      Сохранить
+                    </button>
+                  </div>
+                ) : (
+                  <div className="flex gap-2">
+                    <button
+                      type="button"
+                      onClick={() => handleReject(r.id)}
+                      disabled={isBusy}
+                      className="inline-flex items-center gap-1.5 rounded-lg border border-[#c3c6d7]/50 bg-white px-3 py-1.5 text-xs font-semibold text-[#434655] transition-colors hover:bg-[#f7f9fd] disabled:opacity-50"
+                    >
+                      <X className="size-3.5" />
+                      Отклонить
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => startEdit(r)}
+                      disabled={isBusy}
+                      className="inline-flex items-center gap-1.5 rounded-lg border border-[#c3c6d7]/50 bg-white px-3 py-1.5 text-xs font-semibold text-[#434655] transition-colors hover:bg-[#f7f9fd] disabled:opacity-50"
+                    >
+                      <Pencil className="size-3.5" />
+                      Изменить
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleApprove(r.id)}
+                      disabled={isBusy}
+                      className="inline-flex items-center gap-1.5 rounded-lg bg-[#0d7a2c] px-3 py-1.5 text-xs font-semibold text-white transition-colors hover:bg-[#0a6324] disabled:opacity-50"
+                    >
+                      <ShieldCheck className="size-3.5" />
+                      Одобрить и отправить
+                    </button>
+                  </div>
+                )}
               </div>
             </li>
           );

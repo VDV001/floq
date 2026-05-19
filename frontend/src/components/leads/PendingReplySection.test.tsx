@@ -12,6 +12,7 @@ vi.mock("@/lib/api", async () => {
       getPendingReplies: vi.fn(),
       approvePendingReply: vi.fn(),
       rejectPendingReply: vi.fn(),
+      updatePendingReply: vi.fn(),
     },
   };
 });
@@ -182,5 +183,100 @@ describe("PendingReplySection", () => {
     const { container } = render(<PendingReplySection leadId="lead-1" />);
     await waitFor(() => expect(api.getPendingReplies).toHaveBeenCalled());
     expect(container.firstChild).toBeNull();
+  });
+
+  // --- Edit-before-approve (#48) ---
+
+  it("shows an Edit button on each pending row", async () => {
+    vi.mocked(api.getPendingReplies).mockResolvedValue([reply()]);
+    render(<PendingReplySection leadId="lead-1" />);
+    expect(await screen.findByRole("button", { name: /Изменить/i })).toBeInTheDocument();
+  });
+
+  it("clicking Edit shows a textarea pre-filled with the body and Save/Cancel buttons", async () => {
+    const user = userEvent.setup();
+    vi.mocked(api.getPendingReplies).mockResolvedValue([reply()]);
+    render(<PendingReplySection leadId="lead-1" />);
+
+    await user.click(await screen.findByRole("button", { name: /Изменить/i }));
+
+    const textarea = screen.getByRole("textbox");
+    expect(textarea).toHaveValue("Отлично! Вот ссылка: https://cal.com/x");
+    expect(screen.getByRole("button", { name: /Сохранить/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Отмена/i })).toBeInTheDocument();
+    // Approve / Reject must NOT be shown while editing — operators see
+    // one consistent action set per row at any moment.
+    expect(screen.queryByRole("button", { name: /Одобрить и отправить/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^Отклонить$/i })).not.toBeInTheDocument();
+  });
+
+  it("Cancel exits edit mode without calling the API and restores the original body", async () => {
+    const user = userEvent.setup();
+    vi.mocked(api.getPendingReplies).mockResolvedValue([reply()]);
+    render(<PendingReplySection leadId="lead-1" />);
+
+    await user.click(await screen.findByRole("button", { name: /Изменить/i }));
+    const textarea = screen.getByRole("textbox");
+    await user.clear(textarea);
+    await user.type(textarea, "draft edits");
+    await user.click(screen.getByRole("button", { name: /Отмена/i }));
+
+    expect(api.updatePendingReply).not.toHaveBeenCalled();
+    // Original body is visible again, edit-mode controls are gone.
+    expect(screen.getByText(/Отлично! Вот ссылка/)).toBeInTheDocument();
+    expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
+  });
+
+  it("Save calls updatePendingReply, then refetches and shows the new body", async () => {
+    const user = userEvent.setup();
+    vi.mocked(api.getPendingReplies)
+      .mockResolvedValueOnce([reply()])
+      .mockResolvedValueOnce([reply({ body: "edited" })]);
+    vi.mocked(api.updatePendingReply).mockResolvedValue(reply({ body: "edited" }));
+
+    render(<PendingReplySection leadId="lead-1" />);
+    await user.click(await screen.findByRole("button", { name: /Изменить/i }));
+    const textarea = screen.getByRole("textbox");
+    await user.clear(textarea);
+    await user.type(textarea, "edited");
+    await user.click(screen.getByRole("button", { name: /Сохранить/i }));
+
+    await waitFor(() => expect(api.updatePendingReply).toHaveBeenCalledWith("pr-1", "edited"));
+    await waitFor(() => expect(api.getPendingReplies).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(screen.getByText(/^edited$/)).toBeInTheDocument());
+    // After save we exit edit mode.
+    expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
+  });
+
+  it("Save with empty body is disabled (no API call)", async () => {
+    const user = userEvent.setup();
+    vi.mocked(api.getPendingReplies).mockResolvedValue([reply()]);
+
+    render(<PendingReplySection leadId="lead-1" />);
+    await user.click(await screen.findByRole("button", { name: /Изменить/i }));
+    await user.clear(screen.getByRole("textbox"));
+
+    const saveBtn = screen.getByRole("button", { name: /Сохранить/i });
+    expect(saveBtn).toBeDisabled();
+    // Clicking a disabled button must not call the API.
+    await user.click(saveBtn);
+    expect(api.updatePendingReply).not.toHaveBeenCalled();
+  });
+
+  it("surfaces an error message when updatePendingReply fails and keeps edit mode open", async () => {
+    const user = userEvent.setup();
+    vi.mocked(api.getPendingReplies).mockResolvedValue([reply()]);
+    vi.mocked(api.updatePendingReply).mockRejectedValue(new Error("boom"));
+
+    render(<PendingReplySection leadId="lead-1" />);
+    await user.click(await screen.findByRole("button", { name: /Изменить/i }));
+    const textarea = screen.getByRole("textbox");
+    await user.clear(textarea);
+    await user.type(textarea, "edited");
+    await user.click(screen.getByRole("button", { name: /Сохранить/i }));
+
+    await waitFor(() => expect(screen.getByRole("alert")).toBeInTheDocument());
+    // Edit mode persists so the operator can retry without re-typing.
+    expect(screen.getByRole("textbox")).toBeInTheDocument();
   });
 });

@@ -205,4 +205,12 @@ type PendingReplyRepository interface {
 	// this to ErrPendingReplyAlreadyDecided when the row was loaded
 	// in the same operation.
 	Update(ctx context.Context, pr *PendingReply, expectedStatus PendingReplyStatus) error
+	// UpdateBody persists a body-only edit on a pending row, scoped by
+	// user_id and optimistic-locked on expectedStatus (always Pending
+	// at the call site — Approved/Sent/Rejected rows are immutable per
+	// the domain invariant). Other columns are untouched. Missing /
+	// cross-tenant / lock-violated rows return ErrPendingReplyNotFound;
+	// the usecase maps that to ErrPendingReplyAlreadyDecided when the
+	// row was loaded inside the same operation.
+	UpdateBody(ctx context.Context, pr *PendingReply, expectedStatus PendingReplyStatus) error
 }

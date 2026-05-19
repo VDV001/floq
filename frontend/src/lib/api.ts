@@ -191,6 +191,15 @@ export const api = {
     apiFetch<void>(`/api/pending-replies/${id}/approve`, { method: "POST" }),
   rejectPendingReply: (id: string) =>
     apiFetch<void>(`/api/pending-replies/${id}/reject`, { method: "POST" }),
+  // Edit-before-approve (#48). Returns the updated PendingReply so the
+  // caller can render the new body in place without a refetch round-trip.
+  // Only valid while the row is in 'pending' status — backend answers
+  // 409 once approved/sent/rejected.
+  updatePendingReply: (id: string, body: string) =>
+    apiFetch<PendingReply>(`/api/pending-replies/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify({ body }),
+    }),
 
   // Reminders
   getReminders: () => apiFetch<Reminder[]>("/api/reminders"),

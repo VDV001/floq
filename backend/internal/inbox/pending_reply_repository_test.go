@@ -391,3 +391,91 @@ func TestPendingReplyRepository_Update_PersistsStatusAndTimestamps(t *testing.T)
 	require.NotNil(t, got2.SentAt)
 	assert.WithinDuration(t, sentAt, *got2.SentAt, time.Second)
 }
+
+// --- UpdateBody (#48) ---
+
+func TestPendingReplyRepository_UpdateBody_PersistsBodyOnly(t *testing.T) {
+	// Backfills integration coverage for the body-only column write
+	// shipped alongside the usecase RED commit (#48 plan put the SQL in
+	// before the integration test, so this is honest backfill — not a
+	// fresh TDD RED).
+	pool := testutil.TestDB(t)
+	userID := testutil.SeedUser(t, pool)
+	leadID := seedLeadForUser(t, pool, userID)
+
+	repo := inbox.NewPendingReplyRepository(pool)
+	ctx := context.Background()
+
+	pr, err := inbox.NewPendingReply(userID, leadID, inbox.ChannelTelegram, inbox.PendingReplyKindBookingLink, "original")
+	require.NoError(t, err)
+	require.NoError(t, repo.Save(ctx, pr))
+
+	pr.Body = "edited body"
+	require.NoError(t, repo.UpdateBody(ctx, pr, inbox.PendingReplyStatusPending))
+
+	got, err := repo.GetByID(ctx, userID, pr.ID)
+	require.NoError(t, err)
+	require.NotNil(t, got)
+	assert.Equal(t, "edited body", got.Body)
+	// Status stays Pending; decided_* columns stay nil — UpdateBody
+	// only touches body, never the decision columns.
+	assert.Equal(t, inbox.PendingReplyStatusPending, got.Status)
+	assert.Nil(t, got.DecidedAt)
+	assert.Nil(t, got.DecidedBy)
+	assert.Nil(t, got.SentAt)
+}
+
+func TestPendingReplyRepository_UpdateBody_OptimisticLockRejectsWhenStatusMoved(t *testing.T) {
+	pool := testutil.TestDB(t)
+	userID := testutil.SeedUser(t, pool)
+	leadID := seedLeadForUser(t, pool, userID)
+
+	repo := inbox.NewPendingReplyRepository(pool)
+	ctx := context.Background()
+
+	pr, err := inbox.NewPendingReply(userID, leadID, inbox.ChannelTelegram, inbox.PendingReplyKindBookingLink, "original")
+	require.NoError(t, err)
+	require.NoError(t, repo.Save(ctx, pr))
+
+	// Simulate concurrent approve before edit lands: directly move
+	// status to approved in the DB.
+	_, err = pool.Exec(ctx,
+		`UPDATE pending_replies SET status = 'approved' WHERE id = $1`, pr.ID)
+	require.NoError(t, err)
+
+	pr.Body = "edit too late"
+	err = repo.UpdateBody(ctx, pr, inbox.PendingReplyStatusPending)
+	require.ErrorIs(t, err, inbox.ErrPendingReplyNotFound)
+
+	// Verify body was not silently written.
+	got, _ := repo.GetByID(ctx, userID, pr.ID)
+	require.NotNil(t, got)
+	assert.Equal(t, "original", got.Body)
+}
+
+func TestPendingReplyRepository_UpdateBody_CrossTenantReturnsNotFound(t *testing.T) {
+	pool := testutil.TestDB(t)
+	owner := testutil.SeedUser(t, pool)
+	attacker := testutil.SeedUser(t, pool)
+	leadID := seedLeadForUser(t, pool, owner)
+
+	repo := inbox.NewPendingReplyRepository(pool)
+	ctx := context.Background()
+
+	pr, err := inbox.NewPendingReply(owner, leadID, inbox.ChannelTelegram, inbox.PendingReplyKindBookingLink, "victim body")
+	require.NoError(t, err)
+	require.NoError(t, repo.Save(ctx, pr))
+
+	// Attacker tries to edit with their UserID — repo scopes by user_id
+	// so the row is invisible.
+	pr.UserID = attacker
+	pr.Body = "tampered"
+	err = repo.UpdateBody(ctx, pr, inbox.PendingReplyStatusPending)
+	require.ErrorIs(t, err, inbox.ErrPendingReplyNotFound)
+
+	// Restore owner perspective and verify untouched.
+	pr.UserID = owner
+	got, _ := repo.GetByID(ctx, owner, pr.ID)
+	require.NotNil(t, got)
+	assert.Equal(t, "victim body", got.Body)
+}

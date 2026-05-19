@@ -173,6 +173,26 @@ func (r *PendingReplyRepo) CountPendingByUser(ctx context.Context, userID uuid.U
 // somebody else's row even if the caller forgets to re-check ownership.
 // Body, channel, kind and created_at are immutable after Save by
 // contract — the entity exposes no setters for them.
+// UpdateBody writes the body column only, with the same WHERE
+// (id, user_id, status) optimistic-lock as Update. status is always
+// PendingReplyStatusPending at the call site — Approved / Sent /
+// Rejected rows are immutable per the domain invariant. Integration
+// tests in pending_reply_repository_test.go pin the SQL contract.
+func (r *PendingReplyRepo) UpdateBody(ctx context.Context, pr *PendingReply, expectedStatus PendingReplyStatus) error {
+	tag, err := r.q(ctx).Exec(ctx,
+		`UPDATE pending_replies
+		 SET body = $1
+		 WHERE id = $2 AND user_id = $3 AND status = $4`,
+		pr.Body, pr.ID, pr.UserID, string(expectedStatus))
+	if err != nil {
+		return fmt.Errorf("update pending reply body: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrPendingReplyNotFound
+	}
+	return nil
+}
+
 func (r *PendingReplyRepo) Update(ctx context.Context, pr *PendingReply, expectedStatus PendingReplyStatus) error {
 	tag, err := r.q(ctx).Exec(ctx,
 		`UPDATE pending_replies

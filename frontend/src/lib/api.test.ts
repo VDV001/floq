@@ -375,5 +375,28 @@ describe("api module", () => {
       expect(url).toBe("http://localhost:8080/api/pending-replies/pr-2/reject");
       expect(opts.method).toBe("POST");
     });
+
+    it("updatePendingReply → PATCH /api/pending-replies/:id with body", async () => {
+      const updated = {
+        id: "pr-3",
+        lead_id: "lead-3",
+        channel: "telegram",
+        kind: "booking_link",
+        body: "edited body",
+        status: "pending",
+        created_at: "2026-05-19T10:00:00Z",
+      };
+      fetchMock.mockResolvedValueOnce(mockResponse(updated));
+
+      const result = await api.updatePendingReply("pr-3", "edited body");
+
+      const [url, opts] = fetchMock.mock.calls[0];
+      expect(url).toBe("http://localhost:8080/api/pending-replies/pr-3");
+      expect(opts.method).toBe("PATCH");
+      expect(JSON.parse(opts.body)).toEqual({ body: "edited body" });
+      // PATCH returns 200 + the updated entity (NOT 204), so the API
+      // method must surface the new body to the UI without a refetch.
+      expect(result).toEqual(updated);
+    });
   });
 });
