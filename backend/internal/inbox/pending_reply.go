@@ -96,6 +96,14 @@ var (
 	// so a system-cron caller passing uuid.Nil cannot silently land
 	// rows that would later 500 the repo Update on the decided_by FK.
 	ErrPendingReplyMissingDecider = errors.New("pending reply: decider id is required")
+	// ErrPendingReplyNotEditable rejects UpdateBody on rows that have
+	// left the Pending status. Approved / sent / rejected drafts are
+	// immutable: the operator already committed to the wording when
+	// they took the decision (or the row is terminal). Distinct from
+	// ErrPendingReplyInvalidTransition because UpdateBody is not a
+	// status transition — keeping the sentinel separate lets the
+	// handler answer 409 unambiguously.
+	ErrPendingReplyNotEditable = errors.New("pending reply: not editable")
 )
 
 // PendingReply is an inbox-originated outbound message awaiting human
@@ -178,6 +186,24 @@ func (p *PendingReply) MarkSent(at time.Time) error {
 	}
 	t := at
 	p.SentAt = &t
+	return nil
+}
+
+// UpdateBody replaces the draft body with a trimmed version of input,
+// enforcing the same non-empty invariant as NewPendingReply. Only
+// callable while the reply is in the Pending status — once approved,
+// sent or rejected the body is immutable (operator already committed,
+// or the row is terminal). On any error the existing body is left
+// untouched so partial state never reaches persistence.
+func (p *PendingReply) UpdateBody(body string) error {
+	if p.Status != PendingReplyStatusPending {
+		return ErrPendingReplyNotEditable
+	}
+	trimmed := strings.TrimSpace(body)
+	if trimmed == "" {
+		return ErrPendingReplyEmptyBody
+	}
+	p.Body = trimmed
 	return nil
 }
 
