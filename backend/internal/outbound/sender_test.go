@@ -1185,7 +1185,7 @@ func TestSendViaResend_NoKey(t *testing.T) {
 		"", "", "", "",
 		nil, nil, nil, nil, nil, nil)
 
-	err := s.sendViaResend(context.Background(), "to@test.com", "subj", "body")
+	err := s.sendViaResend(context.Background(), "to@test.com", "subj", "body", "")
 	if !errors.Is(err, ErrNoResendAPIKey) {
 		t.Fatalf("expected errors.Is to match ErrNoResendAPIKey, got: %v", err)
 	}
@@ -1197,7 +1197,7 @@ func TestSendViaResend_ConfigStoreError(t *testing.T) {
 		"", "", "", "",
 		nil, nil, nil, nil, nil, nil)
 
-	err := s.sendViaResend(context.Background(), "to@test.com", "subj", "body")
+	err := s.sendViaResend(context.Background(), "to@test.com", "subj", "body", "")
 	if !errors.Is(err, ErrNoResendAPIKey) {
 		t.Fatalf("expected errors.Is to match ErrNoResendAPIKey, got: %v", err)
 	}

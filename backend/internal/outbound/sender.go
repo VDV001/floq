@@ -127,7 +127,7 @@ func (s *Sender) SendPending(ctx context.Context) error {
 		if smtpHost != "" && smtpUser != "" && smtpPassword != "" {
 			sendErr = s.sendViaSMTPWith(ctx, smtpHost, smtpPort, smtpUser, smtpPassword, fromAddr, prospect.Email, subject, htmlBody)
 		} else {
-			sendErr = s.sendViaResend(ctx, prospect.Email, subject, htmlBody)
+			sendErr = s.sendViaResend(ctx, prospect.Email, subject, htmlBody, "outbound:"+msg.ID.String())
 		}
 
 		if sendErr != nil {
@@ -371,7 +371,12 @@ func (s *Sender) handleTelegramMessage(ctx context.Context, msg seqdomain.Outbou
 }
 
 // sendViaResend sends email through the Resend API using raw HTTP.
-func (s *Sender) sendViaResend(ctx context.Context, to, subject, htmlBody string) error {
+// idempotencyKey is forwarded as the "Idempotency-Key" header so that
+// retries of the same outbound row collapse to a single delivery on
+// Resend's side (https://resend.com/docs/api-reference/idempotency).
+// An empty key is allowed but unsafe — callers should always pass a
+// stable per-message value (e.g. "outbound:<message_id>").
+func (s *Sender) sendViaResend(ctx context.Context, to, subject, htmlBody, idempotencyKey string) error {
 	apiKey := s.fallbackKey
 	if cfg, err := s.store.GetConfig(ctx, s.ownerID); err == nil {
 		apiKey = settingsdomain.ResolveConfig(cfg.ResendAPIKey, apiKey)
@@ -393,6 +398,9 @@ func (s *Sender) sendViaResend(ctx context.Context, to, subject, htmlBody string
 	}
 	req.Header.Set("Authorization", "Bearer "+apiKey)
 	req.Header.Set("Content-Type", "application/json")
+	if idempotencyKey != "" {
+		req.Header.Set("Idempotency-Key", idempotencyKey)
+	}
 
 	client := s.httpClient
 	if client == nil {
