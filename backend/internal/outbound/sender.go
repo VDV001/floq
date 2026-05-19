@@ -6,7 +6,9 @@ import (
 	"crypto/tls"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
+	"math/rand/v2"
 	"net"
 	"net/http"
 	"net/smtp"
@@ -127,7 +129,7 @@ func (s *Sender) SendPending(ctx context.Context) error {
 		if smtpHost != "" && smtpUser != "" && smtpPassword != "" {
 			sendErr = s.sendViaSMTPWith(ctx, smtpHost, smtpPort, smtpUser, smtpPassword, fromAddr, prospect.Email, subject, htmlBody)
 		} else {
-			sendErr = s.sendViaResend(ctx, prospect.Email, subject, htmlBody)
+			sendErr = s.sendViaResend(ctx, prospect.Email, subject, htmlBody, idempotencyKeyPrefix+msg.ID.String())
 		}
 
 		if sendErr != nil {
@@ -168,6 +170,15 @@ func (s *Sender) SendPending(ctx context.Context) error {
 }
 
 // sendViaSMTPWith sends email through an SMTP server (mail.ru, Yandex, Gmail, etc.)
+//
+// UNLIKE sendViaResend, the SMTP path has no retry and no idempotency
+// guarantee. SMTP-level dedup would require a stable Message-ID header
+// plus cooperation from every receiving MTA's duplicate-detection (or
+// our own server-side tracking of which Message-IDs have already been
+// SMTP-handed-off). Neither is implemented. A timeout between SMTP
+// handoff and ack on this path may result in duplicate delivery on a
+// subsequent cron tick that re-fetches the same row. Tracked as a
+// known gap; the Resend path (the production default) is safe.
 func (s *Sender) sendViaSMTPWith(ctx context.Context, host, port, user, password, from, to, subject, htmlBody string) error {
 	if from == "" {
 		from = user
@@ -370,8 +381,33 @@ func (s *Sender) handleTelegramMessage(ctx context.Context, msg seqdomain.Outbou
 	log.Printf("[outbound] sent telegram message to %s (msg %s)", prospect.Phone, msg.ID)
 }
 
+// resendMaxAttempts caps retries at 3 — first try + two backoffs. Any
+// more and the cron tick gets stuck behind a single sticky 5xx; any
+// less and one transient blip surfaces as a hard send failure.
+const resendMaxAttempts = 3
+
+// resendInitialBackoff is the wait before the second attempt; doubled
+// for the third. Total worst-case wait = 200 + 400 = 600 ms (plus up
+// to ~50% jitter), well under the cron tick budget.
+const resendInitialBackoff = 200 * time.Millisecond
+
+// idempotencyKeyPrefix namespaces the Resend Idempotency-Key so it is
+// identifiable in the Resend dashboard and so a future second caller
+// (e.g. transactional emails outside the outbound cron) cannot
+// collide with cron-row keys for free.
+const idempotencyKeyPrefix = "outbound:"
+
 // sendViaResend sends email through the Resend API using raw HTTP.
-func (s *Sender) sendViaResend(ctx context.Context, to, subject, htmlBody string) error {
+// idempotencyKey is forwarded as the "Idempotency-Key" header so that
+// retries of the same outbound row collapse to a single delivery on
+// Resend's side (https://resend.com/docs/api-reference/idempotency).
+// An empty key is allowed but unsafe — callers should always pass a
+// stable per-message value (e.g. "outbound:<message_id>").
+//
+// Retries up to resendMaxAttempts on transport errors and 5xx
+// responses with exponential backoff. 4xx is treated as terminal —
+// same body + same key cannot succeed by trying again.
+func (s *Sender) sendViaResend(ctx context.Context, to, subject, htmlBody, idempotencyKey string) error {
 	apiKey := s.fallbackKey
 	if cfg, err := s.store.GetConfig(ctx, s.ownerID); err == nil {
 		apiKey = settingsdomain.ResolveConfig(cfg.ResendAPIKey, apiKey)
@@ -387,25 +423,90 @@ func (s *Sender) sendViaResend(ctx context.Context, to, subject, htmlBody string
 		"html":    htmlBody,
 	})
 
-	req, err := http.NewRequestWithContext(ctx, "POST", resendAPIURL, bytes.NewReader(body))
-	if err != nil {
-		return fmt.Errorf("resend request: %w", err)
-	}
-	req.Header.Set("Authorization", "Bearer "+apiKey)
-	req.Header.Set("Content-Type", "application/json")
-
 	client := s.httpClient
 	if client == nil {
 		client = http.DefaultClient
 	}
-	resp, err := client.Do(req)
-	if err != nil {
-		return fmt.Errorf("resend send: %w", err)
-	}
-	defer resp.Body.Close()
 
-	if resp.StatusCode >= 400 {
-		return &ResendAPIError{StatusCode: resp.StatusCode}
+	var lastErr error
+	backoff := resendInitialBackoff
+	for attempt := 1; attempt <= resendMaxAttempts; attempt++ {
+		// New Request per attempt — bytes.Reader has an internal
+		// cursor that is exhausted by the previous client.Do.
+		req, err := http.NewRequestWithContext(ctx, "POST", resendAPIURL, bytes.NewReader(body))
+		if err != nil {
+			return fmt.Errorf("resend request: %w", err)
+		}
+		req.Header.Set("Authorization", "Bearer "+apiKey)
+		req.Header.Set("Content-Type", "application/json")
+		if idempotencyKey != "" {
+			req.Header.Set("Idempotency-Key", idempotencyKey)
+		}
+
+		resp, err := client.Do(req)
+		if err != nil {
+			lastErr = fmt.Errorf("resend send (attempt %d): %w", attempt, err)
+			if attempt == resendMaxAttempts {
+				return lastErr
+			}
+			if werr := waitWithCtx(ctx, jitter(backoff)); werr != nil {
+				return werr
+			}
+			backoff *= 2
+			continue
+		}
+		// Drain the response body before Close so the underlying TCP
+		// connection can be returned to the keep-alive pool. Resend
+		// 5xx may carry a hundred-byte JSON error envelope; without
+		// the drain the transport opens a fresh TCP+TLS handshake on
+		// every retry attempt.
+		_, _ = io.Copy(io.Discard, resp.Body)
+		resp.Body.Close()
+
+		// 429 — transient (rate-limit). Same Idempotency-Key is safe
+		// to retry; Resend will dedup if the original eventually
+		// landed. Handle BEFORE the generic 4xx-terminal branch.
+		retryable := (resp.StatusCode >= 500 && resp.StatusCode < 600) || resp.StatusCode == http.StatusTooManyRequests
+		if retryable {
+			lastErr = &ResendAPIError{StatusCode: resp.StatusCode}
+			if attempt == resendMaxAttempts {
+				return lastErr
+			}
+			if werr := waitWithCtx(ctx, jitter(backoff)); werr != nil {
+				return werr
+			}
+			backoff *= 2
+			continue
+		}
+		if resp.StatusCode >= 400 {
+			// 4xx (other than 429) — client error. Same body + same
+			// Idempotency-Key will fail the same way; retry burns
+			// rate-limit budget without changing the outcome.
+			return &ResendAPIError{StatusCode: resp.StatusCode}
+		}
+		return nil
 	}
-	return nil
+	return lastErr
+}
+
+// jitter spreads backoffs across [d, d*1.5) so multiple senders (or
+// tenants) restarting after a Resend outage do not synchronise on the
+// retry edge and re-thunder the herd.
+func jitter(d time.Duration) time.Duration {
+	if d <= 0 {
+		return d
+	}
+	return d + time.Duration(rand.Int64N(int64(d)/2))
+}
+
+// waitWithCtx sleeps for d unless the context is cancelled first.
+// Lets the retry loop honour cron shutdown without leaving a goroutine
+// blocked in the middle of a backoff.
+func waitWithCtx(ctx context.Context, d time.Duration) error {
+	select {
+	case <-time.After(d):
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }
