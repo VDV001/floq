@@ -2,6 +2,7 @@ package inbox
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"log/slog"
 	"net/http"
@@ -59,10 +60,14 @@ func RegisterPendingReplyRoutes(r chi.Router, uc PendingReplyUseCaseAPI, leads L
 	if decideMW == nil {
 		r.Post("/api/pending-replies/{id}/approve", h.approve())
 		r.Post("/api/pending-replies/{id}/reject", h.reject())
+		r.Patch("/api/pending-replies/{id}", h.updateBody())
 		return
 	}
 	r.With(decideMW).Post("/api/pending-replies/{id}/approve", h.approve())
 	r.With(decideMW).Post("/api/pending-replies/{id}/reject", h.reject())
+	// PATCH is rate-limited too — operators editing in a tight loop should
+	// hit the same throttle as a tight approve loop.
+	r.With(decideMW).Patch("/api/pending-replies/{id}", h.updateBody())
 }
 
 func (h *pendingReplyHandler) listByLead() http.HandlerFunc {
@@ -105,6 +110,58 @@ func (h *pendingReplyHandler) reject() http.HandlerFunc {
 	return h.decide(func(uc PendingReplyUseCaseAPI, ctx context.Context, userID, id uuid.UUID) error {
 		return uc.Reject(ctx, userID, id)
 	})
+}
+
+// updateBodyRequest is the PATCH request body. Body is required;
+// presence/non-empty is verified at parse time so the handler can
+// answer 400 without a round-trip to the usecase.
+type updateBodyRequest struct {
+	Body *string `json:"body"`
+}
+
+func (h *pendingReplyHandler) updateBody() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		userID, ok := httputil.UserIDFromContext(r.Context())
+		if !ok {
+			httputil.WriteError(w, http.StatusUnauthorized, "unauthorized")
+			return
+		}
+		id, err := httputil.ParseIDParam(r, "id")
+		if err != nil {
+			httputil.WriteError(w, http.StatusBadRequest, "invalid pending reply id")
+			return
+		}
+		var req updateBodyRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			httputil.WriteError(w, http.StatusBadRequest, "invalid json body")
+			return
+		}
+		if req.Body == nil {
+			// Distinguish "missing field" from "empty string" so callers
+			// who forgot the field get a clear hint vs. domain-empty.
+			httputil.WriteError(w, http.StatusBadRequest, "body field is required")
+			return
+		}
+		updated, err := h.uc.UpdateBody(r.Context(), userID, id, *req.Body)
+		if err != nil {
+			switch {
+			case errors.Is(err, ErrPendingReplyNotFound):
+				httputil.WriteError(w, http.StatusNotFound, "pending reply not found")
+			case errors.Is(err, ErrPendingReplyAlreadyDecided):
+				httputil.WriteError(w, http.StatusConflict, "pending reply already decided")
+			case errors.Is(err, ErrPendingReplyEmptyBody):
+				httputil.WriteError(w, http.StatusBadRequest, "body is required (non-empty after trim)")
+			default:
+				slog.ErrorContext(r.Context(), "pending reply update body failed",
+					slog.String("pending_reply_id", id.String()),
+					slog.String("user_id", userID.String()),
+					slog.Any("err", err))
+				httputil.WriteError(w, http.StatusInternalServerError, "failed to update pending reply")
+			}
+			return
+		}
+		httputil.WriteJSON(w, http.StatusOK, pendingReplyToResponse(updated))
+	}
 }
 
 // decide is the shared shape of Approve and Reject: parse auth, parse
