@@ -45,14 +45,14 @@ func (r *PendingReplyRepo) q(ctx context.Context) db.Querier {
 	return db.ConnFromCtx(ctx, r.pool)
 }
 
-const pendingReplyColumns = `id, user_id, lead_id, channel, kind, body, status, created_at, decided_at, sent_at`
+const pendingReplyColumns = `id, user_id, lead_id, channel, kind, body, status, created_at, decided_at, decided_by, sent_at`
 
 func (r *PendingReplyRepo) Save(ctx context.Context, pr *PendingReply) error {
 	_, err := r.q(ctx).Exec(ctx,
 		`INSERT INTO pending_replies (`+pendingReplyColumns+`)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
 		pr.ID, pr.UserID, pr.LeadID, string(pr.Channel), string(pr.Kind), pr.Body,
-		string(pr.Status), pr.CreatedAt, pr.DecidedAt, pr.SentAt)
+		string(pr.Status), pr.CreatedAt, pr.DecidedAt, pr.DecidedBy, pr.SentAt)
 	if err != nil {
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) && pgErr.Code == "23505" && pgErr.ConstraintName == pendingReplyDedupIndex {
@@ -72,7 +72,7 @@ func (r *PendingReplyRepo) GetByID(ctx context.Context, userID, id uuid.UUID) (*
 		 WHERE id = $1 AND user_id = $2`,
 		id, userID).
 		Scan(&pr.ID, &pr.UserID, &pr.LeadID, &channel, &kind, &pr.Body, &status,
-			&pr.CreatedAt, &pr.DecidedAt, &pr.SentAt)
+			&pr.CreatedAt, &pr.DecidedAt, &pr.DecidedBy, &pr.SentAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
 	}
@@ -102,7 +102,7 @@ func (r *PendingReplyRepo) FindPendingByContent(ctx context.Context, userID, lea
 		 LIMIT 1`,
 		userID, leadID, string(kind), trimmed).
 		Scan(&pr.ID, &pr.UserID, &pr.LeadID, &channel, &kindStr, &pr.Body, &status,
-			&pr.CreatedAt, &pr.DecidedAt, &pr.SentAt)
+			&pr.CreatedAt, &pr.DecidedAt, &pr.DecidedBy, &pr.SentAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
 	}
@@ -131,7 +131,7 @@ func (r *PendingReplyRepo) ListByLead(ctx context.Context, userID, leadID uuid.U
 		var pr PendingReply
 		var channel, kind, status string
 		if err := rows.Scan(&pr.ID, &pr.UserID, &pr.LeadID, &channel, &kind, &pr.Body, &status,
-			&pr.CreatedAt, &pr.DecidedAt, &pr.SentAt); err != nil {
+			&pr.CreatedAt, &pr.DecidedAt, &pr.DecidedBy, &pr.SentAt); err != nil {
 			return nil, fmt.Errorf("scan pending reply: %w", err)
 		}
 		pr.Channel = Channel(channel)
@@ -150,9 +150,9 @@ func (r *PendingReplyRepo) ListByLead(ctx context.Context, userID, leadID uuid.U
 func (r *PendingReplyRepo) Update(ctx context.Context, pr *PendingReply, expectedStatus PendingReplyStatus) error {
 	tag, err := r.q(ctx).Exec(ctx,
 		`UPDATE pending_replies
-		 SET status = $1, decided_at = $2, sent_at = $3
-		 WHERE id = $4 AND user_id = $5 AND status = $6`,
-		string(pr.Status), pr.DecidedAt, pr.SentAt, pr.ID, pr.UserID, string(expectedStatus))
+		 SET status = $1, decided_at = $2, decided_by = $3, sent_at = $4
+		 WHERE id = $5 AND user_id = $6 AND status = $7`,
+		string(pr.Status), pr.DecidedAt, pr.DecidedBy, pr.SentAt, pr.ID, pr.UserID, string(expectedStatus))
 	if err != nil {
 		return fmt.Errorf("update pending reply: %w", err)
 	}
