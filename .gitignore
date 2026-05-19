@@ -36,7 +36,9 @@ frontend/.next/
 
 # IDE
 .idea/
-.vscode/
+.vscode/*
+# Allow workspace-pinned safe defaults (#55) without exposing per-user state.
+!.vscode/settings.json
 *.swp
 *.swo
 
