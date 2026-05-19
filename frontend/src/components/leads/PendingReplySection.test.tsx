@@ -67,9 +67,13 @@ describe("PendingReplySection", () => {
     expect(screen.getByText(/Telegram/i)).toBeInTheDocument();
   });
 
-  it("approves on click, removes the row, and calls onApproved", async () => {
+  it("approves on click, refetches, and calls onApproved", async () => {
     const user = userEvent.setup();
-    vi.mocked(api.getPendingReplies).mockResolvedValue([reply()]);
+    // Initial mount returns the pending row; the post-approve refetch
+    // returns an empty list (server confirmed sent).
+    vi.mocked(api.getPendingReplies)
+      .mockResolvedValueOnce([reply()])
+      .mockResolvedValueOnce([]);
     vi.mocked(api.approvePendingReply).mockResolvedValue(undefined);
     const onApproved = vi.fn();
     render(<PendingReplySection leadId="lead-1" onApproved={onApproved} />);
@@ -82,9 +86,11 @@ describe("PendingReplySection", () => {
     expect(onApproved).toHaveBeenCalledOnce();
   });
 
-  it("rejects on click and removes the row without calling onApproved", async () => {
+  it("rejects on click, refetches, and does not call onApproved", async () => {
     const user = userEvent.setup();
-    vi.mocked(api.getPendingReplies).mockResolvedValue([reply()]);
+    vi.mocked(api.getPendingReplies)
+      .mockResolvedValueOnce([reply()])
+      .mockResolvedValueOnce([]);
     vi.mocked(api.rejectPendingReply).mockResolvedValue(undefined);
     const onApproved = vi.fn();
     render(<PendingReplySection leadId="lead-1" onApproved={onApproved} />);
