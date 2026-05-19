@@ -1,4 +1,10 @@
 import { Star, CheckCircle2, MessageCircle, RotateCcw, CircleCheck } from "lucide-react";
+import { STATUS_STYLES, type LeadStatus } from "@/components/leads/constants";
+
+// Re-export lead-domain primitives so existing inbox callers don't have
+// to chase the move. New code should import from
+// @/components/leads/constants directly.
+export { STATUS_STYLES, type LeadStatus };
 
 export interface InboxLead {
   id: string;
@@ -7,20 +13,11 @@ export interface InboxLead {
   channel: "email" | "telegram";
   preview: string;
   timeAgo: string;
-  status: "Новый" | "Квалифицирован" | "В диалоге" | "Нужен фоллоуап" | "Закрыт" | "Выигран";
+  status: LeadStatus;
   apiStatus: string;
   sourceName?: string;
   pendingRepliesCount: number;
 }
-
-export const STATUS_STYLES: Record<InboxLead["status"], string> = {
-  "Новый": "bg-[#dbe1ff] text-[#004ac6]",
-  "Квалифицирован": "bg-[#c7d2fe] text-[#3730a3]",
-  "В диалоге": "bg-[#fef3c7] text-[#92400e]",
-  "Нужен фоллоуап": "bg-[#fee2e2] text-[#dc2626]",
-  "Закрыт": "bg-[#d1fae5] text-[#065f46]",
-  "Выигран": "bg-[#bbf7d0] text-[#14532d]",
-};
 
 export const PIPELINE_STAGES_CONFIG: { id: string; apiStatus: string; label: string; icon: typeof Star; alert?: boolean }[] = [
   { id: "new", apiStatus: "new", label: "Новые лиды", icon: Star },
@@ -32,7 +29,7 @@ export const PIPELINE_STAGES_CONFIG: { id: string; apiStatus: string; label: str
 
 export const FILTER_TABS = ["Все", "Непрочитанные", "Приоритетные"] as const;
 
-export function mapStatus(status: string): InboxLead["status"] {
+export function mapStatus(status: string): LeadStatus {
   switch (status) {
     case "new": return "Новый";
     case "qualified": return "Квалифицирован";

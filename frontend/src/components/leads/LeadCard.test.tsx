@@ -1,7 +1,7 @@
 import { render, screen } from "@testing-library/react";
 import { describe, it, expect, vi } from "vitest";
 import { LeadCard, type LeadCardProps } from "./LeadCard";
-import { STATUS_STYLES } from "@/components/inbox/constants";
+import { STATUS_STYLES } from "@/components/leads/constants";
 
 vi.mock("next/link", () => ({
   default: ({ children, href, ...props }: { children: React.ReactNode; href: string; [key: string]: unknown }) => (
