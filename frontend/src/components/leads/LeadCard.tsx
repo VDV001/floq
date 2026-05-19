@@ -12,6 +12,9 @@ export interface LeadCardProps {
   preview: string;
   timeAgo: string;
   status: "Новый" | "Квалифицирован" | "Нужен фоллоуап";
+  /** Count of HITL drafts on this lead awaiting operator decision.
+   *  Renders a small badge when > 0; absent or 0 means no badge. */
+  pendingRepliesCount?: number;
 }
 
 const STATUS_STYLES: Record<LeadCardProps["status"], string> = {
@@ -28,6 +31,7 @@ export function LeadCard({
   preview,
   timeAgo,
   status,
+  pendingRepliesCount,
 }: LeadCardProps) {
   return (
     <Link
@@ -72,6 +76,14 @@ export function LeadCard({
         >
           {status}
         </span>
+        {pendingRepliesCount !== undefined && pendingRepliesCount > 0 && (
+          <span
+            aria-label={`${pendingRepliesCount} ожидают подтверждения`}
+            className="inline-flex items-center gap-1 rounded-full bg-[#f5b73c] px-2 py-0.5 text-[10px] font-bold text-[#0d1c2e]"
+          >
+            ⏵ {pendingRepliesCount}
+          </span>
+        )}
       </div>
     </Link>
   );

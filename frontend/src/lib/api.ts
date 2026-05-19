@@ -380,6 +380,9 @@ export interface Lead {
   created_at: string;
   updated_at: string;
   identity?: IdentitySummary;
+  /** Count of HITL drafts on this lead awaiting operator decision.
+   *  Omitted by the backend when zero; clients default to 0. */
+  pending_replies_count?: number;
 }
 
 // IdentitySummary surfaces the unified Identity attached to a lead via

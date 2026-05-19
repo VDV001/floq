@@ -87,6 +87,15 @@ export default function InboxPage() {
                       <Link2 className="size-3" />{suggestionCounts[lead.id]}
                     </span>
                   )}
+                  {lead.pendingRepliesCount > 0 && (
+                    <span
+                      aria-label={`${lead.pendingRepliesCount} ожидают подтверждения`}
+                      className="inline-flex items-center gap-1 rounded-full bg-[#f5b73c] px-2 py-0.5 text-[10px] font-bold text-[#0d1c2e]"
+                      title={`${lead.pendingRepliesCount} ожидают подтверждения`}
+                    >
+                      ⏵ {lead.pendingRepliesCount}
+                    </span>
+                  )}
                 </div>
               </Link>
             ))}

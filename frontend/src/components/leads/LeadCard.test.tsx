@@ -60,4 +60,16 @@ describe("LeadCard", () => {
     render(<LeadCard {...defaultProps} channel="telegram" />);
     expect(screen.getByText(/через Telegram/)).toBeInTheDocument();
   });
+
+  it("shows no pending-reply badge when count is zero or undefined", () => {
+    render(<LeadCard {...defaultProps} pendingRepliesCount={0} />);
+    expect(screen.queryByLabelText(/ожидают подтверждения/i)).not.toBeInTheDocument();
+  });
+
+  it("shows pending-reply badge with count when greater than zero", () => {
+    render(<LeadCard {...defaultProps} pendingRepliesCount={3} />);
+    const badge = screen.getByLabelText(/ожидают подтверждения/i);
+    expect(badge).toBeInTheDocument();
+    expect(badge.textContent).toContain("3");
+  });
 });

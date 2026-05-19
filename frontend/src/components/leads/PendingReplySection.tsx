@@ -47,12 +47,29 @@ export function PendingReplySection({ leadId, onApproved }: Props) {
   const pending = replies.filter((r) => r.status === "pending");
   if (pending.length === 0) return null;
 
+  // refreshFromServer replaces local state with the server's view of
+  // the queue. Costs one extra round-trip per decision but closes the
+  // 'list reflects truth' invariant: if the dispatcher silently kept
+  // the row at 'approved' (Update→approved succeeded, Update→sent
+  // didn't), the operator sees the row back instead of an
+  // optimistically-stale UI.
+  async function refreshFromServer() {
+    try {
+      const fresh = await api.getPendingReplies(leadId);
+      setReplies(fresh);
+    } catch {
+      // Best-effort; if the refetch itself fails, leave the optimistic
+      // state in place so the operator still sees the action took
+      // effect locally. The next page-level refresh will catch up.
+    }
+  }
+
   async function handleApprove(id: string) {
     setBusyId(id);
     setError(null);
     try {
       await api.approvePendingReply(id);
-      setReplies((prev) => prev?.filter((r) => r.id !== id) ?? []);
+      await refreshFromServer();
       onApproved?.();
     } catch {
       setError("Не удалось одобрить — попробуйте ещё раз");
@@ -66,7 +83,7 @@ export function PendingReplySection({ leadId, onApproved }: Props) {
     setError(null);
     try {
       await api.rejectPendingReply(id);
-      setReplies((prev) => prev?.filter((r) => r.id !== id) ?? []);
+      await refreshFromServer();
     } catch {
       setError("Не удалось отклонить — попробуйте ещё раз");
     } finally {

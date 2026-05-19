@@ -10,6 +10,7 @@ export interface InboxLead {
   status: "Новый" | "Квалифицирован" | "В диалоге" | "Нужен фоллоуап" | "Закрыт" | "Выигран";
   apiStatus: string;
   sourceName?: string;
+  pendingRepliesCount: number;
 }
 
 export const STATUS_STYLES: Record<InboxLead["status"], string> = {
