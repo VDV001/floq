@@ -229,6 +229,78 @@ func TestPendingReply_MarkSent_FromApproved(t *testing.T) {
 	}
 }
 
+func TestPendingReply_UpdateBody_TrimAndReject(t *testing.T) {
+	// Table-driven: input → expected behaviour (matches the trim rule
+	// from NewPendingReply so operators get the same invariant on edit
+	// as on create).
+	cases := []struct {
+		name    string
+		input   string
+		wantErr error
+		wantBody string
+	}{
+		{"empty", "", ErrPendingReplyEmptyBody, ""},
+		{"whitespace only", "   \t\n  ", ErrPendingReplyEmptyBody, ""},
+		{"happy path", "edited body", nil, "edited body"},
+		{"trims surrounding whitespace", "  edited  ", nil, "edited"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			pr, err := NewPendingReply(uuid.New(), uuid.New(), ChannelTelegram, PendingReplyKindBookingLink, "original body")
+			if err != nil {
+				t.Fatalf("setup: %v", err)
+			}
+			err = pr.UpdateBody(tc.input)
+			if tc.wantErr != nil {
+				if !errors.Is(err, tc.wantErr) {
+					t.Fatalf("want %v, got %v", tc.wantErr, err)
+				}
+				if pr.Body != "original body" {
+					t.Fatalf("body should be unchanged on error, got %q", pr.Body)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected err: %v", err)
+			}
+			if pr.Body != tc.wantBody {
+				t.Fatalf("want body %q, got %q", tc.wantBody, pr.Body)
+			}
+		})
+	}
+}
+
+func TestPendingReply_UpdateBody_RejectedWhenNotPending(t *testing.T) {
+	// Table-driven: every non-Pending status must reject the edit so
+	// already-decided rows are immutable. New sentinel keeps this
+	// distinct from status-transition errors (Approve/Reject use
+	// ErrPendingReplyInvalidTransition).
+	cases := []struct {
+		name   string
+		status PendingReplyStatus
+	}{
+		{"approved", PendingReplyStatusApproved},
+		{"sent", PendingReplyStatusSent},
+		{"rejected", PendingReplyStatusRejected},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			pr, err := NewPendingReply(uuid.New(), uuid.New(), ChannelTelegram, PendingReplyKindBookingLink, "original")
+			if err != nil {
+				t.Fatalf("setup: %v", err)
+			}
+			pr.Status = tc.status
+			err = pr.UpdateBody("new body")
+			if !errors.Is(err, ErrPendingReplyNotEditable) {
+				t.Fatalf("want ErrPendingReplyNotEditable, got %v", err)
+			}
+			if pr.Body != "original" {
+				t.Fatalf("body should be unchanged on error, got %q", pr.Body)
+			}
+		})
+	}
+}
+
 func TestPendingReply_IllegalTransitions(t *testing.T) {
 	cases := []struct {
 		name string
