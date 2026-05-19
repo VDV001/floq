@@ -29,7 +29,9 @@ const reply = (over: Partial<PendingReply> = {}): PendingReply => ({
 
 describe("PendingReplySection", () => {
   beforeEach(() => {
-    vi.clearAllMocks();
+    // resetAllMocks (not clearAllMocks) so mockResolvedValueOnce
+    // queues set in one test do not leak into the next.
+    vi.resetAllMocks();
   });
 
   it("renders nothing while the fetch is in-flight", () => {
@@ -129,6 +131,44 @@ describe("PendingReplySection", () => {
     expect(rejectBtn).toBeDisabled();
 
     resolve();
+  });
+
+  it("refetches from the server after a successful approve (self-heal)", async () => {
+    // Optimistic-remove can drift from server state: dispatcher fails
+    // between Update→approved and Update→sent, so the row stays at
+    // approved on disk even though the UI dropped it. After approve
+    // we MUST refetch so the list reflects truth.
+    const user = userEvent.setup();
+    vi.mocked(api.getPendingReplies)
+      .mockResolvedValueOnce([reply()])
+      // After approve: server still has the row at status=approved
+      // (dispatcher failed silently). Operator must see it back.
+      .mockResolvedValueOnce([reply({ status: "approved" })]);
+    vi.mocked(api.approvePendingReply).mockResolvedValue(undefined);
+
+    render(<PendingReplySection leadId="lead-1" />);
+    const btn = await screen.findByRole("button", { name: /Одобрить и отправить/i });
+    await user.click(btn);
+
+    // Two calls expected: initial mount + post-approve refetch.
+    await waitFor(() => expect(api.getPendingReplies).toHaveBeenCalledTimes(2));
+    // No 'Отлично' row because the refetch saw status=approved
+    // (which the section filters out of the pending list).
+    await waitFor(() => expect(screen.queryByText(/Отлично! Вот ссылка/)).not.toBeInTheDocument());
+  });
+
+  it("refetches from the server after a successful reject (self-heal)", async () => {
+    const user = userEvent.setup();
+    vi.mocked(api.getPendingReplies)
+      .mockResolvedValueOnce([reply()])
+      .mockResolvedValueOnce([]);
+    vi.mocked(api.rejectPendingReply).mockResolvedValue(undefined);
+
+    render(<PendingReplySection leadId="lead-1" />);
+    const btn = await screen.findByRole("button", { name: /Отклонить/i });
+    await user.click(btn);
+
+    await waitFor(() => expect(api.getPendingReplies).toHaveBeenCalledTimes(2));
   });
 
   it("renders nothing when the fetch fails", async () => {
