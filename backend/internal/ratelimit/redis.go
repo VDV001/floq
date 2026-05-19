@@ -55,20 +55,11 @@ type RedisLimiter struct {
 
 // NewRedisLimiter wires the limiter to a redis.UniversalClient (the
 // interface satisfied by both *redis.Client and *redis.ClusterClient).
-// Accepting `any` keeps the package free of forced type-assertions at
-// the call site — main.go passes its *redis.Client and the script
-// dispatcher does the rest.
-func NewRedisLimiter(client any, limit int, window time.Duration) *RedisLimiter {
-	uc, ok := client.(redis.UniversalClient)
-	if !ok {
-		// At construction time we cannot return an error — but the
-		// stub branch keeps the package safe: Allow will return an
-		// error, middleware fails open, and ops dashboards see the
-		// log line. main.go MUST pass a real client.
-		return &RedisLimiter{limit: limit, window: window}
-	}
+// Compile-time-typed so a wrong-type client at the call site fails
+// the build, not the rate-limit check at runtime.
+func NewRedisLimiter(client redis.UniversalClient, limit int, window time.Duration) *RedisLimiter {
 	return &RedisLimiter{
-		client: uc,
+		client: client,
 		limit:  limit,
 		window: window,
 		script: redis.NewScript(slidingWindowLua),
