@@ -190,6 +190,12 @@ type PendingReplyRepository interface {
 	// enqueued entity to the caller. body is matched against the
 	// trimmed value the factory stored.
 	FindPendingByContent(ctx context.Context, userID, leadID uuid.UUID, kind PendingReplyKind, body string) (*PendingReply, error)
+	// CountPendingByUser returns the number of pending rows per lead
+	// for the given user. Leads with no pending rows are absent from
+	// the map (callers default to zero). Used by the leads-context
+	// inbox-list badge — wired through an adapter so the leads package
+	// stays free of inbox-package imports.
+	CountPendingByUser(ctx context.Context, userID uuid.UUID) (map[uuid.UUID]int, error)
 	// Update writes pr only when the persisted row still matches the
 	// expectedStatus the caller observed at load time — an optimistic
 	// lock that prevents two operators from concurrently approving

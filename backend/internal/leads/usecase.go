@@ -21,6 +21,7 @@ type UseCase struct {
 	sender           domain.MessageSender
 	suggestionFinder domain.ProspectSuggestionFinder
 	identityReader   IdentityReader
+	pendingCounter   PendingReplyCounter
 	logger           *slog.Logger
 }
 

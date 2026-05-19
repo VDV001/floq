@@ -142,6 +142,32 @@ func (r *PendingReplyRepo) ListByLead(ctx context.Context, userID, leadID uuid.U
 	return out, rows.Err()
 }
 
+// CountPendingByUser returns the per-lead count of rows still awaiting
+// operator decision (status='pending') for the given user. Used by
+// the leads-context inbox-list badge.
+func (r *PendingReplyRepo) CountPendingByUser(ctx context.Context, userID uuid.UUID) (map[uuid.UUID]int, error) {
+	rows, err := r.q(ctx).Query(ctx,
+		`SELECT lead_id, COUNT(*)
+		 FROM pending_replies
+		 WHERE user_id = $1 AND status = 'pending'
+		 GROUP BY lead_id`,
+		userID)
+	if err != nil {
+		return nil, fmt.Errorf("count pending replies by user: %w", err)
+	}
+	defer rows.Close()
+	out := make(map[uuid.UUID]int)
+	for rows.Next() {
+		var leadID uuid.UUID
+		var count int
+		if err := rows.Scan(&leadID, &count); err != nil {
+			return nil, fmt.Errorf("scan pending count: %w", err)
+		}
+		out[leadID] = count
+	}
+	return out, rows.Err()
+}
+
 // Update persists status, decided_at and sent_at for an existing row.
 // Scoped by user_id and id to prevent a malformed entity from updating
 // somebody else's row even if the caller forgets to re-check ownership.

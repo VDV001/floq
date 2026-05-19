@@ -532,3 +532,19 @@ func (s *sqlBackfillSource) ProspectsForBackfill(ctx context.Context) ([]leads.P
 	return out, rows.Err()
 }
 
+
+// pendingReplyCounterAdapter bridges inbox.PendingReplyRepository to
+// leads.PendingReplyCounter so the leads inbox-list view can render
+// the badge count without the leads context importing the inbox
+// package directly.
+type pendingReplyCounterAdapter struct {
+	repo inbox.PendingReplyRepository
+}
+
+func newPendingReplyCounterAdapter(repo inbox.PendingReplyRepository) *pendingReplyCounterAdapter {
+	return &pendingReplyCounterAdapter{repo: repo}
+}
+
+func (a *pendingReplyCounterAdapter) CountPendingByUser(ctx context.Context, userID uuid.UUID) (map[uuid.UUID]int, error) {
+	return a.repo.CountPendingByUser(ctx, userID)
+}

@@ -55,6 +55,18 @@ func (f *fakePendingReplyRepo) Save(_ context.Context, pr *PendingReply) error {
 	return nil
 }
 
+func (f *fakePendingReplyRepo) CountPendingByUser(_ context.Context, userID uuid.UUID) (map[uuid.UUID]int, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := make(map[uuid.UUID]int)
+	for _, row := range f.rows {
+		if row.UserID == userID && row.Status == PendingReplyStatusPending {
+			out[row.LeadID]++
+		}
+	}
+	return out, nil
+}
+
 func (f *fakePendingReplyRepo) FindPendingByContent(_ context.Context, userID, leadID uuid.UUID, kind PendingReplyKind, body string) (*PendingReply, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()

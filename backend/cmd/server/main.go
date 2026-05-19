@@ -183,6 +183,7 @@ func main() {
 	leadsUC := leads.NewUseCase(leadsRepo, leadsAI, nil,
 		leads.WithSuggestionFinder(suggestionFinder),
 		leads.WithIdentityReader(identityRepo),
+		leads.WithPendingReplyCounter(newPendingReplyCounterAdapter(pendingReplyRepo)),
 		leads.WithLogger(slog.Default())) // sender set after bot init
 	prospectsUC := prospects.NewUseCase(prospectsRepo,
 		prospects.WithLeadChecker(newLeadCheckerAdapter(leadsRepo)),

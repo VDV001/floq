@@ -74,15 +74,15 @@ func (h *Handler) listLeads() http.HandlerFunc {
 			httputil.WriteError(w, http.StatusUnauthorized, "unauthorized")
 			return
 		}
-		leads, err := h.uc.ListLeads(r.Context(), userID)
+		leads, err := h.uc.ListLeadsWithPendingCounts(r.Context(), userID)
 		if err != nil {
 			httputil.WriteError(w, http.StatusInternalServerError, "failed to list leads")
 			return
 		}
 		if leads == nil {
-			leads = []domain.LeadWithSource{}
+			leads = []LeadWithPendingCount{}
 		}
-		httputil.WriteJSON(w, http.StatusOK, LeadsToResponse(leads))
+		httputil.WriteJSON(w, http.StatusOK, LeadsWithPendingCountToResponse(leads))
 	}
 }
 

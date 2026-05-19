@@ -10,20 +10,26 @@ import (
 // --- Response DTOs ---
 
 type LeadResponse struct {
-	ID             uuid.UUID                `json:"id"`
-	UserID         uuid.UUID                `json:"user_id"`
-	Channel        string                   `json:"channel"`
-	ContactName    string                   `json:"contact_name"`
-	Company        string                   `json:"company"`
-	FirstMessage   string                   `json:"first_message"`
-	Status         string                   `json:"status"`
-	TelegramChatID *int64                   `json:"telegram_chat_id,omitempty"`
-	EmailAddress   *string                  `json:"email_address,omitempty"`
-	SourceID       *uuid.UUID               `json:"source_id,omitempty"`
-	SourceName     string                   `json:"source_name,omitempty"`
-	CreatedAt      time.Time                `json:"created_at"`
-	UpdatedAt      time.Time                `json:"updated_at"`
-	Identity       *IdentitySummaryResponse `json:"identity,omitempty"`
+	ID                  uuid.UUID                `json:"id"`
+	UserID              uuid.UUID                `json:"user_id"`
+	Channel             string                   `json:"channel"`
+	ContactName         string                   `json:"contact_name"`
+	Company             string                   `json:"company"`
+	FirstMessage        string                   `json:"first_message"`
+	Status              string                   `json:"status"`
+	TelegramChatID      *int64                   `json:"telegram_chat_id,omitempty"`
+	EmailAddress        *string                  `json:"email_address,omitempty"`
+	SourceID            *uuid.UUID               `json:"source_id,omitempty"`
+	SourceName          string                   `json:"source_name,omitempty"`
+	CreatedAt           time.Time                `json:"created_at"`
+	UpdatedAt           time.Time                `json:"updated_at"`
+	Identity            *IdentitySummaryResponse `json:"identity,omitempty"`
+	// PendingRepliesCount badges the inbox-list UI when an operator
+	// has HITL drafts awaiting decision on this lead. Omitted from
+	// the wire when zero so the field is absent rather than carrying
+	// noise. The /api/leads list endpoint is the only path that
+	// populates this — single-lead detail endpoints leave it zero.
+	PendingRepliesCount int                      `json:"pending_replies_count,omitempty"`
 }
 
 // IdentitySummaryResponse projects the unified-identity context onto
@@ -121,6 +127,18 @@ func LeadsToResponse(leads []domain.LeadWithSource) []LeadResponse {
 	resp := make([]LeadResponse, len(leads))
 	for i := range leads {
 		resp[i] = LeadWithSourceToResponse(&leads[i])
+	}
+	return resp
+}
+
+// LeadsWithPendingCountToResponse maps the inbox-list projection
+// (lead + per-lead pending-reply count) onto the wire DTO. Counts of
+// zero are omitted via the json:",omitempty" tag on the DTO field.
+func LeadsWithPendingCountToResponse(leads []LeadWithPendingCount) []LeadResponse {
+	resp := make([]LeadResponse, len(leads))
+	for i := range leads {
+		resp[i] = LeadWithSourceToResponse(&leads[i].LeadWithSource)
+		resp[i].PendingRepliesCount = leads[i].PendingCount
 	}
 	return resp
 }
