@@ -20,6 +20,7 @@ export function useInboxPage() {
           channel: l.channel as "email" | "telegram",
           preview: l.first_message === "/start" ? "Загрузка..." : (l.first_message || "Нет сообщений"),
           timeAgo: getTimeAgo(l.created_at), status: mapStatus(l.status), apiStatus: l.status, sourceName: l.source_name,
+          pendingRepliesCount: l.pending_replies_count ?? 0,
         }));
         setLeads(mapped);
         data.forEach((l) => {
