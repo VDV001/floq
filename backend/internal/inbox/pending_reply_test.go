@@ -114,6 +114,40 @@ func freshPendingReply(t *testing.T) *PendingReply {
 	return pr
 }
 
+func TestPendingReply_Approve_RejectsNilDecider(t *testing.T) {
+	pr, err := NewPendingReply(uuid.New(), uuid.New(), ChannelTelegram, PendingReplyKindBookingLink, "body")
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = pr.Approve(time.Now().UTC(), uuid.Nil)
+	if !errors.Is(err, ErrPendingReplyMissingDecider) {
+		t.Fatalf("Approve with uuid.Nil decider must return ErrPendingReplyMissingDecider, got %v", err)
+	}
+	// State must NOT have transitioned: a partial stamp leaves us with
+	// status=approved but DecidedBy=nil, which would later 500 the
+	// repo Update due to the FK constraint.
+	if pr.Status != PendingReplyStatusPending {
+		t.Errorf("rejected Approve must leave status pending, got %v", pr.Status)
+	}
+	if pr.DecidedBy != nil {
+		t.Errorf("rejected Approve must leave DecidedBy nil, got %v", pr.DecidedBy)
+	}
+}
+
+func TestPendingReply_Reject_RejectsNilDecider(t *testing.T) {
+	pr, err := NewPendingReply(uuid.New(), uuid.New(), ChannelTelegram, PendingReplyKindBookingLink, "body")
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = pr.Reject(time.Now().UTC(), uuid.Nil)
+	if !errors.Is(err, ErrPendingReplyMissingDecider) {
+		t.Fatalf("Reject with uuid.Nil decider must return ErrPendingReplyMissingDecider, got %v", err)
+	}
+	if pr.Status != PendingReplyStatusPending {
+		t.Errorf("rejected Reject must leave status pending, got %v", pr.Status)
+	}
+}
+
 func TestPendingReply_Approve_StampsDecidedBy(t *testing.T) {
 	pr, err := NewPendingReply(uuid.New(), uuid.New(), ChannelTelegram, PendingReplyKindBookingLink, "body")
 	if err != nil {

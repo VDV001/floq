@@ -90,6 +90,12 @@ var (
 	// usecase translates this into a silent return of the previously-
 	// enqueued entity so the caller treats re-Propose as idempotent.
 	ErrPendingReplyDuplicatePending = errors.New("pending reply: duplicate pending row for same content")
+	// ErrPendingReplyMissingDecider rejects Approve/Reject with a nil
+	// operator UUID. The domain factory already guards UserID/LeadID
+	// symmetrically; this closes the same gap for the operator stamp
+	// so a system-cron caller passing uuid.Nil cannot silently land
+	// rows that would later 500 the repo Update on the decided_by FK.
+	ErrPendingReplyMissingDecider = errors.New("pending reply: decider id is required")
 )
 
 // PendingReply is an inbox-originated outbound message awaiting human
@@ -134,6 +140,9 @@ func (p *PendingReply) TransitionTo(target PendingReplyStatus) error {
 // should be sent; the actual delivery is a separate step (MarkSent) so that
 // a failed send does not leave the entity in an inconsistent state.
 func (p *PendingReply) Approve(at time.Time, by uuid.UUID) error {
+	if by == uuid.Nil {
+		return ErrPendingReplyMissingDecider
+	}
 	if err := p.TransitionTo(PendingReplyStatusApproved); err != nil {
 		return err
 	}
@@ -148,6 +157,9 @@ func (p *PendingReply) Approve(at time.Time, by uuid.UUID) error {
 // DecidedAt + DecidedBy. The draft body is preserved for audit / future
 // reference.
 func (p *PendingReply) Reject(at time.Time, by uuid.UUID) error {
+	if by == uuid.Nil {
+		return ErrPendingReplyMissingDecider
+	}
 	if err := p.TransitionTo(PendingReplyStatusRejected); err != nil {
 		return err
 	}
