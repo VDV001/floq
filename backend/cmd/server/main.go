@@ -226,6 +226,7 @@ func main() {
 		settings.RegisterRoutes(r, settingsUC, buildAITester(cfg, httpClient), buildSMTPTester(proxyDialer), buildResendTester(httpClient), buildUsageCounter(leadsRepo))
 		chat.RegisterRoutes(r, chat.NewHandler(chat.NewRepository(pool), newChatAIAdapter(aiClient)))
 		inbox.RegisterPendingReplyRoutes(r, pendingReplyUC, leadsUC, pendingReplyDecideMW)
+		audit.RegisterRoutes(r, audit.NewHandler(audit.NewUseCase(auditRepo)))
 		tgOpts := []tgclient.Option{}
 		if proxyDialer != nil {
 			tgOpts = append(tgOpts, tgclient.WithDialer(proxyDialer))
