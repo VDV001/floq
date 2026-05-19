@@ -140,6 +140,33 @@ func TestSendViaResend_StopsAfterMaxAttemptsOn5xx(t *testing.T) {
 	}
 }
 
+func TestSendViaResend_RetriesOn429RateLimit(t *testing.T) {
+	// 429 is transient (rate-limit), not a client mistake. Same
+	// Idempotency-Key is safe to retry — Resend dedups if the
+	// original eventually landed. Pin: 429 → 200 collapses into
+	// success after 2 attempts.
+	attempt := 0
+	c, cleanup := stubResend(t, func(w http.ResponseWriter, _ *http.Request) {
+		attempt++
+		if attempt == 1 {
+			w.WriteHeader(http.StatusTooManyRequests)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+		fmt.Fprint(w, `{"id":"msg_x"}`)
+	})
+	defer cleanup()
+
+	cfgStore := &mockConfigStore{cfg: &settingsdomain.UserConfig{}}
+	s := NewSender(cfgStore, uuid.New(), "test-key", "from@test.com", "",
+		"", "", "", "",
+		nil, nil, nil, nil, nil, nil)
+
+	err := s.sendViaResend(context.Background(), "to@test.com", "subj", "body", "outbound:rate-1")
+	require.NoError(t, err, "429 must be retried as transient; second attempt succeeds")
+	assert.Equal(t, 2, c.calls(), "expected exactly 2 attempts on 429 → 200")
+}
+
 func TestSendViaResend_DoesNotRetryOn4xx(t *testing.T) {
 	// 4xx is a client error (bad payload, bad auth, etc.) — retrying
 	// with the same Idempotency-Key and the same body cannot fix

@@ -6,7 +6,9 @@ import (
 	"crypto/tls"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
+	"math/rand/v2"
 	"net"
 	"net/http"
 	"net/smtp"
@@ -127,7 +129,7 @@ func (s *Sender) SendPending(ctx context.Context) error {
 		if smtpHost != "" && smtpUser != "" && smtpPassword != "" {
 			sendErr = s.sendViaSMTPWith(ctx, smtpHost, smtpPort, smtpUser, smtpPassword, fromAddr, prospect.Email, subject, htmlBody)
 		} else {
-			sendErr = s.sendViaResend(ctx, prospect.Email, subject, htmlBody, "outbound:"+msg.ID.String())
+			sendErr = s.sendViaResend(ctx, prospect.Email, subject, htmlBody, idempotencyKeyPrefix+msg.ID.String())
 		}
 
 		if sendErr != nil {
@@ -168,6 +170,15 @@ func (s *Sender) SendPending(ctx context.Context) error {
 }
 
 // sendViaSMTPWith sends email through an SMTP server (mail.ru, Yandex, Gmail, etc.)
+//
+// UNLIKE sendViaResend, the SMTP path has no retry and no idempotency
+// guarantee. SMTP-level dedup would require a stable Message-ID header
+// plus cooperation from every receiving MTA's duplicate-detection (or
+// our own server-side tracking of which Message-IDs have already been
+// SMTP-handed-off). Neither is implemented. A timeout between SMTP
+// handoff and ack on this path may result in duplicate delivery on a
+// subsequent cron tick that re-fetches the same row. Tracked as a
+// known gap; the Resend path (the production default) is safe.
 func (s *Sender) sendViaSMTPWith(ctx context.Context, host, port, user, password, from, to, subject, htmlBody string) error {
 	if from == "" {
 		from = user
@@ -376,9 +387,15 @@ func (s *Sender) handleTelegramMessage(ctx context.Context, msg seqdomain.Outbou
 const resendMaxAttempts = 3
 
 // resendInitialBackoff is the wait before the second attempt; doubled
-// for the third. Total worst-case wait = 200 + 400 = 600 ms, well
-// under the cron tick budget.
+// for the third. Total worst-case wait = 200 + 400 = 600 ms (plus up
+// to ~50% jitter), well under the cron tick budget.
 const resendInitialBackoff = 200 * time.Millisecond
+
+// idempotencyKeyPrefix namespaces the Resend Idempotency-Key so it is
+// identifiable in the Resend dashboard and so a future second caller
+// (e.g. transactional emails outside the outbound cron) cannot
+// collide with cron-row keys for free.
+const idempotencyKeyPrefix = "outbound:"
 
 // sendViaResend sends email through the Resend API using raw HTTP.
 // idempotencyKey is forwarded as the "Idempotency-Key" header so that
@@ -432,36 +449,54 @@ func (s *Sender) sendViaResend(ctx context.Context, to, subject, htmlBody, idemp
 			if attempt == resendMaxAttempts {
 				return lastErr
 			}
-			if werr := waitWithCtx(ctx, backoff); werr != nil {
+			if werr := waitWithCtx(ctx, jitter(backoff)); werr != nil {
 				return werr
 			}
 			backoff *= 2
 			continue
 		}
-		// Drain + close so the connection can be reused on the next
-		// attempt. Body is small (Resend returns a short JSON ack).
+		// Drain the response body before Close so the underlying TCP
+		// connection can be returned to the keep-alive pool. Resend
+		// 5xx may carry a hundred-byte JSON error envelope; without
+		// the drain the transport opens a fresh TCP+TLS handshake on
+		// every retry attempt.
+		_, _ = io.Copy(io.Discard, resp.Body)
 		resp.Body.Close()
 
-		if resp.StatusCode >= 500 && resp.StatusCode < 600 {
+		// 429 — transient (rate-limit). Same Idempotency-Key is safe
+		// to retry; Resend will dedup if the original eventually
+		// landed. Handle BEFORE the generic 4xx-terminal branch.
+		retryable := (resp.StatusCode >= 500 && resp.StatusCode < 600) || resp.StatusCode == http.StatusTooManyRequests
+		if retryable {
 			lastErr = &ResendAPIError{StatusCode: resp.StatusCode}
 			if attempt == resendMaxAttempts {
 				return lastErr
 			}
-			if werr := waitWithCtx(ctx, backoff); werr != nil {
+			if werr := waitWithCtx(ctx, jitter(backoff)); werr != nil {
 				return werr
 			}
 			backoff *= 2
 			continue
 		}
 		if resp.StatusCode >= 400 {
-			// 4xx — client error. Same body + same Idempotency-Key
-			// will fail the same way; retry burns rate-limit budget
-			// without changing the outcome.
+			// 4xx (other than 429) — client error. Same body + same
+			// Idempotency-Key will fail the same way; retry burns
+			// rate-limit budget without changing the outcome.
 			return &ResendAPIError{StatusCode: resp.StatusCode}
 		}
 		return nil
 	}
 	return lastErr
+}
+
+// jitter spreads backoffs across [d, d*1.5) so multiple senders (or
+// tenants) restarting after a Resend outage do not synchronise on the
+// retry edge and re-thunder the herd.
+func jitter(d time.Duration) time.Duration {
+	if d <= 0 {
+		return d
+	}
+	return d + time.Duration(rand.Int64N(int64(d)/2))
 }
 
 // waitWithCtx sleeps for d unless the context is cancelled first.
