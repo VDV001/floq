@@ -96,6 +96,10 @@ var (
 // approval before being delivered to the lead. It is the aggregate root for
 // the HITL (human-in-the-loop) gate that protects auto-drafted replies from
 // reaching customers without explicit operator consent.
+//
+// DecidedBy is nullable so rows from before migration 032 (which did not
+// capture operator attribution) stay valid; new approves and rejects always
+// stamp it.
 type PendingReply struct {
 	ID        uuid.UUID
 	UserID    uuid.UUID
@@ -106,6 +110,7 @@ type PendingReply struct {
 	Status    PendingReplyStatus
 	CreatedAt time.Time
 	DecidedAt *time.Time
+	DecidedBy *uuid.UUID
 	SentAt    *time.Time
 }
 
@@ -125,26 +130,31 @@ func (p *PendingReply) TransitionTo(target PendingReplyStatus) error {
 }
 
 // Approve moves a pending reply into the Approved status and stamps
-// DecidedAt. Use this when the operator confirms the draft should be sent;
-// the actual delivery is a separate step (MarkSent) so that a failed send
-// does not leave the entity in an inconsistent state.
-func (p *PendingReply) Approve(at time.Time) error {
+// DecidedAt + DecidedBy. Use this when the operator confirms the draft
+// should be sent; the actual delivery is a separate step (MarkSent) so that
+// a failed send does not leave the entity in an inconsistent state.
+func (p *PendingReply) Approve(at time.Time, by uuid.UUID) error {
 	if err := p.TransitionTo(PendingReplyStatusApproved); err != nil {
 		return err
 	}
 	t := at
+	b := by
 	p.DecidedAt = &t
+	p.DecidedBy = &b
 	return nil
 }
 
 // Reject moves a pending reply into the terminal Rejected status and stamps
-// DecidedAt. The draft body is preserved for audit / future reference.
-func (p *PendingReply) Reject(at time.Time) error {
+// DecidedAt + DecidedBy. The draft body is preserved for audit / future
+// reference.
+func (p *PendingReply) Reject(at time.Time, by uuid.UUID) error {
 	if err := p.TransitionTo(PendingReplyStatusRejected); err != nil {
 		return err
 	}
 	t := at
+	b := by
 	p.DecidedAt = &t
+	p.DecidedBy = &b
 	return nil
 }
 

@@ -129,7 +129,7 @@ func (uc *PendingReplyUseCase) Approve(ctx context.Context, userID, id uuid.UUID
 	if err != nil {
 		return err
 	}
-	if err := pr.Approve(time.Now().UTC()); err != nil {
+	if err := pr.Approve(time.Now().UTC(), userID); err != nil {
 		if errors.Is(err, ErrPendingReplyInvalidTransition) {
 			return ErrPendingReplyAlreadyDecided
 		}
@@ -170,7 +170,7 @@ func (uc *PendingReplyUseCase) Reject(ctx context.Context, userID, id uuid.UUID)
 	if err != nil {
 		return err
 	}
-	if err := pr.Reject(time.Now().UTC()); err != nil {
+	if err := pr.Reject(time.Now().UTC(), userID); err != nil {
 		if errors.Is(err, ErrPendingReplyInvalidTransition) {
 			return ErrPendingReplyAlreadyDecided
 		}

@@ -114,10 +114,46 @@ func freshPendingReply(t *testing.T) *PendingReply {
 	return pr
 }
 
+func TestPendingReply_Approve_StampsDecidedBy(t *testing.T) {
+	pr, err := NewPendingReply(uuid.New(), uuid.New(), ChannelTelegram, PendingReplyKindBookingLink, "body")
+	if err != nil {
+		t.Fatal(err)
+	}
+	operator := uuid.New()
+	at := time.Now().UTC()
+	if err := pr.Approve(at, operator); err != nil {
+		t.Fatalf("Approve must accept (at, by), got %v", err)
+	}
+	if pr.DecidedBy == nil {
+		t.Fatal("Approve must stamp DecidedBy alongside DecidedAt")
+	}
+	if *pr.DecidedBy != operator {
+		t.Errorf("DecidedBy = %v, want %v", *pr.DecidedBy, operator)
+	}
+}
+
+func TestPendingReply_Reject_StampsDecidedBy(t *testing.T) {
+	pr, err := NewPendingReply(uuid.New(), uuid.New(), ChannelTelegram, PendingReplyKindBookingLink, "body")
+	if err != nil {
+		t.Fatal(err)
+	}
+	operator := uuid.New()
+	at := time.Now().UTC()
+	if err := pr.Reject(at, operator); err != nil {
+		t.Fatalf("Reject must accept (at, by), got %v", err)
+	}
+	if pr.DecidedBy == nil {
+		t.Fatal("Reject must stamp DecidedBy alongside DecidedAt")
+	}
+	if *pr.DecidedBy != operator {
+		t.Errorf("DecidedBy = %v, want %v", *pr.DecidedBy, operator)
+	}
+}
+
 func TestPendingReply_Approve_FromPending(t *testing.T) {
 	pr := freshPendingReply(t)
 	at := time.Now().UTC()
-	if err := pr.Approve(at); err != nil {
+	if err := pr.Approve(at, uuid.New()); err != nil {
 		t.Fatalf("Approve from pending should succeed, got %v", err)
 	}
 	if pr.Status != PendingReplyStatusApproved {
@@ -131,7 +167,7 @@ func TestPendingReply_Approve_FromPending(t *testing.T) {
 func TestPendingReply_Reject_FromPending(t *testing.T) {
 	pr := freshPendingReply(t)
 	at := time.Now().UTC()
-	if err := pr.Reject(at); err != nil {
+	if err := pr.Reject(at, uuid.New()); err != nil {
 		t.Fatalf("Reject from pending should succeed, got %v", err)
 	}
 	if pr.Status != PendingReplyStatusRejected {
@@ -144,7 +180,7 @@ func TestPendingReply_Reject_FromPending(t *testing.T) {
 
 func TestPendingReply_MarkSent_FromApproved(t *testing.T) {
 	pr := freshPendingReply(t)
-	if err := pr.Approve(time.Now().UTC()); err != nil {
+	if err := pr.Approve(time.Now().UTC(), uuid.New()); err != nil {
 		t.Fatalf("Approve setup failed: %v", err)
 	}
 	sentAt := time.Now().UTC().Add(time.Second)
@@ -172,10 +208,10 @@ func TestPendingReply_IllegalTransitions(t *testing.T) {
 		},
 		{
 			name: "Approve from approved is illegal",
-			op:   func(pr *PendingReply) error { return pr.Approve(time.Now().UTC()) },
+			op:   func(pr *PendingReply) error { return pr.Approve(time.Now().UTC(), uuid.New()) },
 			seed: func(t *testing.T) *PendingReply {
 				pr := freshPendingReply(t)
-				if err := pr.Approve(time.Now().UTC()); err != nil {
+				if err := pr.Approve(time.Now().UTC(), uuid.New()); err != nil {
 					t.Fatalf("seed Approve failed: %v", err)
 				}
 				return pr
@@ -183,10 +219,10 @@ func TestPendingReply_IllegalTransitions(t *testing.T) {
 		},
 		{
 			name: "Reject from approved is illegal",
-			op:   func(pr *PendingReply) error { return pr.Reject(time.Now().UTC()) },
+			op:   func(pr *PendingReply) error { return pr.Reject(time.Now().UTC(), uuid.New()) },
 			seed: func(t *testing.T) *PendingReply {
 				pr := freshPendingReply(t)
-				if err := pr.Approve(time.Now().UTC()); err != nil {
+				if err := pr.Approve(time.Now().UTC(), uuid.New()); err != nil {
 					t.Fatalf("seed Approve failed: %v", err)
 				}
 				return pr
@@ -194,10 +230,10 @@ func TestPendingReply_IllegalTransitions(t *testing.T) {
 		},
 		{
 			name: "Approve from rejected is illegal",
-			op:   func(pr *PendingReply) error { return pr.Approve(time.Now().UTC()) },
+			op:   func(pr *PendingReply) error { return pr.Approve(time.Now().UTC(), uuid.New()) },
 			seed: func(t *testing.T) *PendingReply {
 				pr := freshPendingReply(t)
-				if err := pr.Reject(time.Now().UTC()); err != nil {
+				if err := pr.Reject(time.Now().UTC(), uuid.New()); err != nil {
 					t.Fatalf("seed Reject failed: %v", err)
 				}
 				return pr
@@ -208,7 +244,7 @@ func TestPendingReply_IllegalTransitions(t *testing.T) {
 			op:   func(pr *PendingReply) error { return pr.MarkSent(time.Now().UTC()) },
 			seed: func(t *testing.T) *PendingReply {
 				pr := freshPendingReply(t)
-				if err := pr.Approve(time.Now().UTC()); err != nil {
+				if err := pr.Approve(time.Now().UTC(), uuid.New()); err != nil {
 					t.Fatalf("seed Approve failed: %v", err)
 				}
 				if err := pr.MarkSent(time.Now().UTC()); err != nil {

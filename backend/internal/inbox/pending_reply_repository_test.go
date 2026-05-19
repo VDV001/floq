@@ -136,7 +136,7 @@ func TestPendingReplyRepository_Update_RowMissingReturnsNotFoundSentinel(t *test
 	// the WHERE clause adds the status filter for optimistic lock).
 	pr, err := inbox.NewPendingReply(userID, leadID, inbox.ChannelTelegram, inbox.PendingReplyKindBookingLink, "ghost")
 	require.NoError(t, err)
-	require.NoError(t, pr.Approve(time.Now().UTC()))
+	require.NoError(t, pr.Approve(time.Now().UTC(), uuid.New()))
 
 	err = repo.Update(ctx, pr, inbox.PendingReplyStatusPending)
 	require.Error(t, err)
@@ -161,7 +161,7 @@ func TestPendingReplyRepository_Update_CrossTenantReturnsNotFoundSentinel(t *tes
 	// as a missing row — uniform 404 contract).
 	stolen := *pr
 	stolen.UserID = userB
-	require.NoError(t, stolen.Reject(time.Now().UTC()))
+	require.NoError(t, stolen.Reject(time.Now().UTC(), uuid.New()))
 	err = repo.Update(ctx, &stolen, inbox.PendingReplyStatusPending)
 	require.ErrorIs(t, err, inbox.ErrPendingReplyNotFound)
 }
@@ -181,14 +181,14 @@ func TestPendingReplyRepository_Update_OptimisticLock_RejectsWhenStatusMoved(t *
 	// and is about to push status=approved. Meanwhile operator B
 	// already approved it — the persisted row is now status=approved.
 	bSnap := *pr
-	require.NoError(t, bSnap.Approve(time.Now().UTC()))
+	require.NoError(t, bSnap.Approve(time.Now().UTC(), uuid.New()))
 	require.NoError(t, repo.Update(ctx, &bSnap, inbox.PendingReplyStatusPending))
 
 	// Operator A's stale snapshot, still expecting status=pending,
 	// must fail the optimistic check rather than overwriting B's
 	// decision.
 	aSnap := *pr
-	require.NoError(t, aSnap.Approve(time.Now().UTC()))
+	require.NoError(t, aSnap.Approve(time.Now().UTC(), uuid.New()))
 	err = repo.Update(ctx, &aSnap, inbox.PendingReplyStatusPending)
 	require.ErrorIs(t, err, inbox.ErrPendingReplyNotFound,
 		"second Update with the same expected-status must fail — the row is no longer pending")
@@ -252,7 +252,7 @@ func TestPendingReplyRepository_Save_AllowsRePeoposeAfterRejection(t *testing.T)
 	first, err := inbox.NewPendingReply(userID, leadID, inbox.ChannelTelegram, inbox.PendingReplyKindBookingLink, "book me")
 	require.NoError(t, err)
 	require.NoError(t, repo.Save(ctx, first))
-	require.NoError(t, first.Reject(time.Now().UTC()))
+	require.NoError(t, first.Reject(time.Now().UTC(), uuid.New()))
 	require.NoError(t, repo.Update(ctx, first, inbox.PendingReplyStatusPending))
 
 	second, err := inbox.NewPendingReply(userID, leadID, inbox.ChannelTelegram, inbox.PendingReplyKindBookingLink, "book me")
@@ -304,7 +304,7 @@ func TestPendingReplyRepository_FindPendingByContent_IgnoresDecidedRows(t *testi
 	pr, err := inbox.NewPendingReply(userID, leadID, inbox.ChannelTelegram, inbox.PendingReplyKindBookingLink, "book me")
 	require.NoError(t, err)
 	require.NoError(t, repo.Save(ctx, pr))
-	require.NoError(t, pr.Reject(time.Now().UTC()))
+	require.NoError(t, pr.Reject(time.Now().UTC(), uuid.New()))
 	require.NoError(t, repo.Update(ctx, pr, inbox.PendingReplyStatusPending))
 
 	got, err := repo.FindPendingByContent(ctx, userID, leadID, inbox.PendingReplyKindBookingLink, "book me")
@@ -329,6 +329,34 @@ func TestPendingReplyRepository_FindPendingByContent_ScopedByUser(t *testing.T) 
 	assert.Nil(t, got, "cross-tenant FindPendingByContent must return nil — never another user's row")
 }
 
+func TestPendingReplyRepository_Update_PersistsDecidedBy(t *testing.T) {
+	// After Approve(at, by) + Update, GetByID returns the row with
+	// DecidedBy populated. Pins migration 032 + repo round-trip.
+	pool := testutil.TestDB(t)
+	userID := testutil.SeedUser(t, pool)
+	leadID := seedLeadForUser(t, pool, userID)
+	repo := inbox.NewPendingReplyRepository(pool)
+	ctx := context.Background()
+
+	pr, err := inbox.NewPendingReply(userID, leadID, inbox.ChannelTelegram, inbox.PendingReplyKindBookingLink, "body")
+	require.NoError(t, err)
+	require.NoError(t, repo.Save(ctx, pr))
+	// Newly-created pending row has no decision yet — both fields nil.
+	got, err := repo.GetByID(ctx, userID, pr.ID)
+	require.NoError(t, err)
+	require.NotNil(t, got)
+	assert.Nil(t, got.DecidedBy, "freshly Saved pending row must have nil DecidedBy")
+
+	operator := testutil.SeedUser(t, pool)
+	require.NoError(t, pr.Approve(time.Now().UTC(), operator))
+	require.NoError(t, repo.Update(ctx, pr, inbox.PendingReplyStatusPending))
+
+	got, err = repo.GetByID(ctx, userID, pr.ID)
+	require.NoError(t, err)
+	require.NotNil(t, got.DecidedBy, "Update must persist DecidedBy")
+	assert.Equal(t, operator, *got.DecidedBy)
+}
+
 func TestPendingReplyRepository_Update_PersistsStatusAndTimestamps(t *testing.T) {
 	pool := testutil.TestDB(t)
 	userID := testutil.SeedUser(t, pool)
@@ -341,7 +369,7 @@ func TestPendingReplyRepository_Update_PersistsStatusAndTimestamps(t *testing.T)
 	require.NoError(t, repo.Save(ctx, pr))
 
 	decidedAt := time.Now().UTC().Truncate(time.Microsecond)
-	require.NoError(t, pr.Approve(decidedAt))
+	require.NoError(t, pr.Approve(decidedAt, uuid.New()))
 	require.NoError(t, repo.Update(ctx, pr, inbox.PendingReplyStatusPending))
 
 	got, err := repo.GetByID(ctx, userID, pr.ID)

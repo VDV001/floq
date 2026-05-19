@@ -149,6 +149,10 @@ func (h *pendingReplyHandler) decide(op func(uc PendingReplyUseCaseAPI, ctx cont
 // is intentionally separate from the domain entity so transport-layer
 // concerns (JSON tags, timestamp formatting) do not bleed into the
 // inbox package surface.
+//
+// DecidedBy is omitempty so rows from before migration 032 (when the
+// column did not exist) stay clean on the wire — a missing field
+// signals "attribution unknown" rather than synthesising a UUID.
 type PendingReplyResponse struct {
 	ID        string  `json:"id"`
 	LeadID    string  `json:"lead_id"`
@@ -158,6 +162,7 @@ type PendingReplyResponse struct {
 	Status    string  `json:"status"`
 	CreatedAt string  `json:"created_at"`
 	DecidedAt *string `json:"decided_at,omitempty"`
+	DecidedBy *string `json:"decided_by,omitempty"`
 	SentAt    *string `json:"sent_at,omitempty"`
 }
 
@@ -174,6 +179,10 @@ func pendingReplyToResponse(pr *PendingReply) PendingReplyResponse {
 	if pr.DecidedAt != nil {
 		s := pr.DecidedAt.UTC().Format(time.RFC3339)
 		resp.DecidedAt = &s
+	}
+	if pr.DecidedBy != nil {
+		s := pr.DecidedBy.String()
+		resp.DecidedBy = &s
 	}
 	if pr.SentAt != nil {
 		s := pr.SentAt.UTC().Format(time.RFC3339)
