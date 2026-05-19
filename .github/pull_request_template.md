@@ -28,6 +28,12 @@
 - [ ] `cd backend && go build ./cmd/server/` — компилируется
 - [ ] `cd frontend && npm run lint && npm run build` — зелёный
 
+## Frontend mocks (если PR трогает `src/lib/api.ts` или фронтенд-тесты)
+
+- [ ] Каждый новый endpoint в `src/lib/api.ts` имеет style-1 контрактный тест в `src/lib/api.test.ts` (через `vi.stubGlobal('fetch', ...)`) — см. [`frontend/TESTING.md`](../frontend/TESTING.md).
+- [ ] Endpoint'ы с не-200 status code (204, 401, 4xx, 5xx) — wire-format закрыт в `apiFetch` describe-блоке.
+- [ ] Компонентные тесты через `vi.mock('@/lib/api')` существуют параллельно контрактным, не вместо них.
+
 ## Независимое ревью (обязательно для фичевых PR)
 
 - [ ] Запущен `superpowers:code-reviewer` с жёстким промптом ("оценка 1-10 по TDD/DDD/Clean, без комплиментов, файлы+строки")
