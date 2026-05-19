@@ -1,8 +1,9 @@
 "use client";
 
 import Link from "next/link";
-import { Mail, Send } from "lucide-react";
+import { Mail, Send, Link2 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { STATUS_STYLES, type InboxLead } from "@/components/inbox/constants";
 
 export interface LeadCardProps {
   id: string;
@@ -11,17 +12,15 @@ export interface LeadCardProps {
   channel: "email" | "telegram";
   preview: string;
   timeAgo: string;
-  status: "Новый" | "Квалифицирован" | "Нужен фоллоуап";
+  status: InboxLead["status"];
+  sourceName?: string;
   /** Count of HITL drafts on this lead awaiting operator decision.
-   *  Renders a small badge when > 0; absent or 0 means no badge. */
+   *  Renders an amber badge when > 0; absent or 0 means no badge. */
   pendingRepliesCount?: number;
+  /** Count of cross-channel prospect-dedup suggestions for this lead.
+   *  Renders a beige Link2 badge when > 0. */
+  suggestionCount?: number;
 }
-
-const STATUS_STYLES: Record<LeadCardProps["status"], string> = {
-  "Новый": "bg-[#3b6ef6]/10 text-[#3b6ef6]",
-  "Квалифицирован": "border border-[#3b6ef6] text-[#3b6ef6] bg-transparent",
-  "Нужен фоллоуап": "bg-[#f59e0b]/10 text-[#f59e0b]",
-};
 
 export function LeadCard({
   id,
@@ -31,55 +30,74 @@ export function LeadCard({
   preview,
   timeAgo,
   status,
+  sourceName,
   pendingRepliesCount,
+  suggestionCount,
 }: LeadCardProps) {
   return (
     <Link
       href={`/inbox/${id}`}
-      className="group flex items-start gap-4 rounded-xl bg-white p-4 transition-shadow hover:shadow-md"
+      className="group relative flex cursor-pointer rounded-xl border border-transparent bg-white p-5 transition-all hover:border-[#c3c6d7]/10 hover:bg-[#dce9ff]/40"
     >
-      {/* Channel Icon */}
-      <div
-        className={cn(
-          "flex size-12 shrink-0 items-center justify-center rounded-xl",
-          channel === "email" ? "bg-[#3b6ef6]/10" : "bg-[#3b6ef6]/10"
-        )}
-      >
-        {channel === "email" ? (
-          <Mail className="size-5 text-[#3b6ef6]" />
-        ) : (
-          <Send className="size-5 text-[#3b6ef6]" />
-        )}
-      </div>
-
-      {/* Content */}
-      <div className="min-w-0 flex-1">
-        <div className="flex items-center gap-2">
-          <h3 className="text-sm font-semibold text-[#0d1c2e]">{company}</h3>
+      <div className="flex items-start gap-4 flex-1 min-w-0">
+        <div
+          className={cn(
+            "flex size-12 shrink-0 items-center justify-center rounded-xl",
+            channel === "email" ? "bg-[#dbe1ff]" : "bg-[#d5e0f8]"
+          )}
+        >
+          {channel === "email" ? (
+            <Mail className="size-5 text-[#004ac6]" />
+          ) : (
+            <Send className="size-5 text-[#229ED9]" />
+          )}
         </div>
-        <p className="text-xs text-[#6b7280]">
-          {channel === "email" ? "по email" : "через Telegram"} &middot; {contact}
-        </p>
-        <p className="mt-1 truncate text-sm text-[#6b7280]">{preview}</p>
+        <div className="min-w-0 flex-1">
+          <h4 className="font-bold leading-none text-[#0d1c2e]">{company}</h4>
+          <p className="mt-1 text-xs font-medium text-[#737686]">
+            {channel === "email" ? "по email" : "через Telegram"} · {contact}
+          </p>
+          {/* Wrapper is unconditional to preserve mt-2 spacing even when
+              sourceName is absent — matches the pre-refactor inbox JSX. */}
+          <div className="mt-2 flex items-center gap-2">
+            {sourceName && (
+              <span className="rounded-full bg-[#eff4ff] px-2 py-0.5 text-[10px] font-semibold text-[#004ac6]">
+                {sourceName}
+              </span>
+            )}
+          </div>
+          <p className="mt-1 line-clamp-2 text-sm leading-relaxed text-[#434655]">
+            {preview}
+          </p>
+        </div>
       </div>
-
-      {/* Right: time + badge */}
-      <div className="flex shrink-0 flex-col items-end gap-2">
-        <span className="text-[10px] font-medium tracking-wide text-[#6b7280] uppercase">
+      <div className="ml-4 flex shrink-0 flex-col items-end gap-2">
+        <span className="text-[10px] font-bold uppercase tracking-wider text-[#737686]">
           {timeAgo}
         </span>
         <span
           className={cn(
-            "rounded-full px-2.5 py-0.5 text-[10px] font-semibold whitespace-nowrap",
+            "whitespace-nowrap rounded-full px-3 py-1 text-[10px] font-bold",
             STATUS_STYLES[status]
           )}
         >
           {status}
         </span>
+        {suggestionCount !== undefined && suggestionCount > 0 && (
+          <span
+            aria-label={`${suggestionCount} возможных совпадений с проспектом`}
+            className="inline-flex items-center gap-1 rounded-full bg-[#fff3cd] px-2 py-0.5 text-[10px] font-semibold text-[#8a5a00]"
+            title={`${suggestionCount} возможных совпадений с проспектом`}
+          >
+            <Link2 className="size-3" />
+            {suggestionCount}
+          </span>
+        )}
         {pendingRepliesCount !== undefined && pendingRepliesCount > 0 && (
           <span
             aria-label={`${pendingRepliesCount} ожидают подтверждения`}
             className="inline-flex items-center gap-1 rounded-full bg-[#f5b73c] px-2 py-0.5 text-[10px] font-bold text-[#0d1c2e]"
+            title={`${pendingRepliesCount} ожидают подтверждения`}
           >
             ⏵ {pendingRepliesCount}
           </span>
