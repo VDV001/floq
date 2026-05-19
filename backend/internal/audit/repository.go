@@ -3,6 +3,7 @@ package audit
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -65,6 +66,19 @@ func (r *Repository) Save(ctx context.Context, entries []*domain.Entry) error {
 		return fmt.Errorf("audit save: %w", err)
 	}
 	return nil
+}
+
+// CostSummary aggregates audit_log rows for one user over the closed
+// time range [from, to). Two grouped queries (by request_type, by
+// model) plus a totals query. STUB — SQL lands in the GREEN commit
+// once integration tests have pinned the contract.
+func (r *Repository) CostSummary(ctx context.Context, userID uuid.UUID, from, to time.Time) (*domain.CostSummary, error) {
+	return &domain.CostSummary{
+		ByRequestType: []domain.RequestTypeBreakdown{},
+		ByModel:       []domain.ModelBreakdown{},
+		PeriodFrom:    from,
+		PeriodTo:      to,
+	}, nil
 }
 
 // nullableUUID converts an optional UUID into the form pgx expects for
