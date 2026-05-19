@@ -275,6 +275,9 @@ cd backend
 go test -race ./...
 ```
 
+Фронтенд-тесты следуют конвенции `vi.stubGlobal('fetch')` для контрактов api и
+`vi.mock('@/lib/api')` для UI-тестов — подробности в [`frontend/TESTING.md`](frontend/TESTING.md).
+
 ### Добавить миграцию
 
 ```bash
