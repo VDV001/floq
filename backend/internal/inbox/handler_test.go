@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/daniil/floq/internal/httputil"
 	"github.com/go-chi/chi/v5"
@@ -71,6 +72,51 @@ func authedRequest(t *testing.T, method, path string, userID uuid.UUID) *http.Re
 	req := httptest.NewRequest(method, path, nil)
 	req = req.WithContext(httputil.WithUserID(req.Context(), userID))
 	return req
+}
+
+// --- Response DTO carries DecidedBy ---
+
+func TestHandler_ListByLead_ResponseIncludesDecidedBy(t *testing.T) {
+	userID := uuid.New()
+	leadID := uuid.New()
+	operator := uuid.New()
+
+	pr, err := NewPendingReply(userID, leadID, ChannelTelegram, PendingReplyKindBookingLink, "first")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Simulate a row that was approved by 'operator' — the response
+	// must carry decided_by as a string. omitempty would otherwise
+	// drop a non-stamped row's field, but here it MUST be present.
+	if err := pr.Approve(time.Now().UTC(), operator); err != nil {
+		t.Fatal(err)
+	}
+
+	uc := &fakePendingReplyUseCase{
+		listFn: func(_ context.Context, _, _ uuid.UUID) ([]*PendingReply, error) {
+			return []*PendingReply{pr}, nil
+		},
+	}
+	leads := &fakeLeadOwnership{owned: map[uuid.UUID]bool{leadID: true}}
+
+	srv := newTestServer(uc, leads)
+	req := authedRequest(t, http.MethodGet, "/api/leads/"+leadID.String()+"/pending-replies", userID)
+	rec := httptest.NewRecorder()
+	srv.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200, body=%s", rec.Code, rec.Body.String())
+	}
+	var got []map[string]any
+	if err := json.NewDecoder(rec.Body).Decode(&got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("response len = %d, want 1", len(got))
+	}
+	if got[0]["decided_by"] != operator.String() {
+		t.Errorf("decided_by = %v, want %v — DTO must carry attribution for decided rows", got[0]["decided_by"], operator)
+	}
 }
 
 // --- GET /api/leads/{id}/pending-replies ---

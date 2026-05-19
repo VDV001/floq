@@ -329,6 +329,34 @@ func TestPendingReplyRepository_FindPendingByContent_ScopedByUser(t *testing.T) 
 	assert.Nil(t, got, "cross-tenant FindPendingByContent must return nil — never another user's row")
 }
 
+func TestPendingReplyRepository_Update_PersistsDecidedBy(t *testing.T) {
+	// After Approve(at, by) + Update, GetByID returns the row with
+	// DecidedBy populated. Pins migration 032 + repo round-trip.
+	pool := testutil.TestDB(t)
+	userID := testutil.SeedUser(t, pool)
+	leadID := seedLeadForUser(t, pool, userID)
+	repo := inbox.NewPendingReplyRepository(pool)
+	ctx := context.Background()
+
+	pr, err := inbox.NewPendingReply(userID, leadID, inbox.ChannelTelegram, inbox.PendingReplyKindBookingLink, "body")
+	require.NoError(t, err)
+	require.NoError(t, repo.Save(ctx, pr))
+	// Newly-created pending row has no decision yet — both fields nil.
+	got, err := repo.GetByID(ctx, userID, pr.ID)
+	require.NoError(t, err)
+	require.NotNil(t, got)
+	assert.Nil(t, got.DecidedBy, "freshly Saved pending row must have nil DecidedBy")
+
+	operator := testutil.SeedUser(t, pool)
+	require.NoError(t, pr.Approve(time.Now().UTC(), operator))
+	require.NoError(t, repo.Update(ctx, pr, inbox.PendingReplyStatusPending))
+
+	got, err = repo.GetByID(ctx, userID, pr.ID)
+	require.NoError(t, err)
+	require.NotNil(t, got.DecidedBy, "Update must persist DecidedBy")
+	assert.Equal(t, operator, *got.DecidedBy)
+}
+
 func TestPendingReplyRepository_Update_PersistsStatusAndTimestamps(t *testing.T) {
 	pool := testutil.TestDB(t)
 	userID := testutil.SeedUser(t, pool)
