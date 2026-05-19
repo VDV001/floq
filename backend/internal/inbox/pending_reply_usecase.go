@@ -147,16 +147,30 @@ func (uc *PendingReplyUseCase) Approve(ctx context.Context, userID, id uuid.UUID
 	if uc.dispatcher == nil {
 		return ErrPendingReplyDispatcherNotConfigured
 	}
-	if err := uc.dispatcher.Dispatch(ctx, pr); err != nil {
+	// Re-read after the optimistic-lock Update so a concurrent edit
+	// that committed in the gap [loadOwned, Update] does not
+	// silently dispatch the pre-edit body (#81). The DB holds the
+	// canonical body; our in-memory pr.Body is the load-time
+	// snapshot. The Update only writes decision columns, never body,
+	// so any edit's body change survives.
+	//
+	// Re-read failure is degraded: fall back to the in-memory
+	// snapshot so a transient DB hiccup does not block delivery of
+	// an already-approved row.
+	dispatchTarget := pr
+	if fresh, ferr := uc.repo.GetByID(ctx, userID, pr.ID); ferr == nil && fresh != nil {
+		dispatchTarget = fresh
+	}
+	if err := uc.dispatcher.Dispatch(ctx, dispatchTarget); err != nil {
 		return fmt.Errorf("dispatch approved pending reply: %w", err)
 	}
-	if err := pr.MarkSent(time.Now().UTC()); err != nil {
+	if err := dispatchTarget.MarkSent(time.Now().UTC()); err != nil {
 		return fmt.Errorf("mark pending reply sent: %w", err)
 	}
 	// The persisted row should still be at status=approved (we just
 	// set it). A NotFound here would be a serious anomaly — log it
 	// rather than convert to AlreadyDecided.
-	if err := uc.repo.Update(ctx, pr, PendingReplyStatusApproved); err != nil {
+	if err := uc.repo.Update(ctx, dispatchTarget, PendingReplyStatusApproved); err != nil {
 		return fmt.Errorf("persist sent pending reply: %w", err)
 	}
 	return nil
