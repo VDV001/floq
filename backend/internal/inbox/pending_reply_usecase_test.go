@@ -27,6 +27,12 @@ type fakePendingReplyRepo struct {
 	// for the same (user_id, lead_id, kind, body) tuple. Off by default
 	// so existing tests are unaffected.
 	dedupOnSave bool
+	// postUpdateHook fires after a successful Update / UpdateBody and
+	// receives the stored row (mutable). Tests use this to simulate a
+	// concurrent operation landing between the optimistic-lock Update
+	// and the next read — e.g. an edit racing with Approve (#81).
+	// Lock is already held when the hook runs.
+	postUpdateHook func(stored *PendingReply)
 }
 
 func newFakeRepo() *fakePendingReplyRepo {
@@ -147,6 +153,9 @@ func (f *fakePendingReplyRepo) Update(_ context.Context, pr *PendingReply, expec
 	}
 	copy := *pr
 	f.rows[pr.ID] = &copy
+	if f.postUpdateHook != nil {
+		f.postUpdateHook(f.rows[pr.ID])
+	}
 	return nil
 }
 
@@ -737,5 +746,51 @@ func TestPendingReplyUseCase_UpdateBody_EmptyBodyBubbles(t *testing.T) {
 	_, err = uc.UpdateBody(ctx, userID, pr.ID, "   ")
 	if !errors.Is(err, ErrPendingReplyEmptyBody) {
 		t.Fatalf("want ErrPendingReplyEmptyBody, got %v", err)
+	}
+}
+
+// --- Approve re-reads body before dispatch (#81) ---
+
+func TestPendingReplyUseCase_Approve_DispatchesPostEditBody(t *testing.T) {
+	// Race scenario: operator A clicks Edit → Save while operator B
+	// clicks Approve. A's body lands in the DB before B's Approve
+	// dispatches. Without a post-lock re-read, B's dispatcher would
+	// use the load-time body snapshot — and the customer would
+	// receive A's pre-edit body even though the DB shows the edit.
+	//
+	// The fix: after the optimistic-lock Update succeeds, re-read
+	// the row and dispatch the fresh body. This test pins that
+	// invariant — dispatcher must observe the post-edit body.
+	repo := newFakeRepo()
+	disp := &spyDispatcher{}
+	uc := NewPendingReplyUseCase(repo, disp)
+	ctx := context.Background()
+	userID := uuid.New()
+
+	pr, err := uc.Propose(ctx, userID, uuid.New(), ChannelTelegram, PendingReplyKindBookingLink, "original")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Simulate concurrent edit: after Approve's Update commits the
+	// status flip to approved, an edit lands and rewrites the body.
+	// The hook fires inside the same lock — equivalent to an edit
+	// committing while Approve was between Update and Dispatch.
+	repo.postUpdateHook = func(stored *PendingReply) {
+		if stored.Status == PendingReplyStatusApproved {
+			stored.Body = "edited body"
+		}
+	}
+
+	if err := uc.Approve(ctx, userID, pr.ID); err != nil {
+		t.Fatalf("Approve returned error: %v", err)
+	}
+
+	calls := disp.Calls()
+	if len(calls) != 1 {
+		t.Fatalf("dispatcher call count = %d, want 1", len(calls))
+	}
+	if calls[0].Body != "edited body" {
+		t.Errorf("dispatcher received body %q, want 'edited body' — Approve must re-read after the optimistic-lock Update so the dispatched body reflects any concurrent edit, not the load-time snapshot", calls[0].Body)
 	}
 }
