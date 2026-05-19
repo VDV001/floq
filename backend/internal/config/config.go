@@ -40,6 +40,11 @@ type Config struct {
 	SenderWebsite   string
 	StaleDays       int
 	ProxyURL        string
+	// PendingReplyRateLimitPerMin caps combined approve+reject requests
+	// per user per minute on the HITL endpoints. Default 30 — over an
+	// order of magnitude above any legitimate human cadence, still
+	// capped enough to bound abuse from a compromised JWT.
+	PendingReplyRateLimitPerMin int
 }
 
 // Load reads configuration from environment variables and returns a Config.
@@ -78,6 +83,7 @@ func Load() *Config {
 		SenderWebsite:   os.Getenv("SENDER_WEBSITE"),
 		StaleDays:       getEnvInt("STALE_DAYS", 2),
 		ProxyURL:        os.Getenv("PROXY_URL"),
+		PendingReplyRateLimitPerMin: getEnvInt("RATE_LIMIT_PENDING_REPLIES_PER_MIN", 30),
 	}
 }
 

@@ -43,14 +43,25 @@ type pendingReplyHandler struct {
 //   - POST /api/pending-replies/{id}/approve — approve + dispatch
 //   - POST /api/pending-replies/{id}/reject  — terminal reject
 //
+// decideMW, when non-nil, is applied ONLY to the two mutating routes
+// (approve/reject). The GET listing path is intentionally not rate-
+// limited: it is idempotent and refreshing it in the UI must not be
+// throttled. Passing nil disables the middleware entirely — useful in
+// handler unit tests that do not need a Limiter wired up.
+//
 // A future POST /api/leads/{id}/pending-replies could let operators
 // propose a draft manually; for now only the inbox auto-draft path
 // (Telegram booking link) feeds the queue.
-func RegisterPendingReplyRoutes(r chi.Router, uc PendingReplyUseCaseAPI, leads LeadOwnershipChecker) {
+func RegisterPendingReplyRoutes(r chi.Router, uc PendingReplyUseCaseAPI, leads LeadOwnershipChecker, decideMW func(http.Handler) http.Handler) {
 	h := &pendingReplyHandler{uc: uc, leads: leads}
 	r.Get("/api/leads/{id}/pending-replies", h.listByLead())
-	r.Post("/api/pending-replies/{id}/approve", h.approve())
-	r.Post("/api/pending-replies/{id}/reject", h.reject())
+	if decideMW == nil {
+		r.Post("/api/pending-replies/{id}/approve", h.approve())
+		r.Post("/api/pending-replies/{id}/reject", h.reject())
+		return
+	}
+	r.With(decideMW).Post("/api/pending-replies/{id}/approve", h.approve())
+	r.With(decideMW).Post("/api/pending-replies/{id}/reject", h.reject())
 }
 
 func (h *pendingReplyHandler) listByLead() http.HandlerFunc {

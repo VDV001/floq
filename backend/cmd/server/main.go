@@ -23,6 +23,7 @@ import (
 	"github.com/daniil/floq/internal/chat"
 	"github.com/daniil/floq/internal/config"
 	"github.com/daniil/floq/internal/db"
+	"github.com/daniil/floq/internal/httputil"
 	"github.com/daniil/floq/internal/inbox"
 	"github.com/daniil/floq/internal/inbox/attachments"
 	"github.com/daniil/floq/internal/leads"
@@ -30,6 +31,7 @@ import (
 	"github.com/daniil/floq/internal/outbound"
 	"github.com/daniil/floq/internal/parser"
 	"github.com/daniil/floq/internal/proxy"
+	"github.com/daniil/floq/internal/ratelimit"
 	"github.com/daniil/floq/internal/reminders"
 	"github.com/daniil/floq/internal/prospects"
 	"github.com/daniil/floq/internal/sequences"
@@ -42,7 +44,13 @@ import (
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/joho/godotenv"
+	"github.com/redis/go-redis/v9"
 )
+
+// pendingReplyRateWindow is fixed (per-minute is the only sensible
+// granularity for human-paced HITL endpoints); the budget itself
+// comes from config so ops can tighten on demand without rebuild.
+const pendingReplyRateWindow = time.Minute
 
 func main() {
 	// Load .env file (ignore error if missing — production uses real env vars).
@@ -137,6 +145,30 @@ func main() {
 	// bot -> usecase -> dispatcher -> bot cycle.
 	pendingReplyUC := inbox.NewPendingReplyUseCase(pendingReplyRepo, nil)
 
+	// Rate limiter for pending-reply approve/reject. Redis-backed when
+	// REDIS_URL is set (multi-instance safe); falls back to an in-
+	// process sliding-window for single-instance dev/test. Middleware
+	// fails open on Limiter errors so a Redis outage does not lock
+	// operators out of urgent approvals.
+	var pendingReplyLimiter ratelimit.Limiter
+	if cfg.RedisURL != "" {
+		redisOpt, err := redis.ParseURL(cfg.RedisURL)
+		if err != nil {
+			log.Fatalf("invalid REDIS_URL: %v", err)
+		}
+		redisClient := redis.NewClient(redisOpt)
+		pingCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		if err := redisClient.Ping(pingCtx).Err(); err != nil {
+			slog.Warn("redis ping failed at startup; rate limiter will fail-open until reachable", "err", err)
+		}
+		cancel()
+		pendingReplyLimiter = ratelimit.NewRedisLimiter(redisClient, cfg.PendingReplyRateLimitPerMin, pendingReplyRateWindow)
+	} else {
+		slog.Warn("REDIS_URL not set; using in-process rate limiter (single-instance only)")
+		pendingReplyLimiter = ratelimit.NewInMemoryLimiter(cfg.PendingReplyRateLimitPerMin, pendingReplyRateWindow)
+	}
+	pendingReplyDecideMW := ratelimit.Middleware(pendingReplyLimiter, pendingReplyKeyFn, slog.Default())
+
 	// 4. Adapters
 	leadsAI := leads.NewAIAdapter(aiClient)
 	seqAI := sequences.NewAIMessageGeneratorAdapter(aiClient)
@@ -192,7 +224,7 @@ func main() {
 		parser.RegisterRoutes(r, cfg.TwoGISAPIKey, httpClient)
 		settings.RegisterRoutes(r, settingsUC, buildAITester(cfg, httpClient), buildSMTPTester(proxyDialer), buildResendTester(httpClient), buildUsageCounter(leadsRepo))
 		chat.RegisterRoutes(r, chat.NewHandler(chat.NewRepository(pool), newChatAIAdapter(aiClient)))
-		inbox.RegisterPendingReplyRoutes(r, pendingReplyUC, leadsUC)
+		inbox.RegisterPendingReplyRoutes(r, pendingReplyUC, leadsUC, pendingReplyDecideMW)
 		tgOpts := []tgclient.Option{}
 		if proxyDialer != nil {
 			tgOpts = append(tgOpts, tgclient.WithDialer(proxyDialer))
@@ -334,5 +366,26 @@ func main() {
 		log.Printf("audit recorder stop: %v", err)
 	}
 	log.Println("server stopped")
+}
+
+// pendingReplyKeyFn resolves a request to its rate-limit bucket. Keys
+// are prefixed so future limiters on other routes do not collide in
+// the same Redis namespace, and scoped by user_id so one tenant's
+// burst cannot starve another.
+//
+// IMPORTANT: returning ok=false bypasses the limiter entirely — this
+// hinges on auth.AuthMiddleware running FIRST so the user_id is in
+// context for every request that reaches this point. Mounting the
+// pending-reply routes outside the protected group would silently
+// disable rate-limiting (every request falls back to bypass). See
+// the wire-up in main.go where decideMW is passed into
+// RegisterPendingReplyRoutes inside the auth.AuthMiddleware-scoped
+// chi.Group block.
+func pendingReplyKeyFn(r *http.Request) (string, bool) {
+	id, ok := httputil.UserIDFromContext(r.Context())
+	if !ok {
+		return "", false
+	}
+	return "ratelimit:pending-replies:" + id.String(), true
 }
 
