@@ -114,6 +114,42 @@ func freshPendingReply(t *testing.T) *PendingReply {
 	return pr
 }
 
+func TestPendingReply_Approve_StampsDecidedBy(t *testing.T) {
+	pr, err := NewPendingReply(uuid.New(), uuid.New(), ChannelTelegram, PendingReplyKindBookingLink, "body")
+	if err != nil {
+		t.Fatal(err)
+	}
+	operator := uuid.New()
+	at := time.Now().UTC()
+	if err := pr.Approve(at, operator); err != nil {
+		t.Fatalf("Approve must accept (at, by), got %v", err)
+	}
+	if pr.DecidedBy == nil {
+		t.Fatal("Approve must stamp DecidedBy alongside DecidedAt")
+	}
+	if *pr.DecidedBy != operator {
+		t.Errorf("DecidedBy = %v, want %v", *pr.DecidedBy, operator)
+	}
+}
+
+func TestPendingReply_Reject_StampsDecidedBy(t *testing.T) {
+	pr, err := NewPendingReply(uuid.New(), uuid.New(), ChannelTelegram, PendingReplyKindBookingLink, "body")
+	if err != nil {
+		t.Fatal(err)
+	}
+	operator := uuid.New()
+	at := time.Now().UTC()
+	if err := pr.Reject(at, operator); err != nil {
+		t.Fatalf("Reject must accept (at, by), got %v", err)
+	}
+	if pr.DecidedBy == nil {
+		t.Fatal("Reject must stamp DecidedBy alongside DecidedAt")
+	}
+	if *pr.DecidedBy != operator {
+		t.Errorf("DecidedBy = %v, want %v", *pr.DecidedBy, operator)
+	}
+}
+
 func TestPendingReply_Approve_FromPending(t *testing.T) {
 	pr := freshPendingReply(t)
 	at := time.Now().UTC()
