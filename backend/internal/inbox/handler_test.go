@@ -62,7 +62,7 @@ func (f *fakeLeadOwnership) OwnsLead(_ context.Context, _ uuid.UUID, leadID uuid
 
 func newTestServer(uc PendingReplyUseCaseAPI, leads LeadOwnershipChecker) http.Handler {
 	r := chi.NewRouter()
-	RegisterPendingReplyRoutes(r, uc, leads)
+	RegisterPendingReplyRoutes(r, uc, leads, nil)
 	return r
 }
 
