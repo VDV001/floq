@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { Mail, Send, Link2 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { STATUS_STYLES, type InboxLead } from "@/components/inbox/constants";
+import { STATUS_STYLES, type LeadStatus } from "@/components/leads/constants";
 
 export interface LeadCardProps {
   id: string;
@@ -12,7 +12,7 @@ export interface LeadCardProps {
   channel: "email" | "telegram";
   preview: string;
   timeAgo: string;
-  status: InboxLead["status"];
+  status: LeadStatus;
   sourceName?: string;
   /** Count of HITL drafts on this lead awaiting operator decision.
    *  Renders an amber badge when > 0; absent or 0 means no badge. */
