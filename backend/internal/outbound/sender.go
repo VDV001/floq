@@ -370,12 +370,26 @@ func (s *Sender) handleTelegramMessage(ctx context.Context, msg seqdomain.Outbou
 	log.Printf("[outbound] sent telegram message to %s (msg %s)", prospect.Phone, msg.ID)
 }
 
+// resendMaxAttempts caps retries at 3 — first try + two backoffs. Any
+// more and the cron tick gets stuck behind a single sticky 5xx; any
+// less and one transient blip surfaces as a hard send failure.
+const resendMaxAttempts = 3
+
+// resendInitialBackoff is the wait before the second attempt; doubled
+// for the third. Total worst-case wait = 200 + 400 = 600 ms, well
+// under the cron tick budget.
+const resendInitialBackoff = 200 * time.Millisecond
+
 // sendViaResend sends email through the Resend API using raw HTTP.
 // idempotencyKey is forwarded as the "Idempotency-Key" header so that
 // retries of the same outbound row collapse to a single delivery on
 // Resend's side (https://resend.com/docs/api-reference/idempotency).
 // An empty key is allowed but unsafe — callers should always pass a
 // stable per-message value (e.g. "outbound:<message_id>").
+//
+// Retries up to resendMaxAttempts on transport errors and 5xx
+// responses with exponential backoff. 4xx is treated as terminal —
+// same body + same key cannot succeed by trying again.
 func (s *Sender) sendViaResend(ctx context.Context, to, subject, htmlBody, idempotencyKey string) error {
 	apiKey := s.fallbackKey
 	if cfg, err := s.store.GetConfig(ctx, s.ownerID); err == nil {
@@ -392,28 +406,72 @@ func (s *Sender) sendViaResend(ctx context.Context, to, subject, htmlBody, idemp
 		"html":    htmlBody,
 	})
 
-	req, err := http.NewRequestWithContext(ctx, "POST", resendAPIURL, bytes.NewReader(body))
-	if err != nil {
-		return fmt.Errorf("resend request: %w", err)
-	}
-	req.Header.Set("Authorization", "Bearer "+apiKey)
-	req.Header.Set("Content-Type", "application/json")
-	if idempotencyKey != "" {
-		req.Header.Set("Idempotency-Key", idempotencyKey)
-	}
-
 	client := s.httpClient
 	if client == nil {
 		client = http.DefaultClient
 	}
-	resp, err := client.Do(req)
-	if err != nil {
-		return fmt.Errorf("resend send: %w", err)
-	}
-	defer resp.Body.Close()
 
-	if resp.StatusCode >= 400 {
-		return &ResendAPIError{StatusCode: resp.StatusCode}
+	var lastErr error
+	backoff := resendInitialBackoff
+	for attempt := 1; attempt <= resendMaxAttempts; attempt++ {
+		// New Request per attempt — bytes.Reader has an internal
+		// cursor that is exhausted by the previous client.Do.
+		req, err := http.NewRequestWithContext(ctx, "POST", resendAPIURL, bytes.NewReader(body))
+		if err != nil {
+			return fmt.Errorf("resend request: %w", err)
+		}
+		req.Header.Set("Authorization", "Bearer "+apiKey)
+		req.Header.Set("Content-Type", "application/json")
+		if idempotencyKey != "" {
+			req.Header.Set("Idempotency-Key", idempotencyKey)
+		}
+
+		resp, err := client.Do(req)
+		if err != nil {
+			lastErr = fmt.Errorf("resend send (attempt %d): %w", attempt, err)
+			if attempt == resendMaxAttempts {
+				return lastErr
+			}
+			if werr := waitWithCtx(ctx, backoff); werr != nil {
+				return werr
+			}
+			backoff *= 2
+			continue
+		}
+		// Drain + close so the connection can be reused on the next
+		// attempt. Body is small (Resend returns a short JSON ack).
+		resp.Body.Close()
+
+		if resp.StatusCode >= 500 && resp.StatusCode < 600 {
+			lastErr = &ResendAPIError{StatusCode: resp.StatusCode}
+			if attempt == resendMaxAttempts {
+				return lastErr
+			}
+			if werr := waitWithCtx(ctx, backoff); werr != nil {
+				return werr
+			}
+			backoff *= 2
+			continue
+		}
+		if resp.StatusCode >= 400 {
+			// 4xx — client error. Same body + same Idempotency-Key
+			// will fail the same way; retry burns rate-limit budget
+			// without changing the outcome.
+			return &ResendAPIError{StatusCode: resp.StatusCode}
+		}
+		return nil
 	}
-	return nil
+	return lastErr
+}
+
+// waitWithCtx sleeps for d unless the context is cancelled first.
+// Lets the retry loop honour cron shutdown without leaving a goroutine
+// blocked in the middle of a backoff.
+func waitWithCtx(ctx context.Context, d time.Duration) error {
+	select {
+	case <-time.After(d):
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }
