@@ -28,6 +28,12 @@ type recordingMockRepo struct {
 	saveCalls int
 }
 
+// CostSummary is unused by the recorder tests — recorder writes only.
+// Returning zero is enough to satisfy the AuditRepository interface.
+func (m *recordingMockRepo) CostSummary(_ context.Context, _ uuid.UUID, _, _ time.Time) (*domain.CostSummary, error) {
+	return &domain.CostSummary{}, nil
+}
+
 func (m *recordingMockRepo) Save(ctx context.Context, entries []*domain.Entry) error {
 	m.mu.Lock()
 	m.saveCalls++

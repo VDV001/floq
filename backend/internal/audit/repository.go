@@ -3,6 +3,7 @@ package audit
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -65,6 +66,73 @@ func (r *Repository) Save(ctx context.Context, entries []*domain.Entry) error {
 		return fmt.Errorf("audit save: %w", err)
 	}
 	return nil
+}
+
+// CostSummary aggregates audit_log rows for one user over the half-
+// open interval [from, to). Two grouped queries (by request_type, by
+// model) — totals are derived from the request-type breakdown to
+// avoid a third round-trip and stay consistent by construction.
+//
+// Breakdowns are ordered by USDMicro DESC so the operator dashboard
+// shows the most expensive surface first. Empty slices are returned
+// instead of nil so the JSON wire-shape stays predictable.
+func (r *Repository) CostSummary(ctx context.Context, userID uuid.UUID, from, to time.Time) (*domain.CostSummary, error) {
+	summary := &domain.CostSummary{
+		ByRequestType: []domain.RequestTypeBreakdown{},
+		ByModel:       []domain.ModelBreakdown{},
+		PeriodFrom:    from,
+		PeriodTo:      to,
+	}
+
+	rows, err := r.pool.Query(ctx,
+		`SELECT request_type, COUNT(*), COALESCE(SUM(cost_usd_micro), 0),
+		        COALESCE(SUM(input_tokens), 0), COALESCE(SUM(output_tokens), 0)
+		 FROM audit_log
+		 WHERE user_id = $1 AND created_at >= $2 AND created_at < $3
+		 GROUP BY request_type
+		 ORDER BY SUM(cost_usd_micro) DESC`,
+		userID, from, to)
+	if err != nil {
+		return nil, fmt.Errorf("audit cost-summary by request_type: %w", err)
+	}
+	for rows.Next() {
+		var b domain.RequestTypeBreakdown
+		if err := rows.Scan(&b.RequestType, &b.Calls, &b.USDMicro, &b.InputTokens, &b.OutputTokens); err != nil {
+			rows.Close()
+			return nil, fmt.Errorf("audit cost-summary scan request_type: %w", err)
+		}
+		summary.ByRequestType = append(summary.ByRequestType, b)
+		summary.TotalCalls += b.Calls
+		summary.TotalUSDMicro += b.USDMicro
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("audit cost-summary by request_type rows: %w", err)
+	}
+
+	rows, err = r.pool.Query(ctx,
+		`SELECT model, COUNT(*), COALESCE(SUM(cost_usd_micro), 0),
+		        COALESCE(SUM(input_tokens), 0), COALESCE(SUM(output_tokens), 0)
+		 FROM audit_log
+		 WHERE user_id = $1 AND created_at >= $2 AND created_at < $3
+		 GROUP BY model
+		 ORDER BY SUM(cost_usd_micro) DESC`,
+		userID, from, to)
+	if err != nil {
+		return nil, fmt.Errorf("audit cost-summary by model: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var b domain.ModelBreakdown
+		if err := rows.Scan(&b.Model, &b.Calls, &b.USDMicro, &b.InputTokens, &b.OutputTokens); err != nil {
+			return nil, fmt.Errorf("audit cost-summary scan model: %w", err)
+		}
+		summary.ByModel = append(summary.ByModel, b)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("audit cost-summary by model rows: %w", err)
+	}
+	return summary, nil
 }
 
 // nullableUUID converts an optional UUID into the form pgx expects for
