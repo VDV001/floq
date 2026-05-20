@@ -186,10 +186,10 @@ floq/
 │   │   ├── config/                  # Чтение .env
 │   │   ├── db/                      # TxManager, транзакции
 │   │   └── httputil/                # JSON-ответы, контекст запроса
-│   └── migrations/                  # 16 SQL-миграций (up + down)
+│   └── migrations/                  # 32 SQL-миграции (up + down)
 ├── frontend/
-│   ├── src/app/                     # 11 страниц (App Router)
-│   ├── src/components/              # 18+ компонентов (shadcn/ui)
+│   ├── src/app/                     # 13+ страниц (App Router)
+│   ├── src/components/              # 30+ компонентов (shadcn/ui)
 │   └── src/lib/api.ts               # API-клиент
 ├── docker-compose.yml
 ├── .env.example
@@ -282,8 +282,8 @@ go test -race ./...
 
 ```bash
 # Создать файлы миграции
-touch backend/migrations/017_описание.up.sql
-touch backend/migrations/017_описание.down.sql
+touch backend/migrations/033_описание.up.sql
+touch backend/migrations/033_описание.down.sql
 ```
 
 Миграции применяются автоматически при старте сервера.
