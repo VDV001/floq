@@ -23,6 +23,7 @@ type PendingReplyUseCaseAPI interface {
 	Approve(ctx context.Context, userID, id uuid.UUID) error
 	Reject(ctx context.Context, userID, id uuid.UUID) error
 	UpdateBody(ctx context.Context, userID, id uuid.UUID, body string) (*PendingReply, error)
+	BulkDecide(ctx context.Context, userID uuid.UUID, ids []uuid.UUID, decision BulkDecision) ([]BulkDecideResult, error)
 }
 
 // LeadOwnershipChecker is the narrow port the handler needs to gate
@@ -65,6 +66,7 @@ func RegisterPendingReplyRoutes(r chi.Router, uc PendingReplyUseCaseAPI, leads L
 		r.Post("/api/pending-replies/{id}/approve", h.approve())
 		r.Post("/api/pending-replies/{id}/reject", h.reject())
 		r.Patch("/api/pending-replies/{id}", h.updateBody())
+		r.Post("/api/pending-replies/bulk", h.bulkDecide())
 		return
 	}
 	r.With(decideMW).Post("/api/pending-replies/{id}/approve", h.approve())
@@ -72,6 +74,12 @@ func RegisterPendingReplyRoutes(r chi.Router, uc PendingReplyUseCaseAPI, leads L
 	// PATCH is rate-limited too — operators editing in a tight loop should
 	// hit the same throttle as a tight approve loop.
 	r.With(decideMW).Patch("/api/pending-replies/{id}", h.updateBody())
+	// Bulk decide consumes one rate-limit slot per call regardless of
+	// how many ids it carries. This is a deliberate power-operator
+	// affordance: the alternative — charging N slots per bulk — would
+	// neutralise the whole point of the endpoint. If abuse becomes a
+	// problem, swap to len(ids) accounting in the middleware key fn.
+	r.With(decideMW).Post("/api/pending-replies/bulk", h.bulkDecide())
 }
 
 func (h *pendingReplyHandler) listByLead() http.HandlerFunc {
@@ -137,6 +145,15 @@ func (h *pendingReplyHandler) listPendingByUser() http.HandlerFunc {
 			return
 		}
 		httputil.WriteJSON(w, http.StatusOK, operatorQueueToResponse(rows))
+	}
+}
+
+// bulkDecide — stub for the RED step of #49. Real impl lands in the
+// matching GREEN commit; tests fail at runtime so the build stays
+// bisect-friendly.
+func (h *pendingReplyHandler) bulkDecide() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		httputil.WriteError(w, http.StatusNotImplemented, "bulkDecide not implemented")
 	}
 }
 

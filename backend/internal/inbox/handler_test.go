@@ -26,6 +26,14 @@ type fakePendingReplyUseCase struct {
 	approveFn           func(ctx context.Context, userID, id uuid.UUID) error
 	rejectFn            func(ctx context.Context, userID, id uuid.UUID) error
 	updateBodyFn        func(ctx context.Context, userID, id uuid.UUID, body string) (*PendingReply, error)
+	bulkDecideFn        func(ctx context.Context, userID uuid.UUID, ids []uuid.UUID, decision BulkDecision) ([]BulkDecideResult, error)
+}
+
+func (f *fakePendingReplyUseCase) BulkDecide(ctx context.Context, userID uuid.UUID, ids []uuid.UUID, decision BulkDecision) ([]BulkDecideResult, error) {
+	if f.bulkDecideFn != nil {
+		return f.bulkDecideFn(ctx, userID, ids, decision)
+	}
+	return nil, nil
 }
 
 func (f *fakePendingReplyUseCase) ListByLead(ctx context.Context, userID, leadID uuid.UUID) ([]*PendingReply, error) {
@@ -665,5 +673,155 @@ func TestHandler_UpdateBody_ErrorMatrix(t *testing.T) {
 				t.Fatalf("status = %d, want %d, body=%s", rec.Code, c.wantStatus, rec.Body.String())
 			}
 		})
+	}
+}
+
+// --- POST /api/pending-replies/bulk ---
+
+func TestHandler_BulkDecide_HappyPath_PartialResultsPreserveOrder(t *testing.T) {
+	userID := uuid.New()
+	idOK := uuid.New()
+	idMissing := uuid.New()
+	idDecided := uuid.New()
+
+	uc := &fakePendingReplyUseCase{
+		bulkDecideFn: func(_ context.Context, _ uuid.UUID, ids []uuid.UUID, decision BulkDecision) ([]BulkDecideResult, error) {
+			if decision != BulkDecisionApprove {
+				t.Errorf("decision = %v, want approve", decision)
+			}
+			if len(ids) != 3 {
+				t.Errorf("ids len = %d, want 3", len(ids))
+			}
+			return []BulkDecideResult{
+				{ID: ids[0], Err: nil},
+				{ID: ids[1], Err: ErrPendingReplyNotFound},
+				{ID: ids[2], Err: ErrPendingReplyAlreadyDecided},
+			}, nil
+		},
+	}
+	srv := newTestServer(uc, &fakeLeadOwnership{})
+
+	body := `{"ids":["` + idOK.String() + `","` + idMissing.String() + `","` + idDecided.String() + `"],"decision":"approve"}`
+	req := httptest.NewRequest(http.MethodPost, "/api/pending-replies/bulk", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req = req.WithContext(httputil.WithUserID(req.Context(), userID))
+	rec := httptest.NewRecorder()
+	srv.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200, body=%s", rec.Code, rec.Body.String())
+	}
+	var got struct {
+		Results []map[string]any `json:"results"`
+	}
+	if err := json.NewDecoder(rec.Body).Decode(&got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(got.Results) != 3 {
+		t.Fatalf("results len = %d, want 3", len(got.Results))
+	}
+	// Row 0: success — ok=true, no error field.
+	if got.Results[0]["id"] != idOK.String() {
+		t.Errorf("results[0].id = %v, want %v — order must be preserved", got.Results[0]["id"], idOK)
+	}
+	if got.Results[0]["ok"] != true {
+		t.Errorf("results[0].ok = %v, want true", got.Results[0]["ok"])
+	}
+	if _, present := got.Results[0]["error"]; present {
+		t.Errorf("results[0].error must be omitempty on success, got %v", got.Results[0]["error"])
+	}
+	// Row 1: not-found.
+	if got.Results[1]["ok"] != false {
+		t.Errorf("results[1].ok = %v, want false", got.Results[1]["ok"])
+	}
+	if got.Results[1]["error"] != "not found" {
+		t.Errorf("results[1].error = %v, want 'not found'", got.Results[1]["error"])
+	}
+	// Row 2: already-decided.
+	if got.Results[2]["ok"] != false {
+		t.Errorf("results[2].ok = %v, want false", got.Results[2]["ok"])
+	}
+	if got.Results[2]["error"] != "already decided" {
+		t.Errorf("results[2].error = %v, want 'already decided'", got.Results[2]["error"])
+	}
+}
+
+func TestHandler_BulkDecide_EmptyIDsReturns400(t *testing.T) {
+	uc := &fakePendingReplyUseCase{
+		bulkDecideFn: func(_ context.Context, _ uuid.UUID, _ []uuid.UUID, _ BulkDecision) ([]BulkDecideResult, error) {
+			return nil, ErrBulkDecideEmptyIDs
+		},
+	}
+	srv := newTestServer(uc, &fakeLeadOwnership{})
+
+	req := httptest.NewRequest(http.MethodPost, "/api/pending-replies/bulk", strings.NewReader(`{"ids":[],"decision":"approve"}`))
+	req.Header.Set("Content-Type", "application/json")
+	req = req.WithContext(httputil.WithUserID(req.Context(), uuid.New()))
+	rec := httptest.NewRecorder()
+	srv.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", rec.Code)
+	}
+}
+
+func TestHandler_BulkDecide_UnknownDecisionReturns400(t *testing.T) {
+	uc := &fakePendingReplyUseCase{
+		bulkDecideFn: func(_ context.Context, _ uuid.UUID, _ []uuid.UUID, _ BulkDecision) ([]BulkDecideResult, error) {
+			return nil, ErrBulkDecideInvalidDecision
+		},
+	}
+	srv := newTestServer(uc, &fakeLeadOwnership{})
+
+	body := `{"ids":["` + uuid.New().String() + `"],"decision":"explode"}`
+	req := httptest.NewRequest(http.MethodPost, "/api/pending-replies/bulk", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req = req.WithContext(httputil.WithUserID(req.Context(), uuid.New()))
+	rec := httptest.NewRecorder()
+	srv.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", rec.Code)
+	}
+}
+
+func TestHandler_BulkDecide_MalformedJSONReturns400(t *testing.T) {
+	srv := newTestServer(&fakePendingReplyUseCase{}, &fakeLeadOwnership{})
+
+	req := httptest.NewRequest(http.MethodPost, "/api/pending-replies/bulk", strings.NewReader(`{not json}`))
+	req.Header.Set("Content-Type", "application/json")
+	req = req.WithContext(httputil.WithUserID(req.Context(), uuid.New()))
+	rec := httptest.NewRecorder()
+	srv.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400 on malformed JSON", rec.Code)
+	}
+}
+
+func TestHandler_BulkDecide_InvalidUUIDInIDsReturns400(t *testing.T) {
+	srv := newTestServer(&fakePendingReplyUseCase{}, &fakeLeadOwnership{})
+
+	req := httptest.NewRequest(http.MethodPost, "/api/pending-replies/bulk", strings.NewReader(`{"ids":["not-a-uuid"],"decision":"approve"}`))
+	req.Header.Set("Content-Type", "application/json")
+	req = req.WithContext(httputil.WithUserID(req.Context(), uuid.New()))
+	rec := httptest.NewRecorder()
+	srv.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400 on bad uuid", rec.Code)
+	}
+}
+
+func TestHandler_BulkDecide_NoUserReturns401(t *testing.T) {
+	srv := newTestServer(&fakePendingReplyUseCase{}, &fakeLeadOwnership{})
+
+	req := httptest.NewRequest(http.MethodPost, "/api/pending-replies/bulk", strings.NewReader(`{"ids":["`+uuid.New().String()+`"],"decision":"approve"}`))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	srv.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want 401", rec.Code)
 	}
 }
