@@ -2,14 +2,16 @@
 
 import { useState } from "react";
 import type { AnalyticsPeriod } from "@/lib/api";
-import { useSequenceAnalytics } from "@/hooks/useSequenceAnalytics";
+import { useCostAnalytics } from "@/hooks/useCostAnalytics";
 import { AnalyticsTabs } from "@/components/analytics/AnalyticsTabs";
 import { PeriodSelector } from "@/components/analytics/PeriodSelector";
-import { SequenceStatsTable } from "@/components/analytics/SequenceStatsTable";
+import { CostSummaryCard } from "@/components/analytics/CostSummaryCard";
+import { CostRatiosPanel } from "@/components/analytics/CostRatiosPanel";
+import { CostBreakdownTable } from "@/components/analytics/CostBreakdownTable";
 
-export default function SequenceAnalyticsPage() {
-  const [period, setPeriod] = useState<AnalyticsPeriod>("all");
-  const { rows, loading, error, lastUpdated, refresh } = useSequenceAnalytics(period);
+export default function CostAnalyticsPage() {
+  const [period, setPeriod] = useState<AnalyticsPeriod>("month");
+  const { ratios, summary, loading, error, lastUpdated, refresh } = useCostAnalytics(period);
 
   return (
     <section className="flex-1 overflow-y-auto px-4 sm:px-8 lg:px-12 py-8">
@@ -17,9 +19,9 @@ export default function SequenceAnalyticsPage() {
         <AnalyticsTabs />
         <header className="flex items-end justify-between gap-4 flex-wrap">
           <div>
-            <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight text-[#0d1c2e]">Аналитика sequence&apos;ов</h1>
+            <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight text-[#0d1c2e]">Аналитика затрат</h1>
             <p className="text-sm text-slate-500 mt-1">
-              Какая sequence работает лучше — sent / delivered / opened / replied / converted.
+              Сколько трачу на AI и что получаю — cost per lead / qualified / converted.
             </p>
           </div>
           <div className="flex items-center gap-3">
@@ -40,13 +42,32 @@ export default function SequenceAnalyticsPage() {
           </div>
         )}
 
-        {loading && rows.length === 0 ? (
+        {loading && !ratios ? (
           <div className="rounded-lg border border-slate-200 bg-white p-8 text-center text-sm text-slate-500">
             Загружаем…
           </div>
-        ) : (
-          <SequenceStatsTable rows={rows} />
-        )}
+        ) : ratios ? (
+          <>
+            <CostSummaryCard ratios={ratios} />
+            <CostRatiosPanel ratios={ratios} />
+            {summary && (
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                <CostBreakdownTable
+                  title="По типу запроса"
+                  labelHeader="Тип запроса"
+                  rows={summary.by_request_type}
+                  labelKey="request_type"
+                />
+                <CostBreakdownTable
+                  title="По модели"
+                  labelHeader="Модель"
+                  rows={summary.by_model}
+                  labelKey="model"
+                />
+              </div>
+            )}
+          </>
+        ) : null}
 
         {lastUpdated && (
           <div className="text-xs text-slate-400">

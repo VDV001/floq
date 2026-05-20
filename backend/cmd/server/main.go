@@ -240,7 +240,8 @@ func main() {
 		chat.RegisterRoutes(r, chat.NewHandler(chat.NewRepository(pool), newChatAIAdapter(aiClient)))
 		inbox.RegisterPendingReplyRoutes(r, pendingReplyUC, leadsUC, pendingReplyDecideMW)
 		audit.RegisterRoutes(r, audit.NewHandler(audit.NewUseCase(auditRepo)))
-		analytics.RegisterRoutes(r, analytics.NewUseCase(analytics.NewRepository(pool)))
+		analyticsRepo := analytics.NewRepository(pool)
+		analytics.RegisterRoutes(r, analytics.NewUseCase(analyticsRepo, analyticsRepo))
 		tgOpts := []tgclient.Option{}
 		if proxyDialer != nil {
 			tgOpts = append(tgOpts, tgclient.WithDialer(proxyDialer))

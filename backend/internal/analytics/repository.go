@@ -20,10 +20,13 @@ func NewRepository(pool *pgxpool.Pool) *Repository {
 	return &Repository{pool: pool}
 }
 
-// Compile-time check: Repository satisfies the port consumed by the
-// usecase. Adding the assertion here means a signature drift breaks
+// Compile-time check: Repository satisfies the ports consumed by the
+// usecases. Adding the assertions here means a signature drift breaks
 // the build, not a runtime cast at wire-up time.
-var _ SequenceStatsReader = (*Repository)(nil)
+var (
+	_ SequenceStatsReader = (*Repository)(nil)
+	_ CostRatiosReader    = (*Repository)(nil)
+)
 
 // GetSequenceStats returns one row per sequence with activity in the
 // requested period. Sequences with zero outbound rows in the window
@@ -96,4 +99,86 @@ func nullableCutoff(t time.Time, hasCutoff bool) any {
 		return nil
 	}
 	return t
+}
+
+// GetCostRatios composes the View 2 cost dashboard read model: the
+// total AI spend over [from, to) plus the four denominator counts
+// (leads / qualified leads / converted prospects / sent outbounds)
+// the ratios depend on. Five sequential queries — clarity over
+// throughput; the dashboard is not a hot path.
+//
+// Ratios are computed inside the repo so the wire surface stays
+// integer-pure (USD micro-units divided by counts). A zero
+// denominator yields a zero ratio rather than panicking or emitting
+// IEEE-754 Inf.
+func (r *Repository) GetCostRatios(ctx context.Context, userID uuid.UUID, from, to time.Time) (*CostRatiosDTO, error) {
+	dto := &CostRatiosDTO{
+		PeriodFrom: from,
+		PeriodTo:   to,
+	}
+
+	if err := r.pool.QueryRow(ctx,
+		`SELECT COALESCE(SUM(cost_usd_micro), 0), COUNT(*)
+		 FROM audit_log
+		 WHERE user_id = $1 AND created_at >= $2 AND created_at < $3`,
+		userID, from, to,
+	).Scan(&dto.TotalCostUSDMicro, &dto.TotalCalls); err != nil {
+		return nil, fmt.Errorf("analytics cost-ratios audit: %w", err)
+	}
+
+	if err := r.pool.QueryRow(ctx,
+		`SELECT COUNT(*) FROM leads
+		 WHERE user_id = $1 AND created_at >= $2 AND created_at < $3`,
+		userID, from, to,
+	).Scan(&dto.LeadsCount); err != nil {
+		return nil, fmt.Errorf("analytics cost-ratios leads: %w", err)
+	}
+
+	if err := r.pool.QueryRow(ctx,
+		`SELECT COUNT(*) FROM (
+			SELECT l.id FROM leads l
+			JOIN qualifications q ON q.lead_id = l.id
+			WHERE l.user_id = $1 AND l.created_at >= $2 AND l.created_at < $3
+			GROUP BY l.id
+			HAVING MAX(q.score) >= $4
+		) sub`,
+		userID, from, to, QualifiedScoreThreshold,
+	).Scan(&dto.QualifiedLeadsCount); err != nil {
+		return nil, fmt.Errorf("analytics cost-ratios qualified: %w", err)
+	}
+
+	if err := r.pool.QueryRow(ctx,
+		`SELECT COUNT(*) FROM prospects
+		 WHERE user_id = $1 AND status = 'converted'
+		   AND updated_at >= $2 AND updated_at < $3`,
+		userID, from, to,
+	).Scan(&dto.ConvertedCount); err != nil {
+		return nil, fmt.Errorf("analytics cost-ratios converted: %w", err)
+	}
+
+	if err := r.pool.QueryRow(ctx,
+		`SELECT COUNT(*) FROM outbound_messages om
+		 JOIN prospects p ON p.id = om.prospect_id
+		 WHERE p.user_id = $1 AND om.status = 'sent'
+		   AND om.sent_at >= $2 AND om.sent_at < $3`,
+		userID, from, to,
+	).Scan(&dto.DraftsSentCount); err != nil {
+		return nil, fmt.Errorf("analytics cost-ratios drafts: %w", err)
+	}
+
+	dto.CostPerLeadUSDMicro = safeRatioInt(dto.TotalCostUSDMicro, dto.LeadsCount)
+	dto.CostPerQualifiedUSDMicro = safeRatioInt(dto.TotalCostUSDMicro, dto.QualifiedLeadsCount)
+	dto.CostPerConvertedUSDMicro = safeRatioInt(dto.TotalCostUSDMicro, dto.ConvertedCount)
+	dto.CostPerDraftSentUSDMicro = safeRatioInt(dto.TotalCostUSDMicro, dto.DraftsSentCount)
+	return dto, nil
+}
+
+// safeRatioInt divides totalMicro by count, returning 0 when count is
+// non-positive. Integer-pure — the wire-mapping converts to float USD
+// at the JSON boundary.
+func safeRatioInt(totalMicro int64, count int) int64 {
+	if count <= 0 {
+		return 0
+	}
+	return totalMicro / int64(count)
 }
