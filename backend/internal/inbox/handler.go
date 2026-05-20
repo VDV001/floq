@@ -230,11 +230,11 @@ func (h *pendingReplyHandler) bulkDecide() http.HandlerFunc {
 			return
 		}
 		out := bulkDecideResponse{Results: make([]bulkDecideResultWire, 0, len(results))}
-		for _, r := range results {
+		for _, res := range results {
 			out.Results = append(out.Results, bulkDecideResultWire{
-				ID:    r.ID.String(),
-				OK:    r.Err == nil,
-				Error: perRowErrorString(r.Err),
+				ID:    res.ID.String(),
+				OK:    res.Err == nil,
+				Error: perRowErrorString(res.Err),
 			})
 		}
 		httputil.WriteJSON(w, http.StatusOK, out)

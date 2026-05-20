@@ -971,6 +971,66 @@ func TestPendingReplyUseCase_BulkDecide_MixedSuccessAndFailureSurfacesPerRow(t *
 	}
 }
 
+func TestPendingReplyUseCase_BulkDecide_SecondBulkOnSameRowReportsAlreadyDecided(t *testing.T) {
+	// Two operators (or two browser tabs) racing on the same pending
+	// id: tab 1's bulk-approve wins, tab 2 sees the row in approved
+	// status and the per-row optimistic-lock translates into
+	// ErrPendingReplyAlreadyDecided. The bulk path inherits this
+	// contract via the single-row Approve delegation — this test pins
+	// it directly so a future refactor that bypasses single-row
+	// Approve does not silently lose the lock.
+	repo := newFakeRepo()
+	uc := NewPendingReplyUseCase(repo, &spyDispatcher{})
+	ctx := context.Background()
+	userID := uuid.New()
+
+	pr, err := uc.Propose(ctx, userID, uuid.New(), ChannelTelegram, PendingReplyKindBookingLink, "race row")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	first, err := uc.BulkDecide(ctx, userID, []uuid.UUID{pr.ID}, BulkDecisionApprove)
+	if err != nil {
+		t.Fatalf("first BulkDecide returned top-level error: %v", err)
+	}
+	if first[0].Err != nil {
+		t.Fatalf("first bulk row Err = %v, want nil", first[0].Err)
+	}
+
+	second, err := uc.BulkDecide(ctx, userID, []uuid.UUID{pr.ID}, BulkDecisionApprove)
+	if err != nil {
+		t.Fatalf("second BulkDecide returned top-level error: %v", err)
+	}
+	if !errors.Is(second[0].Err, ErrPendingReplyAlreadyDecided) {
+		t.Errorf("second bulk row Err = %v, want ErrPendingReplyAlreadyDecided — second operator on the same row must observe the optimistic lock", second[0].Err)
+	}
+}
+
+func TestPendingReplyUseCase_BulkDecide_HonorsContextCancellation(t *testing.T) {
+	repo := newFakeRepo()
+	uc := NewPendingReplyUseCase(repo, &spyDispatcher{})
+	userID := uuid.New()
+
+	pr1, _ := uc.Propose(context.Background(), userID, uuid.New(), ChannelTelegram, PendingReplyKindBookingLink, "one")
+	pr2, _ := uc.Propose(context.Background(), userID, uuid.New(), ChannelTelegram, PendingReplyKindBookingLink, "two")
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // dead context from the start
+
+	results, err := uc.BulkDecide(ctx, userID, []uuid.UUID{pr1.ID, pr2.ID}, BulkDecisionApprove)
+	if err != nil {
+		t.Fatalf("BulkDecide returned top-level error: %v", err)
+	}
+	if len(results) != 2 {
+		t.Fatalf("len(results) = %d, want 2 — order must stay 1-to-1 even on cancel", len(results))
+	}
+	for i, r := range results {
+		if !errors.Is(r.Err, context.Canceled) {
+			t.Errorf("results[%d].Err = %v, want context.Canceled — cancelled context must surface per-row, not run wasted work", i, r.Err)
+		}
+	}
+}
+
 func TestPendingReplyUseCase_BulkDecide_RejectDecisionDoesNotDispatch(t *testing.T) {
 	repo := newFakeRepo()
 	disp := &spyDispatcher{}

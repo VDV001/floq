@@ -7,6 +7,7 @@ import { formatTime } from "@/components/outbound/constants";
 import { PendingQueueRow } from "@/components/pending-queue/PendingQueueRow";
 import { PendingQueueTabs } from "@/components/pending-queue/PendingQueueTabs";
 import { usePendingQueue } from "@/hooks/usePendingQueue";
+import { pluralRu } from "@/lib/format";
 
 export default function InboxPendingPage() {
   const q = usePendingQueue();
@@ -132,7 +133,9 @@ export default function InboxPendingPage() {
           >
             <span>
               Готово: {q.bulkSummary.ok} применено
-              {q.bulkSummary.failed > 0 ? `, ${q.bulkSummary.failed} ошибок` : ""}
+              {q.bulkSummary.failed > 0
+                ? `, ${q.bulkSummary.failed} ${pluralRu(q.bulkSummary.failed, "ошибка", "ошибки", "ошибок")}`
+                : ""}
             </span>
             <button
               type="button"

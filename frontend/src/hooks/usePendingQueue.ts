@@ -89,9 +89,16 @@ export function usePendingQueue() {
     if (ids.length === 0) return;
     try {
       const { results } = await api.bulkPendingReplies({ ids, decision });
-      const okIds = new Set(results.filter((r) => r.ok).map((r) => r.id));
+      // Defensive intersection: ignore any server-returned id that
+      // was not in our request. The hook is the integrity boundary
+      // for local row removal — a buggy or hostile backend should
+      // never be able to flip rows we did not ask about.
+      const requestIds = new Set(ids);
+      const okIds = new Set(
+        results.filter((r) => r.ok && requestIds.has(r.id)).map((r) => r.id),
+      );
       const ok = okIds.size;
-      const failed = results.length - ok;
+      const failed = results.filter((r) => requestIds.has(r.id) && !r.ok).length;
       setRows((prev) => prev.filter((r) => !okIds.has(r.id)));
       setSelectedIds(new Set());
       setBulkSummary({ ok, failed });

@@ -147,6 +147,16 @@ func (uc *PendingReplyUseCase) BulkDecide(ctx context.Context, userID uuid.UUID,
 	}
 	results := make([]BulkDecideResult, 0, len(ids))
 	for _, id := range ids {
+		// Honour client disconnect mid-bulk: pad remaining ids with
+		// the context error so the result slice stays 1-to-1 with the
+		// input and the caller can see which rows did not run.
+		// Continuing the loop after a cancel would still fire DB
+		// updates + dispatcher I/O on a dead context (50 wasted
+		// round-trips for a 50-row bulk in the worst case).
+		if err := ctx.Err(); err != nil {
+			results = append(results, BulkDecideResult{ID: id, Err: err})
+			continue
+		}
 		var err error
 		switch decision {
 		case BulkDecisionApprove:

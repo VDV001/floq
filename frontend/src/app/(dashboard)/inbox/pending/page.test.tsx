@@ -215,7 +215,7 @@ describe("InboxPendingPage", () => {
       expect(screen.queryByText("winner")).not.toBeInTheDocument();
     });
     expect(screen.getByText("loser")).toBeInTheDocument();
-    expect(screen.getByText(/1 применено, 1 ошибок/)).toBeInTheDocument();
+    expect(screen.getByText(/1 применено, 1 ошибка/)).toBeInTheDocument();
   });
 
   it("channel filter hides rows from the unselected channel", async () => {
