@@ -43,13 +43,15 @@ func seedLead(t *testing.T, pool *pgxpool.Pool, userID uuid.UUID, status string,
 }
 
 // seedQualification attaches a qualification row with the given score
-// to leadID. generated_at defaults to NOW().
+// to leadID. qualifications.lead_id is UNIQUE — one row per lead via
+// UPSERT in production. generated_at defaults to NOW().
 func seedQualification(t *testing.T, pool *pgxpool.Pool, leadID uuid.UUID, score int) {
 	t.Helper()
 	id := uuid.New()
 	_, err := pool.Exec(context.Background(),
-		`INSERT INTO qualifications (id, lead_id, identified_need, budget, deadline, score, score_reason, suggested_action, provider, generated_at)
-		 VALUES ($1, $2, '', '', '', $3, '', '', 'test', NOW())`,
+		`INSERT INTO qualifications (id, lead_id, identified_need, estimated_budget, deadline, score, score_reason, recommended_action, provider_used, generated_at)
+		 VALUES ($1, $2, '', '', '', $3, '', '', 'test', NOW())
+		 ON CONFLICT (lead_id) DO UPDATE SET score = EXCLUDED.score, generated_at = EXCLUDED.generated_at`,
 		id, leadID, score)
 	require.NoError(t, err, "seed qualification")
 }
@@ -121,10 +123,12 @@ func TestRepository_GetCostRatios_AggregatesCounts(t *testing.T) {
 	prospectID := seedProspect(t, pool, userID, "in_sequence")
 	updateProspect(t, pool, prospectID, l2, now.Add(-30*time.Minute))
 
-	// 5 sent outbound messages in window
+	// 5 sent outbound messages in window. Offset by -1m so the latest
+	// row sits strictly before `to` (the half-open window's right
+	// boundary excludes exactly-equal rows).
 	seqID := seedSequence(t, pool, userID, "S1")
 	for i := 0; i < 5; i++ {
-		seedSentOutbound(t, pool, prospectID, seqID, now.Add(time.Duration(-i)*time.Hour))
+		seedSentOutbound(t, pool, prospectID, seqID, now.Add(-1*time.Minute).Add(time.Duration(-i)*time.Hour))
 	}
 
 	got, err := repo.GetCostRatios(context.Background(), userID, from, now)
@@ -183,19 +187,20 @@ func TestRepository_GetCostRatios_WindowFilter(t *testing.T) {
 	assert.Equal(t, 1, got.LeadsCount)
 }
 
-func TestRepository_GetCostRatios_QualifiedUsesMaxScore(t *testing.T) {
+func TestRepository_GetCostRatios_QualifiedReQualification(t *testing.T) {
 	pool := testutil.TestDB(t)
 	userID := testutil.SeedUser(t, pool)
 	repo := analytics.NewRepository(pool)
 
 	now := time.Now().UTC()
-	// One lead with two qualifications: first below threshold, second
-	// above — max() must win so the lead counts as qualified.
+	// qualifications.lead_id is UNIQUE — the production AI re-qualifier
+	// UPSERTs over the existing row. A lead first scored below
+	// threshold and later re-scored above must count as qualified now.
 	leadID := seedLead(t, pool, userID, "qualified", now.Add(-1*time.Hour))
-	seedQualification(t, pool, leadID, 40)
-	seedQualification(t, pool, leadID, 85)
+	seedQualification(t, pool, leadID, 40) // initial low score
+	seedQualification(t, pool, leadID, 85) // re-qualification UPSERT overwrites
 
 	got, err := repo.GetCostRatios(context.Background(), userID, now.Add(-7*24*time.Hour), now)
 	require.NoError(t, err)
-	assert.Equal(t, 1, got.QualifiedLeadsCount, "lead with max(score) >= 80 must count once, regardless of earlier sub-threshold scores")
+	assert.Equal(t, 1, got.QualifiedLeadsCount, "lead with latest score >= 80 counts as qualified after UPSERT")
 }
