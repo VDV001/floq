@@ -118,11 +118,13 @@ func (uc *PendingReplyUseCase) ListByLead(ctx context.Context, userID, leadID uu
 	return uc.repo.ListByLead(ctx, userID, leadID)
 }
 
-// ListPendingByUser — stub for the RED step of #51. Impl lands in the
-// matching GREEN commit; tests against this method fail at runtime
-// rather than at compile time so the build stays green for bisect.
-func (uc *PendingReplyUseCase) ListPendingByUser(_ context.Context, _ uuid.UUID) ([]*PendingReplyWithLead, error) {
-	return nil, errors.New("pending reply usecase: ListPendingByUser not implemented")
+// ListPendingByUser returns every status='pending' row for the user
+// joined with the lead snippet the operator queue needs. Passthrough
+// to the repository — there is no per-row authorization to apply
+// because user_id scoping is already enforced inside the SQL query;
+// cross-tenant leakage is impossible at this layer.
+func (uc *PendingReplyUseCase) ListPendingByUser(ctx context.Context, userID uuid.UUID) ([]*PendingReplyWithLead, error) {
+	return uc.repo.ListPendingByUser(ctx, userID)
 }
 
 // Approve transitions the reply into Approved, persists the decision,
