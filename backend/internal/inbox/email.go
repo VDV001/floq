@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/tls"
+	"fmt"
 	"io"
 	"log"
 	"log/slog"
@@ -25,16 +26,18 @@ import (
 // extracted and their text content is appended to the qualification
 // context. A nil analyzer keeps the legacy text-only behaviour.
 type EmailPoller struct {
-	store          ConfigStore
-	repo           LeadRepository
-	prospectRepo   ProspectRepository
-	seqRepo        SequenceRepository
-	aiClient       AIQualifier
-	analyzer       *attachments.Analyzer
-	identityLinker IdentityLinker
-	logger         *slog.Logger
-	ownerID        uuid.UUID
-	dialer         proxy.ContextDialer
+	store           ConfigStore
+	repo            LeadRepository
+	prospectRepo    ProspectRepository
+	seqRepo         SequenceRepository
+	aiClient        AIQualifier
+	analyzer        *attachments.Analyzer
+	identityLinker  IdentityLinker
+	pendingProposer PendingReplyProposer
+	bookingLink     string
+	logger          *slog.Logger
+	ownerID         uuid.UUID
+	dialer          proxy.ContextDialer
 
 	fallbackHost     string
 	fallbackPort     string
@@ -94,6 +97,36 @@ func WithLogger(l *slog.Logger) EmailPollerOption {
 			p.logger = l
 		}
 	}
+}
+
+// WithEmailPendingReplyProposer wires the HITL queue for the
+// email-channel auto-draft branch. Symmetric with the Telegram bot's
+// proposer wiring: when DetectCallAgreement matches the email body,
+// the poller enqueues a booking-link pending reply for operator
+// approval instead of sending the URL directly. When nil (or
+// omitted), the booking-link branch is suppressed entirely.
+//
+// Named asymmetrically to its telegram-side sibling because Go does
+// not allow option-name collisions across different option types in
+// the same package.
+func WithEmailPendingReplyProposer(p PendingReplyProposer) EmailPollerOption {
+	return func(e *EmailPoller) { e.pendingProposer = p }
+}
+
+// WithEmailBookingLink sets the calendar URL interpolated into the
+// auto-drafted booking-link reply. Must be set when
+// WithEmailPendingReplyProposer is also wired; otherwise the
+// formatted reply would carry an empty URL.
+func WithEmailBookingLink(link string) EmailPollerOption {
+	return func(e *EmailPoller) { e.bookingLink = link }
+}
+
+// SetPendingProposer wires the HITL queue after construction. Used by
+// the composition root to break a wiring cycle when the inbox usecase
+// (acting as proposer) depends on transports built from the poller's
+// own collaborators.
+func (e *EmailPoller) SetPendingProposer(p PendingReplyProposer) {
+	e.pendingProposer = p
 }
 
 func (e *EmailPoller) Start(ctx context.Context) {
@@ -421,6 +454,34 @@ func (e *EmailPoller) processEmail(ctx context.Context, fromName, fromEmail, bod
 	if err := e.repo.CreateMessage(ctx, message); err != nil {
 		log.Printf("[email-poller] error creating message: %v", err)
 		return
+	}
+
+	// HITL gate for the email booking-link branch — symmetric with the
+	// Telegram bot (telegram.go). When DetectCallAgreement triggers,
+	// enqueue a pending reply for operator approval rather than
+	// sending the calendar URL directly via SMTP/Resend. The secure
+	// default when no proposer is wired is to suppress the branch
+	// entirely; we do NOT fall back to instant send.
+	if DetectCallAgreement(body) {
+		switch {
+		case e.pendingProposer == nil:
+			e.logger.WarnContext(ctx, "email booking link suppressed: no pending reply proposer wired",
+				"lead_id", lead.ID.String(), "email", fromEmail)
+		case e.bookingLink == "":
+			// Enqueueing with an empty URL would let an operator
+			// approve a customer-visible message that says "here is
+			// your calendar link: " followed by nothing. Suppress the
+			// branch instead — operator can write the message
+			// manually if needed.
+			e.logger.WarnContext(ctx, "email booking link suppressed: bookingLink not configured",
+				"lead_id", lead.ID.String(), "email", fromEmail)
+		default:
+			bookingMsg := fmt.Sprintf(bookingLinkReplyTemplate, e.bookingLink)
+			if _, err := e.pendingProposer.Propose(ctx, lead.UserID, lead.ID, ChannelEmail, PendingReplyKindBookingLink, bookingMsg); err != nil {
+				e.logger.WarnContext(ctx, "failed to enqueue email booking reply for approval",
+					"lead_id", lead.ID.String(), "error", err)
+			}
+		}
 	}
 
 	if isNewLead {

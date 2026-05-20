@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -917,4 +918,118 @@ func TestEmailPoller_Poll_ConnectionError(t *testing.T) {
 	}
 	// Should not panic or block — just logs connection error
 	poller.poll(context.Background())
+}
+
+// =============================================
+// Auto-draft (HITL) trigger tests for #53
+// =============================================
+
+type recordingProposer struct {
+	mu      sync.Mutex
+	calls   []proposerCall
+	failErr error
+}
+
+type proposerCall struct {
+	userID  uuid.UUID
+	leadID  uuid.UUID
+	channel Channel
+	kind    PendingReplyKind
+	body    string
+}
+
+func (r *recordingProposer) Propose(_ context.Context, userID, leadID uuid.UUID, channel Channel, kind PendingReplyKind, body string) (*PendingReply, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.calls = append(r.calls, proposerCall{userID: userID, leadID: leadID, channel: channel, kind: kind, body: body})
+	return nil, r.failErr
+}
+
+func (r *recordingProposer) Calls() []proposerCall {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return append([]proposerCall(nil), r.calls...)
+}
+
+func TestEmailPoller_AutoDraft_DetectCallAgreementEnqueuesPendingReply(t *testing.T) {
+	repo := newEmailMockLeadRepo()
+	prospectRepo := newEmailMockProspectRepo()
+	seqRepo := &mockSequenceRepo{}
+	aiClient := &mockAIQualifier{result: &QualificationResult{Score: 0}}
+	proposer := &recordingProposer{}
+
+	poller := newTestEmailPoller(repo, prospectRepo, seqRepo, aiClient, uuid.New())
+	poller.pendingProposer = proposer
+	poller.bookingLink = "https://cal.example/floq"
+
+	// "Yes, let's schedule a call" passes DetectCallAgreement.
+	poller.processEmail(context.Background(), "Alice", "alice@example.com", "Да, давайте созвонимся в любое удобное время", nil)
+
+	calls := proposer.Calls()
+	if len(calls) != 1 {
+		t.Fatalf("proposer called %d times, want 1 — DetectCallAgreement should have triggered auto-draft", len(calls))
+	}
+	if calls[0].channel != ChannelEmail {
+		t.Errorf("channel = %v, want %v", calls[0].channel, ChannelEmail)
+	}
+	if calls[0].kind != PendingReplyKindBookingLink {
+		t.Errorf("kind = %v, want booking_link", calls[0].kind)
+	}
+	if !strings.Contains(calls[0].body, "https://cal.example/floq") {
+		t.Errorf("body %q must include the booking link URL", calls[0].body)
+	}
+}
+
+func TestEmailPoller_AutoDraft_NoTriggerWhenBodyDoesNotMatch(t *testing.T) {
+	repo := newEmailMockLeadRepo()
+	prospectRepo := newEmailMockProspectRepo()
+	seqRepo := &mockSequenceRepo{}
+	aiClient := &mockAIQualifier{result: &QualificationResult{Score: 0}}
+	proposer := &recordingProposer{}
+
+	poller := newTestEmailPoller(repo, prospectRepo, seqRepo, aiClient, uuid.New())
+	poller.pendingProposer = proposer
+	poller.bookingLink = "https://cal.example/floq"
+
+	// Unrelated body — DetectCallAgreement should NOT match.
+	poller.processEmail(context.Background(), "Alice", "alice@example.com", "Подскажите, какие у вас расценки?", nil)
+
+	if got := len(proposer.Calls()); got != 0 {
+		t.Errorf("proposer fired %d times for unrelated body — must trigger only on DetectCallAgreement match", got)
+	}
+}
+
+func TestEmailPoller_AutoDraft_SuppressedWhenBookingLinkEmpty(t *testing.T) {
+	repo := newEmailMockLeadRepo()
+	prospectRepo := newEmailMockProspectRepo()
+	seqRepo := &mockSequenceRepo{}
+	aiClient := &mockAIQualifier{result: &QualificationResult{Score: 0}}
+	proposer := &recordingProposer{}
+
+	poller := newTestEmailPoller(repo, prospectRepo, seqRepo, aiClient, uuid.New())
+	poller.pendingProposer = proposer
+	// bookingLink intentionally empty: enqueueing the template would
+	// land an operator-approvable message with a blank URL slot.
+	poller.bookingLink = ""
+
+	poller.processEmail(context.Background(), "Alice", "alice@example.com", "Да, давайте созвонимся", nil)
+
+	if got := len(proposer.Calls()); got != 0 {
+		t.Errorf("proposer fired %d times with empty bookingLink — must suppress to avoid sending a message with a blank URL", got)
+	}
+}
+
+func TestEmailPoller_AutoDraft_SuppressedWhenNoProposerWired(t *testing.T) {
+	repo := newEmailMockLeadRepo()
+	prospectRepo := newEmailMockProspectRepo()
+	seqRepo := &mockSequenceRepo{}
+	aiClient := &mockAIQualifier{result: &QualificationResult{Score: 0}}
+
+	poller := newTestEmailPoller(repo, prospectRepo, seqRepo, aiClient, uuid.New())
+	// No proposer wired; secure-by-default behaviour is that the
+	// branch is suppressed entirely (logged warning, no instant send).
+	poller.bookingLink = "https://cal.example/floq"
+
+	// Should not panic.
+	poller.processEmail(context.Background(), "Alice", "alice@example.com", "Да, давайте созвонимся", nil)
 }

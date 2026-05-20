@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -1217,4 +1218,85 @@ func TestSendViaSMTPWith_Port465(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error from TLS dial")
 	}
+}
+
+// --- SendOneEmailFor ---
+
+func TestSendOneEmailFor_NoSMTPNoResendKey_ReturnsNoResendKeyError(t *testing.T) {
+	// No SMTP at all, no Resend fallback key → must hit the Resend
+	// branch and fail with ErrNoResendAPIKey. Pins both the routing
+	// (no SMTP → Resend) and the explicit no-key sentinel that the
+	// dispatcher will surface to ops.
+	cfgStore := &mockConfigStore{cfg: &settingsdomain.UserConfig{}}
+	s := NewSender(cfgStore, uuid.New(), "", "from@test.com", "https://app.test",
+		"", "", "", "",
+		nil, nil, nil, nil, nil, nil)
+
+	err := s.SendOneEmailFor(context.Background(), uuid.New(), "to@example.com", "subject", "body", "idem-key")
+	if !errors.Is(err, ErrNoResendAPIKey) {
+		t.Errorf("err = %v, want ErrNoResendAPIKey — Resend branch must surface the no-key sentinel", err)
+	}
+}
+
+func TestSendOneEmailFor_SMTPConfigured_AttemptsSMTPNotResend(t *testing.T) {
+	// SMTP configured (with an unreachable host) → SendOneEmailFor must
+	// take the SMTP branch. The dial fails with a network-layer error;
+	// asserting on the message keeps this honest as a routing test (a
+	// stub returning "not implemented" would fail this check). When the
+	// SMTP path runs, the error wraps a dial/lookup/connect failure.
+	cfgStore := &mockConfigStore{cfg: &settingsdomain.UserConfig{}}
+	s := NewSender(cfgStore, uuid.New(), "fallback-resend-key", "from@test.com", "https://app.test",
+		"smtp.example.invalid", "587", "user@test.com", "pass",
+		nil, nil, nil, nil, nil, nil)
+
+	err := s.SendOneEmailFor(context.Background(), uuid.New(), "to@example.com", "subject", "body", "idem-key")
+	if err == nil {
+		t.Fatal("expected SMTP dial error, got nil — SMTP host is unreachable")
+	}
+	if errors.Is(err, ErrNoResendAPIKey) {
+		t.Errorf("SMTP-configured caller fell through to Resend: %v", err)
+	}
+	// The wrapped error from sendViaSMTPWith should mention smtp/dial/lookup;
+	// a placeholder stub message will not.
+	emsg := strings.ToLower(err.Error())
+	if !strings.Contains(emsg, "smtp") && !strings.Contains(emsg, "dial") && !strings.Contains(emsg, "lookup") && !strings.Contains(emsg, "no such host") {
+		t.Errorf("error %q does not look like a network-layer SMTP failure — routing may not have taken the SMTP branch", err.Error())
+	}
+}
+
+func TestSendOneEmailFor_ResolvesConfigForGivenUserNotOwnerID(t *testing.T) {
+	// The Sender was constructed with one ownerID but the method takes
+	// an explicit userID; the config-store call MUST use the explicit
+	// one. Otherwise the dispatcher would always read the boot-time
+	// owner's SMTP/Resend, which is wrong in multi-tenant deployments.
+	ownerID := uuid.New()
+	otherUser := uuid.New()
+	var seenUserID uuid.UUID
+	cfgStore := &spyConfigStore{
+		cfg: &settingsdomain.UserConfig{},
+		onCall: func(id uuid.UUID) { seenUserID = id },
+	}
+	s := NewSender(cfgStore, ownerID, "", "from@test.com", "https://app.test",
+		"", "", "", "",
+		nil, nil, nil, nil, nil, nil)
+
+	_ = s.SendOneEmailFor(context.Background(), otherUser, "to@example.com", "subject", "body", "idem-key")
+
+	if seenUserID != otherUser {
+		t.Errorf("config-store userID = %v, want %v — SendOneEmailFor must use the explicit userID, not s.ownerID (%v)", seenUserID, otherUser, ownerID)
+	}
+}
+
+// spyConfigStore records the userID passed to GetConfig.
+type spyConfigStore struct {
+	cfg    *settingsdomain.UserConfig
+	err    error
+	onCall func(uuid.UUID)
+}
+
+func (s *spyConfigStore) GetConfig(_ context.Context, id uuid.UUID) (*settingsdomain.UserConfig, error) {
+	if s.onCall != nil {
+		s.onCall(id)
+	}
+	return s.cfg, s.err
 }

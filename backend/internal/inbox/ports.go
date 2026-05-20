@@ -155,6 +155,20 @@ type IdentityLinker interface {
 	LinkLeadToIdentity(ctx context.Context, userID, leadID uuid.UUID, email, phone, telegramUsername string) error
 }
 
+// EmailSender is the narrow port inbox needs to dispatch an
+// approved PendingReply on the email channel. Implementations live
+// in the composition root (an adapter that wraps the outbound
+// package's SMTP/Resend logic) so the inbox package stays free of
+// transport-layer imports.
+//
+// SendEmail MUST resolve the user's SMTP/Resend configuration per
+// call — the same row of pending_replies can outlive a config
+// change. Returning an error keeps the entity in Approved status so
+// the operator can retry; the usecase will NOT mark it sent.
+type EmailSender interface {
+	SendEmail(ctx context.Context, userID uuid.UUID, to, subject, body string) error
+}
+
 // PendingReplyProposer enqueues an auto-drafted reply for human
 // approval. It is the inversion-of-control seam between the inbox
 // pollers (Telegram bot, future email auto-replies) and the HITL
