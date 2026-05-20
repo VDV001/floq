@@ -15,6 +15,7 @@ import {
   UserPlus,
   Send,
   GraduationCap,
+  BarChart3,
   Menu,
   X,
 } from "lucide-react";
@@ -29,6 +30,7 @@ const NAV_ITEMS = [
   { label: "Проспекты", href: "/prospects", icon: UserPlus, hint: "База контактов для холодного аутрича. Импорт из CSV, парсинг 2GIS, ручное добавление" },
   { label: "Секвенции", href: "/sequences", icon: GitBranch, hint: "Цепочки автоматических касаний: Email → Telegram → Прозвон. AI пишет текст под каждый канал" },
   { label: "Очередь отправки", href: "/outbound", icon: Send, hint: "Сообщения, сгенерированные AI и ожидающие вашего одобрения перед отправкой" },
+  { label: "Аналитика", href: "/analytics/sequences", icon: BarChart3, hint: "Какая sequence работает лучше: sent / delivered / opened / replied / converted" },
   { label: "Настройки", href: "/settings", icon: Settings, hint: "Подключение каналов (Telegram, Email), выбор AI-провайдера, уведомления" },
   { label: "Обучение", href: "/onboarding", icon: GraduationCap, hint: "Пошаговая настройка системы и полезные советы для начала работы" },
 ];
