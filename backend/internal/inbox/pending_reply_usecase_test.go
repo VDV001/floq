@@ -16,11 +16,12 @@ import (
 type fakePendingReplyRepo struct {
 	mu       sync.Mutex
 	rows     map[uuid.UUID]*PendingReply
-	saveErr  error
-	getErr   error
-	updErr   error
-	listErr  error
-	findErr  error
+	saveErr        error
+	getErr         error
+	updErr         error
+	listErr        error
+	findErr        error
+	listByUserErr  error
 	// dedupOnSave mirrors the partial unique index that production
 	// installs in migration 031: when true, Save returns
 	// ErrPendingReplyDuplicatePending if a pending row already exists
@@ -118,6 +119,26 @@ func (f *fakePendingReplyRepo) ListByLead(_ context.Context, userID, leadID uuid
 		if row.UserID == userID && row.LeadID == leadID {
 			copy := *row
 			out = append(out, &copy)
+		}
+	}
+	return out, nil
+}
+
+// ListPendingByUser — in-memory mirror of the SQL query: filter on
+// user_id + status='pending'. The fake has no lead store so LeadSnippet
+// stays zero-valued; usecase-layer tests only assert passthrough,
+// real JOIN coverage lives in the repository integration suite.
+func (f *fakePendingReplyRepo) ListPendingByUser(_ context.Context, userID uuid.UUID) ([]*PendingReplyWithLead, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.listByUserErr != nil {
+		return nil, f.listByUserErr
+	}
+	out := []*PendingReplyWithLead{}
+	for _, row := range f.rows {
+		if row.UserID == userID && row.Status == PendingReplyStatusPending {
+			copy := *row
+			out = append(out, &PendingReplyWithLead{Reply: &copy})
 		}
 	}
 	return out, nil

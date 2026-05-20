@@ -142,6 +142,13 @@ func (r *PendingReplyRepo) ListByLead(ctx context.Context, userID, leadID uuid.U
 	return out, rows.Err()
 }
 
+// ListPendingByUser — stub for the RED step of #51. Impl lands in the
+// matching GREEN commit; tests against this method fail at runtime
+// rather than at compile time so the build stays green for bisect.
+func (r *PendingReplyRepo) ListPendingByUser(_ context.Context, _ uuid.UUID) ([]*PendingReplyWithLead, error) {
+	return nil, errors.New("pending reply repo: ListPendingByUser not implemented")
+}
+
 // CountPendingByUser returns the per-lead count of rows still awaiting
 // operator decision (status='pending') for the given user. Used by
 // the leads-context inbox-list badge.
