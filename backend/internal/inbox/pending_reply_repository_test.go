@@ -177,18 +177,21 @@ func TestPendingReplyRepository_Update_OptimisticLock_RejectsWhenStatusMoved(t *
 	require.NoError(t, err)
 	require.NoError(t, repo.Save(ctx, pr))
 
+	operatorB := testutil.SeedUser(t, pool)
+	operatorA := testutil.SeedUser(t, pool)
+
 	// Simulate the race: operator A loaded the row at status=pending
 	// and is about to push status=approved. Meanwhile operator B
 	// already approved it — the persisted row is now status=approved.
 	bSnap := *pr
-	require.NoError(t, bSnap.Approve(time.Now().UTC(), uuid.New()))
+	require.NoError(t, bSnap.Approve(time.Now().UTC(), operatorB))
 	require.NoError(t, repo.Update(ctx, &bSnap, inbox.PendingReplyStatusPending))
 
 	// Operator A's stale snapshot, still expecting status=pending,
 	// must fail the optimistic check rather than overwriting B's
 	// decision.
 	aSnap := *pr
-	require.NoError(t, aSnap.Approve(time.Now().UTC(), uuid.New()))
+	require.NoError(t, aSnap.Approve(time.Now().UTC(), operatorA))
 	err = repo.Update(ctx, &aSnap, inbox.PendingReplyStatusPending)
 	require.ErrorIs(t, err, inbox.ErrPendingReplyNotFound,
 		"second Update with the same expected-status must fail — the row is no longer pending")
@@ -252,7 +255,8 @@ func TestPendingReplyRepository_Save_AllowsRePeoposeAfterRejection(t *testing.T)
 	first, err := inbox.NewPendingReply(userID, leadID, inbox.ChannelTelegram, inbox.PendingReplyKindBookingLink, "book me")
 	require.NoError(t, err)
 	require.NoError(t, repo.Save(ctx, first))
-	require.NoError(t, first.Reject(time.Now().UTC(), uuid.New()))
+	operator := testutil.SeedUser(t, pool)
+	require.NoError(t, first.Reject(time.Now().UTC(), operator))
 	require.NoError(t, repo.Update(ctx, first, inbox.PendingReplyStatusPending))
 
 	second, err := inbox.NewPendingReply(userID, leadID, inbox.ChannelTelegram, inbox.PendingReplyKindBookingLink, "book me")
@@ -304,7 +308,8 @@ func TestPendingReplyRepository_FindPendingByContent_IgnoresDecidedRows(t *testi
 	pr, err := inbox.NewPendingReply(userID, leadID, inbox.ChannelTelegram, inbox.PendingReplyKindBookingLink, "book me")
 	require.NoError(t, err)
 	require.NoError(t, repo.Save(ctx, pr))
-	require.NoError(t, pr.Reject(time.Now().UTC(), uuid.New()))
+	operator := testutil.SeedUser(t, pool)
+	require.NoError(t, pr.Reject(time.Now().UTC(), operator))
 	require.NoError(t, repo.Update(ctx, pr, inbox.PendingReplyStatusPending))
 
 	got, err := repo.FindPendingByContent(ctx, userID, leadID, inbox.PendingReplyKindBookingLink, "book me")
@@ -368,8 +373,9 @@ func TestPendingReplyRepository_Update_PersistsStatusAndTimestamps(t *testing.T)
 	require.NoError(t, err)
 	require.NoError(t, repo.Save(ctx, pr))
 
+	operator := testutil.SeedUser(t, pool)
 	decidedAt := time.Now().UTC().Truncate(time.Microsecond)
-	require.NoError(t, pr.Approve(decidedAt, uuid.New()))
+	require.NoError(t, pr.Approve(decidedAt, operator))
 	require.NoError(t, repo.Update(ctx, pr, inbox.PendingReplyStatusPending))
 
 	got, err := repo.GetByID(ctx, userID, pr.ID)
