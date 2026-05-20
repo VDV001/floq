@@ -27,14 +27,16 @@ import (
 type EmailPoller struct {
 	store          ConfigStore
 	repo           LeadRepository
-	prospectRepo   ProspectRepository
-	seqRepo        SequenceRepository
-	aiClient       AIQualifier
-	analyzer       *attachments.Analyzer
-	identityLinker IdentityLinker
-	logger         *slog.Logger
-	ownerID        uuid.UUID
-	dialer         proxy.ContextDialer
+	prospectRepo    ProspectRepository
+	seqRepo         SequenceRepository
+	aiClient        AIQualifier
+	analyzer        *attachments.Analyzer
+	identityLinker  IdentityLinker
+	pendingProposer PendingReplyProposer
+	bookingLink     string
+	logger          *slog.Logger
+	ownerID         uuid.UUID
+	dialer          proxy.ContextDialer
 
 	fallbackHost     string
 	fallbackPort     string
@@ -94,6 +96,36 @@ func WithLogger(l *slog.Logger) EmailPollerOption {
 			p.logger = l
 		}
 	}
+}
+
+// WithEmailPendingReplyProposer wires the HITL queue for the
+// email-channel auto-draft branch. Symmetric with the Telegram bot's
+// proposer wiring: when DetectCallAgreement matches the email body,
+// the poller enqueues a booking-link pending reply for operator
+// approval instead of sending the URL directly. When nil (or
+// omitted), the booking-link branch is suppressed entirely.
+//
+// Named asymmetrically to its telegram-side sibling because Go does
+// not allow option-name collisions across different option types in
+// the same package.
+func WithEmailPendingReplyProposer(p PendingReplyProposer) EmailPollerOption {
+	return func(e *EmailPoller) { e.pendingProposer = p }
+}
+
+// WithEmailBookingLink sets the calendar URL interpolated into the
+// auto-drafted booking-link reply. Must be set when
+// WithEmailPendingReplyProposer is also wired; otherwise the
+// formatted reply would carry an empty URL.
+func WithEmailBookingLink(link string) EmailPollerOption {
+	return func(e *EmailPoller) { e.bookingLink = link }
+}
+
+// SetPendingProposer wires the HITL queue after construction. Used by
+// the composition root to break a wiring cycle when the inbox usecase
+// (acting as proposer) depends on transports built from the poller's
+// own collaborators.
+func (e *EmailPoller) SetPendingProposer(p PendingReplyProposer) {
+	e.pendingProposer = p
 }
 
 func (e *EmailPoller) Start(ctx context.Context) {
