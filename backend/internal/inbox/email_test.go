@@ -952,10 +952,10 @@ func (r *recordingProposer) Calls() []proposerCall {
 }
 
 func TestEmailPoller_AutoDraft_DetectCallAgreementEnqueuesPendingReply(t *testing.T) {
-	repo := &emailMockLeadRepo{}
-	prospectRepo := &emailMockProspectRepo{}
+	repo := newEmailMockLeadRepo()
+	prospectRepo := newEmailMockProspectRepo()
 	seqRepo := &mockSequenceRepo{}
-	aiClient := &mockAIQualifier{}
+	aiClient := &mockAIQualifier{result: &QualificationResult{Score: 0}}
 	proposer := &recordingProposer{}
 
 	poller := newTestEmailPoller(repo, prospectRepo, seqRepo, aiClient, uuid.New())
@@ -981,10 +981,10 @@ func TestEmailPoller_AutoDraft_DetectCallAgreementEnqueuesPendingReply(t *testin
 }
 
 func TestEmailPoller_AutoDraft_NoTriggerWhenBodyDoesNotMatch(t *testing.T) {
-	repo := &emailMockLeadRepo{}
-	prospectRepo := &emailMockProspectRepo{}
+	repo := newEmailMockLeadRepo()
+	prospectRepo := newEmailMockProspectRepo()
 	seqRepo := &mockSequenceRepo{}
-	aiClient := &mockAIQualifier{}
+	aiClient := &mockAIQualifier{result: &QualificationResult{Score: 0}}
 	proposer := &recordingProposer{}
 
 	poller := newTestEmailPoller(repo, prospectRepo, seqRepo, aiClient, uuid.New())
@@ -1000,10 +1000,10 @@ func TestEmailPoller_AutoDraft_NoTriggerWhenBodyDoesNotMatch(t *testing.T) {
 }
 
 func TestEmailPoller_AutoDraft_SuppressedWhenNoProposerWired(t *testing.T) {
-	repo := &emailMockLeadRepo{}
-	prospectRepo := &emailMockProspectRepo{}
+	repo := newEmailMockLeadRepo()
+	prospectRepo := newEmailMockProspectRepo()
 	seqRepo := &mockSequenceRepo{}
-	aiClient := &mockAIQualifier{}
+	aiClient := &mockAIQualifier{result: &QualificationResult{Score: 0}}
 
 	poller := newTestEmailPoller(repo, prospectRepo, seqRepo, aiClient, uuid.New())
 	// No proposer wired; secure-by-default behaviour is that the

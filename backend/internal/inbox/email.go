@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/tls"
+	"fmt"
 	"io"
 	"log"
 	"log/slog"
@@ -453,6 +454,25 @@ func (e *EmailPoller) processEmail(ctx context.Context, fromName, fromEmail, bod
 	if err := e.repo.CreateMessage(ctx, message); err != nil {
 		log.Printf("[email-poller] error creating message: %v", err)
 		return
+	}
+
+	// HITL gate for the email booking-link branch — symmetric with the
+	// Telegram bot (telegram.go). When DetectCallAgreement triggers,
+	// enqueue a pending reply for operator approval rather than
+	// sending the calendar URL directly via SMTP/Resend. The secure
+	// default when no proposer is wired is to suppress the branch
+	// entirely; we do NOT fall back to instant send.
+	if DetectCallAgreement(body) {
+		if e.pendingProposer == nil {
+			e.logger.WarnContext(ctx, "email booking link suppressed: no pending reply proposer wired",
+				"lead_id", lead.ID.String(), "email", fromEmail)
+		} else {
+			bookingMsg := fmt.Sprintf(bookingLinkReplyTemplate, e.bookingLink)
+			if _, err := e.pendingProposer.Propose(ctx, lead.UserID, lead.ID, ChannelEmail, PendingReplyKindBookingLink, bookingMsg); err != nil {
+				e.logger.WarnContext(ctx, "failed to enqueue email booking reply for approval",
+					"lead_id", lead.ID.String(), "error", err)
+			}
+		}
 	}
 
 	if isNewLead {
