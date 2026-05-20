@@ -142,11 +142,50 @@ func (r *PendingReplyRepo) ListByLead(ctx context.Context, userID, leadID uuid.U
 	return out, rows.Err()
 }
 
-// ListPendingByUser — stub for the RED step of #51. Impl lands in the
-// matching GREEN commit; tests against this method fail at runtime
-// rather than at compile time so the build stays green for bisect.
-func (r *PendingReplyRepo) ListPendingByUser(_ context.Context, _ uuid.UUID) ([]*PendingReplyWithLead, error) {
-	return nil, errors.New("pending reply repo: ListPendingByUser not implemented")
+// ListPendingByUser returns every status='pending' row for the user
+// joined with the minimum lead context the operator queue needs to
+// render — contact + company + channel + identifiers — in one query
+// so the frontend avoids N+1 lookups. user_id is enforced on both
+// sides of the join as defense in depth: even though leads.user_id
+// and pending_replies.user_id should match for the same lead_id, an
+// explicit join predicate makes the cross-tenant invariant local to
+// the SQL rather than relying on FK semantics.
+//
+// Returns an empty (non-nil) slice when nothing is pending so callers
+// can iterate without a nil-check.
+func (r *PendingReplyRepo) ListPendingByUser(ctx context.Context, userID uuid.UUID) ([]*PendingReplyWithLead, error) {
+	rows, err := r.q(ctx).Query(ctx,
+		`SELECT pr.id, pr.user_id, pr.lead_id, pr.channel, pr.kind, pr.body, pr.status,
+		        pr.created_at, pr.decided_at, pr.decided_by, pr.sent_at,
+		        l.contact_name, l.company, l.channel, l.telegram_chat_id, l.email_address
+		 FROM pending_replies pr
+		 JOIN leads l ON l.id = pr.lead_id AND l.user_id = pr.user_id
+		 WHERE pr.user_id = $1 AND pr.status = 'pending'
+		 ORDER BY pr.created_at DESC`,
+		userID)
+	if err != nil {
+		return nil, fmt.Errorf("list pending replies by user: %w", err)
+	}
+	defer rows.Close()
+	out := make([]*PendingReplyWithLead, 0)
+	for rows.Next() {
+		var pr PendingReply
+		var channel, kind, status string
+		var leadChannel string
+		var snippet LeadSnippet
+		if err := rows.Scan(&pr.ID, &pr.UserID, &pr.LeadID, &channel, &kind, &pr.Body, &status,
+			&pr.CreatedAt, &pr.DecidedAt, &pr.DecidedBy, &pr.SentAt,
+			&snippet.ContactName, &snippet.Company, &leadChannel,
+			&snippet.TelegramChatID, &snippet.EmailAddress); err != nil {
+			return nil, fmt.Errorf("scan pending reply with lead: %w", err)
+		}
+		pr.Channel = Channel(channel)
+		pr.Kind = PendingReplyKind(kind)
+		pr.Status = PendingReplyStatus(status)
+		snippet.Channel = Channel(leadChannel)
+		out = append(out, &PendingReplyWithLead{Reply: &pr, Lead: snippet})
+	}
+	return out, rows.Err()
 }
 
 // CountPendingByUser returns the per-lead count of rows still awaiting
