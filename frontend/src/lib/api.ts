@@ -367,6 +367,10 @@ export const api = {
   // Analytics
   getSequenceAnalytics: (period: AnalyticsPeriod = "all") =>
     apiFetch<SequenceAnalyticsResponse>(`/api/analytics/sequences?period=${period}`),
+  getCostRatios: (period: AnalyticsPeriod = "month") =>
+    apiFetch<CostRatiosResponse>(`/api/analytics/cost-ratios?period=${period}`),
+  getCostSummary: (from: string, to: string) =>
+    apiFetch<CostSummaryResponse>(`/api/audit/cost-summary?from=${from}&to=${to}`),
 };
 
 // Types
@@ -645,6 +649,37 @@ export interface SequenceAnalyticsRow {
 export interface SequenceAnalyticsResponse {
   sequences: SequenceAnalyticsRow[];
   period: AnalyticsPeriod;
+}
+
+export interface CostRatiosResponse {
+  period: { from: string; to: string };
+  total_cost_usd: number;
+  total_calls: number;
+  leads_count: number;
+  qualified_leads_count: number;
+  converted_count: number;
+  drafts_sent_count: number;
+  cost_per_lead_usd: number;
+  cost_per_qualified_lead_usd: number;
+  cost_per_converted_usd: number;
+  cost_per_draft_sent_usd: number;
+}
+
+export interface CostBreakdownRow {
+  request_type?: string;
+  model?: string;
+  calls: number;
+  usd: number;
+  tokens_in: number;
+  tokens_out: number;
+}
+
+export interface CostSummaryResponse {
+  total_usd: number;
+  total_calls: number;
+  by_request_type: CostBreakdownRow[];
+  by_model: CostBreakdownRow[];
+  period: { from: string; to: string };
 }
 
 export interface UserSettings {
