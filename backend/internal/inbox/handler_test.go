@@ -813,6 +813,24 @@ func TestHandler_BulkDecide_InvalidUUIDInIDsReturns400(t *testing.T) {
 	}
 }
 
+func TestHandler_BulkDecide_BodyTooLargeReturns400(t *testing.T) {
+	srv := newTestServer(&fakePendingReplyUseCase{}, &fakeLeadOwnership{})
+
+	// Exceed bulkDecideMaxBodyBytes (256 KiB) by a wide margin. Use a
+	// repeated padding string inside an otherwise-valid envelope; the
+	// payload-size cap fires before JSON decode finishes.
+	body := `{"ids":["` + uuid.New().String() + `"],"decision":"approve","_pad":"` + strings.Repeat("x", 300*1024) + `"}`
+	req := httptest.NewRequest(http.MethodPost, "/api/pending-replies/bulk", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req = req.WithContext(httputil.WithUserID(req.Context(), uuid.New()))
+	rec := httptest.NewRecorder()
+	srv.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400 on oversized body — bulk endpoint must cap payload to bound DoS surface", rec.Code)
+	}
+}
+
 func TestHandler_BulkDecide_NoUserReturns401(t *testing.T) {
 	srv := newTestServer(&fakePendingReplyUseCase{}, &fakeLeadOwnership{})
 

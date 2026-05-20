@@ -192,6 +192,14 @@ func perRowErrorString(err error) string {
 	}
 }
 
+// bulkDecideMaxBodyBytes caps the bulk request payload. 256 KiB
+// comfortably holds a few thousand UUIDs (each ~40 bytes on the wire
+// inside a JSON array), which is far beyond any realistic operator
+// batch. Caps DoS surface: bulk is the only inbox endpoint with a
+// variable-size body, so we limit it explicitly here rather than
+// waiting for a project-wide JSON-body cap.
+const bulkDecideMaxBodyBytes = 256 * 1024
+
 func (h *pendingReplyHandler) bulkDecide() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		userID, ok := httputil.UserIDFromContext(r.Context())
@@ -199,6 +207,7 @@ func (h *pendingReplyHandler) bulkDecide() http.HandlerFunc {
 			httputil.WriteError(w, http.StatusUnauthorized, "unauthorized")
 			return
 		}
+		r.Body = http.MaxBytesReader(w, r.Body, bulkDecideMaxBodyBytes)
 		var req bulkDecideRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			httputil.WriteError(w, http.StatusBadRequest, "invalid json body")
