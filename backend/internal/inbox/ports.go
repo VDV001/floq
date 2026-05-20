@@ -196,6 +196,15 @@ type PendingReplyRepository interface {
 	// inbox-list badge — wired through an adapter so the leads package
 	// stays free of inbox-package imports.
 	CountPendingByUser(ctx context.Context, userID uuid.UUID) (map[uuid.UUID]int, error)
+	// ListPendingByUser returns every pending-status row for the user,
+	// joined with the minimum lead context the operator queue needs to
+	// render contact + company without an N+1 fetch on the frontend.
+	// Scoped by user_id; cross-tenant rows are silently filtered, never
+	// surfaced. Rows are ordered by created_at DESC so the newest draft
+	// floats to the top of the queue — matches the outbound-queue
+	// convention. Returns an empty slice (not nil) when nothing is
+	// pending so callers can iterate without a nil-check.
+	ListPendingByUser(ctx context.Context, userID uuid.UUID) ([]*PendingReplyWithLead, error)
 	// Update writes pr only when the persisted row still matches the
 	// expectedStatus the caller observed at load time — an optimistic
 	// lock that prevents two operators from concurrently approving

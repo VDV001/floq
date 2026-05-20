@@ -376,6 +376,34 @@ describe("api module", () => {
       expect(opts.method).toBe("POST");
     });
 
+    it("listPendingReplies → GET /api/pending-replies?status=pending with joined lead snippet", async () => {
+      const sample = [
+        {
+          id: "pr-1",
+          lead_id: "lead-1",
+          channel: "telegram",
+          kind: "booking_link",
+          body: "queue body",
+          status: "pending",
+          created_at: "2026-05-20T10:00:00Z",
+          lead: {
+            contact_name: "Иван Петров",
+            company: "ACME",
+            channel: "telegram",
+            telegram_chat_id: 987654,
+          },
+        },
+      ];
+      fetchMock.mockResolvedValueOnce(mockResponse(sample));
+
+      const result = await api.listPendingReplies();
+
+      const [url, opts] = fetchMock.mock.calls[0];
+      expect(url).toBe("http://localhost:8080/api/pending-replies?status=pending");
+      expect(opts.method).toBeUndefined();
+      expect(result).toEqual(sample);
+    });
+
     it("updatePendingReply → PATCH /api/pending-replies/:id with body", async () => {
       const updated = {
         id: "pr-3",

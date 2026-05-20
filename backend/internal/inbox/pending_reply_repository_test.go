@@ -479,3 +479,175 @@ func TestPendingReplyRepository_UpdateBody_CrossTenantReturnsNotFound(t *testing
 	require.NotNil(t, got)
 	assert.Equal(t, "victim body", got.Body)
 }
+
+// seedRichLead inserts a lead with caller-controlled snippet fields so
+// the ListPendingByUser tests can assert the JOIN payload (contact +
+// company + channel + identifiers). Keeps seedLeadForUser as the
+// minimal helper for the rest of the suite.
+func seedRichLead(t *testing.T, pool *pgxpool.Pool, userID uuid.UUID, channel, contactName, company string, tgChatID *int64, email *string) uuid.UUID {
+	t.Helper()
+	leadID := uuid.New()
+	_, err := pool.Exec(context.Background(),
+		`INSERT INTO leads (id, user_id, channel, contact_name, company, first_message, status, telegram_chat_id, email_address, created_at, updated_at)
+		 VALUES ($1, $2, $3, $4, $5, 'hi', 'new', $6, $7, NOW(), NOW())`,
+		leadID, userID, channel, contactName, company, tgChatID, email)
+	require.NoError(t, err, "seed rich test lead")
+	return leadID
+}
+
+func TestPendingReplyRepository_ListPendingByUser_ReturnsJoinedSnippet(t *testing.T) {
+	pool := testutil.TestDB(t)
+	userID := testutil.SeedUser(t, pool)
+
+	tgChatID := int64(1234567)
+	email := "lead@example.com"
+	tgLead := seedRichLead(t, pool, userID, "telegram", "Иван Петров", "ACME", &tgChatID, nil)
+	mailLead := seedRichLead(t, pool, userID, "email", "Jane Doe", "Globex", nil, &email)
+
+	repo := inbox.NewPendingReplyRepository(pool)
+	ctx := context.Background()
+
+	tgPR, err := inbox.NewPendingReply(userID, tgLead, inbox.ChannelTelegram, inbox.PendingReplyKindBookingLink, "tg draft")
+	require.NoError(t, err)
+	require.NoError(t, repo.Save(ctx, tgPR))
+
+	mailPR, err := inbox.NewPendingReply(userID, mailLead, inbox.ChannelEmail, inbox.PendingReplyKindBookingLink, "email draft")
+	require.NoError(t, err)
+	require.NoError(t, repo.Save(ctx, mailPR))
+
+	got, err := repo.ListPendingByUser(ctx, userID)
+	require.NoError(t, err)
+	require.Len(t, got, 2, "both pending rows must surface")
+
+	byReply := map[uuid.UUID]*inbox.PendingReplyWithLead{}
+	for _, row := range got {
+		require.NotNil(t, row, "no nil entries in the result slice")
+		require.NotNil(t, row.Reply, "Reply must be populated")
+		byReply[row.Reply.ID] = row
+	}
+
+	tgRow := byReply[tgPR.ID]
+	require.NotNil(t, tgRow, "telegram pending row must be present")
+	assert.Equal(t, "Иван Петров", tgRow.Lead.ContactName)
+	assert.Equal(t, "ACME", tgRow.Lead.Company)
+	assert.Equal(t, inbox.ChannelTelegram, tgRow.Lead.Channel)
+	require.NotNil(t, tgRow.Lead.TelegramChatID)
+	assert.Equal(t, int64(1234567), *tgRow.Lead.TelegramChatID)
+	assert.Nil(t, tgRow.Lead.EmailAddress, "telegram lead has no email — column must surface as nil")
+
+	mailRow := byReply[mailPR.ID]
+	require.NotNil(t, mailRow, "email pending row must be present")
+	assert.Equal(t, "Jane Doe", mailRow.Lead.ContactName)
+	assert.Equal(t, "Globex", mailRow.Lead.Company)
+	assert.Equal(t, inbox.ChannelEmail, mailRow.Lead.Channel)
+	assert.Nil(t, mailRow.Lead.TelegramChatID)
+	require.NotNil(t, mailRow.Lead.EmailAddress)
+	assert.Equal(t, "lead@example.com", *mailRow.Lead.EmailAddress)
+}
+
+func TestPendingReplyRepository_ListPendingByUser_FiltersDecidedRows(t *testing.T) {
+	pool := testutil.TestDB(t)
+	userID := testutil.SeedUser(t, pool)
+	leadID := seedLeadForUser(t, pool, userID)
+
+	repo := inbox.NewPendingReplyRepository(pool)
+	ctx := context.Background()
+
+	// Pending — must surface.
+	pending, err := inbox.NewPendingReply(userID, leadID, inbox.ChannelTelegram, inbox.PendingReplyKindBookingLink, "still pending")
+	require.NoError(t, err)
+	require.NoError(t, repo.Save(ctx, pending))
+
+	// Approved — must be filtered.
+	approved, err := inbox.NewPendingReply(userID, leadID, inbox.ChannelTelegram, inbox.PendingReplyKindBookingLink, "already approved")
+	require.NoError(t, err)
+	require.NoError(t, repo.Save(ctx, approved))
+	_, err = pool.Exec(ctx,
+		`UPDATE pending_replies SET status = 'approved' WHERE id = $1`, approved.ID)
+	require.NoError(t, err)
+
+	// Sent — must be filtered.
+	sent, err := inbox.NewPendingReply(userID, leadID, inbox.ChannelTelegram, inbox.PendingReplyKindBookingLink, "already sent")
+	require.NoError(t, err)
+	require.NoError(t, repo.Save(ctx, sent))
+	_, err = pool.Exec(ctx,
+		`UPDATE pending_replies SET status = 'sent' WHERE id = $1`, sent.ID)
+	require.NoError(t, err)
+
+	// Rejected — must be filtered.
+	rejected, err := inbox.NewPendingReply(userID, leadID, inbox.ChannelTelegram, inbox.PendingReplyKindBookingLink, "already rejected")
+	require.NoError(t, err)
+	require.NoError(t, repo.Save(ctx, rejected))
+	_, err = pool.Exec(ctx,
+		`UPDATE pending_replies SET status = 'rejected' WHERE id = $1`, rejected.ID)
+	require.NoError(t, err)
+
+	got, err := repo.ListPendingByUser(ctx, userID)
+	require.NoError(t, err)
+	require.Len(t, got, 1, "only the pending row surfaces — decided rows are out of operator queue scope")
+	assert.Equal(t, pending.ID, got[0].Reply.ID)
+}
+
+func TestPendingReplyRepository_ListPendingByUser_ScopedByUser(t *testing.T) {
+	pool := testutil.TestDB(t)
+	userA := testutil.SeedUser(t, pool)
+	userB := testutil.SeedUser(t, pool)
+	leadA := seedLeadForUser(t, pool, userA)
+
+	repo := inbox.NewPendingReplyRepository(pool)
+	ctx := context.Background()
+
+	prA, err := inbox.NewPendingReply(userA, leadA, inbox.ChannelTelegram, inbox.PendingReplyKindBookingLink, "owned by A")
+	require.NoError(t, err)
+	require.NoError(t, repo.Save(ctx, prA))
+
+	// userB has no leads and no pending rows.
+	got, err := repo.ListPendingByUser(ctx, userB)
+	require.NoError(t, err, "cross-tenant list must not error — empty is the right shape")
+	assert.Empty(t, got, "userB must never see userA's pending rows")
+}
+
+func TestPendingReplyRepository_ListPendingByUser_OrdersByCreatedAtDesc(t *testing.T) {
+	pool := testutil.TestDB(t)
+	userID := testutil.SeedUser(t, pool)
+	leadID := seedLeadForUser(t, pool, userID)
+
+	repo := inbox.NewPendingReplyRepository(pool)
+	ctx := context.Background()
+
+	// Insert three rows with distinct created_at to pin ordering. Use
+	// direct SQL so we can control the timestamp — NewPendingReply
+	// stamps time.Now() which would race within a single test.
+	t0 := time.Now().UTC().Add(-3 * time.Hour)
+	t1 := t0.Add(time.Hour)
+	t2 := t1.Add(time.Hour)
+	ids := []uuid.UUID{uuid.New(), uuid.New(), uuid.New()}
+	for i, ts := range []time.Time{t0, t1, t2} {
+		_, err := pool.Exec(ctx,
+			`INSERT INTO pending_replies (id, user_id, lead_id, channel, kind, body, status, created_at)
+			 VALUES ($1, $2, $3, 'telegram', 'booking_link', $4, 'pending', $5)`,
+			ids[i], userID, leadID, "body"+ts.Format("150405"), ts)
+		require.NoError(t, err)
+	}
+
+	got, err := repo.ListPendingByUser(ctx, userID)
+	require.NoError(t, err)
+	require.Len(t, got, 3)
+	// Newest (t2) first, oldest (t0) last.
+	assert.Equal(t, ids[2], got[0].Reply.ID, "newest pending row must be first")
+	assert.Equal(t, ids[1], got[1].Reply.ID)
+	assert.Equal(t, ids[0], got[2].Reply.ID, "oldest pending row must be last")
+}
+
+func TestPendingReplyRepository_ListPendingByUser_EmptyReturnsEmptySlice(t *testing.T) {
+	pool := testutil.TestDB(t)
+	userID := testutil.SeedUser(t, pool)
+
+	repo := inbox.NewPendingReplyRepository(pool)
+	ctx := context.Background()
+
+	got, err := repo.ListPendingByUser(ctx, userID)
+	require.NoError(t, err)
+	require.NotNil(t, got, "empty result must be a non-nil empty slice — callers iterate without nil-check")
+	assert.Empty(t, got)
+}

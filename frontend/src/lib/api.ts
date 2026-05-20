@@ -187,6 +187,13 @@ export const api = {
   // re-listing.
   getPendingReplies: (leadId: string) =>
     apiFetch<PendingReply[]>(`/api/leads/${leadId}/pending-replies`),
+  // listPendingReplies — operator queue: every pending row across
+  // every lead the operator owns, with the joined lead snippet so the
+  // page renders contact + company in one request (no N+1). The
+  // status filter is explicit on the wire — keeps room for a future
+  // ?status=approved tab without silently widening the contract.
+  listPendingReplies: () =>
+    apiFetch<PendingReplyQueueRow[]>("/api/pending-replies?status=pending"),
   approvePendingReply: (id: string) =>
     apiFetch<void>(`/api/pending-replies/${id}/approve`, { method: "POST" }),
   rejectPendingReply: (id: string) =>
@@ -461,6 +468,26 @@ export interface PendingReply {
   created_at: string;
   decided_at?: string;
   sent_at?: string;
+}
+
+// PendingReplyLeadSnippet is the minimal lead context the operator
+// queue needs per row — contact + company + channel + identifiers.
+// telegram_chat_id / email_address are omitempty on the wire so a
+// telegram lead never carries a null email and vice versa.
+export interface PendingReplyLeadSnippet {
+  contact_name: string;
+  company: string;
+  channel: "telegram" | "email";
+  telegram_chat_id?: number;
+  email_address?: string;
+}
+
+// PendingReplyQueueRow is the wire-shape returned by
+// GET /api/pending-replies — every pending row across every lead the
+// operator owns, joined with the lead snippet so the queue UI avoids
+// an N+1 lookup.
+export interface PendingReplyQueueRow extends PendingReply {
+  lead: PendingReplyLeadSnippet;
 }
 
 export interface Reminder {

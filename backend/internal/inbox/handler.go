@@ -19,6 +19,7 @@ import (
 // stand up without any persistence backend.
 type PendingReplyUseCaseAPI interface {
 	ListByLead(ctx context.Context, userID, leadID uuid.UUID) ([]*PendingReply, error)
+	ListPendingByUser(ctx context.Context, userID uuid.UUID) ([]*PendingReplyWithLead, error)
 	Approve(ctx context.Context, userID, id uuid.UUID) error
 	Reject(ctx context.Context, userID, id uuid.UUID) error
 	UpdateBody(ctx context.Context, userID, id uuid.UUID, body string) (*PendingReply, error)
@@ -57,6 +58,9 @@ type pendingReplyHandler struct {
 func RegisterPendingReplyRoutes(r chi.Router, uc PendingReplyUseCaseAPI, leads LeadOwnershipChecker, decideMW func(http.Handler) http.Handler) {
 	h := &pendingReplyHandler{uc: uc, leads: leads}
 	r.Get("/api/leads/{id}/pending-replies", h.listByLead())
+	// Operator queue: all pending rows for the current user across
+	// every lead. Idempotent + read-only — not rate-limited.
+	r.Get("/api/pending-replies", h.listPendingByUser())
 	if decideMW == nil {
 		r.Post("/api/pending-replies/{id}/approve", h.approve())
 		r.Post("/api/pending-replies/{id}/reject", h.reject())
@@ -97,6 +101,42 @@ func (h *pendingReplyHandler) listByLead() http.HandlerFunc {
 			return
 		}
 		httputil.WriteJSON(w, http.StatusOK, pendingRepliesToResponse(rows))
+	}
+}
+
+// listPendingByUser answers the operator queue: every status='pending'
+// row across every lead the operator owns, joined with the minimum
+// lead snippet the frontend needs to render contact + company without
+// an N+1 lookup.
+//
+// The ?status query param is optional. When absent it defaults to
+// pending so bare /api/pending-replies works for the queue page. When
+// present it MUST be 'pending' — answering 400 to anything else keeps
+// the door open for a future widening (e.g. ?status=approved for a
+// "recent decisions" tab) without silently filtering today.
+func (h *pendingReplyHandler) listPendingByUser() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		userID, ok := httputil.UserIDFromContext(r.Context())
+		if !ok {
+			httputil.WriteError(w, http.StatusUnauthorized, "unauthorized")
+			return
+		}
+		switch r.URL.Query().Get("status") {
+		case "", "pending":
+			// accepted
+		default:
+			httputil.WriteError(w, http.StatusBadRequest, "unsupported status filter (only 'pending' is supported)")
+			return
+		}
+		rows, err := h.uc.ListPendingByUser(r.Context(), userID)
+		if err != nil {
+			slog.ErrorContext(r.Context(), "pending reply list-by-user failed",
+				slog.String("user_id", userID.String()),
+				slog.Any("err", err))
+			httputil.WriteError(w, http.StatusInternalServerError, "failed to list pending replies")
+			return
+		}
+		httputil.WriteJSON(w, http.StatusOK, operatorQueueToResponse(rows))
 	}
 }
 
@@ -253,6 +293,52 @@ func pendingRepliesToResponse(rows []*PendingReply) []PendingReplyResponse {
 	out := make([]PendingReplyResponse, 0, len(rows))
 	for _, pr := range rows {
 		out = append(out, pendingReplyToResponse(pr))
+	}
+	return out
+}
+
+// LeadSnippetResponse is the wire-shape for the lead context embedded
+// in each operator-queue row. Nullable channel-native identifiers are
+// omitempty so a telegram lead never carries a JSON null email and
+// vice versa — the frontend can branch on field presence.
+type LeadSnippetResponse struct {
+	ContactName    string  `json:"contact_name"`
+	Company        string  `json:"company"`
+	Channel        string  `json:"channel"`
+	TelegramChatID *int64  `json:"telegram_chat_id,omitempty"`
+	EmailAddress   *string `json:"email_address,omitempty"`
+}
+
+// OperatorQueueResponse is the wire-shape for a single row in the
+// operator queue. Embeds PendingReplyResponse so existing top-level
+// fields stay identical to the per-lead endpoint, and adds a nested
+// "lead" object so the queue page can render contact + company in one
+// pass without N+1.
+type OperatorQueueResponse struct {
+	PendingReplyResponse
+	Lead LeadSnippetResponse `json:"lead"`
+}
+
+func leadSnippetToResponse(s LeadSnippet) LeadSnippetResponse {
+	return LeadSnippetResponse{
+		ContactName:    s.ContactName,
+		Company:        s.Company,
+		Channel:        string(s.Channel),
+		TelegramChatID: s.TelegramChatID,
+		EmailAddress:   s.EmailAddress,
+	}
+}
+
+func operatorQueueToResponse(rows []*PendingReplyWithLead) []OperatorQueueResponse {
+	out := make([]OperatorQueueResponse, 0, len(rows))
+	for _, row := range rows {
+		if row == nil || row.Reply == nil {
+			continue
+		}
+		out = append(out, OperatorQueueResponse{
+			PendingReplyResponse: pendingReplyToResponse(row.Reply),
+			Lead:                 leadSnippetToResponse(row.Lead),
+		})
 	}
 	return out
 }

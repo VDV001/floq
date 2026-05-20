@@ -118,6 +118,15 @@ func (uc *PendingReplyUseCase) ListByLead(ctx context.Context, userID, leadID uu
 	return uc.repo.ListByLead(ctx, userID, leadID)
 }
 
+// ListPendingByUser returns every status='pending' row for the user
+// joined with the lead snippet the operator queue needs. Passthrough
+// to the repository — there is no per-row authorization to apply
+// because user_id scoping is already enforced inside the SQL query;
+// cross-tenant leakage is impossible at this layer.
+func (uc *PendingReplyUseCase) ListPendingByUser(ctx context.Context, userID uuid.UUID) ([]*PendingReplyWithLead, error) {
+	return uc.repo.ListPendingByUser(ctx, userID)
+}
+
 // Approve transitions the reply into Approved, persists the decision,
 // dispatches through the channel-native transport, and (on success)
 // marks the entity Sent. A dispatch failure leaves the entity in
