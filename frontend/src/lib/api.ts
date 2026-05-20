@@ -363,6 +363,10 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ api_key: apiKey, use_stored: useStored || false }),
     }),
+
+  // Analytics
+  getSequenceAnalytics: (period: AnalyticsPeriod = "all") =>
+    apiFetch<SequenceAnalyticsResponse>(`/api/analytics/sequences?period=${period}`),
 };
 
 // Types
@@ -621,6 +625,26 @@ export interface OutboundStats {
   opened: number;
   replied: number;
   bounced: number;
+}
+
+export type AnalyticsPeriod = "week" | "month" | "all";
+
+export interface SequenceAnalyticsRow {
+  id: string;
+  name: string;
+  sent: number;
+  delivered: number;
+  opened: number;
+  replied: number;
+  converted: number;
+  open_rate: number;
+  reply_rate: number;
+  conversion_rate: number;
+}
+
+export interface SequenceAnalyticsResponse {
+  sequences: SequenceAnalyticsRow[];
+  period: AnalyticsPeriod;
 }
 
 export interface UserSettings {

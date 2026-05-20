@@ -18,6 +18,7 @@ import (
 
 	"github.com/daniil/floq/internal/ai"
 	"github.com/daniil/floq/internal/ai/providers"
+	"github.com/daniil/floq/internal/analytics"
 	"github.com/daniil/floq/internal/audit"
 	"github.com/daniil/floq/internal/auth"
 	"github.com/daniil/floq/internal/chat"
@@ -239,6 +240,7 @@ func main() {
 		chat.RegisterRoutes(r, chat.NewHandler(chat.NewRepository(pool), newChatAIAdapter(aiClient)))
 		inbox.RegisterPendingReplyRoutes(r, pendingReplyUC, leadsUC, pendingReplyDecideMW)
 		audit.RegisterRoutes(r, audit.NewHandler(audit.NewUseCase(auditRepo)))
+		analytics.RegisterRoutes(r, analytics.NewUseCase(analytics.NewRepository(pool)))
 		tgOpts := []tgclient.Option{}
 		if proxyDialer != nil {
 			tgOpts = append(tgOpts, tgclient.WithDialer(proxyDialer))
