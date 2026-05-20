@@ -200,6 +200,11 @@ func main() {
 	r.Use(middleware.Logger)
 	r.Use(middleware.Recoverer)
 	r.Use(corsMiddleware)
+	// Cap application/json request bodies project-wide so a single
+	// oversized payload can't stream straight into json.NewDecoder.
+	// Tighter local caps (e.g. the bulk endpoint's 256 KiB) still win
+	// — MaxBytesReader honours the smallest cap in the chain.
+	r.Use(httputil.JSONBodyCap(httputil.DefaultMaxJSONBodyBytes))
 
 	// Health (public)
 	r.Get("/api/health", func(w http.ResponseWriter, r *http.Request) {
