@@ -127,6 +127,13 @@ func (uc *PendingReplyUseCase) ListPendingByUser(ctx context.Context, userID uui
 	return uc.repo.ListPendingByUser(ctx, userID)
 }
 
+// BulkDecide — stub for the RED step of #49. Real impl lands in the
+// matching GREEN commit; tests fail at runtime so the build stays
+// bisect-friendly.
+func (uc *PendingReplyUseCase) BulkDecide(_ context.Context, _ uuid.UUID, _ []uuid.UUID, _ BulkDecision) ([]BulkDecideResult, error) {
+	return nil, errors.New("pending reply usecase: BulkDecide not implemented")
+}
+
 // Approve transitions the reply into Approved, persists the decision,
 // dispatches through the channel-native transport, and (on success)
 // marks the entity Sent. A dispatch failure leaves the entity in
