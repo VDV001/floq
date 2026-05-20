@@ -204,9 +204,15 @@ describe("InboxPage", () => {
 
     render(<InboxPage />);
 
+    // PendingQueueTabs adds two nav links (/inbox, /inbox/pending) at
+    // the top of the page; the lead card adds a third. Find the one
+    // pointing at the lead detail by its href to keep this assertion
+    // robust to layout chrome added around the list.
     await waitFor(() => {
-      const link = screen.getByRole("link");
-      expect(link).toHaveAttribute("href", "/inbox/lead-42");
+      const link = screen
+        .getAllByRole("link")
+        .find((a) => a.getAttribute("href") === "/inbox/lead-42");
+      expect(link).toBeDefined();
     });
   });
 });

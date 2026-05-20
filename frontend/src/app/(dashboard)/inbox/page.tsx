@@ -6,6 +6,7 @@ import { cn } from "@/lib/utils";
 import { FILTER_TABS } from "@/components/inbox/constants";
 import { PipelineSidebar } from "@/components/inbox/PipelineSidebar";
 import { LeadCard } from "@/components/leads/LeadCard";
+import { PendingQueueTabs } from "@/components/pending-queue/PendingQueueTabs";
 import { useInboxPage } from "@/hooks/useInboxPage";
 
 export default function InboxPage() {
@@ -22,6 +23,7 @@ export default function InboxPage() {
 
       <section className="flex-1 overflow-y-auto px-4 sm:px-8 lg:px-12 py-8">
         <div className="mx-auto max-w-4xl space-y-8">
+          <PendingQueueTabs />
           <div className="flex items-end justify-between">
             <div>
               <div className="flex items-center gap-3">
