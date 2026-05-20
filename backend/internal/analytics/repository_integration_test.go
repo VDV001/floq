@@ -27,13 +27,16 @@ func seedSequence(t *testing.T, pool *pgxpool.Pool, userID uuid.UUID, name strin
 }
 
 // seedProspect inserts a prospect tied to userID with the given status.
+// email uses a uuid suffix so concurrent test runs don't collide on
+// any unique constraints.
 func seedProspect(t *testing.T, pool *pgxpool.Pool, userID uuid.UUID, status string) uuid.UUID {
 	t.Helper()
 	id := uuid.New()
+	email := id.String() + "@test.local"
 	_, err := pool.Exec(context.Background(),
-		`INSERT INTO prospects (id, user_id, name, status, verify_status, created_at, updated_at)
-		 VALUES ($1, $2, 'Test Prospect', $3, 'valid', NOW(), NOW())`,
-		id, userID, status)
+		`INSERT INTO prospects (id, user_id, name, email, status, verify_status, created_at, updated_at)
+		 VALUES ($1, $2, 'Test Prospect', $3, $4, 'valid', NOW(), NOW())`,
+		id, userID, email, status)
 	require.NoError(t, err, "seed prospect")
 	return id
 }
@@ -43,10 +46,15 @@ func seedProspect(t *testing.T, pool *pgxpool.Pool, userID uuid.UUID, status str
 func seedOutbound(t *testing.T, pool *pgxpool.Pool, prospectID, sequenceID uuid.UUID, status string, openedAt, repliedAt *time.Time, createdAt time.Time) {
 	t.Helper()
 	id := uuid.New()
+	var sentAt *time.Time
+	if status == "sent" || status == "bounced" {
+		t := createdAt
+		sentAt = &t
+	}
 	_, err := pool.Exec(context.Background(),
 		`INSERT INTO outbound_messages (id, prospect_id, sequence_id, step_order, channel, body, status, scheduled_at, sent_at, opened_at, replied_at, created_at)
-		 VALUES ($1, $2, $3, 1, 'email', 'hi', $4, NOW(), CASE WHEN $4 IN ('sent','bounced') THEN NOW() ELSE NULL END, $5, $6, $7)`,
-		id, prospectID, sequenceID, status, openedAt, repliedAt, createdAt)
+		 VALUES ($1, $2, $3, 1, 'email', 'hi', $4::outbound_status, $5, $6, $7, $8, $9)`,
+		id, prospectID, sequenceID, status, createdAt, sentAt, openedAt, repliedAt, createdAt)
 	require.NoError(t, err, "seed outbound")
 }
 
