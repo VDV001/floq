@@ -44,9 +44,30 @@ func subjectFor(kind inbox.PendingReplyKind) string {
 	}
 }
 
-// Dispatch — stub for the RED step of #53. Real impl lands in the
-// matching GREEN commit; tests fail at runtime so the build stays
-// bisect-friendly.
-func (d *emailReplyDispatcher) Dispatch(_ context.Context, _ *inbox.PendingReply) error {
-	return errors.New("emailReplyDispatcher: Dispatch not implemented")
+// Dispatch sends the reply via the EmailSender port and, only on a
+// successful send, writes the outbound message into the inbox
+// history. Ordering matters: persisting before sending would risk
+// the UI showing a "sent" row for an email that never left the
+// server; the reverse risks history loss for a message the customer
+// did receive, which we accept as a smaller and more recoverable
+// failure mode — mirrors telegramReplyDispatcher's contract.
+func (d *emailReplyDispatcher) Dispatch(ctx context.Context, pr *inbox.PendingReply) error {
+	if pr.Channel != inbox.ChannelEmail {
+		return errors.New("email dispatcher: unsupported channel " + string(pr.Channel))
+	}
+	lead, err := d.leads.GetLead(ctx, pr.LeadID)
+	if err != nil {
+		return err
+	}
+	if lead == nil {
+		return errors.New("email dispatcher: lead " + pr.LeadID.String() + " not found")
+	}
+	if lead.EmailAddress == nil || *lead.EmailAddress == "" {
+		return errors.New("email dispatcher: lead " + pr.LeadID.String() + " has no email_address")
+	}
+	if err := d.sender.SendEmail(ctx, pr.UserID, *lead.EmailAddress, subjectFor(pr.Kind), pr.Body); err != nil {
+		return err
+	}
+	outMsg := inbox.NewInboxMessage(pr.LeadID, inbox.DirectionOutbound, pr.Body)
+	return d.inboxRepo.CreateMessage(ctx, outMsg)
 }

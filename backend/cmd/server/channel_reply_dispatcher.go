@@ -38,9 +38,22 @@ func newChannelReplyDispatcher(telegram, email inbox.ReplyDispatcher) *channelRe
 	return &channelReplyDispatcher{telegram: telegram, email: email}
 }
 
-// Dispatch — stub for the RED step of #53. Real impl lands in the
-// matching GREEN commit; tests fail at runtime so the build stays
-// bisect-friendly.
-func (d *channelReplyDispatcher) Dispatch(_ context.Context, pr *inbox.PendingReply) error {
-	return fmt.Errorf("channelReplyDispatcher: Dispatch not implemented for %q", pr.Channel)
+// Dispatch picks the channel-specific dispatcher and delegates. A
+// nil branch surfaces ErrChannelDispatcherUnsupported so an
+// unwired channel returns a clear, errors.Is-matchable sentinel
+// instead of panicking.
+func (d *channelReplyDispatcher) Dispatch(ctx context.Context, pr *inbox.PendingReply) error {
+	var target inbox.ReplyDispatcher
+	switch pr.Channel {
+	case inbox.ChannelTelegram:
+		target = d.telegram
+	case inbox.ChannelEmail:
+		target = d.email
+	default:
+		return fmt.Errorf("%w: %q", ErrChannelDispatcherUnsupported, pr.Channel)
+	}
+	if target == nil {
+		return fmt.Errorf("%w: %q", ErrChannelDispatcherUnsupported, pr.Channel)
+	}
+	return target.Dispatch(ctx, pr)
 }
