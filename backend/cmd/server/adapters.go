@@ -555,11 +555,17 @@ func (a *pendingReplyCounterAdapter) CountPendingByUser(ctx context.Context, use
 // the same SMTP/Resend machinery used by the outbound sequence
 // pipeline, without inbox having to import outbound directly.
 //
-// Empty idempotency key — HITL operator retries are infrequent and
-// the underlying sendViaResend has its own HTTP-level retry-with-key
-// loop for transient 5xx; the operator-driven retry surface is small
-// enough that double-delivery on a rare double-Approve is acceptable.
-// Worth tightening if abuse appears (use pr.ID.String() as the key).
+// Idempotency caveat — empty key is passed to SendOneEmailFor. That
+// covers the WITHIN-CALL retry loop in dispatchToResend (the loop
+// reuses the same empty key across attempts, so a transient 5xx is
+// safe to retry — Resend ignores the absent header consistently
+// across attempts). It does NOT cover the BETWEEN-CALL case where
+// an operator double-Approves: each Approve produces a fresh HTTP
+// request with no Idempotency-Key, so Resend cannot dedup. The
+// usecase optimistic-lock (status=pending) blocks the second
+// Approve from running unless the first crashed pre-Update, which
+// is a narrow race. Threading pr.ID.String() through the port is
+// the obvious tightening when the race shows up in practice.
 type inboxEmailSenderAdapter struct {
 	sender *outbound.Sender
 }

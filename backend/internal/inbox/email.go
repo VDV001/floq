@@ -26,8 +26,8 @@ import (
 // extracted and their text content is appended to the qualification
 // context. A nil analyzer keeps the legacy text-only behaviour.
 type EmailPoller struct {
-	store          ConfigStore
-	repo           LeadRepository
+	store           ConfigStore
+	repo            LeadRepository
 	prospectRepo    ProspectRepository
 	seqRepo         SequenceRepository
 	aiClient        AIQualifier
@@ -463,10 +463,19 @@ func (e *EmailPoller) processEmail(ctx context.Context, fromName, fromEmail, bod
 	// default when no proposer is wired is to suppress the branch
 	// entirely; we do NOT fall back to instant send.
 	if DetectCallAgreement(body) {
-		if e.pendingProposer == nil {
+		switch {
+		case e.pendingProposer == nil:
 			e.logger.WarnContext(ctx, "email booking link suppressed: no pending reply proposer wired",
 				"lead_id", lead.ID.String(), "email", fromEmail)
-		} else {
+		case e.bookingLink == "":
+			// Enqueueing with an empty URL would let an operator
+			// approve a customer-visible message that says "here is
+			// your calendar link: " followed by nothing. Suppress the
+			// branch instead — operator can write the message
+			// manually if needed.
+			e.logger.WarnContext(ctx, "email booking link suppressed: bookingLink not configured",
+				"lead_id", lead.ID.String(), "email", fromEmail)
+		default:
 			bookingMsg := fmt.Sprintf(bookingLinkReplyTemplate, e.bookingLink)
 			if _, err := e.pendingProposer.Propose(ctx, lead.UserID, lead.ID, ChannelEmail, PendingReplyKindBookingLink, bookingMsg); err != nil {
 				e.logger.WarnContext(ctx, "failed to enqueue email booking reply for approval",

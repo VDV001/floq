@@ -999,6 +999,26 @@ func TestEmailPoller_AutoDraft_NoTriggerWhenBodyDoesNotMatch(t *testing.T) {
 	}
 }
 
+func TestEmailPoller_AutoDraft_SuppressedWhenBookingLinkEmpty(t *testing.T) {
+	repo := newEmailMockLeadRepo()
+	prospectRepo := newEmailMockProspectRepo()
+	seqRepo := &mockSequenceRepo{}
+	aiClient := &mockAIQualifier{result: &QualificationResult{Score: 0}}
+	proposer := &recordingProposer{}
+
+	poller := newTestEmailPoller(repo, prospectRepo, seqRepo, aiClient, uuid.New())
+	poller.pendingProposer = proposer
+	// bookingLink intentionally empty: enqueueing the template would
+	// land an operator-approvable message with a blank URL slot.
+	poller.bookingLink = ""
+
+	poller.processEmail(context.Background(), "Alice", "alice@example.com", "Да, давайте созвонимся", nil)
+
+	if got := len(proposer.Calls()); got != 0 {
+		t.Errorf("proposer fired %d times with empty bookingLink — must suppress to avoid sending a message with a blank URL", got)
+	}
+}
+
 func TestEmailPoller_AutoDraft_SuppressedWhenNoProposerWired(t *testing.T) {
 	repo := newEmailMockLeadRepo()
 	prospectRepo := newEmailMockProspectRepo()
