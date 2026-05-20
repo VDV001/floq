@@ -7,6 +7,7 @@ vi.mock("@/lib/api", () => ({
     listPendingReplies: vi.fn(),
     approvePendingReply: vi.fn(),
     rejectPendingReply: vi.fn(),
+    bulkPendingReplies: vi.fn(),
   },
 }));
 
@@ -146,6 +147,102 @@ describe("usePendingQueue", () => {
       (result.current.setKindFilter as (k: string) => void)("__no_match__");
     });
     expect(result.current.filtered).toHaveLength(0);
+  });
+
+  it("toggleSelected adds and removes ids from the selection set", async () => {
+    vi.mocked(api.listPendingReplies).mockResolvedValueOnce([
+      row({ id: "a" }),
+      row({ id: "b" }),
+    ]);
+
+    const { result } = renderHook(() => usePendingQueue());
+
+    await waitFor(() => {
+      expect(result.current.rows).toHaveLength(2);
+    });
+
+    act(() => result.current.toggleSelected("a"));
+    expect(result.current.selectedIds.has("a")).toBe(true);
+
+    act(() => result.current.toggleSelected("b"));
+    expect(result.current.selectedIds.size).toBe(2);
+
+    act(() => result.current.toggleSelected("a"));
+    expect(result.current.selectedIds.has("a")).toBe(false);
+    expect(result.current.selectedIds.has("b")).toBe(true);
+
+    act(() => result.current.clearSelected());
+    expect(result.current.selectedIds.size).toBe(0);
+  });
+
+  it("bulkApprove with empty selection is a no-op (no API call)", async () => {
+    vi.mocked(api.listPendingReplies).mockResolvedValueOnce([row({ id: "a" })]);
+
+    const { result } = renderHook(() => usePendingQueue());
+    await waitFor(() => expect(result.current.rows).toHaveLength(1));
+
+    await act(async () => {
+      await result.current.bulkApprove();
+    });
+    expect(api.bulkPendingReplies).not.toHaveBeenCalled();
+  });
+
+  it("bulkApprove sends selected ids, removes ok rows, keeps failed, clears selection", async () => {
+    vi.mocked(api.listPendingReplies).mockResolvedValueOnce([
+      row({ id: "a" }),
+      row({ id: "b" }),
+      row({ id: "c" }),
+    ]);
+    vi.mocked(api.bulkPendingReplies).mockResolvedValueOnce({
+      results: [
+        { id: "a", ok: true },
+        { id: "b", ok: false, error: "not found" },
+        { id: "c", ok: true },
+      ],
+    });
+
+    const { result } = renderHook(() => usePendingQueue());
+    await waitFor(() => expect(result.current.rows).toHaveLength(3));
+
+    act(() => {
+      result.current.toggleSelected("a");
+      result.current.toggleSelected("b");
+      result.current.toggleSelected("c");
+    });
+
+    await act(async () => {
+      await result.current.bulkApprove();
+    });
+
+    expect(api.bulkPendingReplies).toHaveBeenCalledWith({
+      ids: expect.arrayContaining(["a", "b", "c"]),
+      decision: "approve",
+    });
+    // Failed row "b" stays; "a" and "c" are removed.
+    expect(result.current.rows.map((r) => r.id)).toEqual(["b"]);
+    expect(result.current.selectedIds.size).toBe(0);
+    expect(result.current.bulkSummary).toEqual({ ok: 2, failed: 1 });
+  });
+
+  it("bulkApprove refetches on top-level error", async () => {
+    vi.mocked(api.listPendingReplies)
+      .mockResolvedValueOnce([row({ id: "a" })])
+      .mockResolvedValueOnce([row({ id: "a" }), row({ id: "b" })]);
+    vi.mocked(api.bulkPendingReplies).mockRejectedValueOnce(new Error("5xx"));
+
+    const { result } = renderHook(() => usePendingQueue());
+    await waitFor(() => expect(result.current.rows).toHaveLength(1));
+
+    act(() => result.current.toggleSelected("a"));
+
+    await act(async () => {
+      await result.current.bulkApprove();
+    });
+
+    // Refetch landed; selection cleared.
+    expect(api.listPendingReplies).toHaveBeenCalledTimes(2);
+    expect(result.current.rows).toHaveLength(2);
+    expect(result.current.selectedIds.size).toBe(0);
   });
 
   it("channel filter excludes rows from the other channel", async () => {

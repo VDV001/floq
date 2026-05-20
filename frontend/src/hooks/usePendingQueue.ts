@@ -1,5 +1,10 @@
 import { useState, useEffect, useCallback } from "react";
-import { api, type PendingReplyQueueRow, type PendingReplyKind } from "@/lib/api";
+import {
+  api,
+  type PendingReplyBulkDecision,
+  type PendingReplyKind,
+  type PendingReplyQueueRow,
+} from "@/lib/api";
 
 type ChannelFilter = "all" | "telegram" | "email";
 type KindFilter = "all" | PendingReplyKind;
@@ -12,6 +17,8 @@ export function usePendingQueue() {
   const [channelFilter, setChannelFilter] = useState<ChannelFilter>("all");
   const [kindFilter, setKindFilter] = useState<KindFilter>("all");
   const [lastUpdated, setLastUpdated] = useState<Date>(new Date());
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [bulkSummary, setBulkSummary] = useState<{ ok: number; failed: number } | null>(null);
 
   const fetchData = useCallback(async (isInitial: boolean) => {
     try {
@@ -61,6 +68,39 @@ export function usePendingQueue() {
     return true;
   });
 
+  const toggleSelected = (id: string) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const clearSelected = () => setSelectedIds(new Set());
+
+  // Bulk apply the decision to every currently-selected row. Removes
+  // rows that succeed from local state; rows that fail stay visible
+  // so the operator can retry or read the error. Top-level error
+  // (rare — shape problems are guarded client-side) triggers a
+  // refetch so we converge with the server.
+  const bulkDecide = async (decision: PendingReplyBulkDecision) => {
+    const ids = Array.from(selectedIds);
+    if (ids.length === 0) return;
+    try {
+      const { results } = await api.bulkPendingReplies({ ids, decision });
+      const okIds = new Set(results.filter((r) => r.ok).map((r) => r.id));
+      const ok = okIds.size;
+      const failed = results.length - ok;
+      setRows((prev) => prev.filter((r) => !okIds.has(r.id)));
+      setSelectedIds(new Set());
+      setBulkSummary({ ok, failed });
+    } catch {
+      await fetchData(false);
+      setSelectedIds(new Set());
+    }
+  };
+
   return {
     rows,
     filtered,
@@ -72,5 +112,13 @@ export function usePendingQueue() {
     setKindFilter,
     handleApprove,
     handleReject,
+    // Selection + bulk
+    selectedIds,
+    toggleSelected,
+    clearSelected,
+    bulkApprove: () => bulkDecide("approve"),
+    bulkReject: () => bulkDecide("reject"),
+    bulkSummary,
+    dismissBulkSummary: () => setBulkSummary(null),
   };
 }

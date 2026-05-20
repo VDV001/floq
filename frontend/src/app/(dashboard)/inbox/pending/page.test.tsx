@@ -23,6 +23,7 @@ vi.mock("@/lib/api", () => ({
     listPendingReplies: vi.fn(),
     approvePendingReply: vi.fn(),
     rejectPendingReply: vi.fn(),
+    bulkPendingReplies: vi.fn(),
   },
 }));
 
@@ -52,6 +53,7 @@ describe("InboxPendingPage", () => {
     vi.mocked(api.listPendingReplies).mockResolvedValue([]);
     vi.mocked(api.approvePendingReply).mockResolvedValue(undefined);
     vi.mocked(api.rejectPendingReply).mockResolvedValue(undefined);
+    vi.mocked(api.bulkPendingReplies).mockResolvedValue({ results: [] });
   });
 
   it("fetches the queue on mount and renders rows with lead context", async () => {
@@ -130,6 +132,90 @@ describe("InboxPendingPage", () => {
     await waitFor(() => {
       expect(api.rejectPendingReply).toHaveBeenCalledWith("pr-9");
     });
+  });
+
+  it("selecting rows reveals bulk toolbar; Approve selected fires bulk api with chosen ids", async () => {
+    vi.mocked(api.listPendingReplies).mockResolvedValueOnce([
+      makeRow({ id: "pr-1", body: "first" }),
+      makeRow({ id: "pr-2", body: "second" }),
+    ]);
+    vi.mocked(api.bulkPendingReplies).mockResolvedValueOnce({
+      results: [
+        { id: "pr-1", ok: true },
+        { id: "pr-2", ok: true },
+      ],
+    });
+    const user = userEvent.setup();
+
+    render(<InboxPendingPage />);
+
+    await waitFor(() => {
+      expect(screen.getByText("first")).toBeInTheDocument();
+    });
+
+    // Toolbar is hidden before any selection.
+    expect(screen.queryByRole("region", { name: /Массовые действия/ })).toBeNull();
+
+    const checkboxes = screen.getAllByRole("checkbox");
+    await user.click(checkboxes[0]!);
+    await user.click(checkboxes[1]!);
+
+    expect(screen.getByRole("region", { name: /Массовые действия/ })).toBeInTheDocument();
+    expect(screen.getByText(/Выбрано: 2/)).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: /Одобрить выбранные/ }));
+
+    await waitFor(() => {
+      expect(api.bulkPendingReplies).toHaveBeenCalledWith({
+        ids: expect.arrayContaining(["pr-1", "pr-2"]),
+        decision: "approve",
+      });
+    });
+    // Both rows succeeded → both removed; toolbar disappears (count back to 0).
+    await waitFor(() => {
+      expect(screen.queryByText("first")).not.toBeInTheDocument();
+      expect(screen.queryByText("second")).not.toBeInTheDocument();
+    });
+    expect(screen.getByText(/Готово: 2 применено/)).toBeInTheDocument();
+  });
+
+  it("bulk partial failure leaves failed row visible with summary", async () => {
+    vi.mocked(api.listPendingReplies).mockResolvedValueOnce([
+      makeRow({ id: "pr-1", body: "winner" }),
+      makeRow({ id: "pr-2", body: "loser" }),
+    ]);
+    vi.mocked(api.bulkPendingReplies).mockResolvedValueOnce({
+      results: [
+        { id: "pr-1", ok: true },
+        { id: "pr-2", ok: false, error: "not found" },
+      ],
+    });
+    const user = userEvent.setup();
+
+    render(<InboxPendingPage />);
+
+    await waitFor(() => {
+      expect(screen.getByText("loser")).toBeInTheDocument();
+    });
+
+    const checkboxes = screen.getAllByRole("checkbox");
+    await user.click(checkboxes[0]!);
+    await user.click(checkboxes[1]!);
+
+    await user.click(screen.getByRole("button", { name: /Отклонить выбранные/ }));
+
+    await waitFor(() => {
+      expect(api.bulkPendingReplies).toHaveBeenCalledWith({
+        ids: expect.arrayContaining(["pr-1", "pr-2"]),
+        decision: "reject",
+      });
+    });
+    // Winner row removed; loser row stays so the operator can read the error.
+    await waitFor(() => {
+      expect(screen.queryByText("winner")).not.toBeInTheDocument();
+    });
+    expect(screen.getByText("loser")).toBeInTheDocument();
+    expect(screen.getByText(/1 применено, 1 ошибок/)).toBeInTheDocument();
   });
 
   it("channel filter hides rows from the unselected channel", async () => {
