@@ -267,6 +267,13 @@ func main() {
 	if dbCfg, err := settingsStore.GetConfig(context.Background(), ownerID); err == nil && dbCfg.TelegramBotToken != "" {
 		tgToken = dbCfg.TelegramBotToken
 	}
+	// Email-side HITL dispatcher is always wired; the email branch in
+	// the channel router uses outbound.Sender (built above) via an
+	// adapter, so it works even when no Telegram bot is configured.
+	emailHITLSender := newInboxEmailSenderAdapter(emailSender)
+	emailDispatcher := newEmailReplyDispatcher(emailHITLSender, leadsRepo, inboxLeadAdapter)
+
+	var telegramDispatcher inbox.ReplyDispatcher
 	if tgToken != "" {
 		tgBot, err := inbox.NewTelegramBot(tgToken, inboxLeadAdapter, prospectAdapter, inboxAI, ownerID, cfg.BookingLink, httpClient,
 			inbox.WithTelegramIdentityLinker(identityLinker))
@@ -280,20 +287,25 @@ func main() {
 			// arriving in the gap between bot start and approval flow
 			// being fully wired finds at worst a missing dispatcher
 			// error (logged) rather than a partially-initialised cycle.
-			dispatcher := newTelegramReplyDispatcher(tgBot.Bot(), leadsRepo, inboxLeadAdapter)
-			pendingReplyUC.SetDispatcher(dispatcher)
+			telegramDispatcher = newTelegramReplyDispatcher(tgBot.Bot(), leadsRepo, inboxLeadAdapter)
+			pendingReplyUC.SetDispatcher(newChannelReplyDispatcher(telegramDispatcher, emailDispatcher))
 			tgBot.SetPendingProposer(pendingReplyUC)
 			go tgBot.Start(ctx)
 			// Set the telegram sender on the leads use case
 			leadsUC.SetSender(leads.NewTelegramSender(tgBot.Bot()))
 		}
 	} else {
-		// No Telegram token = no bot = no dispatcher. The HITL routes
-		// are still registered so the operator UI doesn't 404, but
-		// any Approve call will surface ErrPendingReplyDispatcher
-		// NotConfigured at runtime. Emit a startup warning so the
-		// silent-500-on-approve failure mode is visible in logs.
-		log.Println("WARN: telegram token not configured; HITL approve route will return 500 (dispatcher not wired)")
+		// No Telegram token = no telegram bot = no telegram dispatch
+		// branch. The email branch still works through the channel
+		// router; an approve on a telegram-channel pending reply will
+		// surface ErrChannelDispatcherUnsupported instead of the older
+		// dispatcher-not-configured 500.
+		log.Println("WARN: telegram token not configured; HITL telegram dispatch will return unsupported-channel error")
+	}
+	if telegramDispatcher == nil {
+		// Wire the router with only the email branch so the email
+		// HITL surface works in deployments without a Telegram bot.
+		pendingReplyUC.SetDispatcher(newChannelReplyDispatcher(nil, emailDispatcher))
 	}
 
 	// 9. Email IMAP poller (reads settings from DB, falls back to .env).
@@ -304,7 +316,14 @@ func main() {
 	attachmentAnalyzer := attachments.New(aiClient)
 	emailPoller := inbox.NewEmailPoller(inboxCfg, ownerID, cfg.IMAPHost, cfg.IMAPPort, cfg.IMAPUser, cfg.IMAPPassword, inboxLeadAdapter, prospectAdapter, sequencesRepo, inboxAI, proxyDialer,
 		inbox.WithAttachmentAnalyzer(attachmentAnalyzer),
-		inbox.WithIdentityLinker(identityLinker))
+		inbox.WithIdentityLinker(identityLinker),
+		inbox.WithEmailBookingLink(cfg.BookingLink))
+	// Cycle-break the same way the telegram bot does: poller depends
+	// on a proposer that depends on a dispatcher that may depend on
+	// the poller's collaborators. SetPendingProposer after the poller
+	// is constructed but before Start so no inbound email is processed
+	// without the HITL gate wired.
+	emailPoller.SetPendingProposer(pendingReplyUC)
 	go emailPoller.Start(ctx)
 
 	// Identity backfill: walk existing leads + prospects once on

@@ -10,6 +10,7 @@ import (
 	"github.com/daniil/floq/internal/inbox"
 	"github.com/daniil/floq/internal/leads"
 	leadsdomain "github.com/daniil/floq/internal/leads/domain"
+	"github.com/daniil/floq/internal/outbound"
 	"github.com/daniil/floq/internal/prospects"
 	prospectsdomain "github.com/daniil/floq/internal/prospects/domain"
 	settingsdomain "github.com/daniil/floq/internal/settings/domain"
@@ -548,3 +549,29 @@ func newPendingReplyCounterAdapter(repo inbox.PendingReplyRepository) *pendingRe
 func (a *pendingReplyCounterAdapter) CountPendingByUser(ctx context.Context, userID uuid.UUID) (map[uuid.UUID]int, error) {
 	return a.repo.CountPendingByUser(ctx, userID)
 }
+
+// inboxEmailSenderAdapter bridges outbound.Sender to inbox.EmailSender
+// so the email HITL dispatcher can dispatch approved replies through
+// the same SMTP/Resend machinery used by the outbound sequence
+// pipeline, without inbox having to import outbound directly.
+//
+// Empty idempotency key — HITL operator retries are infrequent and
+// the underlying sendViaResend has its own HTTP-level retry-with-key
+// loop for transient 5xx; the operator-driven retry surface is small
+// enough that double-delivery on a rare double-Approve is acceptable.
+// Worth tightening if abuse appears (use pr.ID.String() as the key).
+type inboxEmailSenderAdapter struct {
+	sender *outbound.Sender
+}
+
+func newInboxEmailSenderAdapter(sender *outbound.Sender) *inboxEmailSenderAdapter {
+	return &inboxEmailSenderAdapter{sender: sender}
+}
+
+func (a *inboxEmailSenderAdapter) SendEmail(ctx context.Context, userID uuid.UUID, to, subject, body string) error {
+	return a.sender.SendOneEmailFor(ctx, userID, to, subject, body, "")
+}
+
+// Compile-time check that the adapter satisfies inbox.EmailSender so
+// signature drift on the port breaks the build at the wiring edge.
+var _ inbox.EmailSender = (*inboxEmailSenderAdapter)(nil)
