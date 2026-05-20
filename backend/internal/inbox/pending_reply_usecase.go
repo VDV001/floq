@@ -118,6 +118,13 @@ func (uc *PendingReplyUseCase) ListByLead(ctx context.Context, userID, leadID uu
 	return uc.repo.ListByLead(ctx, userID, leadID)
 }
 
+// ListPendingByUser — stub for the RED step of #51. Impl lands in the
+// matching GREEN commit; tests against this method fail at runtime
+// rather than at compile time so the build stays green for bisect.
+func (uc *PendingReplyUseCase) ListPendingByUser(_ context.Context, _ uuid.UUID) ([]*PendingReplyWithLead, error) {
+	return nil, errors.New("pending reply usecase: ListPendingByUser not implemented")
+}
+
 // Approve transitions the reply into Approved, persists the decision,
 // dispatches through the channel-native transport, and (on success)
 // marks the entity Sent. A dispatch failure leaves the entity in

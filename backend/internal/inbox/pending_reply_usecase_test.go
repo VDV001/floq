@@ -815,3 +815,63 @@ func TestPendingReplyUseCase_Approve_DispatchesPostEditBody(t *testing.T) {
 		t.Errorf("dispatcher received body %q, want 'edited body' — Approve must re-read after the optimistic-lock Update so the dispatched body reflects any concurrent edit, not the load-time snapshot", calls[0].Body)
 	}
 }
+
+// --- ListPendingByUser ---
+
+func TestPendingReplyUseCase_ListPendingByUser_PassesThroughRepoRows(t *testing.T) {
+	repo := newFakeRepo()
+	uc := NewPendingReplyUseCase(repo, &spyDispatcher{})
+	ctx := context.Background()
+	userID := uuid.New()
+	leadID := uuid.New()
+
+	// Two pending rows for our user + one for a different user (must
+	// not surface). The fake's ListPendingByUser mirrors the SQL
+	// status+user_id filter so the usecase passthrough is what
+	// produces the visible behaviour.
+	pr1, err := uc.Propose(ctx, userID, leadID, ChannelTelegram, PendingReplyKindBookingLink, "first")
+	if err != nil {
+		t.Fatalf("Propose returned error: %v", err)
+	}
+	pr2, err := uc.Propose(ctx, userID, leadID, ChannelTelegram, PendingReplyKindBookingLink, "second")
+	if err != nil {
+		t.Fatalf("Propose returned error: %v", err)
+	}
+	otherUser := uuid.New()
+	if _, err := uc.Propose(ctx, otherUser, leadID, ChannelTelegram, PendingReplyKindBookingLink, "third"); err != nil {
+		t.Fatalf("Propose returned error: %v", err)
+	}
+
+	got, err := uc.ListPendingByUser(ctx, userID)
+	if err != nil {
+		t.Fatalf("ListPendingByUser returned error: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("got %d rows, want 2 (other user's row must not surface)", len(got))
+	}
+	seen := map[uuid.UUID]bool{}
+	for _, row := range got {
+		if row == nil || row.Reply == nil {
+			t.Fatal("nil entry in result")
+		}
+		seen[row.Reply.ID] = true
+	}
+	if !seen[pr1.ID] || !seen[pr2.ID] {
+		t.Errorf("missing expected pending IDs in result; got %v", seen)
+	}
+}
+
+func TestPendingReplyUseCase_ListPendingByUser_PropagatesRepoError(t *testing.T) {
+	repo := newFakeRepo()
+	sentinel := errors.New("repo went sideways")
+	repo.listByUserErr = sentinel
+	uc := NewPendingReplyUseCase(repo, &spyDispatcher{})
+
+	_, err := uc.ListPendingByUser(context.Background(), uuid.New())
+	if err == nil {
+		t.Fatal("expected repo error to propagate, got nil")
+	}
+	if !errors.Is(err, sentinel) {
+		t.Errorf("expected wrapped repo error, got %v — usecase must surface the underlying repo failure so callers can introspect", err)
+	}
+}
