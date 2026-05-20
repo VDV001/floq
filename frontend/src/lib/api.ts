@@ -187,11 +187,13 @@ export const api = {
   // re-listing.
   getPendingReplies: (leadId: string) =>
     apiFetch<PendingReply[]>(`/api/leads/${leadId}/pending-replies`),
-  // listPendingReplies — stub for the RED step of #51. Real impl
-  // lands in the matching GREEN commit so the contract test fails
-  // at runtime while the TS build stays green for bisect.
-  listPendingReplies: (): Promise<PendingReplyQueueRow[]> =>
-    Promise.reject(new Error("listPendingReplies not implemented")),
+  // listPendingReplies — operator queue: every pending row across
+  // every lead the operator owns, with the joined lead snippet so the
+  // page renders contact + company in one request (no N+1). The
+  // status filter is explicit on the wire — keeps room for a future
+  // ?status=approved tab without silently widening the contract.
+  listPendingReplies: () =>
+    apiFetch<PendingReplyQueueRow[]>("/api/pending-replies?status=pending"),
   approvePendingReply: (id: string) =>
     apiFetch<void>(`/api/pending-replies/${id}/approve`, { method: "POST" }),
   rejectPendingReply: (id: string) =>
