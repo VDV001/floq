@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/tls"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -71,6 +72,13 @@ func NewSender(
 		dialer:       dialer,
 		httpClient:   httpClient,
 	}
+}
+
+// SendOneEmailFor — stub for the RED step of #53. Real impl lands in
+// the matching GREEN commit; tests fail at runtime so the build stays
+// bisect-friendly.
+func (s *Sender) SendOneEmailFor(_ context.Context, _ uuid.UUID, _, _, _, _ string) error {
+	return errors.New("outbound: SendOneEmailFor not implemented")
 }
 
 // SendPending finds all approved email messages ready to send.
