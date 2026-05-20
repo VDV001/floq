@@ -21,15 +21,23 @@ import (
 type fakePendingReplyUseCase struct {
 	mu sync.Mutex
 
-	listFn       func(ctx context.Context, userID, leadID uuid.UUID) ([]*PendingReply, error)
-	approveFn    func(ctx context.Context, userID, id uuid.UUID) error
-	rejectFn     func(ctx context.Context, userID, id uuid.UUID) error
-	updateBodyFn func(ctx context.Context, userID, id uuid.UUID, body string) (*PendingReply, error)
+	listFn              func(ctx context.Context, userID, leadID uuid.UUID) ([]*PendingReply, error)
+	listPendingByUserFn func(ctx context.Context, userID uuid.UUID) ([]*PendingReplyWithLead, error)
+	approveFn           func(ctx context.Context, userID, id uuid.UUID) error
+	rejectFn            func(ctx context.Context, userID, id uuid.UUID) error
+	updateBodyFn        func(ctx context.Context, userID, id uuid.UUID, body string) (*PendingReply, error)
 }
 
 func (f *fakePendingReplyUseCase) ListByLead(ctx context.Context, userID, leadID uuid.UUID) ([]*PendingReply, error) {
 	if f.listFn != nil {
 		return f.listFn(ctx, userID, leadID)
+	}
+	return nil, nil
+}
+
+func (f *fakePendingReplyUseCase) ListPendingByUser(ctx context.Context, userID uuid.UUID) ([]*PendingReplyWithLead, error) {
+	if f.listPendingByUserFn != nil {
+		return f.listPendingByUserFn(ctx, userID)
 	}
 	return nil, nil
 }
@@ -237,6 +245,166 @@ func TestHandler_ListByLead_CrossTenantReturns404(t *testing.T) {
 
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("status = %d, want 404 (uniform — no info leak)", rec.Code)
+	}
+}
+
+// --- GET /api/pending-replies (operator queue) ---
+
+func TestHandler_ListPendingByUser_HappyPath_EnrichedWithLeadSnippet(t *testing.T) {
+	userID := uuid.New()
+	leadID := uuid.New()
+	pr, err := NewPendingReply(userID, leadID, ChannelTelegram, PendingReplyKindBookingLink, "queue body")
+	if err != nil {
+		t.Fatal(err)
+	}
+	chat := int64(987654)
+	uc := &fakePendingReplyUseCase{
+		listPendingByUserFn: func(_ context.Context, u uuid.UUID) ([]*PendingReplyWithLead, error) {
+			if u != userID {
+				t.Errorf("usecase received wrong user id: %v", u)
+			}
+			return []*PendingReplyWithLead{{
+				Reply: pr,
+				Lead: LeadSnippet{
+					ContactName:    "Иван Петров",
+					Company:        "ACME",
+					Channel:        ChannelTelegram,
+					TelegramChatID: &chat,
+				},
+			}}, nil
+		},
+	}
+	srv := newTestServer(uc, &fakeLeadOwnership{})
+	req := authedRequest(t, http.MethodGet, "/api/pending-replies?status=pending", userID)
+	rec := httptest.NewRecorder()
+	srv.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200, body=%s", rec.Code, rec.Body.String())
+	}
+	var got []map[string]any
+	if err := json.NewDecoder(rec.Body).Decode(&got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("response len = %d, want 1", len(got))
+	}
+	row := got[0]
+	if row["id"] != pr.ID.String() {
+		t.Errorf("id = %v, want %v", row["id"], pr.ID)
+	}
+	if row["body"] != "queue body" {
+		t.Errorf("body = %v, want queue body", row["body"])
+	}
+	if row["status"] != "pending" {
+		t.Errorf("status = %v, want pending", row["status"])
+	}
+	lead, ok := row["lead"].(map[string]any)
+	if !ok {
+		t.Fatalf("lead field missing or wrong shape: %v", row["lead"])
+	}
+	if lead["contact_name"] != "Иван Петров" {
+		t.Errorf("lead.contact_name = %v", lead["contact_name"])
+	}
+	if lead["company"] != "ACME" {
+		t.Errorf("lead.company = %v", lead["company"])
+	}
+	if lead["channel"] != "telegram" {
+		t.Errorf("lead.channel = %v", lead["channel"])
+	}
+	// JSON numbers decode to float64. Compare via that lens.
+	if got, want := lead["telegram_chat_id"], float64(987654); got != want {
+		t.Errorf("lead.telegram_chat_id = %v, want %v", got, want)
+	}
+	if _, present := lead["email_address"]; present {
+		t.Errorf("lead.email_address must be omitempty when nil, got %v", lead["email_address"])
+	}
+}
+
+func TestHandler_ListPendingByUser_DefaultsStatusToPendingWhenAbsent(t *testing.T) {
+	userID := uuid.New()
+	called := false
+	uc := &fakePendingReplyUseCase{
+		listPendingByUserFn: func(_ context.Context, _ uuid.UUID) ([]*PendingReplyWithLead, error) {
+			called = true
+			return nil, nil
+		},
+	}
+	srv := newTestServer(uc, &fakeLeadOwnership{})
+	// No ?status= param.
+	req := authedRequest(t, http.MethodGet, "/api/pending-replies", userID)
+	rec := httptest.NewRecorder()
+	srv.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (default to pending) — operators hit this URL with no filter for the queue", rec.Code)
+	}
+	if !called {
+		t.Error("usecase must have been invoked when ?status is absent — handler defaults to pending")
+	}
+}
+
+func TestHandler_ListPendingByUser_EmptyReturnsJSONArrayNotNull(t *testing.T) {
+	uc := &fakePendingReplyUseCase{
+		listPendingByUserFn: func(_ context.Context, _ uuid.UUID) ([]*PendingReplyWithLead, error) {
+			return nil, nil
+		},
+	}
+	srv := newTestServer(uc, &fakeLeadOwnership{})
+	req := authedRequest(t, http.MethodGet, "/api/pending-replies?status=pending", uuid.New())
+	rec := httptest.NewRecorder()
+	srv.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	body := strings.TrimSpace(rec.Body.String())
+	if body != "[]" {
+		t.Errorf("empty list body = %q, want %q (must not be JSON null)", body, "[]")
+	}
+}
+
+func TestHandler_ListPendingByUser_NoUserReturns401(t *testing.T) {
+	srv := newTestServer(&fakePendingReplyUseCase{}, &fakeLeadOwnership{})
+	req := httptest.NewRequest(http.MethodGet, "/api/pending-replies?status=pending", nil)
+	rec := httptest.NewRecorder()
+	srv.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want 401", rec.Code)
+	}
+}
+
+func TestHandler_ListPendingByUser_UnsupportedStatusReturns400(t *testing.T) {
+	uc := &fakePendingReplyUseCase{
+		listPendingByUserFn: func(_ context.Context, _ uuid.UUID) ([]*PendingReplyWithLead, error) {
+			t.Fatal("usecase must NOT be called when status filter is rejected")
+			return nil, nil
+		},
+	}
+	srv := newTestServer(uc, &fakeLeadOwnership{})
+	req := authedRequest(t, http.MethodGet, "/api/pending-replies?status=approved", uuid.New())
+	rec := httptest.NewRecorder()
+	srv.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400 (only pending is supported today)", rec.Code)
+	}
+}
+
+func TestHandler_ListPendingByUser_UsecaseErrorReturns500(t *testing.T) {
+	uc := &fakePendingReplyUseCase{
+		listPendingByUserFn: func(_ context.Context, _ uuid.UUID) ([]*PendingReplyWithLead, error) {
+			return nil, errors.New("db hiccup")
+		},
+	}
+	srv := newTestServer(uc, &fakeLeadOwnership{})
+	req := authedRequest(t, http.MethodGet, "/api/pending-replies?status=pending", uuid.New())
+	rec := httptest.NewRecorder()
+	srv.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500", rec.Code)
 	}
 }
 

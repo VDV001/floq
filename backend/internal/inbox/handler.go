@@ -19,6 +19,7 @@ import (
 // stand up without any persistence backend.
 type PendingReplyUseCaseAPI interface {
 	ListByLead(ctx context.Context, userID, leadID uuid.UUID) ([]*PendingReply, error)
+	ListPendingByUser(ctx context.Context, userID uuid.UUID) ([]*PendingReplyWithLead, error)
 	Approve(ctx context.Context, userID, id uuid.UUID) error
 	Reject(ctx context.Context, userID, id uuid.UUID) error
 	UpdateBody(ctx context.Context, userID, id uuid.UUID, body string) (*PendingReply, error)
@@ -57,6 +58,9 @@ type pendingReplyHandler struct {
 func RegisterPendingReplyRoutes(r chi.Router, uc PendingReplyUseCaseAPI, leads LeadOwnershipChecker, decideMW func(http.Handler) http.Handler) {
 	h := &pendingReplyHandler{uc: uc, leads: leads}
 	r.Get("/api/leads/{id}/pending-replies", h.listByLead())
+	// Operator queue: all pending rows for the current user across
+	// every lead. Idempotent + read-only — not rate-limited.
+	r.Get("/api/pending-replies", h.listPendingByUser())
 	if decideMW == nil {
 		r.Post("/api/pending-replies/{id}/approve", h.approve())
 		r.Post("/api/pending-replies/{id}/reject", h.reject())
@@ -97,6 +101,15 @@ func (h *pendingReplyHandler) listByLead() http.HandlerFunc {
 			return
 		}
 		httputil.WriteJSON(w, http.StatusOK, pendingRepliesToResponse(rows))
+	}
+}
+
+// listPendingByUser — stub for the RED step of #51. Real impl lands in
+// the matching GREEN commit; tests fail at runtime so the build stays
+// bisect-friendly.
+func (h *pendingReplyHandler) listPendingByUser() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		httputil.WriteError(w, http.StatusNotImplemented, "listPendingByUser not implemented")
 	}
 }
 
