@@ -3,6 +3,7 @@ package analytics
 import (
 	"context"
 	"errors"
+	"time"
 
 	"github.com/google/uuid"
 )
@@ -59,4 +60,39 @@ type SequenceStatsDTO struct {
 // implementation lives in repository.go; tests stub it directly.
 type SequenceStatsReader interface {
 	GetSequenceStats(ctx context.Context, userID uuid.UUID, period Period) ([]SequenceStatsDTO, error)
+}
+
+// QualifiedScoreThreshold is the minimum qualifications.score for a
+// lead to count as "qualified" in the cost-ratios view. Score range
+// is 0-100 (set by the AI qualifier); 80 reflects the threshold the
+// product treats as a real sales-ready prospect.
+const QualifiedScoreThreshold = 80
+
+// CostRatiosDTO is the read model for the View 2 cost dashboard. All
+// money fields are in USD micro-units (integer) at the DTO boundary;
+// the wire mapping in the handler converts to float USD with the
+// same microToUSD helper the audit package uses, keeping precision
+// integer-pure across the aggregation pipeline.
+type CostRatiosDTO struct {
+	PeriodFrom              time.Time
+	PeriodTo                time.Time
+	TotalCostUSDMicro       int64
+	TotalCalls              int
+	LeadsCount              int
+	QualifiedLeadsCount     int
+	ConvertedCount          int
+	DraftsSentCount         int
+	CostPerLeadUSDMicro     int64
+	CostPerQualifiedUSDMicro int64
+	CostPerConvertedUSDMicro int64
+	CostPerDraftSentUSDMicro int64
+}
+
+// CostRatiosReader is the port the cost-ratios usecase depends on.
+// Composes audit_log + leads + qualifications + prospects +
+// outbound_messages into a single dashboard row; the pg implementation
+// runs the queries in sequence (5 round-trips for v1 — readability
+// beats throughput on the operator dashboard).
+type CostRatiosReader interface {
+	GetCostRatios(ctx context.Context, userID uuid.UUID, from, to time.Time) (*CostRatiosDTO, error)
 }
