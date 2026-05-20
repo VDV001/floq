@@ -53,7 +53,7 @@ func TestHandler_GetSequenceStats_ReturnsRows(t *testing.T) {
 	}}}
 
 	r := chi.NewRouter()
-	analytics.RegisterRoutes(r, analytics.NewUseCase(reader))
+	analytics.RegisterRoutes(r, analytics.NewUseCase(reader, nil))
 
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, newAuthedRequest(t, "/api/analytics/sequences", userID))
@@ -101,7 +101,7 @@ func TestHandler_GetSequenceStats_PeriodQueryParam(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			reader := &stubReader{}
 			r := chi.NewRouter()
-			analytics.RegisterRoutes(r, analytics.NewUseCase(reader))
+			analytics.RegisterRoutes(r, analytics.NewUseCase(reader, nil))
 
 			w := httptest.NewRecorder()
 			r.ServeHTTP(w, newAuthedRequest(t, "/api/analytics/sequences"+tc.query, uuid.New()))
@@ -119,7 +119,7 @@ func TestHandler_GetSequenceStats_PeriodQueryParam(t *testing.T) {
 func TestHandler_GetSequenceStats_Unauthorized(t *testing.T) {
 	reader := &stubReader{}
 	r := chi.NewRouter()
-	analytics.RegisterRoutes(r, analytics.NewUseCase(reader))
+	analytics.RegisterRoutes(r, analytics.NewUseCase(reader, nil))
 
 	w := httptest.NewRecorder()
 	// Plain httptest request — no user_id in context.
@@ -132,7 +132,7 @@ func TestHandler_GetSequenceStats_Unauthorized(t *testing.T) {
 func TestHandler_GetSequenceStats_ReaderError(t *testing.T) {
 	reader := &stubReader{err: errors.New("pg down")}
 	r := chi.NewRouter()
-	analytics.RegisterRoutes(r, analytics.NewUseCase(reader))
+	analytics.RegisterRoutes(r, analytics.NewUseCase(reader, nil))
 
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, newAuthedRequest(t, "/api/analytics/sequences", uuid.New()))
@@ -143,7 +143,7 @@ func TestHandler_GetSequenceStats_ReaderError(t *testing.T) {
 func TestHandler_GetSequenceStats_EmptyReturnsEmptyArray(t *testing.T) {
 	reader := &stubReader{rows: nil}
 	r := chi.NewRouter()
-	analytics.RegisterRoutes(r, analytics.NewUseCase(reader))
+	analytics.RegisterRoutes(r, analytics.NewUseCase(reader, nil))
 
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, newAuthedRequest(t, "/api/analytics/sequences", uuid.New()))
@@ -162,7 +162,7 @@ func TestHandler_RatesAreComputedCorrectly(t *testing.T) {
 	}}
 
 	r := chi.NewRouter()
-	analytics.RegisterRoutes(r, analytics.NewUseCase(reader))
+	analytics.RegisterRoutes(r, analytics.NewUseCase(reader, nil))
 
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, newAuthedRequest(t, "/api/analytics/sequences", userID))
