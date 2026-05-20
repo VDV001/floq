@@ -94,3 +94,77 @@ func TestJSONBodyCap_RespectsCharsetSuffix(t *testing.T) {
 		t.Fatal("expected MaxBytesError with charset-suffixed Content-Type, got nil")
 	}
 }
+
+func TestMaxBodyBytes_CapsArbitraryContentType(t *testing.T) {
+	// Outer absolute ceiling — applies regardless of Content-Type, so a
+	// client spoofing "application/octet-stream" cannot stream past
+	// the cap into json.NewDecoder via the bypass JSONBodyCap leaves
+	// open by design.
+	var capturedErr error
+	next := http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		_, capturedErr = io.ReadAll(r.Body)
+	})
+
+	mw := MaxBodyBytes(10)(next)
+
+	oversized := strings.Repeat("x", 50)
+	req := httptest.NewRequest(http.MethodPost, "/x", bytes.NewBufferString(oversized))
+	req.Header.Set("Content-Type", "application/octet-stream")
+	mw.ServeHTTP(httptest.NewRecorder(), req)
+
+	if capturedErr == nil {
+		t.Fatal("expected MaxBytesError for octet-stream body, got nil")
+	}
+	var maxBytesErr *http.MaxBytesError
+	if !errors.As(capturedErr, &maxBytesErr) {
+		t.Fatalf("expected *http.MaxBytesError, got %T (%v)", capturedErr, capturedErr)
+	}
+}
+
+func TestMaxBodyBytes_CapsNoContentTypeHeader(t *testing.T) {
+	// Missing Content-Type must NOT bypass the outer cap — this is
+	// exactly the bypass JSONBodyCap alone is vulnerable to.
+	var capturedErr error
+	next := http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		_, capturedErr = io.ReadAll(r.Body)
+	})
+
+	mw := MaxBodyBytes(10)(next)
+
+	oversized := strings.Repeat("x", 50)
+	req := httptest.NewRequest(http.MethodPost, "/x", bytes.NewBufferString(oversized))
+	// Note: no Content-Type header set.
+	mw.ServeHTTP(httptest.NewRecorder(), req)
+
+	if capturedErr == nil {
+		t.Fatal("expected MaxBytesError when Content-Type is absent, got nil")
+	}
+}
+
+func TestMaxBodyBytes_StackedUnderJSONBodyCap(t *testing.T) {
+	// Defence in depth: MaxBodyBytes is the outer (loose) ceiling,
+	// JSONBodyCap layered inside trips first for JSON traffic because
+	// MaxBytesReader honours the smallest cap in the chain.
+	var capturedErr error
+	next := http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		_, capturedErr = io.ReadAll(r.Body)
+	})
+
+	mw := MaxBodyBytes(1000)(JSONBodyCap(10)(next))
+
+	oversized := strings.Repeat("x", 50)
+	req := httptest.NewRequest(http.MethodPost, "/x", bytes.NewBufferString(oversized))
+	req.Header.Set("Content-Type", "application/json")
+	mw.ServeHTTP(httptest.NewRecorder(), req)
+
+	if capturedErr == nil {
+		t.Fatal("expected MaxBytesError from inner JSON cap, got nil")
+	}
+	var maxBytesErr *http.MaxBytesError
+	if !errors.As(capturedErr, &maxBytesErr) {
+		t.Fatalf("expected *http.MaxBytesError, got %T", capturedErr)
+	}
+	if maxBytesErr.Limit != 10 {
+		t.Fatalf("expected inner JSON cap (10) to trip first, got Limit=%d", maxBytesErr.Limit)
+	}
+}
