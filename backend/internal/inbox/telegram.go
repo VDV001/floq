@@ -221,10 +221,19 @@ func (t *TelegramBot) handleMessage(ctx context.Context, msg *tgbotapi.Message) 
 	// so the secure default when no proposer is wired is to suppress
 	// the branch entirely — we do NOT fall back to instant send.
 	if DetectCallAgreement(text) {
-		if t.pendingProposer == nil {
+		switch {
+		case t.pendingProposer == nil:
 			t.logger.WarnContext(ctx, "booking link suppressed: no pending reply proposer wired",
 				slog.Int64("chat_id", chatID), slog.String("lead_id", lead.ID.String()))
-		} else {
+		case t.bookingLink == "":
+			// Enqueueing with an empty URL would let an operator
+			// approve a customer-visible message ending in
+			// "…ссылка для звонка: " with nothing after it.
+			// Suppress the branch instead — operator can write the
+			// message manually if needed.
+			t.logger.WarnContext(ctx, "booking link suppressed: bookingLink not configured",
+				slog.Int64("chat_id", chatID), slog.String("lead_id", lead.ID.String()))
+		default:
 			bookingMsg := fmt.Sprintf(bookingLinkReplyTemplate, t.bookingLink)
 			if _, err := t.pendingProposer.Propose(ctx, lead.UserID, lead.ID, ChannelTelegram, PendingReplyKindBookingLink, bookingMsg); err != nil {
 				t.logger.WarnContext(ctx, "failed to enqueue booking reply for approval",

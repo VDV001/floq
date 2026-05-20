@@ -397,6 +397,27 @@ func TestHandleMessage_CallAgreement_EnqueuesForApproval(t *testing.T) {
 	assert.Contains(t, calls[0].Body, bookingLink)
 }
 
+func TestHandleMessage_CallAgreement_EmptyBookingLinkSuppresses(t *testing.T) {
+	// Mirrors the email-side guard added in #53: a proposer wired AND
+	// DetectCallAgreement matching still must NOT enqueue when
+	// bookingLink is "". Otherwise the formatted template carries a
+	// blank URL slot ("…вот ссылка: ") and the operator can approve a
+	// customer-visible message with no link in it.
+	repo := newMockLeadRepo()
+	aiClient := &mockAIQualifier{result: &QualificationResult{Score: 9}}
+	ownerID := uuid.New()
+	proposer := &spyPendingProposer{}
+	bot := newTestBot(repo, aiClient, ownerID, "") // empty bookingLink
+	bot.SetPendingProposer(proposer)
+
+	msg := makeTgMessage(99999, "Bob", "", "Звучит интересно, давайте созвон проведём!")
+	bot.handleMessage(context.Background(), msg)
+	waitQualifyDone(t, repo)
+
+	assert.Empty(t, proposer.Calls(),
+		"proposer must NOT fire with empty bookingLink — would land a customer-visible message with a blank URL")
+}
+
 func TestHandleMessage_CallAgreement_NoProposerSuppressesBookingLink(t *testing.T) {
 	repo := newMockLeadRepo()
 	aiClient := &mockAIQualifier{result: &QualificationResult{Score: 9}}
