@@ -376,6 +376,30 @@ describe("api module", () => {
       expect(opts.method).toBe("POST");
     });
 
+    it("bulkPendingReplies → POST /api/pending-replies/bulk with ids and decision", async () => {
+      const wireResponse = {
+        results: [
+          { id: "pr-1", ok: true },
+          { id: "pr-2", ok: false, error: "not found" },
+        ],
+      };
+      fetchMock.mockResolvedValueOnce(mockResponse(wireResponse));
+
+      const result = await api.bulkPendingReplies({
+        ids: ["pr-1", "pr-2"],
+        decision: "approve",
+      });
+
+      const [url, opts] = fetchMock.mock.calls[0];
+      expect(url).toBe("http://localhost:8080/api/pending-replies/bulk");
+      expect(opts.method).toBe("POST");
+      expect(JSON.parse(opts.body)).toEqual({
+        ids: ["pr-1", "pr-2"],
+        decision: "approve",
+      });
+      expect(result).toEqual(wireResponse);
+    });
+
     it("listPendingReplies → GET /api/pending-replies?status=pending with joined lead snippet", async () => {
       const sample = [
         {
