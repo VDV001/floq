@@ -56,7 +56,7 @@ export function SequenceStatsTable({ rows }: SequenceStatsTableProps) {
   if (rows.length === 0) {
     return (
       <div className="rounded-lg border border-slate-200 bg-white p-8 text-center text-sm text-slate-500">
-        Нет sequence'ов с активностью в выбранном периоде.
+        Нет sequence&apos;ов с активностью в выбранном периоде.
       </div>
     );
   }
