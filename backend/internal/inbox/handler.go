@@ -148,12 +148,96 @@ func (h *pendingReplyHandler) listPendingByUser() http.HandlerFunc {
 	}
 }
 
-// bulkDecide — stub for the RED step of #49. Real impl lands in the
-// matching GREEN commit; tests fail at runtime so the build stays
-// bisect-friendly.
+// bulkDecideRequest is the JSON request body. Both fields are
+// required; emptiness / unknown decision is detected by the usecase
+// and surfaced as a 400, while malformed JSON / non-uuid ids are
+// rejected at parse time without reaching the usecase.
+type bulkDecideRequest struct {
+	IDs      []string `json:"ids"`
+	Decision string   `json:"decision"`
+}
+
+// bulkDecideResultWire mirrors the per-row outcome on the wire.
+// `error` is omitempty so success rows carry only {id, ok:true},
+// keeping the response compact for the typical happy-path bulk.
+type bulkDecideResultWire struct {
+	ID    string `json:"id"`
+	OK    bool   `json:"ok"`
+	Error string `json:"error,omitempty"`
+}
+
+// bulkDecideResponse wraps the per-row results under a "results" key
+// so the response shape is forward-compatible with future top-level
+// metadata (counts, partial-failure summaries) without breaking
+// existing clients.
+type bulkDecideResponse struct {
+	Results []bulkDecideResultWire `json:"results"`
+}
+
+// perRowErrorString maps a per-row usecase error to a stable wire
+// string. Unknown errors collapse to a generic "internal error" so
+// upstream taxonomy (dispatcher 5xx, db hiccup, …) doesn't leak.
+func perRowErrorString(err error) string {
+	switch {
+	case err == nil:
+		return ""
+	case errors.Is(err, ErrPendingReplyNotFound):
+		return "not found"
+	case errors.Is(err, ErrPendingReplyAlreadyDecided):
+		return "already decided"
+	case errors.Is(err, ErrPendingReplyDispatcherNotConfigured):
+		return "dispatcher not configured"
+	default:
+		return "internal error"
+	}
+}
+
 func (h *pendingReplyHandler) bulkDecide() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		httputil.WriteError(w, http.StatusNotImplemented, "bulkDecide not implemented")
+		userID, ok := httputil.UserIDFromContext(r.Context())
+		if !ok {
+			httputil.WriteError(w, http.StatusUnauthorized, "unauthorized")
+			return
+		}
+		var req bulkDecideRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			httputil.WriteError(w, http.StatusBadRequest, "invalid json body")
+			return
+		}
+		ids := make([]uuid.UUID, 0, len(req.IDs))
+		for _, raw := range req.IDs {
+			parsed, err := uuid.Parse(raw)
+			if err != nil {
+				httputil.WriteError(w, http.StatusBadRequest, "invalid id in ids[]")
+				return
+			}
+			ids = append(ids, parsed)
+		}
+		results, err := h.uc.BulkDecide(r.Context(), userID, ids, BulkDecision(req.Decision))
+		if err != nil {
+			switch {
+			case errors.Is(err, ErrBulkDecideEmptyIDs):
+				httputil.WriteError(w, http.StatusBadRequest, "ids must be non-empty")
+			case errors.Is(err, ErrBulkDecideInvalidDecision):
+				httputil.WriteError(w, http.StatusBadRequest, "decision must be 'approve' or 'reject'")
+			default:
+				slog.ErrorContext(r.Context(), "pending reply bulk decide failed",
+					slog.String("user_id", userID.String()),
+					slog.Int("ids_count", len(ids)),
+					slog.Any("err", err))
+				httputil.WriteError(w, http.StatusInternalServerError, "failed to process bulk decide")
+			}
+			return
+		}
+		out := bulkDecideResponse{Results: make([]bulkDecideResultWire, 0, len(results))}
+		for _, r := range results {
+			out.Results = append(out.Results, bulkDecideResultWire{
+				ID:    r.ID.String(),
+				OK:    r.Err == nil,
+				Error: perRowErrorString(r.Err),
+			})
+		}
+		httputil.WriteJSON(w, http.StatusOK, out)
 	}
 }
 
