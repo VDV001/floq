@@ -5,7 +5,6 @@ import (
 	"context"
 	"crypto/tls"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -74,11 +73,42 @@ func NewSender(
 	}
 }
 
-// SendOneEmailFor — stub for the RED step of #53. Real impl lands in
-// the matching GREEN commit; tests fail at runtime so the build stays
-// bisect-friendly.
-func (s *Sender) SendOneEmailFor(_ context.Context, _ uuid.UUID, _, _, _, _ string) error {
-	return errors.New("outbound: SendOneEmailFor not implemented")
+// SendOneEmailFor dispatches a single ad-hoc email outside the
+// sequence outbound pipeline. Resolves the user's SMTP / Resend
+// configuration per call (so a config change after Sender startup
+// takes effect immediately) and routes through the same SMTP or
+// Resend branch as SendPending. Used by the inbox HITL email
+// dispatcher for an approved auto-drafted reply.
+//
+// idempotencyKey is forwarded to the Resend API only — SMTP has no
+// idempotency story (see the comment on sendViaSMTPWith). Callers
+// SHOULD pass a stable key derived from the PendingReply ID so a
+// retry after a transient HTTP failure does not double-deliver.
+func (s *Sender) SendOneEmailFor(ctx context.Context, userID uuid.UUID, to, subject, body, idempotencyKey string) error {
+	smtpHost, smtpPort, smtpUser, smtpPassword := s.smtpHost, s.smtpPort, s.smtpUser, s.smtpPassword
+	fromAddr := s.fromAddress
+	apiKey := s.fallbackKey
+	// Single GetConfig call resolves both SMTP and Resend for the
+	// explicit userID. Calling sendViaResend (which does its own
+	// GetConfig keyed on s.ownerID) here would silently fall back to
+	// the boot-time owner's Resend key in a multi-tenant deployment;
+	// resolve everything up front and pass the key explicitly into
+	// the wire-level helper instead.
+	if cfg, err := s.store.GetConfig(ctx, userID); err == nil && cfg != nil {
+		smtpHost = settingsdomain.ResolveConfig(cfg.SMTPHost, smtpHost)
+		smtpPort = settingsdomain.ResolveConfig(cfg.SMTPPort, smtpPort)
+		smtpUser = settingsdomain.ResolveConfig(cfg.SMTPUser, smtpUser)
+		smtpPassword = settingsdomain.ResolveConfig(cfg.SMTPPassword, smtpPassword)
+		apiKey = settingsdomain.ResolveConfig(cfg.ResendAPIKey, apiKey)
+		if smtpUser != "" && fromAddr == "" {
+			fromAddr = smtpUser
+		}
+	}
+	htmlBody := "<html><body>" + body + "</body></html>"
+	if smtpHost != "" && smtpUser != "" && smtpPassword != "" {
+		return s.sendViaSMTPWith(ctx, smtpHost, smtpPort, smtpUser, smtpPassword, fromAddr, to, subject, htmlBody)
+	}
+	return s.dispatchToResend(ctx, apiKey, to, subject, htmlBody, idempotencyKey)
 }
 
 // SendPending finds all approved email messages ready to send.
@@ -420,6 +450,14 @@ func (s *Sender) sendViaResend(ctx context.Context, to, subject, htmlBody, idemp
 	if cfg, err := s.store.GetConfig(ctx, s.ownerID); err == nil {
 		apiKey = settingsdomain.ResolveConfig(cfg.ResendAPIKey, apiKey)
 	}
+	return s.dispatchToResend(ctx, apiKey, to, subject, htmlBody, idempotencyKey)
+}
+
+// dispatchToResend is the wire-level Resend HTTP call factored out of
+// sendViaResend so multi-tenant callers (SendOneEmailFor) can resolve
+// the API key for an explicit userID and pass it down without
+// triggering a second GetConfig keyed on s.ownerID.
+func (s *Sender) dispatchToResend(ctx context.Context, apiKey, to, subject, htmlBody, idempotencyKey string) error {
 	if apiKey == "" {
 		return ErrNoResendAPIKey
 	}
