@@ -1,16 +1,18 @@
 "use client";
 
 import { useState } from "react";
-import { ShieldCheck } from "lucide-react";
+import { ShieldCheck, X } from "lucide-react";
 import { FilterPill } from "@/components/outbound/FilterPill";
 import { formatTime } from "@/components/outbound/constants";
 import { PendingQueueRow } from "@/components/pending-queue/PendingQueueRow";
 import { PendingQueueTabs } from "@/components/pending-queue/PendingQueueTabs";
 import { usePendingQueue } from "@/hooks/usePendingQueue";
+import { pluralRu } from "@/lib/format";
 
 export default function InboxPendingPage() {
   const q = usePendingQueue();
   const [busyId, setBusyId] = useState<string | null>(null);
+  const [bulkBusy, setBulkBusy] = useState(false);
 
   async function withBusy(id: string, op: (id: string) => Promise<void>) {
     setBusyId(id);
@@ -20,6 +22,17 @@ export default function InboxPendingPage() {
       setBusyId(null);
     }
   }
+
+  async function withBulkBusy(op: () => Promise<void>) {
+    setBulkBusy(true);
+    try {
+      await op();
+    } finally {
+      setBulkBusy(false);
+    }
+  }
+
+  const selectedCount = q.selectedIds.size;
 
   return (
     <section className="flex-1 overflow-y-auto px-4 sm:px-8 lg:px-12 py-8">
@@ -73,12 +86,75 @@ export default function InboxPendingPage() {
           </div>
         )}
 
+        {selectedCount > 0 && (
+          <div
+            role="region"
+            aria-label="Массовые действия"
+            className="mb-4 flex items-center justify-between rounded-xl border border-[#004ac6]/20 bg-[#eff4ff] px-4 py-3"
+          >
+            <span className="text-sm font-bold text-[#0d1c2e]">
+              Выбрано: {selectedCount}
+            </span>
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={q.clearSelected}
+                disabled={bulkBusy}
+                className="rounded-lg border border-[#c3c6d7]/50 bg-white px-3 py-1.5 text-xs font-semibold text-[#434655] transition-colors hover:bg-[#f7f9fd] disabled:opacity-50"
+              >
+                Снять выбор
+              </button>
+              <button
+                type="button"
+                onClick={() => withBulkBusy(q.bulkReject)}
+                disabled={bulkBusy}
+                className="inline-flex items-center gap-1.5 rounded-lg border border-[#c3c6d7]/50 bg-white px-3 py-1.5 text-xs font-semibold text-[#434655] transition-colors hover:bg-[#f7f9fd] disabled:opacity-50"
+              >
+                <X className="size-3.5" />
+                Отклонить выбранные
+              </button>
+              <button
+                type="button"
+                onClick={() => withBulkBusy(q.bulkApprove)}
+                disabled={bulkBusy}
+                className="inline-flex items-center gap-1.5 rounded-lg bg-[#0d7a2c] px-3 py-1.5 text-xs font-semibold text-white transition-colors hover:bg-[#0a6324] disabled:opacity-50"
+              >
+                <ShieldCheck className="size-3.5" />
+                Одобрить выбранные
+              </button>
+            </div>
+          </div>
+        )}
+
+        {q.bulkSummary && (
+          <div
+            role="status"
+            className="mb-4 flex items-center justify-between rounded-xl bg-[#e8f6ec] px-4 py-3 text-sm text-[#0d1c2e]"
+          >
+            <span>
+              Готово: {q.bulkSummary.ok} применено
+              {q.bulkSummary.failed > 0
+                ? `, ${q.bulkSummary.failed} ${pluralRu(q.bulkSummary.failed, "ошибка", "ошибки", "ошибок")}`
+                : ""}
+            </span>
+            <button
+              type="button"
+              onClick={q.dismissBulkSummary}
+              className="text-xs font-semibold text-[#434655] hover:text-[#0d1c2e]"
+            >
+              Скрыть
+            </button>
+          </div>
+        )}
+
         <ul className="space-y-3">
           {q.filtered.map((row) => (
             <PendingQueueRow
               key={row.id}
               row={row}
-              busy={busyId === row.id}
+              busy={busyId === row.id || bulkBusy}
+              selected={q.selectedIds.has(row.id)}
+              onToggleSelect={q.toggleSelected}
               onApprove={(id) => withBusy(id, q.handleApprove)}
               onReject={(id) => withBusy(id, q.handleReject)}
             />

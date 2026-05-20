@@ -9,6 +9,8 @@ interface Props {
   onApprove: (id: string) => void;
   onReject: (id: string) => void;
   busy?: boolean;
+  selected?: boolean;
+  onToggleSelect?: (id: string) => void;
 }
 
 const KIND_LABELS: Record<PendingReplyQueueRow["kind"], string> = {
@@ -20,12 +22,29 @@ const CHANNEL_LABELS: Record<PendingReplyQueueRow["channel"], string> = {
   email: "Email",
 };
 
-export function PendingQueueRow({ row, onApprove, onReject, busy = false }: Props) {
+export function PendingQueueRow({
+  row,
+  onApprove,
+  onReject,
+  busy = false,
+  selected,
+  onToggleSelect,
+}: Props) {
   const isEmail = row.channel === "email";
+  const selectable = onToggleSelect !== undefined;
   return (
     <li className="rounded-xl border border-[#f5b73c]/30 bg-white p-5 transition-shadow hover:shadow-sm">
       <header className="mb-3 flex items-start justify-between gap-3">
         <div className="flex items-center gap-3">
+          {selectable && (
+            <input
+              type="checkbox"
+              checked={!!selected}
+              onChange={() => onToggleSelect!(row.id)}
+              aria-label={`Выбрать драфт для ${row.lead.contact_name || "лида"}`}
+              className="size-4 cursor-pointer accent-[#004ac6]"
+            />
+          )}
           <div
             className={`flex size-10 items-center justify-center rounded-full ${
               isEmail ? "bg-[#dbe1ff]" : "bg-[#d5e0f8]"

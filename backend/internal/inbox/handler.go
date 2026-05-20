@@ -23,6 +23,7 @@ type PendingReplyUseCaseAPI interface {
 	Approve(ctx context.Context, userID, id uuid.UUID) error
 	Reject(ctx context.Context, userID, id uuid.UUID) error
 	UpdateBody(ctx context.Context, userID, id uuid.UUID, body string) (*PendingReply, error)
+	BulkDecide(ctx context.Context, userID uuid.UUID, ids []uuid.UUID, decision BulkDecision) ([]BulkDecideResult, error)
 }
 
 // LeadOwnershipChecker is the narrow port the handler needs to gate
@@ -65,6 +66,7 @@ func RegisterPendingReplyRoutes(r chi.Router, uc PendingReplyUseCaseAPI, leads L
 		r.Post("/api/pending-replies/{id}/approve", h.approve())
 		r.Post("/api/pending-replies/{id}/reject", h.reject())
 		r.Patch("/api/pending-replies/{id}", h.updateBody())
+		r.Post("/api/pending-replies/bulk", h.bulkDecide())
 		return
 	}
 	r.With(decideMW).Post("/api/pending-replies/{id}/approve", h.approve())
@@ -72,6 +74,12 @@ func RegisterPendingReplyRoutes(r chi.Router, uc PendingReplyUseCaseAPI, leads L
 	// PATCH is rate-limited too — operators editing in a tight loop should
 	// hit the same throttle as a tight approve loop.
 	r.With(decideMW).Patch("/api/pending-replies/{id}", h.updateBody())
+	// Bulk decide consumes one rate-limit slot per call regardless of
+	// how many ids it carries. This is a deliberate power-operator
+	// affordance: the alternative — charging N slots per bulk — would
+	// neutralise the whole point of the endpoint. If abuse becomes a
+	// problem, swap to len(ids) accounting in the middleware key fn.
+	r.With(decideMW).Post("/api/pending-replies/bulk", h.bulkDecide())
 }
 
 func (h *pendingReplyHandler) listByLead() http.HandlerFunc {
@@ -137,6 +145,108 @@ func (h *pendingReplyHandler) listPendingByUser() http.HandlerFunc {
 			return
 		}
 		httputil.WriteJSON(w, http.StatusOK, operatorQueueToResponse(rows))
+	}
+}
+
+// bulkDecideRequest is the JSON request body. Both fields are
+// required; emptiness / unknown decision is detected by the usecase
+// and surfaced as a 400, while malformed JSON / non-uuid ids are
+// rejected at parse time without reaching the usecase.
+type bulkDecideRequest struct {
+	IDs      []string `json:"ids"`
+	Decision string   `json:"decision"`
+}
+
+// bulkDecideResultWire mirrors the per-row outcome on the wire.
+// `error` is omitempty so success rows carry only {id, ok:true},
+// keeping the response compact for the typical happy-path bulk.
+type bulkDecideResultWire struct {
+	ID    string `json:"id"`
+	OK    bool   `json:"ok"`
+	Error string `json:"error,omitempty"`
+}
+
+// bulkDecideResponse wraps the per-row results under a "results" key
+// so the response shape is forward-compatible with future top-level
+// metadata (counts, partial-failure summaries) without breaking
+// existing clients.
+type bulkDecideResponse struct {
+	Results []bulkDecideResultWire `json:"results"`
+}
+
+// perRowErrorString maps a per-row usecase error to a stable wire
+// string. Unknown errors collapse to a generic "internal error" so
+// upstream taxonomy (dispatcher 5xx, db hiccup, …) doesn't leak.
+func perRowErrorString(err error) string {
+	switch {
+	case err == nil:
+		return ""
+	case errors.Is(err, ErrPendingReplyNotFound):
+		return "not found"
+	case errors.Is(err, ErrPendingReplyAlreadyDecided):
+		return "already decided"
+	case errors.Is(err, ErrPendingReplyDispatcherNotConfigured):
+		return "dispatcher not configured"
+	default:
+		return "internal error"
+	}
+}
+
+// bulkDecideMaxBodyBytes caps the bulk request payload. 256 KiB
+// comfortably holds a few thousand UUIDs (each ~40 bytes on the wire
+// inside a JSON array), which is far beyond any realistic operator
+// batch. Caps DoS surface: bulk is the only inbox endpoint with a
+// variable-size body, so we limit it explicitly here rather than
+// waiting for a project-wide JSON-body cap.
+const bulkDecideMaxBodyBytes = 256 * 1024
+
+func (h *pendingReplyHandler) bulkDecide() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		userID, ok := httputil.UserIDFromContext(r.Context())
+		if !ok {
+			httputil.WriteError(w, http.StatusUnauthorized, "unauthorized")
+			return
+		}
+		r.Body = http.MaxBytesReader(w, r.Body, bulkDecideMaxBodyBytes)
+		var req bulkDecideRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			httputil.WriteError(w, http.StatusBadRequest, "invalid json body")
+			return
+		}
+		ids := make([]uuid.UUID, 0, len(req.IDs))
+		for _, raw := range req.IDs {
+			parsed, err := uuid.Parse(raw)
+			if err != nil {
+				httputil.WriteError(w, http.StatusBadRequest, "invalid id in ids[]")
+				return
+			}
+			ids = append(ids, parsed)
+		}
+		results, err := h.uc.BulkDecide(r.Context(), userID, ids, BulkDecision(req.Decision))
+		if err != nil {
+			switch {
+			case errors.Is(err, ErrBulkDecideEmptyIDs):
+				httputil.WriteError(w, http.StatusBadRequest, "ids must be non-empty")
+			case errors.Is(err, ErrBulkDecideInvalidDecision):
+				httputil.WriteError(w, http.StatusBadRequest, "decision must be 'approve' or 'reject'")
+			default:
+				slog.ErrorContext(r.Context(), "pending reply bulk decide failed",
+					slog.String("user_id", userID.String()),
+					slog.Int("ids_count", len(ids)),
+					slog.Any("err", err))
+				httputil.WriteError(w, http.StatusInternalServerError, "failed to process bulk decide")
+			}
+			return
+		}
+		out := bulkDecideResponse{Results: make([]bulkDecideResultWire, 0, len(results))}
+		for _, res := range results {
+			out.Results = append(out.Results, bulkDecideResultWire{
+				ID:    res.ID.String(),
+				OK:    res.Err == nil,
+				Error: perRowErrorString(res.Err),
+			})
+		}
+		httputil.WriteJSON(w, http.StatusOK, out)
 	}
 }
 

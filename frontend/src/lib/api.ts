@@ -194,6 +194,16 @@ export const api = {
   // ?status=approved tab without silently widening the contract.
   listPendingReplies: () =>
     apiFetch<PendingReplyQueueRow[]>("/api/pending-replies?status=pending"),
+  // bulkPendingReplies — power-operator endpoint: apply the same
+  // decision to many drafts in one round-trip. Per-row outcomes come
+  // back under `results` so the UI can surface partial failures
+  // (NotFound / AlreadyDecided / dispatcher 5xx) without aborting the
+  // whole batch.
+  bulkPendingReplies: (body: { ids: string[]; decision: PendingReplyBulkDecision }) =>
+    apiFetch<{ results: PendingReplyBulkResult[] }>("/api/pending-replies/bulk", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
   approvePendingReply: (id: string) =>
     apiFetch<void>(`/api/pending-replies/${id}/approve`, { method: "POST" }),
   rejectPendingReply: (id: string) =>
@@ -488,6 +498,20 @@ export interface PendingReplyLeadSnippet {
 // an N+1 lookup.
 export interface PendingReplyQueueRow extends PendingReply {
   lead: PendingReplyLeadSnippet;
+}
+
+// PendingReplyBulkDecision matches the BulkDecision enum on the
+// backend — the two terminal actions an operator can apply en-masse
+// to a slice of pending replies.
+export type PendingReplyBulkDecision = "approve" | "reject";
+
+// PendingReplyBulkResult is the per-row outcome surfaced by
+// POST /api/pending-replies/bulk. `error` is omitempty server-side
+// for success rows, so it's optional on the wire too.
+export interface PendingReplyBulkResult {
+  id: string;
+  ok: boolean;
+  error?: string;
 }
 
 export interface Reminder {
