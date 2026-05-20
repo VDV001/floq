@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { ShieldCheck } from "lucide-react";
 import { FilterPill } from "@/components/outbound/FilterPill";
+import { formatTime } from "@/components/outbound/constants";
 import { PendingQueueRow } from "@/components/pending-queue/PendingQueueRow";
 import { PendingQueueTabs } from "@/components/pending-queue/PendingQueueTabs";
 import { usePendingQueue } from "@/hooks/usePendingQueue";
@@ -38,7 +39,7 @@ export default function InboxPendingPage() {
             </p>
           </div>
           <span className="text-[11px] text-[#737686]">
-            Обновлено: {q.lastUpdated.toLocaleTimeString("ru-RU")}
+            Обновлено: {formatTime(q.lastUpdated)}
           </span>
         </div>
 

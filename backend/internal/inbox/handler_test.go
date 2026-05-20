@@ -319,6 +319,14 @@ func TestHandler_ListPendingByUser_HappyPath_EnrichedWithLeadSnippet(t *testing.
 	if _, present := lead["email_address"]; present {
 		t.Errorf("lead.email_address must be omitempty when nil, got %v", lead["email_address"])
 	}
+	// Pending rows have no decision yet — the wire DTO must NOT carry
+	// decided_at / decided_by / sent_at to avoid confusing the queue
+	// UI ("why does this row look approved?"). omitempty contract.
+	for _, field := range []string{"decided_at", "decided_by", "sent_at"} {
+		if _, present := row[field]; present {
+			t.Errorf("%s must be omitempty on a pending row, got %v", field, row[field])
+		}
+	}
 }
 
 func TestHandler_ListPendingByUser_DefaultsStatusToPendingWhenAbsent(t *testing.T) {

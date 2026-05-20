@@ -48,7 +48,7 @@ function makeRow(over: Partial<PendingReplyQueueRow> = {}): PendingReplyQueueRow
 
 describe("InboxPendingPage", () => {
   beforeEach(() => {
-    vi.clearAllMocks();
+    vi.resetAllMocks();
     vi.mocked(api.listPendingReplies).mockResolvedValue([]);
     vi.mocked(api.approvePendingReply).mockResolvedValue(undefined);
     vi.mocked(api.rejectPendingReply).mockResolvedValue(undefined);

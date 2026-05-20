@@ -1,7 +1,5 @@
 package inbox
 
-import "github.com/google/uuid"
-
 // LeadSnippet is the minimal lead context the operator queue needs
 // alongside a PendingReply row: who is this draft for, on what
 // channel, and how do we identify them. Public fields — this is a
@@ -29,13 +27,4 @@ type LeadSnippet struct {
 type PendingReplyWithLead struct {
 	Reply *PendingReply
 	Lead  LeadSnippet
-}
-
-// PendingReplyID is a typed accessor so callers don't have to reach
-// through the embedded pointer. Used by the handler when logging.
-func (v *PendingReplyWithLead) PendingReplyID() uuid.UUID {
-	if v == nil || v.Reply == nil {
-		return uuid.Nil
-	}
-	return v.Reply.ID
 }

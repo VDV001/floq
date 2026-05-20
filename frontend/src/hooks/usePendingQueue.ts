@@ -4,6 +4,8 @@ import { api, type PendingReplyQueueRow, type PendingReplyKind } from "@/lib/api
 type ChannelFilter = "all" | "telegram" | "email";
 type KindFilter = "all" | PendingReplyKind;
 
+export const POLL_INTERVAL_MS = 10_000;
+
 export function usePendingQueue() {
   const [rows, setRows] = useState<PendingReplyQueueRow[]>([]);
   const [loading, setLoading] = useState(true);
@@ -16,8 +18,10 @@ export function usePendingQueue() {
       const data = await api.listPendingReplies();
       setRows(data);
       setLastUpdated(new Date());
-    } catch {
-      // Keep last-good state; the interval will retry.
+    } catch (e) {
+      // Keep last-good state; the interval will retry. Surface to the
+      // console so a silent 5xx loop is debuggable from the browser.
+      console.warn("pending queue refetch failed", e);
     } finally {
       if (isInitial) setLoading(false);
     }
@@ -25,7 +29,7 @@ export function usePendingQueue() {
 
   useEffect(() => { fetchData(true); }, [fetchData]);
   useEffect(() => {
-    const id = setInterval(() => fetchData(false), 10_000);
+    const id = setInterval(() => fetchData(false), POLL_INTERVAL_MS);
     return () => clearInterval(id);
   }, [fetchData]);
 
@@ -51,10 +55,6 @@ export function usePendingQueue() {
     }
   };
 
-  const handleEdited = (id: string, newBody: string) => {
-    setRows((prev) => prev.map((r) => (r.id === id ? { ...r, body: newBody } : r)));
-  };
-
   const filtered = rows.filter((r) => {
     if (channelFilter !== "all" && r.channel !== channelFilter) return false;
     if (kindFilter !== "all" && r.kind !== kindFilter) return false;
@@ -72,6 +72,5 @@ export function usePendingQueue() {
     setKindFilter,
     handleApprove,
     handleReject,
-    handleEdited,
   };
 }
