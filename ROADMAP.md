@@ -25,6 +25,7 @@
 | **parser** | `internal/parser/` | 2GIS, website scraping |
 | **tgclient** | `internal/tgclient/` | MTProto (gotd/td) для отправки с личного TG |
 | **audit** | `internal/audit/` | AsyncRecorder cost-tracking за каждый AI-call, decorator над ai.Provider |
+| **analytics** | `internal/analytics/` | Read-side projections (sequence performance, cost ratios) — DTO-only |
 | **ratelimit** | `internal/ratelimit/` | Redis-backed sliding window + in-memory fallback |
 | **httputil** | `internal/httputil/` | JSON-response helpers + defence-in-depth body-size middleware |
 
@@ -39,6 +40,7 @@
 | Prospects | `/prospects` | CRUD + CSV + verify integration |
 | Sequences | `/sequences` | Multi-step builder, channel-per-step |
 | Outbound | `/outbound` | Очередь отправки + tracking |
+| Analytics | `/analytics/sequences`, `/analytics/cost` | Sequence performance + cost-effectiveness (v0.28.0) |
 | Parser | `/parser` | 2GIS + website scraping |
 | Settings | `/settings` | Sub-hooks per concern (AI/SMTP/IMAP/Resend/Telegram bot/account) |
 
@@ -56,7 +58,7 @@
 
 - docker-compose: PostgreSQL 18, Redis 8, Ollama (опционально)
 - OrbStack на dev-машине
-- Миграции: golang-migrate, 001-032 (audit_log, pending_replies, decided_by FK, и т.д.)
+- Миграции: golang-migrate, 001-032 (audit_log, pending_replies, decided_by FK, и т.д.; 32 файла .up.sql)
 - Защита от DoS на body size: 10 MiB outer ceiling + 1 MiB JSON-specific cap (defence in depth)
 - CLA bot, CI gates: Backend Go, Frontend Next.js, Redteam corpus, Tooling
 - Release automation: `bin/release.sh X.Y.Z` синкает 4 version sync-points + tag + GH release
@@ -75,8 +77,8 @@
 ### Outbound HITL
 Inbound имеет full approve-before-send. Outbound (sequences) пока шлёт автоматически. Возможный mirror: each scheduled outbound message → `pending_replies` queue → operator approve. Trade-off: добавляет latency + manual surface vs. lower risk на cold outreach.
 
-### Analytics dashboard
-Outbound tracking (sequences pixel) уже собирает open events. Reply rate частично через identity-aggregation. **Нет**: UI-агрегации (open rate, reply rate, conversion rate per sequence, per user, per campaign). Audit-log с cost собирается, но UI отдельной cost-dashboard нет.
+### Analytics dashboard (частично shipped в v0.28.0)
+`/analytics/sequences` (#95) — per-sequence sent/delivered/opened/replied/converted с rates. `/analytics/cost` (#96) — total AI-cost + cost-per-{lead,qualified,converted,draft} + by-request-type/by-model breakdowns. Осталось: View 3 inbox flow (#97), View 4 hot leads (#98) — закроют parent #91.
 
 ### Multi-workspace
 Текущая модель: один владелец (`cfg.OwnerUserID`), single-tenant в продакшене с multi-tenant adapters внутри. Реальная multi-team разработка требует переосмысления — workspace как aggregate, RBAC, billing-per-workspace.
