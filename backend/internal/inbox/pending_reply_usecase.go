@@ -127,11 +127,36 @@ func (uc *PendingReplyUseCase) ListPendingByUser(ctx context.Context, userID uui
 	return uc.repo.ListPendingByUser(ctx, userID)
 }
 
-// BulkDecide — stub for the RED step of #49. Real impl lands in the
-// matching GREEN commit; tests fail at runtime so the build stays
-// bisect-friendly.
-func (uc *PendingReplyUseCase) BulkDecide(_ context.Context, _ uuid.UUID, _ []uuid.UUID, _ BulkDecision) ([]BulkDecideResult, error) {
-	return nil, errors.New("pending reply usecase: BulkDecide not implemented")
+// BulkDecide applies the same decision to every id in the slice,
+// delegating per-row to the existing Approve/Reject usecase methods
+// so the optimistic-lock + dispatcher contract is preserved. Per-row
+// failures (NotFound, AlreadyDecided, dispatcher 5xx, …) are
+// collected into the result slice and do NOT abort the rest — one
+// Telegram outage shouldn't poison a fifty-row bulk. The result
+// order matches the input order 1-to-1 so callers can correlate.
+//
+// Top-level error is reserved for request-shape problems
+// (ErrBulkDecideEmptyIDs, ErrBulkDecideInvalidDecision) that prevent
+// any per-row work from starting; per-row issues never surface here.
+func (uc *PendingReplyUseCase) BulkDecide(ctx context.Context, userID uuid.UUID, ids []uuid.UUID, decision BulkDecision) ([]BulkDecideResult, error) {
+	if len(ids) == 0 {
+		return nil, ErrBulkDecideEmptyIDs
+	}
+	if !decision.IsValid() {
+		return nil, ErrBulkDecideInvalidDecision
+	}
+	results := make([]BulkDecideResult, 0, len(ids))
+	for _, id := range ids {
+		var err error
+		switch decision {
+		case BulkDecisionApprove:
+			err = uc.Approve(ctx, userID, id)
+		case BulkDecisionReject:
+			err = uc.Reject(ctx, userID, id)
+		}
+		results = append(results, BulkDecideResult{ID: id, Err: err})
+	}
+	return results, nil
 }
 
 // Approve transitions the reply into Approved, persists the decision,
