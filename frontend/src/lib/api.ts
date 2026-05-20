@@ -194,13 +194,16 @@ export const api = {
   // ?status=approved tab without silently widening the contract.
   listPendingReplies: () =>
     apiFetch<PendingReplyQueueRow[]>("/api/pending-replies?status=pending"),
-  // bulkPendingReplies — stub for the RED step of #49. Real impl
-  // lands in the matching GREEN commit so the contract test fails
-  // at runtime while the TS build stays green for bisect.
-  bulkPendingReplies: (
-    _body: { ids: string[]; decision: PendingReplyBulkDecision },
-  ): Promise<{ results: PendingReplyBulkResult[] }> =>
-    Promise.reject(new Error("bulkPendingReplies not implemented")),
+  // bulkPendingReplies — power-operator endpoint: apply the same
+  // decision to many drafts in one round-trip. Per-row outcomes come
+  // back under `results` so the UI can surface partial failures
+  // (NotFound / AlreadyDecided / dispatcher 5xx) without aborting the
+  // whole batch.
+  bulkPendingReplies: (body: { ids: string[]; decision: PendingReplyBulkDecision }) =>
+    apiFetch<{ results: PendingReplyBulkResult[] }>("/api/pending-replies/bulk", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
   approvePendingReply: (id: string) =>
     apiFetch<void>(`/api/pending-replies/${id}/approve`, { method: "POST" }),
   rejectPendingReply: (id: string) =>
