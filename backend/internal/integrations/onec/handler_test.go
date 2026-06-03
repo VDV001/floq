@@ -10,6 +10,7 @@ import (
 
 	"github.com/daniil/floq/internal/httputil"
 	"github.com/daniil/floq/internal/integrations/onec"
+	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 )
 
@@ -169,4 +170,41 @@ func TestWebhookAuth_ResolverError(t *testing.T) {
 	if rec.Code != http.StatusInternalServerError {
 		t.Fatalf("status = %d, want 500", rec.Code)
 	}
+}
+
+// --- full wire-up: RegisterRoutes composes auth middleware + handler ---
+
+func TestRegisterRoutes_EndToEnd(t *testing.T) {
+	store := &fakeStore{inserted: true}
+	resolver := &fakeResolver{user: uuid.New(), found: true}
+	r := chi.NewRouter()
+	onec.RegisterRoutes(r, onec.NewHandler(onec.NewUseCase(store)), resolver)
+
+	const path = "/api/integrations/onec/webhook"
+
+	t.Run("valid secret + body → 200, stored", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodPost, path, strings.NewReader(validBody))
+		req.Header.Set("X-Onec-Secret", "good")
+		rec := httptest.NewRecorder()
+		r.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d, want 200; body=%s", rec.Code, rec.Body.String())
+		}
+		if store.calls != 1 {
+			t.Errorf("store calls = %d, want 1", store.calls)
+		}
+	})
+
+	t.Run("missing secret → 401, not stored", func(t *testing.T) {
+		store.calls = 0
+		req := httptest.NewRequest(http.MethodPost, path, strings.NewReader(validBody))
+		rec := httptest.NewRecorder()
+		r.ServeHTTP(rec, req)
+		if rec.Code != http.StatusUnauthorized {
+			t.Fatalf("status = %d, want 401", rec.Code)
+		}
+		if store.calls != 0 {
+			t.Errorf("unauthenticated request must not reach the store")
+		}
+	})
 }

@@ -27,22 +27,23 @@ import (
 	"github.com/daniil/floq/internal/httputil"
 	"github.com/daniil/floq/internal/inbox"
 	"github.com/daniil/floq/internal/inbox/attachments"
+	"github.com/daniil/floq/internal/integrations/onec"
 	"github.com/daniil/floq/internal/leads"
 	"github.com/daniil/floq/internal/notify"
 	"github.com/daniil/floq/internal/outbound"
 	"github.com/daniil/floq/internal/parser"
+	"github.com/daniil/floq/internal/prospects"
 	"github.com/daniil/floq/internal/proxy"
 	"github.com/daniil/floq/internal/ratelimit"
 	"github.com/daniil/floq/internal/reminders"
-	"github.com/daniil/floq/internal/prospects"
 	"github.com/daniil/floq/internal/sequences"
 	"github.com/daniil/floq/internal/settings"
 	"github.com/daniil/floq/internal/sources"
 	"github.com/daniil/floq/internal/tgclient"
 	"github.com/daniil/floq/internal/verify"
-	"github.com/google/uuid"
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/joho/godotenv"
 	"github.com/redis/go-redis/v9"
@@ -226,6 +227,10 @@ func main() {
 
 	// Auth (public)
 	auth.RegisterRoutes(r, authHandler)
+
+	// 1C inbound webhook (public — authenticated by per-user secret, not JWT)
+	onecRepo := onec.NewRepository(pool)
+	onec.RegisterRoutes(r, onec.NewHandler(onec.NewUseCase(onecRepo)), onecRepo)
 
 	// Protected routes
 	r.Group(func(r chi.Router) {
@@ -424,4 +429,3 @@ func pendingReplyKeyFn(r *http.Request) (string, bool) {
 	}
 	return "ratelimit:pending-replies:" + id.String(), true
 }
-
