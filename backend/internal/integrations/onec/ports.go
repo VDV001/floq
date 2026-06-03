@@ -42,6 +42,15 @@ type MappingStore interface {
 	GetActiveMappingConfig(ctx context.Context, userID uuid.UUID) (*domain.MappingConfig, error)
 }
 
+// OneCClient pushes objects to a tenant's 1C endpoint. The HTTP/OData
+// implementation (client.go) satisfies it; the usecase depends on this port so
+// it can be faked in unit tests. CreateCounterparty returns the 1C-assigned
+// reference (Ref_Key) on success — empty is allowed when 1C accepts the create
+// but returns no body.
+type OneCClient interface {
+	CreateCounterparty(ctx context.Context, creds *domain.OutboundCredentials, draft *domain.CounterpartyDraft) (externalRef string, err error)
+}
+
 // EventApplier performs the domain action for a resolved 1C event. Implemented
 // by a cross-context adapter (cmd/server/adapters.go) over leads/prospects —
 // onec never imports those contexts directly. Actions that target an existing
