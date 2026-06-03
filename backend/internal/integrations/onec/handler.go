@@ -64,20 +64,26 @@ func (h *Handler) Webhook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	kind, err := domain.ParseEventKind(req.Kind)
-	if err != nil {
-		http.Error(w, "invalid event kind", http.StatusBadRequest)
+	res, err := h.uc.ProcessInboundEvent(r.Context(), userID, RawInboundEvent{
+		ExternalID:   req.ExternalID,
+		ExternalType: req.ExternalType,
+		Kind:         req.Kind,
+		Payload:      req.Payload,
+	})
+	switch {
+	case err == nil:
+		// ok
+	case errors.Is(err, ErrUnresolvableKind):
+		// External type isn't in the user's mapping and no kind was given —
+		// Floq can't classify the event.
+		http.Error(w, "unmapped event: no kind and no mapping rule", http.StatusUnprocessableEntity)
 		return
-	}
-
-	ev, err := domain.NewExternalEvent(req.ExternalID, req.ExternalType, kind, req.Payload)
-	if err != nil {
+	case errors.Is(err, domain.ErrInvalidEventKind),
+		errors.Is(err, domain.ErrEmptyExternalID),
+		errors.Is(err, domain.ErrEmptyExternalType):
 		http.Error(w, "invalid event", http.StatusBadRequest)
 		return
-	}
-
-	res, err := h.uc.ProcessInboundEvent(r.Context(), userID, ev)
-	if err != nil {
+	default:
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
