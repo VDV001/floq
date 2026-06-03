@@ -592,20 +592,34 @@ var _ inbox.EmailSender = (*inboxEmailSenderAdapter)(nil)
 // the lead's state machine forbids the transition — surfaced as a log line, not
 // an error, since a 1C webhook must not be failed for a benign mismatch.
 // counterparty-created upserts a prospect.
+//
+// Dependencies are narrow interfaces (not concrete *leads/*prospects types) so
+// the routing/transition logic is unit-testable with fakes.
+type onecLeadLookup interface {
+	GetLeadByEmailAddress(ctx context.Context, userID uuid.UUID, email string) (*leadsdomain.Lead, error)
+}
+type onecLeadMover interface {
+	UpdateStatus(ctx context.Context, id uuid.UUID, status string) error
+}
+type onecProspectStore interface {
+	FindByEmail(ctx context.Context, userID uuid.UUID, email string) (*prospectsdomain.Prospect, error)
+	CreateProspect(ctx context.Context, input prospects.CreateProspectInput) (*prospectsdomain.Prospect, error)
+}
+
 type onecApplierAdapter struct {
-	leadsRepo   *leads.Repository
-	leadsUC     *leads.UseCase
-	prospectsUC *prospects.UseCase
-	logger      *slog.Logger
+	leadLookup onecLeadLookup
+	leadMover  onecLeadMover
+	prospects  onecProspectStore
+	logger     *slog.Logger
 }
 
-func newOnecApplierAdapter(leadsRepo *leads.Repository, leadsUC *leads.UseCase, prospectsUC *prospects.UseCase, logger *slog.Logger) *onecApplierAdapter {
-	return &onecApplierAdapter{leadsRepo: leadsRepo, leadsUC: leadsUC, prospectsUC: prospectsUC, logger: logger}
+func newOnecApplierAdapter(leadLookup onecLeadLookup, leadMover onecLeadMover, prospectStore onecProspectStore, logger *slog.Logger) *onecApplierAdapter {
+	return &onecApplierAdapter{leadLookup: leadLookup, leadMover: leadMover, prospects: prospectStore, logger: logger}
 }
 
-// HandlePayment: counterparty paid → close the matching lead.
+// HandlePayment: counterparty paid → the deal is won.
 func (a *onecApplierAdapter) HandlePayment(ctx context.Context, userID uuid.UUID, email string) error {
-	return a.moveLeadByEmail(ctx, userID, email, leadsdomain.StatusClosed)
+	return a.moveLeadByEmail(ctx, userID, email, leadsdomain.StatusWon)
 }
 
 // HandleOrderStatus: order moved → mark the lead as in active conversation.
@@ -625,7 +639,7 @@ func (a *onecApplierAdapter) moveLeadByEmail(ctx context.Context, userID uuid.UU
 	if email == "" {
 		return nil
 	}
-	lead, err := a.leadsRepo.GetLeadByEmailAddress(ctx, userID, email)
+	lead, err := a.leadLookup.GetLeadByEmailAddress(ctx, userID, email)
 	if err != nil {
 		return err
 	}
@@ -638,7 +652,7 @@ func (a *onecApplierAdapter) moveLeadByEmail(ctx context.Context, userID uuid.UU
 			"lead_id", lead.ID, "from", lead.Status.String(), "to", target.String())
 		return nil
 	}
-	return a.leadsUC.UpdateStatus(ctx, lead.ID, target.String())
+	return a.leadMover.UpdateStatus(ctx, lead.ID, target.String())
 }
 
 // HandleCounterpartyCreated upserts a prospect for a new 1C counterparty. An
@@ -648,7 +662,7 @@ func (a *onecApplierAdapter) HandleCounterpartyCreated(ctx context.Context, user
 	if email == "" {
 		return nil
 	}
-	existing, err := a.prospectsUC.FindByEmail(ctx, userID, email)
+	existing, err := a.prospects.FindByEmail(ctx, userID, email)
 	if err != nil {
 		return err
 	}
@@ -658,7 +672,7 @@ func (a *onecApplierAdapter) HandleCounterpartyCreated(ctx context.Context, user
 	if name == "" {
 		name = email
 	}
-	_, err = a.prospectsUC.CreateProspect(ctx, prospects.CreateProspectInput{
+	_, err = a.prospects.CreateProspect(ctx, prospects.CreateProspectInput{
 		UserID:  userID,
 		Name:    name,
 		Company: company,
