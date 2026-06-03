@@ -230,7 +230,7 @@ func main() {
 
 	// 1C inbound webhook (public — authenticated by per-user secret, not JWT)
 	onecRepo := onec.NewRepository(pool)
-	onec.RegisterRoutes(r, onec.NewHandler(onec.NewUseCase(onecRepo)), onecRepo)
+	onec.RegisterRoutes(r, onec.NewHandler(onec.NewUseCase(onecRepo, onec.WithLogger(slog.Default()))), onecRepo)
 
 	// Protected routes
 	r.Group(func(r chi.Router) {
