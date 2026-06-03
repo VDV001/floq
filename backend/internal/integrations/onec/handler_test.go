@@ -209,6 +209,27 @@ func TestRegisterRoutes_EndToEnd(t *testing.T) {
 	})
 }
 
+// An event with no kind whose external type isn't mapped can't be classified →
+// 422 (so 1C surfaces it as unprocessable rather than retrying forever).
+func TestWebhook_UnmappedNoKindReturns422(t *testing.T) {
+	store := &fakeStore{inserted: true}
+	mapping := &fakeMapping{err: onec.ErrMappingNotFound} // no active mapping
+	h := onec.NewHandler(onec.NewUseCase(store, onec.WithMapping(mapping)))
+
+	body := `{"external_id":"X-1","external_type":"Документ.Неизвестный","payload":{}}`
+	req := httptest.NewRequest(http.MethodPost, "/x", strings.NewReader(body))
+	req = req.WithContext(httputil.WithUserID(req.Context(), uuid.New()))
+	rec := httptest.NewRecorder()
+	h.Webhook(rec, req)
+
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status = %d, want 422; body=%s", rec.Code, rec.Body.String())
+	}
+	if store.calls != 0 {
+		t.Error("unclassifiable event must not be recorded")
+	}
+}
+
 // Oversized JSON body under JSONBodyCap must yield 413, not 400 — the public
 // webhook is the only unauthenticated-by-JWT route and must reject large
 // bodies with the right status.

@@ -217,6 +217,38 @@ func TestProcessInbound_Routing(t *testing.T) {
 	}
 }
 
+func TestProcessInbound_ExtractionEdgeCases(t *testing.T) {
+	cases := []struct {
+		name    string
+		payload string
+	}{
+		{"missing email field", `{"other":"x"}`},
+		{"non-json payload", `not json at all`},
+		{"empty object", `{}`},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			store := &fakeStore{inserted: true}
+			mapping := activeMapping(t, "Документ.Оплата", domain.EventKindPayment)
+			applier := &fakeApplier{}
+			uc := onec.NewUseCase(store, onec.WithMapping(mapping), onec.WithApplier(applier))
+
+			ev := onec.RawInboundEvent{ExternalID: "X", ExternalType: "Документ.Оплата", Payload: []byte(c.payload)}
+			if _, err := uc.ProcessInboundEvent(context.Background(), uuid.New(), ev); err != nil {
+				t.Fatalf("err: %v", err)
+			}
+			// Routing still happens; the applier just receives an empty email and
+			// is expected to no-op safely downstream.
+			if applier.action != "payment" {
+				t.Errorf("action = %q, want payment", applier.action)
+			}
+			if applier.email != "" {
+				t.Errorf("email = %q, want empty when unextractable", applier.email)
+			}
+		})
+	}
+}
+
 func TestProcessInbound_DedupSkipsApply(t *testing.T) {
 	store := &fakeStore{inserted: false} // dedup hit
 	mapping := activeMapping(t, "Документ.Оплата", domain.EventKindPayment)
