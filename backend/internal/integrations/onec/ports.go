@@ -34,3 +34,22 @@ type SecretResolver interface {
 	// secret. found=false means no match (→ 401).
 	UserIDByWebhookSecret(ctx context.Context, secret string) (uuid.UUID, bool, error)
 }
+
+// MappingStore loads a user's ACTIVE 1C→Floq mapping config for application.
+// The postgres Repository satisfies it; returns ErrMappingNotFound when the
+// user has no active config (so an inactive config genuinely disables mapping).
+type MappingStore interface {
+	GetActiveMappingConfig(ctx context.Context, userID uuid.UUID) (*domain.MappingConfig, error)
+}
+
+// EventApplier performs the domain action for a resolved 1C event. Implemented
+// by a cross-context adapter (cmd/server/adapters.go) over leads/prospects —
+// onec never imports those contexts directly. Actions that target an existing
+// entity (payment/order/shipment) no-op when the counterparty is unknown; only
+// counterparty-created upserts.
+type EventApplier interface {
+	HandlePayment(ctx context.Context, userID uuid.UUID, email string) error
+	HandleCounterpartyCreated(ctx context.Context, userID uuid.UUID, email, name, company string) error
+	HandleOrderStatus(ctx context.Context, userID uuid.UUID, email string) error
+	HandleShipment(ctx context.Context, userID uuid.UUID, email string) error
+}
