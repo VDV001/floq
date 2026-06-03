@@ -20,11 +20,12 @@ func NewRepository(pool *pgxpool.Pool) *Repository {
 	return &Repository{pool: pool}
 }
 
-// InsertSyncRecord persists a ledger entry, returning inserted=false when the
-// (user_id, external_id, external_type) dedup key already exists. This is the
-// idempotency primitive: a replayed webhook resolves to a no-op insert rather
-// than a duplicate row or an error.
-func (r *Repository) InsertSyncRecord(ctx context.Context, rec *domain.SyncRecord) (bool, error) {
+// InsertSyncRecord persists a ledger entry idempotently. On the dedup key
+// (user_id, external_id, external_type) it inserts at most once; a replay is a
+// no-op (Inserted=false). When deduped, it compares the stored payload hash to
+// detect drift — a 1C document re-sent with changed content — so the caller can
+// surface it instead of silently dropping a real update.
+func (r *Repository) InsertSyncRecord(ctx context.Context, rec *domain.SyncRecord) (InsertOutcome, error) {
 	tag, err := r.pool.Exec(ctx, `
 		INSERT INTO onec_sync_records
 			(id, user_id, external_id, external_type, direction, kind, status, payload_hash)
@@ -33,9 +34,22 @@ func (r *Repository) InsertSyncRecord(ctx context.Context, rec *domain.SyncRecor
 		rec.ID, rec.UserID, rec.ExternalID, rec.ExternalType,
 		string(rec.Direction), string(rec.Kind), string(rec.Status), rec.PayloadHash)
 	if err != nil {
-		return false, err
+		return InsertOutcome{}, err
 	}
-	return tag.RowsAffected() == 1, nil
+	if tag.RowsAffected() == 1 {
+		return InsertOutcome{Inserted: true}, nil
+	}
+
+	// Dedup hit: check whether the replayed payload differs from the stored one.
+	var storedHash string
+	err = r.pool.QueryRow(ctx, `
+		SELECT payload_hash FROM onec_sync_records
+		WHERE user_id = $1 AND external_id = $2 AND external_type = $3`,
+		rec.UserID, rec.ExternalID, rec.ExternalType).Scan(&storedHash)
+	if err != nil {
+		return InsertOutcome{}, err
+	}
+	return InsertOutcome{Inserted: false, PayloadDrifted: storedHash != rec.PayloadHash}, nil
 }
 
 // UserIDByWebhookSecret resolves the owning user from a webhook secret. Only

@@ -12,16 +12,17 @@ import (
 
 // fakeStore is an in-memory SyncStore for unit tests.
 type fakeStore struct {
-	inserted bool      // value to return from InsertSyncRecord
-	err      error     // error to return
-	calls    int       // how many times InsertSyncRecord was called
+	inserted bool  // InsertOutcome.Inserted to return
+	drifted  bool  // InsertOutcome.PayloadDrifted to return
+	err      error // error to return
+	calls    int   // how many times InsertSyncRecord was called
 	last     *domain.SyncRecord
 }
 
-func (f *fakeStore) InsertSyncRecord(_ context.Context, rec *domain.SyncRecord) (bool, error) {
+func (f *fakeStore) InsertSyncRecord(_ context.Context, rec *domain.SyncRecord) (onec.InsertOutcome, error) {
 	f.calls++
 	f.last = rec
-	return f.inserted, f.err
+	return onec.InsertOutcome{Inserted: f.inserted, PayloadDrifted: f.drifted}, f.err
 }
 
 func mustEvent(t *testing.T) *domain.ExternalEvent {
@@ -62,6 +63,22 @@ func TestProcessInboundEvent_Duplicate(t *testing.T) {
 	}
 	if !res.Deduped {
 		t.Error("replayed event must be marked deduped")
+	}
+}
+
+func TestProcessInboundEvent_PayloadDrift(t *testing.T) {
+	store := &fakeStore{inserted: false, drifted: true} // deduped but content changed
+	uc := onec.NewUseCase(store)
+
+	res, err := uc.ProcessInboundEvent(context.Background(), uuid.New(), mustEvent(t))
+	if err != nil {
+		t.Fatalf("unexpected err: %v", err)
+	}
+	if !res.Deduped {
+		t.Error("drifted replay is still deduped")
+	}
+	if !res.PayloadDrifted {
+		t.Error("drift must be surfaced in the result")
 	}
 }
 

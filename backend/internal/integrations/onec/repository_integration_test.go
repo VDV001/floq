@@ -28,23 +28,23 @@ func TestRepository_InsertSyncRecord_Dedup(t *testing.T) {
 	rec1, err := domain.NewSyncRecord(user, newEvent(t, "ОП-0001"), domain.DirectionInbound)
 	require.NoError(t, err)
 
-	inserted, err := repo.InsertSyncRecord(ctx, rec1)
+	out, err := repo.InsertSyncRecord(ctx, rec1)
 	require.NoError(t, err)
-	require.True(t, inserted, "first insert must persist")
+	require.True(t, out.Inserted, "first insert must persist")
 
 	// Same (user, external_id, external_type) → dedup, no second row.
 	rec2, err := domain.NewSyncRecord(user, newEvent(t, "ОП-0001"), domain.DirectionInbound)
 	require.NoError(t, err)
-	inserted, err = repo.InsertSyncRecord(ctx, rec2)
+	out, err = repo.InsertSyncRecord(ctx, rec2)
 	require.NoError(t, err)
-	require.False(t, inserted, "replayed event must be deduped")
+	require.False(t, out.Inserted, "replayed event must be deduped")
 
 	// Different external_id → new row.
 	rec3, err := domain.NewSyncRecord(user, newEvent(t, "ОП-0002"), domain.DirectionInbound)
 	require.NoError(t, err)
-	inserted, err = repo.InsertSyncRecord(ctx, rec3)
+	out, err = repo.InsertSyncRecord(ctx, rec3)
 	require.NoError(t, err)
-	require.True(t, inserted, "distinct event must persist")
+	require.True(t, out.Inserted, "distinct event must persist")
 }
 
 func TestRepository_InsertSyncRecord_PerUserScope(t *testing.T) {
@@ -58,15 +58,15 @@ func TestRepository_InsertSyncRecord_PerUserScope(t *testing.T) {
 	// dedup is per-user, not global.
 	recA, err := domain.NewSyncRecord(userA, newEvent(t, "ОП-SHARED"), domain.DirectionInbound)
 	require.NoError(t, err)
-	insertedA, err := repo.InsertSyncRecord(ctx, recA)
+	outA, err := repo.InsertSyncRecord(ctx, recA)
 	require.NoError(t, err)
-	require.True(t, insertedA)
+	require.True(t, outA.Inserted)
 
 	recB, err := domain.NewSyncRecord(userB, newEvent(t, "ОП-SHARED"), domain.DirectionInbound)
 	require.NoError(t, err)
-	insertedB, err := repo.InsertSyncRecord(ctx, recB)
+	outB, err := repo.InsertSyncRecord(ctx, recB)
 	require.NoError(t, err)
-	require.True(t, insertedB, "same external id under different user must not collide")
+	require.True(t, outB.Inserted, "same external id under different user must not collide")
 }
 
 func TestRepository_InsertSyncRecord_PayloadDrift(t *testing.T) {
