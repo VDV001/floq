@@ -228,9 +228,16 @@ func main() {
 	// Auth (public)
 	auth.RegisterRoutes(r, authHandler)
 
-	// 1C inbound webhook (public — authenticated by per-user secret, not JWT)
+	// 1C inbound webhook (public — authenticated by per-user secret, not JWT).
+	// Mapping resolves event kinds + counterparty fields; the applier routes
+	// mapped events to leads/prospects via a cross-context adapter.
 	onecRepo := onec.NewRepository(pool)
-	onec.RegisterRoutes(r, onec.NewHandler(onec.NewUseCase(onecRepo, onec.WithLogger(slog.Default()))), onecRepo)
+	onecApplier := newOnecApplierAdapter(leadsRepo, leadsUC, prospectsUC, slog.Default())
+	onecUC := onec.NewUseCase(onecRepo,
+		onec.WithMapping(onecRepo),
+		onec.WithApplier(onecApplier),
+		onec.WithLogger(slog.Default()))
+	onec.RegisterRoutes(r, onec.NewHandler(onecUC), onecRepo)
 
 	// Protected routes
 	r.Group(func(r chi.Router) {
