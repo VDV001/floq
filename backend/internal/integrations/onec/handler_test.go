@@ -1,0 +1,172 @@
+package onec_test
+
+import (
+	"context"
+	"errors"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+
+	"github.com/daniil/floq/internal/httputil"
+	"github.com/daniil/floq/internal/integrations/onec"
+	"github.com/google/uuid"
+)
+
+// fakeResolver is a SecretResolver for middleware tests.
+type fakeResolver struct {
+	user  uuid.UUID
+	found bool
+	err   error
+}
+
+func (f *fakeResolver) UserIDByWebhookSecret(_ context.Context, _ string) (uuid.UUID, bool, error) {
+	return f.user, f.found, f.err
+}
+
+const validBody = `{"external_id":"ОП-1","external_type":"Документ.Оплата","kind":"payment","payload":{"sum":1000}}`
+
+func newHandler(store onec.SyncStore) *onec.Handler {
+	return onec.NewHandler(onec.NewUseCase(store))
+}
+
+// --- handler (assumes auth middleware already put userID in context) ---
+
+func TestWebhook_Valid(t *testing.T) {
+	store := &fakeStore{inserted: true}
+	h := newHandler(store)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/integrations/onec/webhook", strings.NewReader(validBody))
+	req = req.WithContext(httputil.WithUserID(req.Context(), uuid.New()))
+	rec := httptest.NewRecorder()
+	h.Webhook(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+	if store.calls != 1 {
+		t.Errorf("store calls = %d, want 1", store.calls)
+	}
+}
+
+func TestWebhook_DuplicateReturns200(t *testing.T) {
+	store := &fakeStore{inserted: false} // dedup hit
+	h := newHandler(store)
+
+	req := httptest.NewRequest(http.MethodPost, "/x", strings.NewReader(validBody))
+	req = req.WithContext(httputil.WithUserID(req.Context(), uuid.New()))
+	rec := httptest.NewRecorder()
+	h.Webhook(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("replay status = %d, want 200", rec.Code)
+	}
+}
+
+func TestWebhook_InvalidKind(t *testing.T) {
+	store := &fakeStore{inserted: true}
+	h := newHandler(store)
+
+	body := `{"external_id":"ОП-1","external_type":"Документ","kind":"delivery","payload":{}}`
+	req := httptest.NewRequest(http.MethodPost, "/x", strings.NewReader(body))
+	req = req.WithContext(httputil.WithUserID(req.Context(), uuid.New()))
+	rec := httptest.NewRecorder()
+	h.Webhook(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", rec.Code)
+	}
+	if store.calls != 0 {
+		t.Errorf("store must not be called on invalid kind")
+	}
+}
+
+func TestWebhook_BadJSON(t *testing.T) {
+	h := newHandler(&fakeStore{})
+	req := httptest.NewRequest(http.MethodPost, "/x", strings.NewReader(`{not json`))
+	req = req.WithContext(httputil.WithUserID(req.Context(), uuid.New()))
+	rec := httptest.NewRecorder()
+	h.Webhook(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", rec.Code)
+	}
+}
+
+func TestWebhook_NoUserInContext(t *testing.T) {
+	h := newHandler(&fakeStore{})
+	req := httptest.NewRequest(http.MethodPost, "/x", strings.NewReader(validBody))
+	rec := httptest.NewRecorder()
+	h.Webhook(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want 401", rec.Code)
+	}
+}
+
+// --- secret middleware (tenant resolution by webhook secret) ---
+
+func TestWebhookAuth_MissingSecret(t *testing.T) {
+	mw := onec.WebhookAuth(&fakeResolver{found: false})
+	next := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
+
+	req := httptest.NewRequest(http.MethodPost, "/x", nil)
+	rec := httptest.NewRecorder()
+	mw(next).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want 401", rec.Code)
+	}
+}
+
+func TestWebhookAuth_UnknownSecret(t *testing.T) {
+	mw := onec.WebhookAuth(&fakeResolver{found: false})
+	next := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
+
+	req := httptest.NewRequest(http.MethodPost, "/x", nil)
+	req.Header.Set("X-Onec-Secret", "nope")
+	rec := httptest.NewRecorder()
+	mw(next).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want 401", rec.Code)
+	}
+}
+
+func TestWebhookAuth_ValidSecretInjectsUser(t *testing.T) {
+	want := uuid.New()
+	mw := onec.WebhookAuth(&fakeResolver{user: want, found: true})
+
+	var got uuid.UUID
+	var ok bool
+	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got, ok = httputil.UserIDFromContext(r.Context())
+		w.WriteHeader(http.StatusOK)
+	})
+
+	req := httptest.NewRequest(http.MethodPost, "/x", nil)
+	req.Header.Set("X-Onec-Secret", "good")
+	rec := httptest.NewRecorder()
+	mw(next).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	if !ok || got != want {
+		t.Fatalf("userID in ctx = %v (ok=%v), want %v", got, ok, want)
+	}
+}
+
+func TestWebhookAuth_ResolverError(t *testing.T) {
+	mw := onec.WebhookAuth(&fakeResolver{err: errors.New("db down")})
+	next := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
+
+	req := httptest.NewRequest(http.MethodPost, "/x", nil)
+	req.Header.Set("X-Onec-Secret", "good")
+	rec := httptest.NewRecorder()
+	mw(next).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500", rec.Code)
+	}
+}
