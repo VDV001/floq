@@ -71,9 +71,10 @@ func (u *OutboundUseCase) PushCounterparty(ctx context.Context, userID uuid.UUID
 		return fmt.Errorf("onec: build outbound record: %w", err)
 	}
 	if upErr := u.store.UpsertOutboundRecord(ctx, rec); upErr != nil {
-		// Recording failed too — surface the more actionable error.
+		// Recording failed too — keep both in the chain so errors.Is sees each.
 		if pushErr != nil {
-			return fmt.Errorf("onec: 1C push failed (%v) and ledger write failed: %w", pushErr, upErr)
+			return errors.Join(fmt.Errorf("onec: push counterparty: %w", pushErr),
+				fmt.Errorf("onec: ledger write: %w", upErr))
 		}
 		return fmt.Errorf("onec: ledger write: %w", upErr)
 	}

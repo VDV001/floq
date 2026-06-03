@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"time"
 
 	"github.com/daniil/floq/internal/ai"
 	"github.com/daniil/floq/internal/chat"
@@ -700,9 +701,20 @@ func newOnecQualificationAdapter(outbound *onec.OutboundUseCase, logger *slog.Lo
 	return &onecQualificationAdapter{outbound: outbound, logger: logger}
 }
 
+// onecPushTimeout bounds the detached counterparty push (HTTP to 1C with
+// retries) independently of the request that triggered qualification.
+const onecPushTimeout = 35 * time.Second
+
 // OnLeadQualified builds a counterparty draft from the lead and pushes it to 1C.
 // A lead with neither name nor email cannot become a counterparty — skipped.
-func (a *onecQualificationAdapter) OnLeadQualified(ctx context.Context, lead *leadsdomain.Lead) {
+//
+// The push runs in a detached goroutine on a fresh background context: it is a
+// side-effect that must not couple its latency to (or be cancelled by) the HTTP
+// request that qualified the lead. If it were on the request context, a slow 1C
+// would block the user's /qualify call, and a client disconnect would cancel the
+// push mid-flight — losing even the 'error' ledger entry the push records. A
+// push lost to process shutdown is the safety net of reconciliation (#109).
+func (a *onecQualificationAdapter) OnLeadQualified(_ context.Context, lead *leadsdomain.Lead) {
 	email := ""
 	if lead.EmailAddress != nil {
 		email = *lead.EmailAddress
@@ -712,9 +724,14 @@ func (a *onecQualificationAdapter) OnLeadQualified(ctx context.Context, lead *le
 		a.logger.Info("onec: qualified lead has no name/email; counterparty push skipped", "lead_id", lead.ID)
 		return
 	}
-	if err := a.outbound.PushCounterparty(ctx, lead.UserID, draft); err != nil {
-		a.logger.Warn("onec: counterparty push to 1C failed", "lead_id", lead.ID, "err", err)
-	}
+	userID, leadID := lead.UserID, lead.ID
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), onecPushTimeout)
+		defer cancel()
+		if err := a.outbound.PushCounterparty(ctx, userID, draft); err != nil {
+			a.logger.Warn("onec: counterparty push to 1C failed", "lead_id", leadID, "err", err)
+		}
+	}()
 }
 
 // Compile-time check that the adapter satisfies the leads observer port.

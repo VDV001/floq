@@ -46,7 +46,7 @@ func (r *Repository) UpsertOutboundRecord(ctx context.Context, rec *domain.SyncR
 			(id, user_id, external_id, external_type, direction, kind, status, payload_hash)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 		ON CONFLICT (user_id, external_id, external_type) DO UPDATE
-			SET status = EXCLUDED.status, kind = EXCLUDED.kind`,
+			SET status = EXCLUDED.status, kind = EXCLUDED.kind, direction = EXCLUDED.direction`,
 		rec.ID, rec.UserID, rec.ExternalID, rec.ExternalType,
 		string(rec.Direction), string(rec.Kind), string(rec.Status), rec.PayloadHash)
 	return err
