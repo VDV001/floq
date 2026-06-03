@@ -109,6 +109,20 @@ func TestPushCounterparty_OneCError_RecordedNotFatal(t *testing.T) {
 	assert.Equal(t, domain.SyncStatusError, store.upserted[0].Status)
 }
 
+func TestPushCounterparty_PushAndLedgerBothFail_JoinsErrors(t *testing.T) {
+	pushErr := errors.New("1C down")
+	ledgerErr := errors.New("db down")
+	store := &fakeOutboundStore{creds: okCreds(t), upsertErr: ledgerErr}
+	client := &fakeClient{err: pushErr}
+	uc := NewOutboundUseCase(store, client, nil)
+
+	err := uc.PushCounterparty(context.Background(), uuid.New(), draftWithEmail(t))
+
+	require.Error(t, err)
+	assert.ErrorIs(t, err, pushErr, "push error must stay in the chain")
+	assert.ErrorIs(t, err, ledgerErr, "ledger error must stay in the chain")
+}
+
 func TestPushCounterparty_CredsLookupError_Propagates(t *testing.T) {
 	store := &fakeOutboundStore{credsErr: errors.New("db boom")}
 	client := &fakeClient{}

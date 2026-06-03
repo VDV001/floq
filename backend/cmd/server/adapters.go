@@ -692,12 +692,19 @@ var _ onec.EventApplier = (*onecApplierAdapter)(nil)
 // post-qualification side-effect without importing onec. It translates a
 // qualified Lead into a CounterpartyDraft and pushes it to 1C. All failures are
 // swallowed (logged) — qualification must never fail because the 1C push did.
+// counterpartyPusher is the narrow slice of the onec outbound use case this
+// adapter needs — kept an interface (not the concrete *onec.OutboundUseCase) so
+// the adapter's branching and goroutine can be unit-tested with a fake.
+type counterpartyPusher interface {
+	PushCounterparty(ctx context.Context, userID uuid.UUID, draft *onecdomain.CounterpartyDraft) error
+}
+
 type onecQualificationAdapter struct {
-	outbound *onec.OutboundUseCase
+	outbound counterpartyPusher
 	logger   *slog.Logger
 }
 
-func newOnecQualificationAdapter(outbound *onec.OutboundUseCase, logger *slog.Logger) *onecQualificationAdapter {
+func newOnecQualificationAdapter(outbound counterpartyPusher, logger *slog.Logger) *onecQualificationAdapter {
 	return &onecQualificationAdapter{outbound: outbound, logger: logger}
 }
 
@@ -708,12 +715,18 @@ const onecPushTimeout = 35 * time.Second
 // OnLeadQualified builds a counterparty draft from the lead and pushes it to 1C.
 // A lead with neither name nor email cannot become a counterparty — skipped.
 //
-// The push runs in a detached goroutine on a fresh background context: it is a
-// side-effect that must not couple its latency to (or be cancelled by) the HTTP
-// request that qualified the lead. If it were on the request context, a slow 1C
-// would block the user's /qualify call, and a client disconnect would cancel the
-// push mid-flight — losing even the 'error' ledger entry the push records. A
-// push lost to process shutdown is the safety net of reconciliation (#109).
+// The push runs in a detached goroutine on a fresh background context for two
+// distinct reasons:
+//
+//  1. Latency/cancellation isolation (the reason for detaching from the REQUEST
+//     context): a slow 1C must not block the user's /qualify call, and a client
+//     disconnect must not cancel the push mid-flight — which would lose even the
+//     'error' ledger entry the push records.
+//  2. Not bound to the APP-lifecycle context: like the outbound email cron
+//     goroutine, an in-flight push is not awaited on server shutdown, so a push
+//     started inside the shutdown window can be lost. This is a deliberate
+//     trade-off — outbound pushes lost to shutdown (or any gap) are exactly what
+//     the scheduled reconciliation (#109) re-applies idempotently.
 func (a *onecQualificationAdapter) OnLeadQualified(_ context.Context, lead *leadsdomain.Lead) {
 	email := ""
 	if lead.EmailAddress != nil {
