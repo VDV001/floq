@@ -2,8 +2,11 @@ package onec
 
 import (
 	"context"
+	"errors"
 
 	"github.com/daniil/floq/internal/integrations/onec/domain"
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -33,4 +36,24 @@ func (r *Repository) InsertSyncRecord(ctx context.Context, rec *domain.SyncRecor
 		return false, err
 	}
 	return tag.RowsAffected() == 1, nil
+}
+
+// UserIDByWebhookSecret resolves the owning user from a webhook secret. Only
+// active credentials with a non-empty secret match, so a blank secret never
+// authenticates. found=false when no row matches.
+func (r *Repository) UserIDByWebhookSecret(ctx context.Context, secret string) (uuid.UUID, bool, error) {
+	if secret == "" {
+		return uuid.Nil, false, nil
+	}
+	var userID uuid.UUID
+	err := r.pool.QueryRow(ctx, `
+		SELECT user_id FROM onec_credentials
+		WHERE webhook_secret = $1 AND is_active = TRUE`, secret).Scan(&userID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return uuid.Nil, false, nil
+	}
+	if err != nil {
+		return uuid.Nil, false, err
+	}
+	return userID, true, nil
 }
