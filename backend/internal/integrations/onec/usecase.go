@@ -145,14 +145,14 @@ func resolveKind(explicit string, rule domain.MappingRule, hasRule bool, lookupE
 // apply routes a recorded event to its domain action. Apply failures are logged,
 // not returned — the event is already persisted.
 func (u *UseCase) apply(ctx context.Context, userID uuid.UUID, kind domain.EventKind, rule domain.MappingRule, payload []byte) {
-	email := extractField(payload, rule.EmailField)
+	fields := parseStringFields(payload)
+	email := fields[rule.EmailField]
 	var err error
 	switch kind {
 	case domain.EventKindPayment:
 		err = u.applier.HandlePayment(ctx, userID, email)
 	case domain.EventKindCounterpartyCreated:
-		err = u.applier.HandleCounterpartyCreated(ctx, userID, email,
-			extractField(payload, rule.NameField), extractField(payload, rule.CompanyField))
+		err = u.applier.HandleCounterpartyCreated(ctx, userID, email, fields[rule.NameField], fields[rule.CompanyField])
 	case domain.EventKindOrderStatus:
 		err = u.applier.HandleOrderStatus(ctx, userID, email)
 	case domain.EventKindShipment:
@@ -164,23 +164,21 @@ func (u *UseCase) apply(ctx context.Context, userID uuid.UUID, kind domain.Event
 	}
 }
 
-// extractField pulls a string value from a raw JSON payload by key. Missing key,
-// empty field name, or non-string value yields "".
-func extractField(payload []byte, field string) string {
-	if field == "" {
-		return ""
+// parseStringFields flattens a raw JSON object's string-valued top-level keys
+// into a map (parsed once per event). A non-object/invalid payload yields an
+// empty map, so every field lookup safely returns "". Empty field names in a
+// rule then resolve to "" via the missing-key path.
+func parseStringFields(payload []byte) map[string]string {
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(payload, &raw); err != nil {
+		return map[string]string{}
 	}
-	var m map[string]json.RawMessage
-	if err := json.Unmarshal(payload, &m); err != nil {
-		return ""
+	out := make(map[string]string, len(raw))
+	for k, v := range raw {
+		var s string
+		if json.Unmarshal(v, &s) == nil {
+			out[k] = s
+		}
 	}
-	raw, ok := m[field]
-	if !ok {
-		return ""
-	}
-	var s string
-	if err := json.Unmarshal(raw, &s); err != nil {
-		return ""
-	}
-	return s
+	return out
 }
