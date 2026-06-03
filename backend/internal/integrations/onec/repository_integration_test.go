@@ -68,3 +68,42 @@ func TestRepository_InsertSyncRecord_PerUserScope(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, insertedB, "same external id under different user must not collide")
 }
+
+func TestRepository_UserIDByWebhookSecret(t *testing.T) {
+	pool := testutil.TestDB(t)
+	repo := onec.NewRepository(pool)
+	ctx := context.Background()
+	user := testutil.SeedUser(t, pool)
+
+	_, err := pool.Exec(ctx,
+		`INSERT INTO onec_credentials (user_id, webhook_secret, is_active) VALUES ($1, $2, TRUE)`,
+		user, "s3cr3t")
+	require.NoError(t, err)
+
+	t.Run("active secret resolves", func(t *testing.T) {
+		got, found, err := repo.UserIDByWebhookSecret(ctx, "s3cr3t")
+		require.NoError(t, err)
+		require.True(t, found)
+		require.Equal(t, user, got)
+	})
+
+	t.Run("empty secret never matches", func(t *testing.T) {
+		_, found, err := repo.UserIDByWebhookSecret(ctx, "")
+		require.NoError(t, err)
+		require.False(t, found)
+	})
+
+	t.Run("unknown secret not found", func(t *testing.T) {
+		_, found, err := repo.UserIDByWebhookSecret(ctx, "wrong")
+		require.NoError(t, err)
+		require.False(t, found)
+	})
+
+	t.Run("inactive credentials excluded", func(t *testing.T) {
+		_, err := pool.Exec(ctx, `UPDATE onec_credentials SET is_active = FALSE WHERE user_id = $1`, user)
+		require.NoError(t, err)
+		_, found, err := repo.UserIDByWebhookSecret(ctx, "s3cr3t")
+		require.NoError(t, err)
+		require.False(t, found, "inactive credentials must not authenticate")
+	})
+}
