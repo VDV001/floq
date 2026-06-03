@@ -31,7 +31,7 @@ type fakeMapping struct {
 	err error
 }
 
-func (f *fakeMapping) GetMappingConfig(_ context.Context, _ uuid.UUID) (*domain.MappingConfig, error) {
+func (f *fakeMapping) GetActiveMappingConfig(_ context.Context, _ uuid.UUID) (*domain.MappingConfig, error) {
 	return f.cfg, f.err
 }
 
@@ -141,6 +141,43 @@ func TestProcessInbound_UnresolvableKind(t *testing.T) {
 	}
 	if store.calls != 0 {
 		t.Error("unresolvable event must not record")
+	}
+}
+
+func TestProcessInbound_TransientMappingErrorPropagates(t *testing.T) {
+	store := &fakeStore{inserted: true}
+	boom := errors.New("db pool exhausted")
+	mapping := &fakeMapping{err: boom}
+	uc := onec.NewUseCase(store, onec.WithMapping(mapping))
+
+	// No explicit kind → kind resolution needs the mapping; a transient error
+	// must propagate (→ 500, retryable), NOT collapse into ErrUnresolvableKind.
+	_, err := uc.ProcessInboundEvent(context.Background(), uuid.New(), raw(""))
+	if !errors.Is(err, boom) {
+		t.Fatalf("err = %v, want transient boom propagated", err)
+	}
+	if store.calls != 0 {
+		t.Error("must not record when kind unresolved due to transient error")
+	}
+}
+
+func TestProcessInbound_ExplicitKindToleratesMappingError(t *testing.T) {
+	store := &fakeStore{inserted: true}
+	mapping := &fakeMapping{err: errors.New("boom")}
+	applier := &fakeApplier{}
+	uc := onec.NewUseCase(store, onec.WithMapping(mapping), onec.WithApplier(applier))
+
+	// Explicit kind makes the event classifiable regardless of mapping health;
+	// it is recorded, application is skipped (no rule available).
+	res, err := uc.ProcessInboundEvent(context.Background(), uuid.New(), raw("payment"))
+	if err != nil {
+		t.Fatalf("explicit kind must tolerate mapping error: %v", err)
+	}
+	if store.calls != 1 || res.Deduped {
+		t.Error("event should be recorded despite mapping error")
+	}
+	if applier.action != "" {
+		t.Error("no rule available → application must be skipped")
 	}
 }
 
