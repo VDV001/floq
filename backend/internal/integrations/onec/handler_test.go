@@ -208,3 +208,25 @@ func TestRegisterRoutes_EndToEnd(t *testing.T) {
 		}
 	})
 }
+
+// Oversized JSON body under JSONBodyCap must yield 413, not 400 — the public
+// webhook is the only unauthenticated-by-JWT route and must reject large
+// bodies with the right status.
+func TestWebhook_BodyCapReturns413(t *testing.T) {
+	store := &fakeStore{inserted: true}
+	r := chi.NewRouter()
+	r.Use(httputil.JSONBodyCap(64)) // tiny cap to force overflow
+	resolver := &fakeResolver{user: uuid.New(), found: true}
+	onec.RegisterRoutes(r, onec.NewHandler(onec.NewUseCase(store)), resolver)
+
+	big := `{"external_id":"x","external_type":"y","kind":"payment","payload":"` + strings.Repeat("A", 500) + `"}`
+	req := httptest.NewRequest(http.MethodPost, "/api/integrations/onec/webhook", strings.NewReader(big))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Onec-Secret", "good")
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("status = %d, want 413", rec.Code)
+	}
+}
