@@ -4,6 +4,7 @@ package testutil
 
 import (
 	"context"
+	"os"
 	"testing"
 
 	"github.com/google/uuid"
@@ -11,13 +12,23 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-const dsn = "postgres://floq:floq@localhost:5432/floq?sslmode=disable"
+const defaultDSN = "postgres://floq:floq@localhost:5432/floq?sslmode=disable"
+
+// dsn returns the integration-test database connection string. It honours
+// TEST_DATABASE_URL when set (e.g. to point at a postgres on an alternate
+// port when 5432 is taken), falling back to the default local instance.
+func dsn() string {
+	if v := os.Getenv("TEST_DATABASE_URL"); v != "" {
+		return v
+	}
+	return defaultDSN
+}
 
 // TestDB returns a connection pool for integration tests.
 // The pool is closed automatically when the test finishes.
 func TestDB(t *testing.T) *pgxpool.Pool {
 	t.Helper()
-	pool, err := pgxpool.New(context.Background(), dsn)
+	pool, err := pgxpool.New(context.Background(), dsn())
 	require.NoError(t, err, "connect to test database")
 	t.Cleanup(func() { pool.Close() })
 	return pool
