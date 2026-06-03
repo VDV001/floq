@@ -73,9 +73,9 @@ type ProcessResult struct {
 //     event is already durably recorded, so an apply failure is logged rather
 //     than propagated (a 1C retry would only duplicate; reconciliation re-applies).
 func (u *UseCase) ProcessInboundEvent(ctx context.Context, userID uuid.UUID, in RawInboundEvent) (ProcessResult, error) {
-	rule, hasRule := u.lookupRule(ctx, userID, in.ExternalType)
+	rule, hasRule, lookupErr := u.lookupRule(ctx, userID, in.ExternalType)
 
-	kind, err := resolveKind(in.Kind, rule, hasRule)
+	kind, err := resolveKind(in.Kind, rule, hasRule, lookupErr)
 	if err != nil {
 		return ProcessResult{}, err
 	}
@@ -106,24 +106,35 @@ func (u *UseCase) ProcessInboundEvent(ctx context.Context, userID uuid.UUID, in 
 	return ProcessResult{Deduped: !out.Inserted, PayloadDrifted: out.PayloadDrifted}, nil
 }
 
-// lookupRule resolves the mapping rule for an external type, tolerating a
-// missing/unconfigured mapping (no rule → application is skipped).
-func (u *UseCase) lookupRule(ctx context.Context, userID uuid.UUID, externalType string) (domain.MappingRule, bool) {
+// lookupRule resolves the mapping rule for an external type. A missing active
+// config (ErrMappingNotFound) is not an error — it just means no rule. Any other
+// error (transient DB failure) is returned so the caller can decide whether to
+// fail the request rather than silently treat it as "unmapped".
+func (u *UseCase) lookupRule(ctx context.Context, userID uuid.UUID, externalType string) (domain.MappingRule, bool, error) {
 	if u.mapping == nil {
-		return domain.MappingRule{}, false
+		return domain.MappingRule{}, false, nil
 	}
-	cfg, err := u.mapping.GetMappingConfig(ctx, userID)
+	cfg, err := u.mapping.GetActiveMappingConfig(ctx, userID)
+	if errors.Is(err, ErrMappingNotFound) {
+		return domain.MappingRule{}, false, nil
+	}
 	if err != nil {
-		return domain.MappingRule{}, false // not configured → no rule
+		return domain.MappingRule{}, false, err
 	}
-	return cfg.Resolve(externalType)
+	rule, ok := cfg.Resolve(externalType)
+	return rule, ok, nil
 }
 
-// resolveKind implements hybrid resolution: explicit kind wins; else the
-// mapping rule's kind; else unresolvable.
-func resolveKind(explicit string, rule domain.MappingRule, hasRule bool) (domain.EventKind, error) {
+// resolveKind implements hybrid resolution: an explicit kind always wins (so a
+// classifiable event survives a mapping outage). Otherwise the kind must come
+// from the mapping: a transient lookup error propagates (→ 500, retryable),
+// genuinely no rule → ErrUnresolvableKind (→ 422).
+func resolveKind(explicit string, rule domain.MappingRule, hasRule bool, lookupErr error) (domain.EventKind, error) {
 	if explicit != "" {
 		return domain.ParseEventKind(explicit) // invalid → ErrInvalidEventKind
+	}
+	if lookupErr != nil {
+		return "", lookupErr
 	}
 	if hasRule {
 		return rule.Kind, nil
