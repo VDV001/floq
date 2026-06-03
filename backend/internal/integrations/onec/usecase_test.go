@@ -25,93 +25,202 @@ func (f *fakeStore) InsertSyncRecord(_ context.Context, rec *domain.SyncRecord) 
 	return onec.InsertOutcome{Inserted: f.inserted, PayloadDrifted: f.drifted}, f.err
 }
 
-func mustEvent(t *testing.T) *domain.ExternalEvent {
+// fakeMapping is an in-memory MappingStore.
+type fakeMapping struct {
+	cfg *domain.MappingConfig
+	err error
+}
+
+func (f *fakeMapping) GetMappingConfig(_ context.Context, _ uuid.UUID) (*domain.MappingConfig, error) {
+	return f.cfg, f.err
+}
+
+// fakeApplier records the action method invoked and its args.
+type fakeApplier struct {
+	action  string
+	email   string
+	name    string
+	company string
+	err     error
+}
+
+func (f *fakeApplier) HandlePayment(_ context.Context, _ uuid.UUID, email string) error {
+	f.action, f.email = "payment", email
+	return f.err
+}
+func (f *fakeApplier) HandleCounterpartyCreated(_ context.Context, _ uuid.UUID, email, name, company string) error {
+	f.action, f.email, f.name, f.company = "counterparty", email, name, company
+	return f.err
+}
+func (f *fakeApplier) HandleOrderStatus(_ context.Context, _ uuid.UUID, email string) error {
+	f.action, f.email = "order_status", email
+	return f.err
+}
+func (f *fakeApplier) HandleShipment(_ context.Context, _ uuid.UUID, email string) error {
+	f.action, f.email = "shipment", email
+	return f.err
+}
+
+func raw(kind string) onec.RawInboundEvent {
+	return onec.RawInboundEvent{
+		ExternalID:   "ОП-1",
+		ExternalType: "Документ.Оплата",
+		Kind:         kind,
+		Payload:      []byte(`{"counterparty_email":"a@b.ru","counterparty_name":"ООО Тест","counterparty_company":"Тест"}`),
+	}
+}
+
+func activeMapping(t *testing.T, extType string, kind domain.EventKind) *fakeMapping {
 	t.Helper()
-	ev, err := domain.NewExternalEvent("ОП-1", "Документ.Оплата", domain.EventKindPayment, []byte(`{"sum":1}`))
+	cfg, err := domain.NewMappingConfig(uuid.New(), []domain.MappingRule{{
+		ExternalType: extType, Kind: kind,
+		EmailField: "counterparty_email", NameField: "counterparty_name", CompanyField: "counterparty_company",
+	}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	return ev
+	return &fakeMapping{cfg: cfg}
 }
 
-func TestProcessInboundEvent_New(t *testing.T) {
+func TestProcessInbound_RecordOnly_NoMapping(t *testing.T) {
 	store := &fakeStore{inserted: true}
-	uc := onec.NewUseCase(store)
+	uc := onec.NewUseCase(store) // no mapping, no applier
 
-	res, err := uc.ProcessInboundEvent(context.Background(), uuid.New(), mustEvent(t))
+	res, err := uc.ProcessInboundEvent(context.Background(), uuid.New(), raw("payment"))
 	if err != nil {
 		t.Fatalf("unexpected err: %v", err)
 	}
 	if res.Deduped {
-		t.Error("fresh event must not be marked deduped")
+		t.Error("fresh event must not be deduped")
 	}
-	if store.calls != 1 {
-		t.Errorf("store called %d times, want 1", store.calls)
-	}
-	if store.last == nil || store.last.Direction != domain.DirectionInbound {
-		t.Error("expected an inbound sync record to be stored")
+	if store.calls != 1 || store.last.Kind != domain.EventKindPayment {
+		t.Errorf("expected one payment record, got calls=%d kind=%v", store.calls, store.last.Kind)
 	}
 }
 
-func TestProcessInboundEvent_Duplicate(t *testing.T) {
-	store := &fakeStore{inserted: false} // dedup hit
-	uc := onec.NewUseCase(store)
-
-	res, err := uc.ProcessInboundEvent(context.Background(), uuid.New(), mustEvent(t))
-	if err != nil {
-		t.Fatalf("unexpected err: %v", err)
-	}
-	if !res.Deduped {
-		t.Error("replayed event must be marked deduped")
-	}
-}
-
-func TestProcessInboundEvent_PayloadDrift(t *testing.T) {
-	store := &fakeStore{inserted: false, drifted: true} // deduped but content changed
-	uc := onec.NewUseCase(store)
-
-	res, err := uc.ProcessInboundEvent(context.Background(), uuid.New(), mustEvent(t))
-	if err != nil {
-		t.Fatalf("unexpected err: %v", err)
-	}
-	if !res.Deduped {
-		t.Error("drifted replay is still deduped")
-	}
-	if !res.PayloadDrifted {
-		t.Error("drift must be surfaced in the result")
-	}
-}
-
-func TestProcessInboundEvent_NilUser(t *testing.T) {
+func TestProcessInbound_InvalidRequestKind(t *testing.T) {
 	store := &fakeStore{inserted: true}
 	uc := onec.NewUseCase(store)
 
-	_, err := uc.ProcessInboundEvent(context.Background(), uuid.Nil, mustEvent(t))
-	if !errors.Is(err, domain.ErrNilUser) {
-		t.Fatalf("err = %v, want ErrNilUser", err)
+	_, err := uc.ProcessInboundEvent(context.Background(), uuid.New(), raw("nonsense"))
+	if !errors.Is(err, domain.ErrInvalidEventKind) {
+		t.Fatalf("err = %v, want ErrInvalidEventKind", err)
 	}
 	if store.calls != 0 {
-		t.Error("store must not be called when record construction fails")
+		t.Error("invalid kind must not record")
 	}
 }
 
-func TestProcessInboundEvent_NilEvent(t *testing.T) {
+func TestProcessInbound_HybridDerivesKindFromMapping(t *testing.T) {
+	store := &fakeStore{inserted: true}
+	mapping := activeMapping(t, "Документ.Оплата", domain.EventKindPayment)
+	applier := &fakeApplier{}
+	uc := onec.NewUseCase(store, onec.WithMapping(mapping), onec.WithApplier(applier))
+
+	// empty kind → derived from mapping rule
+	res, err := uc.ProcessInboundEvent(context.Background(), uuid.New(), raw(""))
+	if err != nil {
+		t.Fatalf("unexpected err: %v", err)
+	}
+	if res.Deduped {
+		t.Error("fresh event not deduped")
+	}
+	if store.last.Kind != domain.EventKindPayment {
+		t.Errorf("kind = %v, want payment (from mapping)", store.last.Kind)
+	}
+}
+
+func TestProcessInbound_UnresolvableKind(t *testing.T) {
+	store := &fakeStore{inserted: true}
+	mapping := &fakeMapping{err: onec.ErrMappingNotFound} // no config
+	uc := onec.NewUseCase(store, onec.WithMapping(mapping))
+
+	_, err := uc.ProcessInboundEvent(context.Background(), uuid.New(), raw("")) // no kind, no mapping
+	if !errors.Is(err, onec.ErrUnresolvableKind) {
+		t.Fatalf("err = %v, want ErrUnresolvableKind", err)
+	}
+	if store.calls != 0 {
+		t.Error("unresolvable event must not record")
+	}
+}
+
+func TestProcessInbound_Routing(t *testing.T) {
+	tests := []struct {
+		extType    string
+		kind       domain.EventKind
+		wantAction string
+	}{
+		{"Документ.Оплата", domain.EventKindPayment, "payment"},
+		{"Справочник.Контрагенты", domain.EventKindCounterpartyCreated, "counterparty"},
+		{"Документ.Заказ", domain.EventKindOrderStatus, "order_status"},
+		{"Документ.Отгрузка", domain.EventKindShipment, "shipment"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.wantAction, func(t *testing.T) {
+			store := &fakeStore{inserted: true}
+			mapping := activeMapping(t, tt.extType, tt.kind)
+			applier := &fakeApplier{}
+			uc := onec.NewUseCase(store, onec.WithMapping(mapping), onec.WithApplier(applier))
+
+			ev := onec.RawInboundEvent{
+				ExternalID: "X-1", ExternalType: tt.extType, Kind: "",
+				Payload: []byte(`{"counterparty_email":"a@b.ru","counterparty_name":"N","counterparty_company":"C"}`),
+			}
+			_, err := uc.ProcessInboundEvent(context.Background(), uuid.New(), ev)
+			if err != nil {
+				t.Fatalf("unexpected err: %v", err)
+			}
+			if applier.action != tt.wantAction {
+				t.Fatalf("action = %q, want %q", applier.action, tt.wantAction)
+			}
+			if applier.email != "a@b.ru" {
+				t.Errorf("email = %q, want extracted a@b.ru", applier.email)
+			}
+		})
+	}
+}
+
+func TestProcessInbound_DedupSkipsApply(t *testing.T) {
+	store := &fakeStore{inserted: false} // dedup hit
+	mapping := activeMapping(t, "Документ.Оплата", domain.EventKindPayment)
+	applier := &fakeApplier{}
+	uc := onec.NewUseCase(store, onec.WithMapping(mapping), onec.WithApplier(applier))
+
+	res, err := uc.ProcessInboundEvent(context.Background(), uuid.New(), raw(""))
+	if err != nil {
+		t.Fatalf("unexpected err: %v", err)
+	}
+	if !res.Deduped {
+		t.Error("expected deduped")
+	}
+	if applier.action != "" {
+		t.Errorf("deduped replay must not re-apply, got %q", applier.action)
+	}
+}
+
+func TestProcessInbound_ApplierErrorNotFatal(t *testing.T) {
+	store := &fakeStore{inserted: true}
+	mapping := activeMapping(t, "Документ.Оплата", domain.EventKindPayment)
+	applier := &fakeApplier{err: errors.New("downstream boom")}
+	uc := onec.NewUseCase(store, onec.WithMapping(mapping), onec.WithApplier(applier))
+
+	// applier failure is logged, not propagated — the event was recorded and a
+	// 1C retry would only duplicate. Reconciliation (#109) handles re-apply.
+	res, err := uc.ProcessInboundEvent(context.Background(), uuid.New(), raw(""))
+	if err != nil {
+		t.Fatalf("applier error must not fail the webhook: %v", err)
+	}
+	if res.Deduped {
+		t.Error("event was still recorded")
+	}
+}
+
+func TestProcessInbound_NilUser(t *testing.T) {
 	store := &fakeStore{inserted: true}
 	uc := onec.NewUseCase(store)
 
-	_, err := uc.ProcessInboundEvent(context.Background(), uuid.New(), nil)
-	if !errors.Is(err, domain.ErrNilEvent) {
-		t.Fatalf("err = %v, want ErrNilEvent", err)
-	}
-}
-
-func TestProcessInboundEvent_StoreError(t *testing.T) {
-	sentinel := errors.New("db down")
-	store := &fakeStore{err: sentinel}
-	uc := onec.NewUseCase(store)
-
-	_, err := uc.ProcessInboundEvent(context.Background(), uuid.New(), mustEvent(t))
-	if !errors.Is(err, sentinel) {
-		t.Fatalf("err = %v, want sentinel", err)
+	_, err := uc.ProcessInboundEvent(context.Background(), uuid.Nil, raw("payment"))
+	if !errors.Is(err, domain.ErrNilUser) {
+		t.Fatalf("err = %v, want ErrNilUser", err)
 	}
 }

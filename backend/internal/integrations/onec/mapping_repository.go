@@ -19,6 +19,8 @@ type mappingRuleDTO struct {
 	ExternalType string `json:"external_type"`
 	Kind         string `json:"kind"`
 	EmailField   string `json:"email_field"`
+	NameField    string `json:"name_field,omitempty"`
+	CompanyField string `json:"company_field,omitempty"`
 }
 
 // SaveMappingConfig upserts a user's mapping rules (one config per user). The
@@ -30,6 +32,8 @@ func (r *Repository) SaveMappingConfig(ctx context.Context, cfg *domain.MappingC
 			ExternalType: rule.ExternalType,
 			Kind:         rule.Kind.String(),
 			EmailField:   rule.EmailField,
+			NameField:    rule.NameField,
+			CompanyField: rule.CompanyField,
 		}
 	}
 	raw, err := json.Marshal(dtos)
@@ -69,7 +73,13 @@ func (r *Repository) GetMappingConfig(ctx context.Context, userID uuid.UUID) (*d
 		if err != nil {
 			return nil, err
 		}
-		rules[i] = domain.MappingRule{ExternalType: d.ExternalType, Kind: kind, EmailField: d.EmailField}
+		rules[i] = domain.MappingRule{
+			ExternalType: d.ExternalType,
+			Kind:         kind,
+			EmailField:   d.EmailField,
+			NameField:    d.NameField,
+			CompanyField: d.CompanyField,
+		}
 	}
 	return domain.NewMappingConfig(userID, rules)
 }

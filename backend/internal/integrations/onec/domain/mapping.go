@@ -20,7 +20,9 @@ var (
 type MappingRule struct {
 	ExternalType string    // 1C document/object type, e.g. "Документ.ОплатаПокупателя"
 	Kind         EventKind // canonical Floq event
-	EmailField   string    // JSON key in payload holding the counterparty email (optional)
+	EmailField   string    // JSON key in payload holding the counterparty email (match key)
+	NameField    string    // JSON key holding the counterparty name (for counterparty upsert)
+	CompanyField string    // JSON key holding the counterparty company (optional)
 }
 
 // MappingConfig is a user's full set of 1C→Floq mapping rules. Built and
