@@ -9,14 +9,14 @@ import (
 
 func TestNewCounterpartyDraft(t *testing.T) {
 	tests := []struct {
-		name              string
-		inName            string
-		inEmail           string
-		inCompany         string
-		wantErr           error
-		wantName          string
-		wantEmail         string
-		wantCompany       string
+		name        string
+		inName      string
+		inEmail     string
+		inCompany   string
+		wantErr     error
+		wantName    string
+		wantEmail   string
+		wantCompany string
 	}{
 		{"name and email", "Иван", "iv@ex.ru", "ООО Ромашка", nil, "Иван", "iv@ex.ru", "ООО Ромашка"},
 		{"email only", "", "iv@ex.ru", "", nil, "", "iv@ex.ru", ""},
