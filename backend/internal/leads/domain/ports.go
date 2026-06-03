@@ -73,6 +73,16 @@ type Notifier interface {
 	SendAlert(ctx context.Context, leadName string, company string, message string) error
 }
 
+// QualificationObserver is notified after a lead is successfully qualified, so
+// cross-context side-effects (e.g. creating a counterparty in 1C, #108) can fire
+// without the leads context importing those modules. The implementation lives in
+// the composition root and bridges to the onec context. A nil observer disables
+// the hook. The method returns nothing on purpose: a failing side-effect must
+// never fail qualification — the observer owns its own error handling.
+type QualificationObserver interface {
+	OnLeadQualified(ctx context.Context, lead *Lead)
+}
+
 // --- Prospect suggestion (cross-channel dedup) ---
 
 // SuggestionConfidence classifies how strong the cross-channel match signal is.

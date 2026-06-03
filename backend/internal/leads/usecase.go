@@ -22,6 +22,7 @@ type UseCase struct {
 	suggestionFinder domain.ProspectSuggestionFinder
 	identityReader   IdentityReader
 	pendingCounter   PendingReplyCounter
+	qualObserver     domain.QualificationObserver
 	logger           *slog.Logger
 }
 
@@ -34,6 +35,13 @@ type Option func(*UseCase)
 // adapter is built.
 func WithSuggestionFinder(f domain.ProspectSuggestionFinder) Option {
 	return func(uc *UseCase) { uc.suggestionFinder = f }
+}
+
+// WithQualificationObserver wires the post-qualification hook (issue #108).
+// Supplied from the composition root via an adapter that bridges to the onec
+// context. nil leaves the hook disabled.
+func WithQualificationObserver(o domain.QualificationObserver) Option {
+	return func(uc *UseCase) { uc.qualObserver = o }
 }
 
 // WithLogger overrides the default slog.Logger so the use case emits
@@ -170,6 +178,13 @@ func (uc *UseCase) QualifyLead(ctx context.Context, leadID uuid.UUID) (*domain.Q
 	}
 	if err := uc.repo.UpdateLeadStatus(ctx, leadID, domain.StatusQualified); err != nil {
 		return nil, err
+	}
+	lead.Status = domain.StatusQualified
+
+	// Fire the post-qualification side-effect (e.g. push a counterparty to 1C).
+	// The observer owns its errors — a failure here must not fail qualification.
+	if uc.qualObserver != nil {
+		uc.qualObserver.OnLeadQualified(ctx, lead)
 	}
 
 	return q, nil
