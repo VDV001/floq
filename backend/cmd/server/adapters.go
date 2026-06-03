@@ -3,11 +3,13 @@ package main
 import (
 	"context"
 	"fmt"
+	"log/slog"
 
 	"github.com/daniil/floq/internal/ai"
 	"github.com/daniil/floq/internal/chat"
 	"github.com/daniil/floq/internal/db"
 	"github.com/daniil/floq/internal/inbox"
+	"github.com/daniil/floq/internal/integrations/onec"
 	"github.com/daniil/floq/internal/leads"
 	leadsdomain "github.com/daniil/floq/internal/leads/domain"
 	"github.com/daniil/floq/internal/outbound"
@@ -533,7 +535,6 @@ func (s *sqlBackfillSource) ProspectsForBackfill(ctx context.Context) ([]leads.P
 	return out, rows.Err()
 }
 
-
 // pendingReplyCounterAdapter bridges inbox.PendingReplyRepository to
 // leads.PendingReplyCounter so the leads inbox-list view can render
 // the badge count without the leads context importing the inbox
@@ -581,3 +582,90 @@ func (a *inboxEmailSenderAdapter) SendEmail(ctx context.Context, userID uuid.UUI
 // Compile-time check that the adapter satisfies inbox.EmailSender so
 // signature drift on the port breaks the build at the wiring edge.
 var _ inbox.EmailSender = (*inboxEmailSenderAdapter)(nil)
+
+// --- 1C EventApplier adapter (onec → leads/prospects boundary) ---
+//
+// Implements onec.EventApplier so the onec context never imports leads or
+// prospects directly. Each handler resolves the Floq entity by the
+// counterparty email extracted from the 1C payload. Actions that target an
+// existing entity (payment/order/shipment) no-op when no lead matches or when
+// the lead's state machine forbids the transition — surfaced as a log line, not
+// an error, since a 1C webhook must not be failed for a benign mismatch.
+// counterparty-created upserts a prospect.
+type onecApplierAdapter struct {
+	leadsRepo   *leads.Repository
+	leadsUC     *leads.UseCase
+	prospectsUC *prospects.UseCase
+	logger      *slog.Logger
+}
+
+func newOnecApplierAdapter(leadsRepo *leads.Repository, leadsUC *leads.UseCase, prospectsUC *prospects.UseCase, logger *slog.Logger) *onecApplierAdapter {
+	return &onecApplierAdapter{leadsRepo: leadsRepo, leadsUC: leadsUC, prospectsUC: prospectsUC, logger: logger}
+}
+
+// HandlePayment: counterparty paid → close the matching lead.
+func (a *onecApplierAdapter) HandlePayment(ctx context.Context, userID uuid.UUID, email string) error {
+	return a.moveLeadByEmail(ctx, userID, email, leadsdomain.StatusClosed)
+}
+
+// HandleOrderStatus: order moved → mark the lead as in active conversation.
+func (a *onecApplierAdapter) HandleOrderStatus(ctx context.Context, userID uuid.UUID, email string) error {
+	return a.moveLeadByEmail(ctx, userID, email, leadsdomain.StatusInConversation)
+}
+
+// HandleShipment: goods shipped → flag the lead for follow-up.
+func (a *onecApplierAdapter) HandleShipment(ctx context.Context, userID uuid.UUID, email string) error {
+	return a.moveLeadByEmail(ctx, userID, email, leadsdomain.StatusFollowup)
+}
+
+// moveLeadByEmail transitions the lead matched by email to target, skipping
+// benignly when there is no match or the transition is illegal for the lead's
+// current state.
+func (a *onecApplierAdapter) moveLeadByEmail(ctx context.Context, userID uuid.UUID, email string, target leadsdomain.LeadStatus) error {
+	if email == "" {
+		return nil
+	}
+	lead, err := a.leadsRepo.GetLeadByEmailAddress(ctx, userID, email)
+	if err != nil {
+		return err
+	}
+	if lead == nil {
+		a.logger.Info("onec: no lead for counterparty email; action skipped", "target", target.String())
+		return nil
+	}
+	if !lead.Status.CanTransitionTo(target) {
+		a.logger.Info("onec: lead transition not allowed; action skipped",
+			"lead_id", lead.ID, "from", lead.Status.String(), "to", target.String())
+		return nil
+	}
+	return a.leadsUC.UpdateStatus(ctx, lead.ID, target.String())
+}
+
+// HandleCounterpartyCreated upserts a prospect for a new 1C counterparty. An
+// existing prospect (matched by email) is left untouched; a missing name falls
+// back to the email so the prospect invariant (non-empty name) holds.
+func (a *onecApplierAdapter) HandleCounterpartyCreated(ctx context.Context, userID uuid.UUID, email, name, company string) error {
+	if email == "" {
+		return nil
+	}
+	existing, err := a.prospectsUC.FindByEmail(ctx, userID, email)
+	if err != nil {
+		return err
+	}
+	if existing != nil {
+		return nil
+	}
+	if name == "" {
+		name = email
+	}
+	_, err = a.prospectsUC.CreateProspect(ctx, prospects.CreateProspectInput{
+		UserID:  userID,
+		Name:    name,
+		Company: company,
+		Email:   email,
+	})
+	return err
+}
+
+// Compile-time check that the adapter satisfies onec.EventApplier.
+var _ onec.EventApplier = (*onecApplierAdapter)(nil)
