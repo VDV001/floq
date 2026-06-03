@@ -6,6 +6,53 @@ import (
 	"github.com/google/uuid"
 )
 
+// AuthType is how Floq authenticates outbound calls to a tenant's 1C endpoint.
+// Mirrors the onec_credentials.auth_type CHECK (basic | token).
+type AuthType string
+
+const (
+	AuthTypeBasic AuthType = "basic" // HTTP Basic (base64 user:pass in AuthSecret)
+	AuthTypeToken AuthType = "token" // Bearer token in AuthSecret
+)
+
+// IsValid reports whether a is a known auth type.
+func (a AuthType) IsValid() bool {
+	return a == AuthTypeBasic || a == AuthTypeToken
+}
+
+// ParseAuthType converts a wire string into an AuthType, rejecting unknown
+// values with ErrInvalidAuthType.
+func ParseAuthType(s string) (AuthType, error) {
+	a := AuthType(s)
+	if !a.IsValid() {
+		return "", ErrInvalidAuthType
+	}
+	return a, nil
+}
+
+// OutboundCredentials is the per-user connection Floq uses to push objects to a
+// 1C endpoint. BaseURL is the OData/HTTP-service root; AuthSecret is the opaque
+// credential interpreted per AuthType. The factory enforces a usable endpoint:
+// a non-empty base URL (trailing slash trimmed so path joins are predictable)
+// and a valid auth type.
+type OutboundCredentials struct {
+	BaseURL    string
+	AuthType   AuthType
+	AuthSecret string
+}
+
+// NewOutboundCredentials validates and normalises an outbound connection.
+func NewOutboundCredentials(baseURL string, authType AuthType, authSecret string) (*OutboundCredentials, error) {
+	baseURL = strings.TrimRight(strings.TrimSpace(baseURL), "/")
+	if baseURL == "" {
+		return nil, ErrEmptyBaseURL
+	}
+	if !authType.IsValid() {
+		return nil, ErrInvalidAuthType
+	}
+	return &OutboundCredentials{BaseURL: baseURL, AuthType: authType, AuthSecret: authSecret}, nil
+}
+
 // CounterpartyDraft is the value object Floq pushes to 1C to create a
 // counterparty (контрагент) when a lead is qualified. It is built from
 // Floq-side data, not from a 1C event, so it carries no external id yet —

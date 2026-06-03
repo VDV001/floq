@@ -23,6 +23,8 @@ var (
 	ErrNilEvent          = errors.New("onec: external event is required")
 	ErrInvalidSyncStatus = errors.New("onec: invalid sync status")
 	ErrEmptyCounterparty = errors.New("onec: counterparty needs at least a name or email")
+	ErrInvalidAuthType   = errors.New("onec: invalid auth type")
+	ErrEmptyBaseURL      = errors.New("onec: base url is required")
 )
 
 // EventKind is the ubiquitous-language enum of 1C events Floq reacts to.
