@@ -72,13 +72,13 @@ func (d SyncDirection) IsValid() bool {
 	return d == DirectionInbound || d == DirectionOutbound
 }
 
-// SyncStatus is the lifecycle state of a ledger entry.
+// SyncStatus is the lifecycle state of a ledger entry. #106 only ever records
+// Received (capture). The processed/error transitions arrive with the mapping
+// layer (#107) — intentionally not declared here to avoid dead states.
 type SyncStatus string
 
 const (
-	SyncStatusReceived  SyncStatus = "received"  // принято, ещё не применено
-	SyncStatusProcessed SyncStatus = "processed" // применено к домену
-	SyncStatusError     SyncStatus = "error"     // применение упало
+	SyncStatusReceived SyncStatus = "received" // принято, ещё не применено
 )
 
 // ExternalEvent is a value object wrapping a single 1C event. ExternalID +
