@@ -69,6 +69,38 @@ func TestRepository_InsertSyncRecord_PerUserScope(t *testing.T) {
 	require.True(t, insertedB, "same external id under different user must not collide")
 }
 
+func TestRepository_InsertSyncRecord_PayloadDrift(t *testing.T) {
+	pool := testutil.TestDB(t)
+	repo := onec.NewRepository(pool)
+	ctx := context.Background()
+	user := testutil.SeedUser(t, pool)
+
+	mk := func(payload string) *domain.SyncRecord {
+		ev, err := domain.NewExternalEvent("ОП-DRIFT", "Документ.Оплата", domain.EventKindPayment, []byte(payload))
+		require.NoError(t, err)
+		rec, err := domain.NewSyncRecord(user, ev, domain.DirectionInbound)
+		require.NoError(t, err)
+		return rec
+	}
+
+	out, err := repo.InsertSyncRecord(ctx, mk(`{"sum":1000}`))
+	require.NoError(t, err)
+	require.True(t, out.Inserted)
+	require.False(t, out.PayloadDrifted)
+
+	// Same dedup key, identical payload → deduped, no drift.
+	out, err = repo.InsertSyncRecord(ctx, mk(`{"sum":1000}`))
+	require.NoError(t, err)
+	require.False(t, out.Inserted)
+	require.False(t, out.PayloadDrifted)
+
+	// Same dedup key, CHANGED payload → deduped but drift detected.
+	out, err = repo.InsertSyncRecord(ctx, mk(`{"sum":9999}`))
+	require.NoError(t, err)
+	require.False(t, out.Inserted)
+	require.True(t, out.PayloadDrifted, "changed payload under same external id must be flagged as drift")
+}
+
 func TestRepository_UserIDByWebhookSecret(t *testing.T) {
 	pool := testutil.TestDB(t)
 	repo := onec.NewRepository(pool)
