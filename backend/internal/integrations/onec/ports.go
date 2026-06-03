@@ -35,10 +35,11 @@ type SecretResolver interface {
 	UserIDByWebhookSecret(ctx context.Context, secret string) (uuid.UUID, bool, error)
 }
 
-// MappingStore loads a user's 1C→Floq mapping config. The postgres Repository
-// satisfies it; returns ErrMappingNotFound when the user has none.
+// MappingStore loads a user's ACTIVE 1C→Floq mapping config for application.
+// The postgres Repository satisfies it; returns ErrMappingNotFound when the
+// user has no active config (so an inactive config genuinely disables mapping).
 type MappingStore interface {
-	GetMappingConfig(ctx context.Context, userID uuid.UUID) (*domain.MappingConfig, error)
+	GetActiveMappingConfig(ctx context.Context, userID uuid.UUID) (*domain.MappingConfig, error)
 }
 
 // EventApplier performs the domain action for a resolved 1C event. Implemented

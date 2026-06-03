@@ -49,13 +49,26 @@ func (r *Repository) SaveMappingConfig(ctx context.Context, cfg *domain.MappingC
 	return err
 }
 
-// GetMappingConfig loads and reconstructs a user's mapping config, re-validating
-// invariants through the domain factory. Returns ErrMappingNotFound when the
-// user has no config.
+// GetMappingConfig loads and reconstructs a user's mapping config regardless of
+// active state (for the settings UI). Returns ErrMappingNotFound when absent.
 func (r *Repository) GetMappingConfig(ctx context.Context, userID uuid.UUID) (*domain.MappingConfig, error) {
+	return r.loadMappingConfig(ctx, userID, false)
+}
+
+// GetActiveMappingConfig loads a user's config only when is_active = TRUE, so an
+// inactive config disables application. Returns ErrMappingNotFound otherwise.
+// This is the MappingStore method the inbound flow uses.
+func (r *Repository) GetActiveMappingConfig(ctx context.Context, userID uuid.UUID) (*domain.MappingConfig, error) {
+	return r.loadMappingConfig(ctx, userID, true)
+}
+
+func (r *Repository) loadMappingConfig(ctx context.Context, userID uuid.UUID, activeOnly bool) (*domain.MappingConfig, error) {
+	query := `SELECT rules FROM onec_mapping_configs WHERE user_id = $1`
+	if activeOnly {
+		query += ` AND is_active = TRUE`
+	}
 	var raw []byte
-	err := r.pool.QueryRow(ctx,
-		`SELECT rules FROM onec_mapping_configs WHERE user_id = $1`, userID).Scan(&raw)
+	err := r.pool.QueryRow(ctx, query, userID).Scan(&raw)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrMappingNotFound
 	}

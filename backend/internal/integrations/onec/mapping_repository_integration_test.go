@@ -48,6 +48,33 @@ func TestRepository_GetMappingConfig_NotFound(t *testing.T) {
 	require.True(t, errors.Is(err, onec.ErrMappingNotFound), "got %v", err)
 }
 
+func TestRepository_GetActiveMappingConfig_RespectsIsActive(t *testing.T) {
+	pool := testutil.TestDB(t)
+	repo := onec.NewRepository(pool)
+	ctx := context.Background()
+	user := testutil.SeedUser(t, pool)
+
+	cfg, err := domain.NewMappingConfig(user, []domain.MappingRule{
+		{ExternalType: "Документ.Оплата", Kind: domain.EventKindPayment},
+	})
+	require.NoError(t, err)
+
+	// Saved inactive → not returned by the active getter (mapping disabled).
+	require.NoError(t, repo.SaveMappingConfig(ctx, cfg, false))
+	_, err = repo.GetActiveMappingConfig(ctx, user)
+	require.True(t, errors.Is(err, onec.ErrMappingNotFound), "inactive config must not be active; got %v", err)
+
+	// The general getter still loads it (for the settings UI).
+	_, err = repo.GetMappingConfig(ctx, user)
+	require.NoError(t, err)
+
+	// Activate → now returned by the active getter.
+	require.NoError(t, repo.SaveMappingConfig(ctx, cfg, true))
+	got, err := repo.GetActiveMappingConfig(ctx, user)
+	require.NoError(t, err)
+	require.Len(t, got.Rules, 1)
+}
+
 func TestRepository_SaveMappingConfig_Upsert(t *testing.T) {
 	pool := testutil.TestDB(t)
 	repo := onec.NewRepository(pool)
