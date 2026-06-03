@@ -10,6 +10,7 @@ import (
 	"github.com/daniil/floq/internal/db"
 	"github.com/daniil/floq/internal/inbox"
 	"github.com/daniil/floq/internal/integrations/onec"
+	onecdomain "github.com/daniil/floq/internal/integrations/onec/domain"
 	"github.com/daniil/floq/internal/leads"
 	leadsdomain "github.com/daniil/floq/internal/leads/domain"
 	"github.com/daniil/floq/internal/outbound"
@@ -683,3 +684,38 @@ func (a *onecApplierAdapter) HandleCounterpartyCreated(ctx context.Context, user
 
 // Compile-time check that the adapter satisfies onec.EventApplier.
 var _ onec.EventApplier = (*onecApplierAdapter)(nil)
+
+// --- 1C qualification observer (leads → onec outbound boundary) ---
+//
+// Implements leadsdomain.QualificationObserver so the leads context can fire a
+// post-qualification side-effect without importing onec. It translates a
+// qualified Lead into a CounterpartyDraft and pushes it to 1C. All failures are
+// swallowed (logged) — qualification must never fail because the 1C push did.
+type onecQualificationAdapter struct {
+	outbound *onec.OutboundUseCase
+	logger   *slog.Logger
+}
+
+func newOnecQualificationAdapter(outbound *onec.OutboundUseCase, logger *slog.Logger) *onecQualificationAdapter {
+	return &onecQualificationAdapter{outbound: outbound, logger: logger}
+}
+
+// OnLeadQualified builds a counterparty draft from the lead and pushes it to 1C.
+// A lead with neither name nor email cannot become a counterparty — skipped.
+func (a *onecQualificationAdapter) OnLeadQualified(ctx context.Context, lead *leadsdomain.Lead) {
+	email := ""
+	if lead.EmailAddress != nil {
+		email = *lead.EmailAddress
+	}
+	draft, err := onecdomain.NewCounterpartyDraft(lead.ContactName, email, lead.Company)
+	if err != nil {
+		a.logger.Info("onec: qualified lead has no name/email; counterparty push skipped", "lead_id", lead.ID)
+		return
+	}
+	if err := a.outbound.PushCounterparty(ctx, lead.UserID, draft); err != nil {
+		a.logger.Warn("onec: counterparty push to 1C failed", "lead_id", lead.ID, "err", err)
+	}
+}
+
+// Compile-time check that the adapter satisfies the leads observer port.
+var _ leadsdomain.QualificationObserver = (*onecQualificationAdapter)(nil)

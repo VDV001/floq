@@ -69,6 +69,13 @@ func (uc *UseCase) SetSender(sender domain.MessageSender) {
 	uc.sender = sender
 }
 
+// SetQualificationObserver wires the post-qualification hook after construction,
+// needed because the onec outbound use case (which the observer bridges to) is
+// built later in the composition root than the leads use case.
+func (uc *UseCase) SetQualificationObserver(o domain.QualificationObserver) {
+	uc.qualObserver = o
+}
+
 func (uc *UseCase) ListLeads(ctx context.Context, userID uuid.UUID) ([]domain.LeadWithSource, error) {
 	return uc.repo.ListLeads(ctx, userID)
 }
