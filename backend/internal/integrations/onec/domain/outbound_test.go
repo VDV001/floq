@@ -41,6 +41,65 @@ func TestNewCounterpartyDraft(t *testing.T) {
 	}
 }
 
+func TestParseAuthType(t *testing.T) {
+	tests := []struct {
+		in      string
+		want    AuthType
+		wantErr error
+	}{
+		{"basic", AuthTypeBasic, nil},
+		{"token", AuthTypeToken, nil},
+		{"", "", ErrInvalidAuthType},
+		{"oauth", "", ErrInvalidAuthType},
+	}
+	for _, tt := range tests {
+		t.Run(tt.in, func(t *testing.T) {
+			got, err := ParseAuthType(tt.in)
+			if !errors.Is(err, tt.wantErr) {
+				t.Fatalf("err = %v, want %v", err, tt.wantErr)
+			}
+			if got != tt.want {
+				t.Fatalf("got %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestNewOutboundCredentials(t *testing.T) {
+	tests := []struct {
+		name     string
+		baseURL  string
+		authType AuthType
+		secret   string
+		wantErr  error
+		wantURL  string
+	}{
+		{"valid basic", "https://1c.example/odata", AuthTypeBasic, "dXNlcjpwYXNz", nil, "https://1c.example/odata"},
+		{"valid token", "https://1c.example/odata", AuthTypeToken, "tok", nil, "https://1c.example/odata"},
+		{"trims trailing slash", "https://1c.example/odata/", AuthTypeBasic, "s", nil, "https://1c.example/odata"},
+		{"empty base url", "", AuthTypeBasic, "s", ErrEmptyBaseURL, ""},
+		{"blank base url", "   ", AuthTypeBasic, "s", ErrEmptyBaseURL, ""},
+		{"invalid auth type", "https://1c.example", AuthType("oauth"), "s", ErrInvalidAuthType, ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := NewOutboundCredentials(tt.baseURL, tt.authType, tt.secret)
+			if !errors.Is(err, tt.wantErr) {
+				t.Fatalf("err = %v, want %v", err, tt.wantErr)
+			}
+			if tt.wantErr != nil {
+				return
+			}
+			if got.BaseURL != tt.wantURL {
+				t.Errorf("BaseURL = %q, want %q", got.BaseURL, tt.wantURL)
+			}
+			if got.AuthType != tt.authType || got.AuthSecret != tt.secret {
+				t.Errorf("got %+v", got)
+			}
+		})
+	}
+}
+
 func TestSyncStatus_IsValid(t *testing.T) {
 	valid := []SyncStatus{SyncStatusReceived, SyncStatusProcessed, SyncStatusError}
 	for _, s := range valid {
