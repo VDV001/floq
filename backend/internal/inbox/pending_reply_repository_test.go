@@ -57,6 +57,38 @@ func TestPendingReplyRepository_SaveAndGetByID(t *testing.T) {
 	assert.Nil(t, got.SentAt)
 }
 
+func TestPendingReplyRepository_CountPendingByKind(t *testing.T) {
+	pool := testutil.TestDB(t)
+	userA := testutil.SeedUser(t, pool)
+	userB := testutil.SeedUser(t, pool)
+	leadA := seedLeadForUser(t, pool, userA)
+	leadB := seedLeadForUser(t, pool, userB)
+	repo := inbox.NewPendingReplyRepository(pool)
+	ctx := context.Background()
+
+	// 2 pending for userA + 1 for userB — the queue-depth metric is an
+	// aggregate across tenants (no per-user label on the public endpoint).
+	for i, body := range []string{"a-1", "a-2"} {
+		pr, err := inbox.NewPendingReply(userA, leadA, inbox.ChannelTelegram, inbox.PendingReplyKindBookingLink, body)
+		require.NoError(t, err, "seed %d", i)
+		require.NoError(t, repo.Save(ctx, pr))
+	}
+	prB, err := inbox.NewPendingReply(userB, leadB, inbox.ChannelTelegram, inbox.PendingReplyKindBookingLink, "b-1")
+	require.NoError(t, err)
+	require.NoError(t, repo.Save(ctx, prB))
+
+	// An already-sent row must be excluded by the status='pending' filter.
+	_, err = pool.Exec(ctx,
+		`INSERT INTO pending_replies (id, user_id, lead_id, channel, kind, body, status, created_at)
+		 VALUES ($1, $2, $3, 'telegram', 'booking_link', 'done', 'sent', NOW())`,
+		uuid.New(), userA, leadA)
+	require.NoError(t, err)
+
+	depths, err := repo.CountPendingByKind(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, 3, depths["booking_link"], "aggregate pending across users; non-pending excluded")
+}
+
 func TestPendingReplyRepository_GetByID_ScopedByUser(t *testing.T) {
 	pool := testutil.TestDB(t)
 	userA := testutil.SeedUser(t, pool)

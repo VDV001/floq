@@ -7,6 +7,7 @@ package metrics
 
 import (
 	"net/http"
+	"sync"
 
 	"github.com/daniil/floq/internal/audit/domain"
 	"github.com/prometheus/client_golang/prometheus"
@@ -25,6 +26,10 @@ type Metrics struct {
 	aiCalls      *prometheus.CounterVec
 	aiCost       *prometheus.CounterVec
 	aiDuration   *prometheus.HistogramVec
+	queueDepth   *prometheus.GaugeVec
+
+	mu        sync.Mutex          // guards prevKinds
+	prevKinds map[string]struct{} // queue-depth kinds published last scan
 }
 
 // New builds the registry, registers the HTTP collectors plus the Go
@@ -59,6 +64,10 @@ func New() *Metrics {
 			// make p95/p99 useless. Buckets extend to 2 minutes.
 			Buckets: []float64{0.5, 1, 2.5, 5, 10, 20, 30, 60, 120},
 		}, aiLabels),
+		queueDepth: prometheus.NewGaugeVec(prometheus.GaugeOpts{
+			Name: "pending_replies_queue_depth",
+			Help: "Number of pending HITL replies awaiting an operator decision, by kind.",
+		}, []string{"kind"}),
 	}
 	reg.MustRegister(
 		m.httpRequests,
@@ -66,10 +75,24 @@ func New() *Metrics {
 		m.aiCalls,
 		m.aiCost,
 		m.aiDuration,
+		m.queueDepth,
 		collectors.NewGoCollector(),
 		collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}),
 	)
 	return m
+}
+
+// RegisterDropsSource wires a CounterFunc that reports the cumulative
+// audit-recorder drop count (buffer overflow / record-after-stop). The
+// source is read live on each scrape, so it always reflects the current
+// atomic counter without any push wiring. CounterFunc (not GaugeFunc) so
+// the monotonic source matches the _total suffix and rate() works in
+// PromQL. Call once at startup.
+func (m *Metrics) RegisterDropsSource(get func() float64) {
+	m.registry.MustRegister(prometheus.NewCounterFunc(prometheus.CounterOpts{
+		Name: "audit_log_drops_total",
+		Help: "Cumulative audit_log entries dropped by the async recorder (buffer overflow or record-after-stop).",
+	}, get))
 }
 
 // aiLabels are intentionally limited to bounded, non-tenant dimensions.

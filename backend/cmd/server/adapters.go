@@ -749,3 +749,15 @@ func (a *onecQualificationAdapter) OnLeadQualified(_ context.Context, lead *lead
 
 // Compile-time check that the adapter satisfies the leads observer port.
 var _ leadsdomain.QualificationObserver = (*onecQualificationAdapter)(nil)
+
+// queueDepthAdapter bridges the inbox pending-reply repository to the
+// metrics package's QueueDepthSource port, so the metrics context polls
+// queue depth without importing inbox (cross-context wiring lives here,
+// at the composition root).
+type queueDepthAdapter struct {
+	repo *inbox.PendingReplyRepo
+}
+
+func (a queueDepthAdapter) QueueDepths(ctx context.Context) (map[string]int, error) {
+	return a.repo.CountPendingByKind(ctx)
+}

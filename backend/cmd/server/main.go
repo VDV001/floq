@@ -134,6 +134,7 @@ func main() {
 	// AI-cost metrics through the observer hook; the HTTP middleware and
 	// /metrics endpoint are wired into the router below.
 	appMetrics := metrics.New()
+	appMetrics.RegisterDropsSource(func() float64 { return float64(auditRecorder.Dropped()) })
 	wrappedProvider := audit.NewRecordingProvider(aiProvider, auditRecorder, slog.Default(),
 		audit.WithObserver(appMetrics.OnAuditEntry))
 
@@ -348,6 +349,10 @@ func main() {
 	// unbounded growth of the cost ledger. Stops on ctx.
 	auditRetentionUC := audit.NewRetentionUseCase(auditRepo, cfg.AuditRetentionDays)
 	go audit.NewRetentionCron(auditRetentionUC, cfg.AuditRetentionInterval, slog.Default()).Start(ctx)
+
+	// Queue-depth metric (#94) — periodically publishes the pending-reply
+	// backlog (aggregate by kind) into Prometheus. Stops on ctx.
+	go appMetrics.StartQueueScanner(ctx, queueDepthAdapter{repo: pendingReplyRepo}, 30*time.Second, slog.Default())
 
 	// 8. Optional: Telegram inbox bot
 	// Read token from DB first, fall back to .env

@@ -81,6 +81,33 @@ func TestOnAuditEntry_LatencyHistogramCapturesSlowCalls(t *testing.T) {
 	assert.Contains(t, body, `ai_call_duration_seconds_bucket{model="o1",provider="openai",request_type="qualification",le="60"} 1`)
 }
 
+func TestRegisterDropsSource_ExposesCumulativeDropCount(t *testing.T) {
+	m := metrics.New()
+	dropped := 0
+	m.RegisterDropsSource(func() float64 { return float64(dropped) })
+
+	assert.Contains(t, scrape(t, m), "audit_log_drops_total 0")
+
+	dropped = 7 // GaugeFunc reads live on each scrape
+	assert.Contains(t, scrape(t, m), "audit_log_drops_total 7")
+}
+
+func TestSetPendingReplyDepth_ExposesGaugePerKind(t *testing.T) {
+	m := metrics.New()
+	m.SetPendingReplyDepth(map[string]int{"booking_link": 3})
+
+	assert.Contains(t, scrape(t, m), `pending_replies_queue_depth{kind="booking_link"} 3`)
+}
+
+func TestSetPendingReplyDepth_ResetsDrainedKinds(t *testing.T) {
+	m := metrics.New()
+	m.SetPendingReplyDepth(map[string]int{"booking_link": 3})
+	m.SetPendingReplyDepth(map[string]int{}) // queue drained
+
+	// A kind that dropped to zero must not linger at its last value.
+	assert.NotContains(t, scrape(t, m), `pending_replies_queue_depth{kind="booking_link"}`)
+}
+
 func TestOnAuditEntry_NeverLabelsByUserID(t *testing.T) {
 	m := metrics.New()
 	userID := uuid.New()
