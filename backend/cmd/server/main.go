@@ -239,10 +239,16 @@ func main() {
 		onec.WithLogger(slog.Default()))
 	onec.RegisterRoutes(r, onec.NewHandler(onecUC), onecRepo)
 
-	// Floq→1C outbound: push a counterparty when a lead is qualified. Reuses the
-	// proxy-aware shared HTTP client. Wired onto leadsUC via the observer hook.
-	onecOutboundUC := onec.NewOutboundUseCase(onecRepo, onec.NewHTTPClient(httpClient), slog.Default())
+	// Floq→1C outbound: one proxy-aware HTTP client serves both the counterparty
+	// write path and the reconciliation read path.
+	onecClient := onec.NewHTTPClient(httpClient)
+	onecOutboundUC := onec.NewOutboundUseCase(onecRepo, onecClient, slog.Default())
 	leadsUC.SetQualificationObserver(newOnecQualificationAdapter(onecOutboundUC, slog.Default()))
+
+	// Reconciliation safety net (#109): re-feed recent 1C events through the
+	// inbound use case to recover any webhook that was lost. Cron started below
+	// once the app-lifecycle context exists.
+	onecReconcileUC := onec.NewReconcileUseCase(onecRepo, onecClient, onecUC, slog.Default())
 
 	// Protected routes
 	r.Group(func(r chi.Router) {
@@ -288,6 +294,9 @@ func main() {
 		}
 	}()
 	log.Println("outbound email sender started (every 30s)")
+
+	// 1C reconciliation cron — recovers lost webhooks every 15 minutes, stops on ctx.
+	go onec.NewReconcileCron(onecReconcileUC, 15*time.Minute, slog.Default()).Start(ctx)
 
 	// 8. Optional: Telegram inbox bot
 	// Read token from DB first, fall back to .env
