@@ -130,7 +130,12 @@ func main() {
 	auditRecorder := audit.NewAsyncRecorder(auditRepo,
 		audit.WithLogger(slog.Default()))
 	auditRecorder.Start()
-	wrappedProvider := audit.NewRecordingProvider(aiProvider, auditRecorder, slog.Default())
+	// Prometheus metrics. Built here so the RecordingProvider can feed
+	// AI-cost metrics through the observer hook; the HTTP middleware and
+	// /metrics endpoint are wired into the router below.
+	appMetrics := metrics.New()
+	wrappedProvider := audit.NewRecordingProvider(aiProvider, auditRecorder, slog.Default(),
+		audit.WithObserver(appMetrics.OnAuditEntry))
 
 	// Read the owner's style-check preference once at boot. We don't
 	// propagate runtime changes — switching the toggle in the UI requires
@@ -229,7 +234,6 @@ func main() {
 	authHandler := auth.NewHandler(auth.NewRepository(pool), cfg.JWTSecret)
 
 	// 6. Router
-	appMetrics := metrics.New()
 	r := chi.NewRouter()
 	// Metrics middleware is outermost so it observes the FINAL status,
 	// including the 500 the Recoverer writes for a panicked handler.
