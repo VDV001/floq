@@ -16,31 +16,47 @@ type QueueDepthSource interface {
 }
 
 // SetPendingReplyDepth publishes the current per-kind queue depth. It
-// Resets the gauge first so a kind that drained to zero stops being
-// reported at its stale last value (the source only returns kinds with
-// rows, so a disappeared kind would otherwise linger).
+// deletes only the kinds that disappeared since the previous call (set
+// difference) rather than Reset()-ing the whole vector — a global Reset
+// opens a window in which a concurrent scrape sees an empty or partially
+// repopulated gauge. Tracking the prior key set keeps every still-present
+// series continuously valued across updates.
+//
+// prevKinds is guarded by mu; in practice only the single scanner
+// goroutine calls this, but the lock keeps it safe if that ever changes.
 func (m *Metrics) SetPendingReplyDepth(byKind map[string]int) {
-	m.queueDepth.Reset()
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for kind := range m.prevKinds {
+		if _, still := byKind[kind]; !still {
+			m.queueDepth.DeleteLabelValues(kind)
+		}
+	}
+	next := make(map[string]struct{}, len(byKind))
 	for kind, depth := range byKind {
 		m.queueDepth.WithLabelValues(kind).Set(float64(depth))
+		next[kind] = struct{}{}
 	}
+	m.prevKinds = next
 }
 
 // StartQueueScanner polls source every interval and republishes the
 // pending-reply queue depth, until ctx is cancelled. Runs once on entry
 // so a freshly started server reflects the backlog without waiting a
 // full interval. A source error is logged and the last gauge value is
-// left in place (better stale than zeroed-on-blip). Blocking; run in a
-// goroutine. A nil logger falls back to slog.Default.
-func (m *Metrics) StartQueueScanner(ctx context.Context, source QueueDepthSource, interval time.Duration, logger ...*slog.Logger) {
-	log := slog.Default()
-	if len(logger) > 0 && logger[0] != nil {
-		log = logger[0]
+// left in place (better stale than zeroed-on-blip). Each scan is bounded
+// by its own timeout so a hung query cannot stall the loop indefinitely.
+// Blocking; run in a goroutine. A nil logger falls back to slog.Default.
+func (m *Metrics) StartQueueScanner(ctx context.Context, source QueueDepthSource, interval time.Duration, logger *slog.Logger) {
+	if logger == nil {
+		logger = slog.Default()
 	}
 	scan := func() {
-		depths, err := source.QueueDepths(ctx)
+		scanCtx, cancel := context.WithTimeout(ctx, interval)
+		defer cancel()
+		depths, err := source.QueueDepths(scanCtx)
 		if err != nil {
-			log.WarnContext(ctx, "metrics: queue-depth scan failed", "err", err)
+			logger.WarnContext(ctx, "metrics: queue-depth scan failed", "err", err)
 			return
 		}
 		m.SetPendingReplyDepth(depths)
