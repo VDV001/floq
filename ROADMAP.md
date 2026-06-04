@@ -41,7 +41,8 @@
 | Prospects | `/prospects` | CRUD + CSV + verify integration |
 | Sequences | `/sequences` | Multi-step builder, channel-per-step |
 | Outbound | `/outbound` | Очередь отправки + tracking |
-| Analytics | `/analytics/sequences`, `/analytics/cost`, `/analytics/hot-leads` | Sequence performance + cost-effectiveness + hot-leads list (v0.28.0, hot-leads v0.39.0) |
+| Analytics | `/analytics/sequences`, `/analytics/cost`, `/analytics/inbox`, `/analytics/hot-leads` | Дашборд из 4 view'ов: sequence performance + cost + inbox flow + hot-leads (v0.28.0 → inbox-flow v0.40.0; эпик #91 закрыт) |
+| Integrations | `/settings` → секция 1С | Двусторонняя интеграция с 1С: webhook-приём + outbound OData + маппинг + reconcile + UI настроек/секретов (эпик #105, v0.41.0) |
 | Parser | `/parser` | 2GIS + website scraping |
 | Settings | `/settings` | Sub-hooks per concern (AI/SMTP/IMAP/Resend/Telegram bot/account) |
 
@@ -59,7 +60,7 @@
 
 - docker-compose: PostgreSQL 18, Redis 8, Ollama (опционально)
 - OrbStack на dev-машине
-- Миграции: golang-migrate, 001-032 (audit_log, pending_replies, decided_by FK, и т.д.; 32 файла .up.sql)
+- Миграции: golang-migrate, 001-036 (audit_log, pending_replies, decided_by FK, onec_credentials/mapping, audit_log_daily retention, и т.д.; 36 файлов .up.sql)
 - Защита от DoS на body size: 10 MiB outer ceiling + 1 MiB JSON-specific cap (defence in depth)
 - CLA bot, CI gates: Backend Go, Frontend Next.js, Redteam corpus, Tooling
 - Release automation: `bin/release.sh X.Y.Z` синкает 4 version sync-points + tag + GH release
@@ -78,8 +79,8 @@
 ### Outbound HITL
 Inbound имеет full approve-before-send. Outbound (sequences) пока шлёт автоматически. Возможный mirror: each scheduled outbound message → `pending_replies` queue → operator approve. Trade-off: добавляет latency + manual surface vs. lower risk на cold outreach.
 
-### Analytics dashboard (частично shipped в v0.28.0)
-`/analytics/sequences` (#95) — per-sequence sent/delivered/opened/replied/converted с rates. `/analytics/cost` (#96) — total AI-cost + cost-per-{lead,qualified,converted,draft} + by-request-type/by-model breakdowns. `/analytics/hot-leads` (#98, v0.39.0) — лиды по убыванию скора квалификации, фильтры status/channel/period. Осталось: View 3 inbox flow (#97) — закроет parent #91.
+### Analytics dashboard (shipped — эпик #91 закрыт)
+`/analytics/sequences` (#95) — per-sequence sent/delivered/opened/replied/converted с rates. `/analytics/cost` (#96) — total AI-cost + cost-per-{lead,qualified,converted,draft} + by-request-type/by-model breakdowns. `/analytics/inbox` (#97, v0.40.0) — inbox flow: leads by channel/status + score-гистограмма + pending-replies approve-rate + p50/p95 time-to-decide. `/analytics/hot-leads` (#98, v0.39.0) — лиды по убыванию скора квалификации, фильтры status/channel/period. Все 4 view готовы.
 
 ### Multi-workspace
 Текущая модель: один владелец (`cfg.OwnerUserID`), single-tenant в продакшене с multi-tenant adapters внутри. Реальная multi-team разработка требует переосмысления — workspace как aggregate, RBAC, billing-per-workspace.
