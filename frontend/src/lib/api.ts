@@ -380,6 +380,18 @@ export const api = {
   },
   getInboxAnalytics: (period: AnalyticsPeriod = "month") =>
     apiFetch<InboxFlowResponse>(`/api/analytics/inbox?period=${period}`),
+
+  // 1C integration settings
+  getOnecConfig: () => apiFetch<OnecConfig>("/api/onec/config"),
+  updateOnecConfig: (data: OnecConfigUpdate) =>
+    apiFetch<OnecConfig>("/api/onec/config", { method: "PUT", body: JSON.stringify(data) }),
+  regenerateOnecWebhook: () =>
+    apiFetch<{ webhook_secret: string }>("/api/onec/config/regenerate-webhook", { method: "POST" }),
+  testOnec: (data: { base_url?: string; auth_type?: string; auth_secret?: string }) =>
+    apiFetch<OnecTestResult>("/api/onec/test", { method: "POST", body: JSON.stringify(data) }),
+  getOnecMapping: () => apiFetch<OnecMapping>("/api/onec/mapping"),
+  updateOnecMapping: (rules: OnecMappingRule[]) =>
+    apiFetch<{ saved: boolean }>("/api/onec/mapping", { method: "PUT", body: JSON.stringify({ rules }) }),
   getCostSummary: (from: string, to: string) =>
     apiFetch<CostSummaryResponse>(`/api/audit/cost-summary?from=${from}&to=${to}`),
 };
@@ -706,6 +718,45 @@ export interface HotLeadsParams {
 export interface ScoreBucket {
   range: string;
   count: number;
+}
+
+// 1C integration. Secrets (auth_secret, webhook_secret) arrive MASKED from the
+// API — never the raw value. Send a new auth_secret only when replacing it; an
+// empty or masked value tells the backend to keep the stored one.
+export type OnecAuthType = "basic" | "token";
+
+export interface OnecConfig {
+  base_url: string;
+  auth_type: OnecAuthType;
+  auth_secret: string; // masked
+  webhook_secret: string; // masked
+  is_active: boolean;
+}
+
+export interface OnecConfigUpdate {
+  base_url?: string;
+  auth_type?: OnecAuthType;
+  auth_secret?: string;
+  is_active?: boolean;
+}
+
+export type OnecEventKind = "payment" | "counterparty_created" | "order_status" | "shipment";
+
+export interface OnecMappingRule {
+  external_type: string;
+  kind: OnecEventKind;
+  email_field: string;
+  name_field?: string;
+  company_field?: string;
+}
+
+export interface OnecMapping {
+  rules: OnecMappingRule[];
+}
+
+export interface OnecTestResult {
+  success: boolean;
+  error?: string;
 }
 
 // InboxFlowResponse is the View 3 (inbox flow) read model. by_channel /
