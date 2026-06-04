@@ -168,3 +168,44 @@ func TestMaxBodyBytes_StackedUnderJSONBodyCap(t *testing.T) {
 		t.Fatalf("expected inner JSON cap (10) to trip first, got Limit=%d", maxBytesErr.Limit)
 	}
 }
+
+func TestMaxBodyBytesWithUploads_PathSelectsCap(t *testing.T) {
+	// Small caps exercise the path-based selection without multi-MiB bodies:
+	// general=10, upload=50.
+	mw := MaxBodyBytesWithUploads(10, 50)
+
+	readErr := func(path string, n int) error {
+		var captured error
+		next := http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+			_, captured = io.ReadAll(r.Body)
+		})
+		req := httptest.NewRequest(http.MethodPost, path, bytes.NewBufferString(strings.Repeat("x", n)))
+		mw(next).ServeHTTP(httptest.NewRecorder(), req)
+		return captured
+	}
+
+	tests := []struct {
+		name    string
+		path    string
+		n       int
+		wantErr bool
+	}{
+		{"import under upload cap", "/api/prospects/import", 30, false},
+		{"import over upload cap", "/api/leads/import", 60, true},
+		{"non-import over general cap", "/api/prospects", 30, true},
+		{"non-import under general cap", "/api/leads", 5, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := readErr(tt.path, tt.n)
+			if tt.wantErr {
+				var maxErr *http.MaxBytesError
+				if !errors.As(err, &maxErr) {
+					t.Fatalf("expected *http.MaxBytesError, got %T (%v)", err, err)
+				}
+			} else if err != nil {
+				t.Fatalf("expected read under cap to succeed, got %v", err)
+			}
+		})
+	}
+}
