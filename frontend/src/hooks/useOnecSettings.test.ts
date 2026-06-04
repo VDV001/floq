@@ -105,6 +105,13 @@ describe("useOnecSettings", () => {
     expect(api.updateOnecMapping).toHaveBeenCalledWith(result.current.rules);
   });
 
+  it("surfaces a load error instead of swallowing it", async () => {
+    vi.mocked(api.getOnecConfig).mockRejectedValueOnce(new Error("network"));
+    const { result } = renderHook(() => useOnecSettings());
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    expect(result.current.loadError).toBeTruthy();
+  });
+
   it("runs a connection test with the current form values", async () => {
     const { result } = renderHook(() => useOnecSettings());
     await waitFor(() => expect(result.current.loading).toBe(false));

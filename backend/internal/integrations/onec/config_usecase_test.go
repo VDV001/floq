@@ -106,6 +106,18 @@ func TestConfigUseCase_GetConfig_MasksSecrets(t *testing.T) {
 	assert.NotContains(t, v.AuthSecret, "abcdef")
 }
 
+func TestConfigUseCase_GetConfig_MasksShortSecretFully(t *testing.T) {
+	// A short secret (≤4 chars) must not be revealed by the mask — return a
+	// fixed placeholder instead of leaking the whole value.
+	store := &fakeConfigStore{found: true, cfg: storedCfg(t, "https://1c.example.com", domain.AuthTypeBasic, "abc", "", false)}
+	uc := newUC(store, &fakeMappingStore{}, &fakeTester{}, &fakeSecretGen{})
+
+	v, err := uc.GetConfig(context.Background(), uuid.New())
+	require.NoError(t, err)
+	assert.NotContains(t, v.AuthSecret, "abc", "short secret must not leak")
+	assert.NotEqual(t, "", v.AuthSecret, "but still indicates a secret is set")
+}
+
 func TestConfigUseCase_GetConfig_DefaultsWhenNoRow(t *testing.T) {
 	store := &fakeConfigStore{found: false}
 	uc := newUC(store, &fakeMappingStore{}, &fakeTester{}, &fakeSecretGen{})

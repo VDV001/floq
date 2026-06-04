@@ -29,6 +29,7 @@ const EMPTY_RULE: OnecMappingRule = { external_type: "", kind: "payment", email_
 export function useOnecSettings() {
   const [config, setConfig] = useState<OnecConfig | null>(null);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   // Config form state (secrets start blank; the masked value is shown as a
   // placeholder, never as a value).
@@ -67,7 +68,10 @@ export function useOnecSettings() {
         applyConfig(c);
         setRules(m.rules);
       })
-      .catch(() => {})
+      .catch((e) => {
+        if (!alive) return;
+        setLoadError(e instanceof Error ? e.message : "Не удалось загрузить настройки 1С");
+      })
       .finally(() => {
         if (alive) setLoading(false);
       });
@@ -151,6 +155,7 @@ export function useOnecSettings() {
 
   return {
     loading,
+    loadError,
     config,
     // config form
     baseURL,

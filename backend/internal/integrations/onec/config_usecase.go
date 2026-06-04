@@ -252,14 +252,16 @@ func maskedView(c *domain.CredentialsConfig) *ConfigView {
 	}
 }
 
-// maskSecret reveals only the last 4 characters of a secret (mirrors the
-// settings package), so the read API never exposes a usable credential.
+// maskSecret reveals only the last 4 characters of a secret so the read API
+// never exposes a usable credential. A secret too short to mask meaningfully
+// (≤4 chars) is replaced wholesale rather than leaked — stricter than the
+// settings package's copy, which returns the short value verbatim.
 func maskSecret(s string) string {
 	if s == "" {
 		return ""
 	}
 	if len(s) <= 4 {
-		return "..." + s
+		return "••••"
 	}
 	return "..." + s[len(s)-4:]
 }
