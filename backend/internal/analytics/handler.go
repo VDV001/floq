@@ -201,8 +201,99 @@ func (h *handler) getHotLeads(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// inboxScoreBucketWire / inboxQualDistributionWire / inboxLeadsWire /
+// inboxPendingRepliesWire mirror the InboxFlowDTO sections onto the JSON
+// surface. approve_rate lives here (not in the DTO) because it's a
+// derived presentation value — the DTO stays count-pure.
+type inboxScoreBucketWire struct {
+	Range string `json:"range"`
+	Count int    `json:"count"`
+}
+
+type inboxQualDistributionWire struct {
+	ScoreHistogram []inboxScoreBucketWire `json:"score_histogram"`
+	AvgScore       float64                `json:"avg_score"`
+}
+
+type inboxLeadsWire struct {
+	Total     int            `json:"total"`
+	ByChannel map[string]int `json:"by_channel"`
+	ByStatus  map[string]int `json:"by_status"`
+}
+
+type inboxPendingRepliesWire struct {
+	Approved               int     `json:"approved"`
+	Rejected               int     `json:"rejected"`
+	CurrentlyPending       int     `json:"currently_pending"`
+	ApproveRate            float64 `json:"approve_rate"`
+	P50TimeToDecideSeconds int     `json:"p50_time_to_decide_seconds"`
+	P95TimeToDecideSeconds int     `json:"p95_time_to_decide_seconds"`
+}
+
+type inboxFlowResponse struct {
+	Period         costRatiosPeriodResponse  `json:"period"`
+	Leads          inboxLeadsWire            `json:"leads"`
+	Qualifications inboxQualDistributionWire `json:"qualifications"`
+	PendingReplies inboxPendingRepliesWire   `json:"pending_replies"`
+}
+
 func (h *handler) getInboxFlow(w http.ResponseWriter, r *http.Request) {
-	httputil.WriteError(w, http.StatusNotImplemented, "not implemented")
+	userID, ok := httputil.UserIDFromContext(r.Context())
+	if !ok {
+		httputil.WriteError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+
+	periodParam := r.URL.Query().Get("period")
+	if periodParam == "" {
+		periodParam = string(PeriodMonth) // default for the inbox dashboard
+	}
+	period, err := ParsePeriod(periodParam)
+	if err != nil {
+		httputil.WriteError(w, http.StatusBadRequest, "period must be one of: week, month, all")
+		return
+	}
+
+	from, to := periodWindow(period, time.Now().UTC())
+	dto, err := h.uc.GetInboxFlow(r.Context(), userID, from, to)
+	if err != nil {
+		slog.ErrorContext(r.Context(), "analytics: get inbox flow failed",
+			slog.String("user_id", userID.String()),
+			slog.String("period", string(period)),
+			slog.Any("err", err))
+		httputil.WriteError(w, http.StatusInternalServerError, "failed to load inbox analytics")
+		return
+	}
+
+	histogram := make([]inboxScoreBucketWire, 0, len(dto.Qualifications.ScoreHistogram))
+	for _, b := range dto.Qualifications.ScoreHistogram {
+		histogram = append(histogram, inboxScoreBucketWire{Range: b.Range, Count: b.Count})
+	}
+
+	pr := dto.PendingReplies
+	httputil.WriteJSON(w, http.StatusOK, inboxFlowResponse{
+		Period: costRatiosPeriodResponse{
+			From: dto.PeriodFrom.UTC().Format(time.RFC3339),
+			To:   dto.PeriodTo.UTC().Format(time.RFC3339),
+		},
+		Leads: inboxLeadsWire{
+			Total:     dto.Leads.Total,
+			ByChannel: dto.Leads.ByChannel,
+			ByStatus:  dto.Leads.ByStatus,
+		},
+		Qualifications: inboxQualDistributionWire{
+			ScoreHistogram: histogram,
+			AvgScore:       dto.Qualifications.AvgScore,
+		},
+		PendingReplies: inboxPendingRepliesWire{
+			Approved:               pr.Approved,
+			Rejected:               pr.Rejected,
+			CurrentlyPending:       pr.CurrentlyPending,
+			ApproveRate:            safeRatio(int64(pr.Approved), int64(pr.Approved+pr.Rejected)),
+			P50TimeToDecideSeconds: pr.P50TimeToDecideSeconds,
+			P95TimeToDecideSeconds: pr.P95TimeToDecideSeconds,
+		},
+	})
 }
 
 // safeRatio divides numerator by denominator, returning 0 when the
