@@ -21,9 +21,27 @@ func NewHandler(repo UserRepository, jwtSecret string) *Handler {
 	return &Handler{repo: repo, jwtSecret: []byte(jwtSecret)}
 }
 
-func RegisterRoutes(r chi.Router, h *Handler) {
-	r.Post("/api/auth/register", h.Register)
-	r.Post("/api/auth/login", h.Login)
+// RegisterRoutes mounts the public auth endpoints. loginMW and
+// registerMW are per-route rate-limit middlewares supplied by the
+// composition root (DI) — the limits and storage backend live there,
+// not in this package. Either may be nil (e.g. in tests), in which case
+// that route is mounted without a limiter.
+func RegisterRoutes(r chi.Router, h *Handler, loginMW, registerMW func(http.Handler) http.Handler) {
+	register := http.HandlerFunc(h.Register)
+	login := http.HandlerFunc(h.Login)
+	if registerMW != nil {
+		r.Method(http.MethodPost, "/api/auth/register", registerMW(register))
+	} else {
+		r.Method(http.MethodPost, "/api/auth/register", register)
+	}
+	if loginMW != nil {
+		r.Method(http.MethodPost, "/api/auth/login", loginMW(login))
+	} else {
+		r.Method(http.MethodPost, "/api/auth/login", login)
+	}
+	// Refresh is intentionally not rate-limited: it requires a valid
+	// signed refresh token, which is not brute-forceable, so a per-IP
+	// cap would only risk throttling legitimate token rotation.
 	r.Post("/api/auth/refresh", h.Refresh)
 }
 
