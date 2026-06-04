@@ -7,6 +7,7 @@ import { cn } from "@/lib/utils";
 const TABS = [
   { href: "/analytics/sequences", label: "Sequences" },
   { href: "/analytics/cost", label: "Затраты" },
+  { href: "/analytics/hot-leads", label: "Горячие лиды" },
 ];
 
 // AnalyticsTabs renders the sub-navigation for /analytics/* pages.
