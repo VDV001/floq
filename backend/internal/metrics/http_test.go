@@ -56,6 +56,24 @@ func TestHTTPMiddleware_RecordsErrorStatus(t *testing.T) {
 	assert.Equal(t, 0.0, testutil.ToFloat64(m.RequestsCounter("/api/leads/{id}", http.MethodGet, "200")))
 }
 
+func TestHTTPMiddleware_PreservesResponseWriterCapabilities(t *testing.T) {
+	m := metrics.New()
+	var sawFlusher bool
+	r := chi.NewRouter()
+	r.Use(m.HTTPMiddleware)
+	r.Get("/stream", func(w http.ResponseWriter, _ *http.Request) {
+		// httptest.ResponseRecorder implements http.Flusher; the metrics
+		// wrapper must not hide it from downstream handlers (SSE/stream).
+		_, sawFlusher = w.(http.Flusher)
+		w.WriteHeader(http.StatusOK)
+	})
+
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/stream", nil))
+
+	assert.True(t, sawFlusher, "wrapped ResponseWriter must still expose http.Flusher")
+}
+
 func TestHTTPMiddleware_SkipsMetricsEndpointSelf(t *testing.T) {
 	m := metrics.New()
 	r := chi.NewRouter()
