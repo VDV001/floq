@@ -26,6 +26,7 @@ func RegisterRoutes(r chi.Router, uc *UseCase) {
 	r.Get("/api/analytics/sequences", h.getSequenceStats)
 	r.Get("/api/analytics/cost-ratios", h.getCostRatios)
 	r.Get("/api/analytics/hot-leads", h.getHotLeads)
+	r.Get("/api/analytics/inbox", h.getInboxFlow)
 }
 
 type handler struct {
@@ -198,6 +199,10 @@ func (h *handler) getHotLeads(w http.ResponseWriter, r *http.Request) {
 		TotalMatching: dto.TotalMatching,
 		LimitApplied:  dto.LimitApplied,
 	})
+}
+
+func (h *handler) getInboxFlow(w http.ResponseWriter, r *http.Request) {
+	httputil.WriteError(w, http.StatusNotImplemented, "not implemented")
 }
 
 // safeRatio divides numerator by denominator, returning 0 when the

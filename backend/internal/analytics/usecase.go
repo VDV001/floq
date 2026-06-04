@@ -13,9 +13,10 @@ import (
 // audit_log + sequence stats joined together) don't have to rewire
 // every handler.
 type UseCase struct {
-	seq  SequenceStatsReader
-	cost CostRatiosReader
-	hot  HotLeadsReader
+	seq   SequenceStatsReader
+	cost  CostRatiosReader
+	hot   HotLeadsReader
+	inbox InboxFlowReader
 }
 
 // Option configures optional read ports on the UseCase. Used for ports
@@ -25,6 +26,11 @@ type Option func(*UseCase)
 // WithHotLeadsReader wires the View 4 hot-leads reader.
 func WithHotLeadsReader(h HotLeadsReader) Option {
 	return func(uc *UseCase) { uc.hot = h }
+}
+
+// WithInboxFlowReader wires the View 3 inbox-flow reader.
+func WithInboxFlowReader(i InboxFlowReader) Option {
+	return func(uc *UseCase) { uc.inbox = i }
 }
 
 // NewUseCase wires the read ports. seq and cost may be nil if the
@@ -50,6 +56,12 @@ func (uc *UseCase) GetHotLeads(ctx context.Context, userID uuid.UUID, filter Hot
 // layer only sees the typed value.
 func (uc *UseCase) GetSequenceStats(ctx context.Context, userID uuid.UUID, period Period) ([]SequenceStatsDTO, error) {
 	return uc.seq.GetSequenceStats(ctx, userID, period)
+}
+
+// GetInboxFlow forwards to the inbox-flow reader. The [from, to) window
+// is resolved at the handler boundary from the period query param.
+func (uc *UseCase) GetInboxFlow(ctx context.Context, userID uuid.UUID, from, to time.Time) (*InboxFlowDTO, error) {
+	return uc.inbox.GetInboxFlow(ctx, userID, from, to)
 }
 
 // GetCostRatios forwards the call to the cost-ratios reader. The
