@@ -27,6 +27,19 @@ const clientMaxAttempts = 3
 // third (200ms → 400ms), matching internal/outbound.
 const clientInitialBackoff = 200 * time.Millisecond
 
+// Response body read caps: a created object is a single small record; a
+// reconcile read is a bounded array (see reconcileWindow), so it gets more room
+// but is still capped to bound memory on a misbehaving endpoint.
+const (
+	maxCreateRespBytes = 1 << 20 // 1 MiB
+	maxListRespBytes   = 8 << 20 // 8 MiB
+)
+
+// reconcileWindow bounds how many recent events Floq asks 1C for per pass via
+// OData $top, so the read endpoint cannot return an unbounded backlog. A tenant
+// with more missed events than this is caught over successive passes.
+const reconcileWindow = 500
+
 // HTTPClient is the HTTP/OData implementation of OneCClient. It is stateless
 // per tenant — credentials are passed per call — so a single instance serves
 // every user.
@@ -113,7 +126,7 @@ type eventDTO struct {
 // ListEvents GETs the tenant's recent 1C events for reconciliation. Retries
 // transport errors and 5xx; a 4xx is terminal.
 func (c *HTTPClient) ListEvents(ctx context.Context, creds *domain.OutboundCredentials) ([]RawInboundEvent, error) {
-	url := creds.BaseURL + reconcileEventsPath + "?$format=json"
+	url := fmt.Sprintf("%s%s?$format=json&$top=%d", creds.BaseURL, reconcileEventsPath, reconcileWindow)
 
 	var events []RawInboundEvent
 	err := c.doRetrying(ctx, http.MethodGet, url, nil, creds, func(resp *http.Response) (bool, error) {
@@ -180,7 +193,7 @@ func (c *HTTPClient) doRetrying(ctx context.Context, method, url string, body []
 // array on 2xx. Signature mirrors handleCreateResponse.
 func handleListResponse(resp *http.Response) ([]RawInboundEvent, bool, error) {
 	defer resp.Body.Close()
-	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
+	raw, _ := io.ReadAll(io.LimitReader(resp.Body, maxListRespBytes))
 
 	switch {
 	case resp.StatusCode >= 200 && resp.StatusCode < 300:
@@ -220,7 +233,7 @@ func setAuth(req *http.Request, creds *domain.OutboundCredentials) {
 // terminal 4xx. It always drains and closes the body.
 func handleCreateResponse(resp *http.Response) (string, bool, error) {
 	defer resp.Body.Close()
-	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	raw, _ := io.ReadAll(io.LimitReader(resp.Body, maxCreateRespBytes))
 
 	switch {
 	case resp.StatusCode >= 200 && resp.StatusCode < 300:
