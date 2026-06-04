@@ -12,6 +12,12 @@ import (
 // defence-in-depth stack with JSONBodyCap.
 const DefaultMaxBodyBytes int64 = 10 * 1024 * 1024
 
+// DefaultMaxUploadBytes is the ceiling for multipart CSV-import uploads
+// (prospects/leads). Higher than DefaultMaxBodyBytes because legitimate
+// enterprise imports can be large (≈50-100K rows); only the import routes get
+// this looser cap, selected by path in MaxBodyBytesWithUploads.
+const DefaultMaxUploadBytes int64 = 50 * 1024 * 1024
+
 // DefaultMaxJSONBodyBytes is the default cap applied by JSONBodyCap.
 // 1 MiB is far beyond any structured JSON payload Floq accepts and far
 // below the DoS threshold. The inner (tighter) layer in the
@@ -32,6 +38,32 @@ func MaxBodyBytes(maxBytes int64) func(http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if r.Body != nil {
 				r.Body = http.MaxBytesReader(w, r.Body, maxBytes)
+			}
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
+// MaxBodyBytesWithUploads is the outer body ceiling that lets CSV-import
+// uploads exceed the general limit. It applies generalMax to every request,
+// except paths ending in "/import" (the multipart upload routes) which get
+// uploadMax.
+//
+// Why path-based and not a per-route middleware: http.MaxBytesReader is
+// smallest-wins, so a higher inner cap on the import route cannot loosen a lower
+// ancestor cap. The upload routes therefore must NOT sit under the general
+// ceiling at all — selecting the cap by path here keeps both limits in one
+// documented place instead of splitting the router. JSONBodyCap still composes
+// on top, so JSON traffic trips its tighter 1 MiB cap first.
+func MaxBodyBytesWithUploads(generalMax, uploadMax int64) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.Body != nil {
+				limit := generalMax
+				if strings.HasSuffix(r.URL.Path, "/import") {
+					limit = uploadMax
+				}
+				r.Body = http.MaxBytesReader(w, r.Body, limit)
 			}
 			next.ServeHTTP(w, r)
 		})
