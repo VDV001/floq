@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -11,6 +12,51 @@ import (
 
 	"github.com/daniil/floq/internal/integrations/onec/domain"
 )
+
+// Connection-probe sentinels for the settings "test connection" action (#110).
+// Technical/infrastructure errors — the handler maps them to user-facing
+// Russian strings; they are not domain errors.
+var (
+	// ErrOnecAuth means 1C rejected the credentials (401/403).
+	ErrOnecAuth = errors.New("onec: 1C rejected credentials")
+	// ErrOnecUnreachable means the endpoint could not be reached (DNS, dial,
+	// TLS, timeout — a transport-level failure before any HTTP status).
+	ErrOnecUnreachable = errors.New("onec: 1C endpoint unreachable")
+	// ErrOnecBadResponse means 1C answered but with an unexpected non-2xx,
+	// non-auth status.
+	ErrOnecBadResponse = errors.New("onec: 1C returned an unexpected response")
+)
+
+// TestConnection probes the tenant's 1C endpoint with a single authenticated
+// GET to the OData root — enough to confirm reachability and that the
+// credentials are accepted, without mutating anything. No retries: a
+// connectivity check is a one-shot, bounded by the caller's context timeout.
+// The OData root (not /$metadata) is used because a published 1C service always
+// answers at its root, whereas $metadata pathing varies by install (#108).
+func (c *HTTPClient) TestConnection(ctx context.Context, creds *domain.OutboundCredentials) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, creds.BaseURL, nil)
+	if err != nil {
+		return fmt.Errorf("onec: build request: %w", err)
+	}
+	req.Header.Set("Accept", "application/json")
+	setAuth(req, creds)
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("%w: %v", ErrOnecUnreachable, err)
+	}
+	defer resp.Body.Close()
+	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, maxCreateRespBytes))
+
+	switch {
+	case resp.StatusCode >= 200 && resp.StatusCode < 300:
+		return nil
+	case resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden:
+		return fmt.Errorf("%w (%d)", ErrOnecAuth, resp.StatusCode)
+	default:
+		return fmt.Errorf("%w (%d)", ErrOnecBadResponse, resp.StatusCode)
+	}
+}
 
 // counterpartyCatalogPath is the OData resource for counterparties. The
 // connector is universal (the concrete 1C config is out of scope, #108), so we

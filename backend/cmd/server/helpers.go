@@ -2,7 +2,9 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/tls"
+	"encoding/hex"
 	"fmt"
 	"log"
 	"net"
@@ -13,6 +15,8 @@ import (
 	"github.com/daniil/floq/internal/ai"
 	"github.com/daniil/floq/internal/ai/providers"
 	"github.com/daniil/floq/internal/config"
+	"github.com/daniil/floq/internal/integrations/onec"
+	"github.com/daniil/floq/internal/integrations/onec/domain"
 	"github.com/daniil/floq/internal/leads"
 	"github.com/daniil/floq/internal/proxy"
 	"github.com/daniil/floq/internal/settings"
@@ -20,6 +24,25 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	openaiopt "github.com/openai/openai-go/option"
 )
+
+// onecSecretGenerator produces 1C webhook secrets from crypto/rand. This is the
+// infra side of the onec.SecretGenerator port — the usecase stays oblivious to
+// how the entropy is sourced.
+type onecSecretGenerator struct{}
+
+// WebhookSecret returns the hex encoding of WebhookSecretBytes random bytes.
+func (onecSecretGenerator) WebhookSecret() (string, error) {
+	b := make([]byte, domain.WebhookSecretBytes)
+	if _, err := rand.Read(b); err != nil {
+		return "", fmt.Errorf("onec: read random: %w", err)
+	}
+	return hex.EncodeToString(b), nil
+}
+
+// buildOnecSecretGenerator returns the crypto/rand webhook-secret generator.
+func buildOnecSecretGenerator() onec.SecretGenerator {
+	return onecSecretGenerator{}
+}
 
 func buildUsageCounter(repo *leads.Repository) settings.UsageCounter {
 	return func(ctx context.Context, userID uuid.UUID) (int, int, error) {

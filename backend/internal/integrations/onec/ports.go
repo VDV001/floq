@@ -75,6 +75,40 @@ type OneCClient interface {
 	CreateCounterparty(ctx context.Context, creds *domain.OutboundCredentials, draft *domain.CounterpartyDraft) (externalRef string, err error)
 }
 
+// ConfigStore persists a user's editable 1C credentials config (#110). The
+// postgres Repository satisfies it. GetCredentialsConfig returns found=false
+// when the user has no row yet (→ the usecase serves defaults); unlike
+// GetOutboundCredentials it returns the row regardless of is_active/base_url.
+type ConfigStore interface {
+	GetCredentialsConfig(ctx context.Context, userID uuid.UUID) (*domain.CredentialsConfig, bool, error)
+	UpsertCredentialsConfig(ctx context.Context, userID uuid.UUID, cfg *domain.CredentialsConfig) error
+}
+
+// MappingConfigStore reads/writes a user's full mapping config (active or not)
+// for the settings editor. Satisfied by the Repository via the existing
+// GetMappingConfig/SaveMappingConfig — distinct from inbound MappingStore,
+// which only loads the ACTIVE config.
+type MappingConfigStore interface {
+	GetMappingConfig(ctx context.Context, userID uuid.UUID) (*domain.MappingConfig, error)
+	SaveMappingConfig(ctx context.Context, cfg *domain.MappingConfig, isActive bool) error
+}
+
+// SecretGenerator produces a high-entropy webhook secret. The crypto/rand
+// implementation lives in cmd/server (infra), so generation stays out of the
+// usecase/domain and is fakeable in tests.
+type SecretGenerator interface {
+	WebhookSecret() (string, error)
+}
+
+// ConnectionTester probes a tenant's 1C endpoint to verify reachability and
+// credentials for the settings "test connection" action (#110). Kept separate
+// from OneCClient (ISP): the config usecase depends only on the probe, and
+// adding it here doesn't disturb the outbound OneCClient fakes. The HTTP/OData
+// implementation (client.go) satisfies it.
+type ConnectionTester interface {
+	TestConnection(ctx context.Context, creds *domain.OutboundCredentials) error
+}
+
 // EventApplier performs the domain action for a resolved 1C event. Implemented
 // by a cross-context adapter (cmd/server/adapters.go) over leads/prospects —
 // onec never imports those contexts directly. Actions that target an existing

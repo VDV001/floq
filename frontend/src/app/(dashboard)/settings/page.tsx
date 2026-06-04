@@ -13,6 +13,9 @@ import { ResendSection } from "@/components/settings/ResendSection";
 import { SmtpSection } from "@/components/settings/SmtpSection";
 import { AiProviderSection } from "@/components/settings/AiProviderSection";
 import { InboxViewSection } from "@/components/settings/InboxViewSection";
+import { OnecSection } from "@/components/settings/OnecSection";
+import { OnecMappingEditor } from "@/components/settings/OnecMappingEditor";
+import { useOnecSettings } from "@/hooks/useOnecSettings";
 
 export default function SettingsPage() {
   const core = useSettingsCore();
@@ -22,6 +25,7 @@ export default function SettingsPage() {
   const resend = useResendSettings(core.settings, core.setSettings);
   const smtp = useSmtpSettings(core.settings, core.setSettings);
   const ai = useAiSettings(core.settings, core.setSettings);
+  const onec = useOnecSettings();
 
   const [notifyTg, setNotifyTg] = useState(true);
   const [notifyEmail, setNotifyEmail] = useState(false);
@@ -102,6 +106,29 @@ export default function SettingsPage() {
               </div>
             </section>
             <AiProviderSection aiProvider={ai.provider} setAiProvider={ai.setProvider} aiModel={ai.model} setAiModel={ai.setModel} aiApiKey={ai.apiKey} setAiApiKey={ai.setApiKey} maskedKey={ai.maskedKey} showApiKey={ai.showKey} setShowApiKey={ai.setShowKey} active={ai.active} testing={ai.testing} testResult={ai.testResult} setTestResult={ai.setTestResult} hasKey={ai.hasKey} providerDefaults={PROVIDER_DEFAULTS} onTest={ai.test} />
+            {onec.loadError && (
+              <div role="alert" className="rounded-xl bg-red-50 px-6 py-4 text-sm font-medium text-red-600 ring-1 ring-red-200">
+                Не удалось загрузить настройки 1С: {onec.loadError}
+              </div>
+            )}
+            {!onec.loading && !onec.loadError && (
+              <>
+                <OnecSection
+                  baseURL={onec.baseURL} setBaseURL={onec.setBaseURL}
+                  authType={onec.authType} setAuthType={onec.setAuthType}
+                  authSecret={onec.authSecret} setAuthSecret={onec.setAuthSecret} maskedSecret={onec.maskedSecret}
+                  isActive={onec.isActive} setIsActive={onec.setIsActive}
+                  maskedWebhook={onec.maskedWebhook} fullWebhook={onec.fullWebhook}
+                  regenerating={onec.regenerating} onRegenerate={onec.regenerateWebhook}
+                  saving={onec.saving} saveResult={onec.saveResult} onSave={onec.save}
+                  testing={onec.testing} testResult={onec.testResult} setTestResult={onec.setTestResult} onTest={onec.test}
+                />
+                <OnecMappingEditor
+                  rules={onec.rules} addRule={onec.addRule} updateRule={onec.updateRule} removeRule={onec.removeRule}
+                  saving={onec.savingMapping} result={onec.mappingResult} setResult={onec.setMappingResult} onSave={onec.saveMapping}
+                />
+              </>
+            )}
           </div>
         </div>
       </div>
