@@ -378,6 +378,8 @@ export const api = {
     const qs = q.toString();
     return apiFetch<HotLeadsResponse>(`/api/analytics/hot-leads${qs ? `?${qs}` : ""}`);
   },
+  getInboxAnalytics: (period: AnalyticsPeriod = "month") =>
+    apiFetch<InboxFlowResponse>(`/api/analytics/inbox?period=${period}`),
   getCostSummary: (from: string, to: string) =>
     apiFetch<CostSummaryResponse>(`/api/audit/cost-summary?from=${from}&to=${to}`),
 };
@@ -699,6 +701,36 @@ export interface HotLeadsParams {
   status?: LeadStatusFilter;
   channel?: ChannelFilter;
   limit?: number;
+}
+
+export interface ScoreBucket {
+  range: string;
+  count: number;
+}
+
+// InboxFlowResponse is the View 3 (inbox flow) read model. by_channel /
+// by_status are open maps keyed by the lead enum members present in the
+// period. There is no edited_then_approved field — pending_replies
+// stores no original body to diff against, so it's dropped in v1.
+export interface InboxFlowResponse {
+  period: { from: string; to: string };
+  leads: {
+    total: number;
+    by_channel: Record<string, number>;
+    by_status: Record<string, number>;
+  };
+  qualifications: {
+    score_histogram: ScoreBucket[];
+    avg_score: number;
+  };
+  pending_replies: {
+    approved: number;
+    rejected: number;
+    currently_pending: number;
+    approve_rate: number;
+    p50_time_to_decide_seconds: number;
+    p95_time_to_decide_seconds: number;
+  };
 }
 
 export interface CostBreakdownRow {
