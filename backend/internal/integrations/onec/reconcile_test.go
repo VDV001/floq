@@ -57,7 +57,7 @@ func TestReconcileUser_AppliesMissedEvent(t *testing.T) {
 	store := &fakeReconcileStore{creds: reconcileCreds(t)}
 	reader := &fakeReader{events: []RawInboundEvent{{ExternalID: "doc-1", ExternalType: "X", Kind: "payment"}}}
 	proc := &fakeProcessor{fn: func(RawInboundEvent) (ProcessResult, error) {
-		return ProcessResult{Deduped: false}, nil // was missing → freshly applied
+		return ProcessResult{Applied: true}, nil // was missing → freshly applied
 	}}
 	uc := NewReconcileUseCase(store, reader, proc, nil)
 
@@ -107,7 +107,7 @@ func TestReconcileUser_OneBadEventDoesNotStopBatch(t *testing.T) {
 		if in.ExternalID == "bad" {
 			return ProcessResult{}, errors.New("unresolvable")
 		}
-		return ProcessResult{Deduped: false}, nil
+		return ProcessResult{Applied: true}, nil
 	}}
 	uc := NewReconcileUseCase(store, reader, proc, nil)
 
@@ -134,4 +134,44 @@ func TestReconcileAll_IteratesActiveUsers(t *testing.T) {
 
 	require.NoError(t, err)
 	assert.Equal(t, 2, reader.calls, "each active user must be reconciled")
+}
+
+func TestReconcileUser_ListEventsError_Propagates(t *testing.T) {
+	store := &fakeReconcileStore{creds: reconcileCreds(t)}
+	reader := &fakeReader{err: errors.New("1C unreachable")}
+	proc := &fakeProcessor{fn: func(RawInboundEvent) (ProcessResult, error) { return ProcessResult{}, nil }}
+	uc := NewReconcileUseCase(store, reader, proc, nil)
+
+	_, err := uc.ReconcileUser(context.Background(), uuid.New())
+
+	require.Error(t, err, "a read failure must surface so the pass is not silently empty")
+	assert.Equal(t, 0, proc.calls)
+}
+
+func TestReconcileAll_ActiveUsersError_Propagates(t *testing.T) {
+	store := &fakeReconcileStore{activeErr: errors.New("db down")}
+	reader := &fakeReader{}
+	proc := &fakeProcessor{fn: func(RawInboundEvent) (ProcessResult, error) { return ProcessResult{}, nil }}
+	uc := NewReconcileUseCase(store, reader, proc, nil)
+
+	err := uc.ReconcileAll(context.Background())
+
+	require.Error(t, err)
+	assert.Equal(t, 0, reader.calls)
+}
+
+func TestReconcileAll_OneTenantFailureDoesNotStopOthers(t *testing.T) {
+	// First user's read fails; ReconcileAll must still reconcile the second.
+	store := &fakeReconcileStore{
+		activeIDs: []uuid.UUID{uuid.New(), uuid.New()},
+		creds:     reconcileCreds(t),
+	}
+	reader := &fakeReader{err: errors.New("1C unreachable")}
+	proc := &fakeProcessor{fn: func(RawInboundEvent) (ProcessResult, error) { return ProcessResult{}, nil }}
+	uc := NewReconcileUseCase(store, reader, proc, nil)
+
+	err := uc.ReconcileAll(context.Background())
+
+	require.NoError(t, err, "a per-tenant failure is logged, not fatal to the pass")
+	assert.Equal(t, 2, reader.calls, "both tenants attempted despite the first failing")
 }
