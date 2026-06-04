@@ -3,6 +3,8 @@ package analytics
 import (
 	"context"
 	"fmt"
+	"math"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -27,7 +29,136 @@ var (
 	_ SequenceStatsReader = (*Repository)(nil)
 	_ CostRatiosReader    = (*Repository)(nil)
 	_ HotLeadsReader      = (*Repository)(nil)
+	_ InboxFlowReader     = (*Repository)(nil)
 )
+
+// GetInboxFlow composes the View 3 inbound-funnel read model over the
+// [from, to) window: lead volume sliced by channel and status, the
+// qualification-score histogram + mean, and the HITL approval stats
+// (approve/reject/pending counts + time-to-decide percentiles). Three
+// sequential queries — clarity over throughput, the dashboard is not a
+// hot path (mirrors GetCostRatios).
+//
+// Every section is tenant-scoped through its own user_id column. The
+// histogram bands come from the shared scoreBuckets table so the SQL
+// FILTERs and the DTO labels stay in lockstep.
+func (r *Repository) GetInboxFlow(ctx context.Context, userID uuid.UUID, from, to time.Time) (*InboxFlowDTO, error) {
+	dto := &InboxFlowDTO{
+		PeriodFrom: from,
+		PeriodTo:   to,
+		Leads:      LeadsBreakdownDTO{ByChannel: map[string]int{}, ByStatus: map[string]int{}},
+	}
+
+	if err := r.loadLeadsBreakdown(ctx, userID, from, to, &dto.Leads); err != nil {
+		return nil, err
+	}
+	if err := r.loadQualificationDistribution(ctx, userID, from, to, &dto.Qualifications); err != nil {
+		return nil, err
+	}
+	if err := r.loadPendingRepliesStats(ctx, userID, from, to, &dto.PendingReplies); err != nil {
+		return nil, err
+	}
+	return dto, nil
+}
+
+// loadLeadsBreakdown fills total/by-channel/by-status from a single
+// GROUP BY channel, status. Counts are folded into the maps in Go so the
+// query stays one round-trip regardless of how many enum members are
+// present.
+func (r *Repository) loadLeadsBreakdown(ctx context.Context, userID uuid.UUID, from, to time.Time, out *LeadsBreakdownDTO) error {
+	rows, err := r.pool.Query(ctx, `
+		SELECT channel::text, status::text, COUNT(*)
+		FROM leads
+		WHERE user_id = $1 AND created_at >= $2 AND created_at < $3
+		GROUP BY channel, status`,
+		userID, from, to,
+	)
+	if err != nil {
+		return fmt.Errorf("analytics inbox leads breakdown: %w", err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var (
+			channel, status string
+			count           int
+		)
+		if err := rows.Scan(&channel, &status, &count); err != nil {
+			return fmt.Errorf("analytics inbox scan leads breakdown: %w", err)
+		}
+		out.Total += count
+		out.ByChannel[channel] += count
+		out.ByStatus[status] += count
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("analytics inbox leads breakdown iter: %w", err)
+	}
+	return nil
+}
+
+// loadQualificationDistribution fills the score histogram and mean. The
+// per-band COUNT(*) FILTER columns are built from scoreBuckets so the
+// SQL and the DTO labels can't drift; the bounds are compile-time int
+// constants so the fmt-built SQL carries no injection surface. Period
+// scope is on the lead's created_at (same cohort as the leads slice).
+func (r *Repository) loadQualificationDistribution(ctx context.Context, userID uuid.UUID, from, to time.Time, out *QualificationDistributionDTO) error {
+	var sb strings.Builder
+	sb.WriteString("SELECT COALESCE(AVG(q.score), 0)")
+	for i, b := range scoreBuckets {
+		fmt.Fprintf(&sb, ", COUNT(*) FILTER (WHERE q.score BETWEEN %d AND %d) AS b%d", b.Lo, b.Hi, i)
+	}
+	sb.WriteString(`
+		FROM qualifications q
+		JOIN leads l ON l.id = q.lead_id
+		WHERE l.user_id = $1 AND l.created_at >= $2 AND l.created_at < $3`)
+
+	counts := make([]int, len(scoreBuckets))
+	dests := make([]any, 0, len(scoreBuckets)+1)
+	dests = append(dests, &out.AvgScore)
+	for i := range counts {
+		dests = append(dests, &counts[i])
+	}
+	if err := r.pool.QueryRow(ctx, sb.String(), userID, from, to).Scan(dests...); err != nil {
+		return fmt.Errorf("analytics inbox qualification histogram: %w", err)
+	}
+
+	out.ScoreHistogram = make([]ScoreBucketDTO, len(scoreBuckets))
+	for i, b := range scoreBuckets {
+		out.ScoreHistogram[i] = ScoreBucketDTO{Range: b.Label, Count: counts[i]}
+	}
+	return nil
+}
+
+// loadPendingRepliesStats fills the HITL approval slice. approved counts
+// the approved+sent terminal states (both operator approvals); the
+// percentiles are computed in SQL over decided rows (decided_at NOT
+// NULL) via percentile_cont, COALESCEd to 0 so an empty queue scans a
+// number rather than NULL. Seconds are rounded to whole integers at the
+// boundary.
+func (r *Repository) loadPendingRepliesStats(ctx context.Context, userID uuid.UUID, from, to time.Time, out *PendingRepliesStatsDTO) error {
+	var p50, p95 float64
+	err := r.pool.QueryRow(ctx, `
+		SELECT
+		    COUNT(*) FILTER (WHERE status IN ('approved', 'sent')) AS approved,
+		    COUNT(*) FILTER (WHERE status = 'rejected')           AS rejected,
+		    COUNT(*) FILTER (WHERE status = 'pending')            AS pending,
+		    COALESCE(percentile_cont(0.5) WITHIN GROUP (
+		        ORDER BY EXTRACT(EPOCH FROM (decided_at - created_at))
+		    ) FILTER (WHERE decided_at IS NOT NULL), 0) AS p50,
+		    COALESCE(percentile_cont(0.95) WITHIN GROUP (
+		        ORDER BY EXTRACT(EPOCH FROM (decided_at - created_at))
+		    ) FILTER (WHERE decided_at IS NOT NULL), 0) AS p95
+		FROM pending_replies
+		WHERE user_id = $1 AND created_at >= $2 AND created_at < $3`,
+		userID, from, to,
+	).Scan(&out.Approved, &out.Rejected, &out.CurrentlyPending, &p50, &p95)
+	if err != nil {
+		return fmt.Errorf("analytics inbox pending replies: %w", err)
+	}
+	out.P50TimeToDecideSeconds = int(math.Round(p50))
+	out.P95TimeToDecideSeconds = int(math.Round(p95))
+	return nil
+}
 
 // GetSequenceStats returns one row per sequence with activity in the
 // requested period. Sequences with zero outbound rows in the window
