@@ -194,6 +194,11 @@ func TestMaxBodyBytesWithUploads_PathSelectsCap(t *testing.T) {
 		{"import over upload cap", "/api/leads/import", 60, true},
 		{"non-import over general cap", "/api/prospects", 30, true},
 		{"non-import under general cap", "/api/leads", 5, false},
+		// Only an exact "/import" suffix loosens the cap. Variants fall back to
+		// the general ceiling (and would 404 at the router anyway) — they must
+		// never be a way around the tighter limit.
+		{"trailing slash stays general", "/api/leads/import/", 30, true},
+		{"uppercase stays general", "/api/leads/IMPORT", 30, true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

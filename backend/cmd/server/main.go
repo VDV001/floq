@@ -203,16 +203,18 @@ func main() {
 	r.Use(middleware.Recoverer)
 	r.Use(corsMiddleware)
 	// Defence in depth on request body size:
-	//   1) MaxBodyBytes (outer, 10 MiB) — unconditional ceiling so a
-	//      client omitting or spoofing Content-Type cannot stream past
-	//      the cap into a handler. Multipart uploads (importCSV) are
-	//      bounded here as well.
+	//   1) MaxBodyBytesWithUploads (outer) — unconditional ceiling so a client
+	//      omitting or spoofing Content-Type cannot stream past the cap. General
+	//      routes get 10 MiB; the multipart CSV-import routes (/…/import) get
+	//      50 MiB so legitimate enterprise imports fit. Path-based rather than a
+	//      per-route override because MaxBytesReader is smallest-wins — a higher
+	//      inner cap cannot loosen a lower ancestor (#99).
 	//   2) JSONBodyCap (inner, 1 MiB) — tighter cap that fires only for
 	//      application/json bodies; MaxBytesReader composes downward so
 	//      JSON clients trip the inner cap first.
 	//   3) Handler-local caps (e.g. bulk endpoint's 256 KiB) still win
 	//      when wrapped after the middleware — smallest in chain wins.
-	r.Use(httputil.MaxBodyBytes(httputil.DefaultMaxBodyBytes))
+	r.Use(httputil.MaxBodyBytesWithUploads(httputil.DefaultMaxBodyBytes, httputil.DefaultMaxUploadBytes))
 	r.Use(httputil.JSONBodyCap(httputil.DefaultMaxJSONBodyBytes))
 
 	// Health (public)
