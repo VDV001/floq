@@ -26,6 +26,20 @@ type RecordingProvider struct {
 	inner    ai.Provider
 	recorder domain.Recorder
 	logger   *slog.Logger
+	observe  func(*domain.Entry)
+}
+
+// RecordingOption configures a RecordingProvider at construction.
+type RecordingOption func(*RecordingProvider)
+
+// WithObserver registers a side-channel callback invoked with every
+// successfully-constructed Entry, just before it is handed to the
+// Recorder. Used to feed real-time metrics (Prometheus) without coupling
+// the audit layer to the metrics package — the observer fires for both
+// success and error outcomes, and regardless of whether the async
+// recorder later persists or drops the row. It must be non-blocking.
+func WithObserver(fn func(*domain.Entry)) RecordingOption {
+	return func(r *RecordingProvider) { r.observe = fn }
 }
 
 // Compile-time assertions: RecordingProvider always satisfies Provider;
@@ -39,11 +53,15 @@ var (
 // NewRecordingProvider wires the decorator. Pass nil logger to use
 // slog.Default(). The recorder is mandatory — there is no sensible
 // "no-op" mode for the audit layer.
-func NewRecordingProvider(inner ai.Provider, recorder domain.Recorder, logger *slog.Logger) *RecordingProvider {
+func NewRecordingProvider(inner ai.Provider, recorder domain.Recorder, logger *slog.Logger, opts ...RecordingOption) *RecordingProvider {
 	if logger == nil {
 		logger = slog.Default()
 	}
-	return &RecordingProvider{inner: inner, recorder: recorder, logger: logger}
+	rp := &RecordingProvider{inner: inner, recorder: recorder, logger: logger}
+	for _, opt := range opts {
+		opt(rp)
+	}
+	return rp
 }
 
 func (r *RecordingProvider) Name() string { return r.inner.Name() }
@@ -133,6 +151,12 @@ func (r *RecordingProvider) record(ctx context.Context, resp *ai.CompletionResul
 		r.logger.WarnContext(ctx, "audit: entry construction failed, skipping row",
 			"err", entryErr, "provider", r.inner.Name(), "model", model)
 		return
+	}
+	if r.observe != nil {
+		// Real-time metrics hook — fires for every real call (success or
+		// error), before the async Record so a saturated recorder cannot
+		// suppress the "call happened" signal.
+		r.observe(entry)
 	}
 	r.recorder.Record(ctx, entry)
 }
