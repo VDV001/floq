@@ -369,6 +369,15 @@ export const api = {
     apiFetch<SequenceAnalyticsResponse>(`/api/analytics/sequences?period=${period}`),
   getCostRatios: (period: AnalyticsPeriod = "month") =>
     apiFetch<CostRatiosResponse>(`/api/analytics/cost-ratios?period=${period}`),
+  getHotLeads: (params: HotLeadsParams = {}) => {
+    const q = new URLSearchParams();
+    if (params.period) q.set("period", params.period);
+    if (params.status) q.set("status", params.status);
+    if (params.channel) q.set("channel", params.channel);
+    if (params.limit != null) q.set("limit", String(params.limit));
+    const qs = q.toString();
+    return apiFetch<HotLeadsResponse>(`/api/analytics/hot-leads${qs ? `?${qs}` : ""}`);
+  },
   getCostSummary: (from: string, to: string) =>
     apiFetch<CostSummaryResponse>(`/api/audit/cost-summary?from=${from}&to=${to}`),
 };
@@ -663,6 +672,33 @@ export interface CostRatiosResponse {
   cost_per_qualified_lead_usd: number;
   cost_per_converted_usd: number;
   cost_per_draft_sent_usd: number;
+}
+
+export type LeadStatusFilter = "any" | "new" | "qualified" | "in_conversation" | "followup" | "closed";
+export type ChannelFilter = "any" | "telegram" | "email";
+
+export interface HotLead {
+  id: string;
+  contact_name: string;
+  channel: string;
+  status: string;
+  score: number | null;
+  score_reason: string;
+  last_activity_at: string;
+  qualified_at: string | null;
+}
+
+export interface HotLeadsResponse {
+  leads: HotLead[];
+  total_matching: number;
+  limit_applied: number;
+}
+
+export interface HotLeadsParams {
+  period?: AnalyticsPeriod;
+  status?: LeadStatusFilter;
+  channel?: ChannelFilter;
+  limit?: number;
 }
 
 export interface CostBreakdownRow {
