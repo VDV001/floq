@@ -4,12 +4,14 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"time"
 
 	"github.com/daniil/floq/internal/ai"
 	"github.com/daniil/floq/internal/chat"
 	"github.com/daniil/floq/internal/db"
 	"github.com/daniil/floq/internal/inbox"
 	"github.com/daniil/floq/internal/integrations/onec"
+	onecdomain "github.com/daniil/floq/internal/integrations/onec/domain"
 	"github.com/daniil/floq/internal/leads"
 	leadsdomain "github.com/daniil/floq/internal/leads/domain"
 	"github.com/daniil/floq/internal/outbound"
@@ -683,3 +685,67 @@ func (a *onecApplierAdapter) HandleCounterpartyCreated(ctx context.Context, user
 
 // Compile-time check that the adapter satisfies onec.EventApplier.
 var _ onec.EventApplier = (*onecApplierAdapter)(nil)
+
+// --- 1C qualification observer (leads → onec outbound boundary) ---
+//
+// Implements leadsdomain.QualificationObserver so the leads context can fire a
+// post-qualification side-effect without importing onec. It translates a
+// qualified Lead into a CounterpartyDraft and pushes it to 1C. All failures are
+// swallowed (logged) — qualification must never fail because the 1C push did.
+// counterpartyPusher is the narrow slice of the onec outbound use case this
+// adapter needs — kept an interface (not the concrete *onec.OutboundUseCase) so
+// the adapter's branching and goroutine can be unit-tested with a fake.
+type counterpartyPusher interface {
+	PushCounterparty(ctx context.Context, userID uuid.UUID, draft *onecdomain.CounterpartyDraft) error
+}
+
+type onecQualificationAdapter struct {
+	outbound counterpartyPusher
+	logger   *slog.Logger
+}
+
+func newOnecQualificationAdapter(outbound counterpartyPusher, logger *slog.Logger) *onecQualificationAdapter {
+	return &onecQualificationAdapter{outbound: outbound, logger: logger}
+}
+
+// onecPushTimeout bounds the detached counterparty push (HTTP to 1C with
+// retries) independently of the request that triggered qualification.
+const onecPushTimeout = 35 * time.Second
+
+// OnLeadQualified builds a counterparty draft from the lead and pushes it to 1C.
+// A lead with neither name nor email cannot become a counterparty — skipped.
+//
+// The push runs in a detached goroutine on a fresh background context for two
+// distinct reasons:
+//
+//  1. Latency/cancellation isolation (the reason for detaching from the REQUEST
+//     context): a slow 1C must not block the user's /qualify call, and a client
+//     disconnect must not cancel the push mid-flight — which would lose even the
+//     'error' ledger entry the push records.
+//  2. Not bound to the APP-lifecycle context: like the outbound email cron
+//     goroutine, an in-flight push is not awaited on server shutdown, so a push
+//     started inside the shutdown window can be lost. This is a deliberate
+//     trade-off — outbound pushes lost to shutdown (or any gap) are exactly what
+//     the scheduled reconciliation (#109) re-applies idempotently.
+func (a *onecQualificationAdapter) OnLeadQualified(_ context.Context, lead *leadsdomain.Lead) {
+	email := ""
+	if lead.EmailAddress != nil {
+		email = *lead.EmailAddress
+	}
+	draft, err := onecdomain.NewCounterpartyDraft(lead.ContactName, email, lead.Company)
+	if err != nil {
+		a.logger.Info("onec: qualified lead has no name/email; counterparty push skipped", "lead_id", lead.ID)
+		return
+	}
+	userID, leadID := lead.UserID, lead.ID
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), onecPushTimeout)
+		defer cancel()
+		if err := a.outbound.PushCounterparty(ctx, userID, draft); err != nil {
+			a.logger.Warn("onec: counterparty push to 1C failed", "lead_id", leadID, "err", err)
+		}
+	}()
+}
+
+// Compile-time check that the adapter satisfies the leads observer port.
+var _ leadsdomain.QualificationObserver = (*onecQualificationAdapter)(nil)

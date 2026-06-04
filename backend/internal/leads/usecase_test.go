@@ -277,6 +277,54 @@ func TestQualifyLead_HappyPath(t *testing.T) {
 	assert.NotNil(t, repo.upsertedQualification)
 }
 
+type fakeQualObserver struct {
+	calls      int
+	calledWith *domain.Lead
+}
+
+func (f *fakeQualObserver) OnLeadQualified(_ context.Context, lead *domain.Lead) {
+	f.calls++
+	f.calledWith = lead
+}
+
+func TestQualifyLead_NotifiesObserver(t *testing.T) {
+	repo := newMockRepo()
+	leadID := uuid.New()
+	repo.leads[leadID] = &domain.Lead{
+		ID:          leadID,
+		UserID:      uuid.New(),
+		ContactName: "Ivan",
+		Channel:     domain.ChannelTelegram,
+		Status:      domain.StatusNew,
+	}
+	aiSvc := &mockAI{qualifyResult: &domain.Qualification{Score: 90, ProviderUsed: "test"}}
+	obs := &fakeQualObserver{}
+
+	uc := NewUseCase(repo, aiSvc, nil, WithQualificationObserver(obs))
+
+	_, err := uc.QualifyLead(context.Background(), leadID)
+	require.NoError(t, err)
+
+	require.Equal(t, 1, obs.calls, "observer must be notified after a successful qualification")
+	require.NotNil(t, obs.calledWith)
+	assert.Equal(t, leadID, obs.calledWith.ID)
+	assert.Equal(t, domain.StatusQualified, obs.calledWith.Status, "observer sees the qualified lead")
+}
+
+func TestQualifyLead_ObserverNotCalledOnFailure(t *testing.T) {
+	repo := newMockRepo()
+	leadID := uuid.New()
+	repo.leads[leadID] = &domain.Lead{ID: leadID, ContactName: "Ivan", Channel: domain.ChannelTelegram, Status: domain.StatusNew}
+	aiSvc := &mockAI{qualifyErr: fmt.Errorf("ai down")}
+	obs := &fakeQualObserver{}
+
+	uc := NewUseCase(repo, aiSvc, nil, WithQualificationObserver(obs))
+
+	_, err := uc.QualifyLead(context.Background(), leadID)
+	require.Error(t, err)
+	assert.Equal(t, 0, obs.calls, "no qualification → no notification")
+}
+
 func TestQualifyLead_NotFound(t *testing.T) {
 	repo := newMockRepo()
 	uc := NewUseCase(repo, &mockAI{}, nil)

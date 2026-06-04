@@ -239,6 +239,11 @@ func main() {
 		onec.WithLogger(slog.Default()))
 	onec.RegisterRoutes(r, onec.NewHandler(onecUC), onecRepo)
 
+	// Floq→1C outbound: push a counterparty when a lead is qualified. Reuses the
+	// proxy-aware shared HTTP client. Wired onto leadsUC via the observer hook.
+	onecOutboundUC := onec.NewOutboundUseCase(onecRepo, onec.NewHTTPClient(httpClient), slog.Default())
+	leadsUC.SetQualificationObserver(newOnecQualificationAdapter(onecOutboundUC, slog.Default()))
+
 	// Protected routes
 	r.Group(func(r chi.Router) {
 		r.Use(auth.AuthMiddleware(cfg.JWTSecret))

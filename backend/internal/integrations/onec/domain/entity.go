@@ -21,6 +21,10 @@ var (
 	ErrInvalidDirection  = errors.New("onec: invalid sync direction")
 	ErrNilUser           = errors.New("onec: user id is required")
 	ErrNilEvent          = errors.New("onec: external event is required")
+	ErrInvalidSyncStatus = errors.New("onec: invalid sync status")
+	ErrEmptyCounterparty = errors.New("onec: counterparty needs at least a name or email")
+	ErrInvalidAuthType   = errors.New("onec: invalid auth type")
+	ErrEmptyBaseURL      = errors.New("onec: base url is required")
 )
 
 // EventKind is the ubiquitous-language enum of 1C events Floq reacts to.
@@ -72,14 +76,26 @@ func (d SyncDirection) IsValid() bool {
 	return d == DirectionInbound || d == DirectionOutbound
 }
 
-// SyncStatus is the lifecycle state of a ledger entry. #106 only ever records
-// Received (capture). The processed/error transitions arrive with the mapping
-// layer (#107) — intentionally not declared here to avoid dead states.
+// SyncStatus is the lifecycle state of a ledger entry. Inbound capture lands as
+// Received (#106). Outbound pushes to 1C (#108) record their result directly:
+// Processed on a successful POST, Error when 1C rejected/was unreachable.
 type SyncStatus string
 
 const (
-	SyncStatusReceived SyncStatus = "received" // принято, ещё не применено
+	SyncStatusReceived  SyncStatus = "received"  // принято от 1С, ещё не применено
+	SyncStatusProcessed SyncStatus = "processed" // действие успешно выполнено в 1С
+	SyncStatusError     SyncStatus = "error"     // 1С отверг/недоступен
 )
+
+// IsValid reports whether s is a known sync status.
+func (s SyncStatus) IsValid() bool {
+	switch s {
+	case SyncStatusReceived, SyncStatusProcessed, SyncStatusError:
+		return true
+	default:
+		return false
+	}
+}
 
 // ExternalEvent is a value object wrapping a single 1C event. ExternalID +
 // ExternalType form the natural dedup key (a 1C object is uniquely a

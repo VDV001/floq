@@ -42,6 +42,24 @@ type MappingStore interface {
 	GetActiveMappingConfig(ctx context.Context, userID uuid.UUID) (*domain.MappingConfig, error)
 }
 
+// OutboundStore resolves a tenant's outbound connection and persists the push
+// ledger. The postgres Repository satisfies it. GetOutboundCredentials returns
+// ErrOutboundNotConfigured when the tenant has no usable 1C endpoint.
+type OutboundStore interface {
+	GetOutboundCredentials(ctx context.Context, userID uuid.UUID) (*domain.OutboundCredentials, error)
+	OutboundProcessedExists(ctx context.Context, userID uuid.UUID, externalID, externalType string) (bool, error)
+	UpsertOutboundRecord(ctx context.Context, rec *domain.SyncRecord) error
+}
+
+// OneCClient pushes objects to a tenant's 1C endpoint. The HTTP/OData
+// implementation (client.go) satisfies it; the usecase depends on this port so
+// it can be faked in unit tests. CreateCounterparty returns the 1C-assigned
+// reference (Ref_Key) on success — empty is allowed when 1C accepts the create
+// but returns no body.
+type OneCClient interface {
+	CreateCounterparty(ctx context.Context, creds *domain.OutboundCredentials, draft *domain.CounterpartyDraft) (externalRef string, err error)
+}
+
 // EventApplier performs the domain action for a resolved 1C event. Implemented
 // by a cross-context adapter (cmd/server/adapters.go) over leads/prospects —
 // onec never imports those contexts directly. Actions that target an existing
