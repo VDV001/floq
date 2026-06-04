@@ -4,10 +4,18 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/daniil/floq/internal/httputil"
 	"github.com/go-chi/chi/v5"
+)
+
+// Hot-leads limit bounds: default page size and the hard cap that
+// prevents an enormous ?limit from sweeping the whole table.
+const (
+	defaultHotLeadsLimit = 20
+	maxHotLeadsLimit     = 100
 )
 
 // RegisterRoutes mounts the analytics endpoints onto the chi router.
@@ -17,6 +25,7 @@ func RegisterRoutes(r chi.Router, uc *UseCase) {
 	h := &handler{uc: uc}
 	r.Get("/api/analytics/sequences", h.getSequenceStats)
 	r.Get("/api/analytics/cost-ratios", h.getCostRatios)
+	r.Get("/api/analytics/hot-leads", h.getHotLeads)
 }
 
 type handler struct {
@@ -91,6 +100,103 @@ func (h *handler) getSequenceStats(w http.ResponseWriter, r *http.Request) {
 	httputil.WriteJSON(w, http.StatusOK, sequenceStatsResponse{
 		Sequences: wire,
 		Period:    string(period),
+	})
+}
+
+// hotLeadWire mirrors HotLeadDTO onto the JSON surface. Score and
+// QualifiedAt are pointers so an unqualified lead serialises them as
+// null rather than a misleading zero / zero-time.
+type hotLeadWire struct {
+	ID             string  `json:"id"`
+	ContactName    string  `json:"contact_name"`
+	Channel        string  `json:"channel"`
+	Status         string  `json:"status"`
+	Score          *int    `json:"score"`
+	ScoreReason    string  `json:"score_reason"`
+	LastActivityAt string  `json:"last_activity_at"`
+	QualifiedAt    *string `json:"qualified_at"`
+}
+
+type hotLeadsResponse struct {
+	Leads         []hotLeadWire `json:"leads"`
+	TotalMatching int           `json:"total_matching"`
+	LimitApplied  int           `json:"limit_applied"`
+}
+
+// parseHotLeadsLimit clamps the ?limit query value into [1, max],
+// defaulting on missing/garbage/non-positive input. Clamps rather than
+// 400s — a silly limit is a UI nicety, not a client error worth failing.
+func parseHotLeadsLimit(raw string) int {
+	n, err := strconv.Atoi(raw)
+	if err != nil || n < 1 {
+		return defaultHotLeadsLimit
+	}
+	if n > maxHotLeadsLimit {
+		return maxHotLeadsLimit
+	}
+	return n
+}
+
+func (h *handler) getHotLeads(w http.ResponseWriter, r *http.Request) {
+	userID, ok := httputil.UserIDFromContext(r.Context())
+	if !ok {
+		httputil.WriteError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+
+	period, err := ParsePeriod(r.URL.Query().Get("period"))
+	if err != nil {
+		httputil.WriteError(w, http.StatusBadRequest, "period must be one of: week, month, all")
+		return
+	}
+	status, err := ParseStatusFilter(r.URL.Query().Get("status"))
+	if err != nil {
+		httputil.WriteError(w, http.StatusBadRequest, "status must be one of: any, new, qualified, in_conversation, followup, closed")
+		return
+	}
+	channel, err := ParseChannelFilter(r.URL.Query().Get("channel"))
+	if err != nil {
+		httputil.WriteError(w, http.StatusBadRequest, "channel must be one of: any, telegram, email")
+		return
+	}
+	limit := parseHotLeadsLimit(r.URL.Query().Get("limit"))
+
+	dto, err := h.uc.GetHotLeads(r.Context(), userID, HotLeadsFilter{
+		Period:  period,
+		Status:  status,
+		Channel: channel,
+		Limit:   limit,
+	})
+	if err != nil {
+		slog.ErrorContext(r.Context(), "analytics: get hot leads failed",
+			slog.String("user_id", userID.String()),
+			slog.Any("err", err))
+		httputil.WriteError(w, http.StatusInternalServerError, "failed to load hot leads")
+		return
+	}
+
+	wire := make([]hotLeadWire, 0, len(dto.Leads))
+	for _, l := range dto.Leads {
+		row := hotLeadWire{
+			ID:             l.ID.String(),
+			ContactName:    l.ContactName,
+			Channel:        l.Channel,
+			Status:         l.Status,
+			Score:          l.Score,
+			ScoreReason:    l.ScoreReason,
+			LastActivityAt: l.LastActivityAt.UTC().Format(time.RFC3339),
+		}
+		if l.QualifiedAt != nil {
+			qa := l.QualifiedAt.UTC().Format(time.RFC3339)
+			row.QualifiedAt = &qa
+		}
+		wire = append(wire, row)
+	}
+
+	httputil.WriteJSON(w, http.StatusOK, hotLeadsResponse{
+		Leads:         wire,
+		TotalMatching: dto.TotalMatching,
+		LimitApplied:  limit,
 	})
 }
 
