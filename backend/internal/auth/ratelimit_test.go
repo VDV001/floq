@@ -19,7 +19,7 @@ import (
 // these tests exercise the real KeyFunc + Middleware path.
 func limitMW(prefix string, limit int) func(http.Handler) http.Handler {
 	l := ratelimit.NewInMemoryLimiter(limit, time.Minute)
-	return ratelimit.Middleware(l, ratelimit.IPKeyFunc(prefix), nil)
+	return ratelimit.Middleware(l, ratelimit.IPKeyFunc(prefix, false), nil)
 }
 
 func postJSON(t *testing.T, r chi.Router, path string, v any) *httptest.ResponseRecorder {

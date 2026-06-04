@@ -196,10 +196,10 @@ func main() {
 	// buckets from colliding in the shared Redis keyspace.
 	authLoginMW := ratelimit.Middleware(
 		newLimiter(cfg.AuthLoginRateLimit, authLoginRateWindow),
-		ratelimit.IPKeyFunc("ratelimit:auth-login:"), slog.Default())
+		ratelimit.IPKeyFunc("ratelimit:auth-login:", cfg.TrustProxyHeaders), slog.Default())
 	authRegisterMW := ratelimit.Middleware(
 		newLimiter(cfg.AuthRegisterRateLimit, authRegisterRateWindow),
-		ratelimit.IPKeyFunc("ratelimit:auth-register:"), slog.Default())
+		ratelimit.IPKeyFunc("ratelimit:auth-register:", cfg.TrustProxyHeaders), slog.Default())
 
 	// 4. Adapters
 	leadsAI := leads.NewAIAdapter(aiClient)
