@@ -91,16 +91,21 @@ func (u *ReconcileUseCase) ReconcileUser(ctx context.Context, userID uuid.UUID) 
 
 	stats := ReconcileStats{Fetched: len(events)}
 	for _, ev := range events {
+		// Stop promptly on shutdown rather than hammering a cancelled context and
+		// inflating Failed with context.Canceled for every remaining event.
+		if ctx.Err() != nil {
+			return stats, ctx.Err()
+		}
 		res, err := u.processor.ProcessInboundEvent(ctx, userID, ev)
 		switch {
 		case err != nil:
 			stats.Failed++
 			u.logger.Warn("onec: reconcile event failed",
 				"user_id", userID, "external_id", ev.ExternalID, "external_type", ev.ExternalType, "err", err)
-		case res.Deduped:
-			stats.Deduped++
+		case res.Applied:
+			stats.Applied++ // missed/unprocessed event recovered
 		default:
-			stats.Applied++
+			stats.Deduped++ // already processed (or no actionable rule) — no-op
 		}
 	}
 	return stats, nil

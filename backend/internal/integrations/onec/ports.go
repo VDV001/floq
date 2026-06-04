@@ -16,6 +16,10 @@ type InsertOutcome struct {
 	// content changed. The caller decides what to do (we log it); a silent
 	// drop would lose a real update.
 	PayloadDrifted bool
+	// AlreadyProcessed is true when a dedup hit found a record whose domain
+	// action already succeeded (status 'processed'). When false on a dedup hit,
+	// the event was recorded but never applied — reconciliation must re-apply it.
+	AlreadyProcessed bool
 }
 
 // SyncStore persists ledger entries. Declared in the consumer package
@@ -24,6 +28,9 @@ type SyncStore interface {
 	// InsertSyncRecord saves rec idempotently: a replayed dedup key yields
 	// Inserted=false, and PayloadDrifted=true if the stored payload differs.
 	InsertSyncRecord(ctx context.Context, rec *domain.SyncRecord) (InsertOutcome, error)
+	// MarkProcessed flips the record's status to 'processed' once its domain
+	// action has succeeded, so a later replay/reconciliation does not re-apply it.
+	MarkProcessed(ctx context.Context, rec *domain.SyncRecord) error
 }
 
 // SecretResolver maps an inbound webhook secret to its owning user. The
