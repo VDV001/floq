@@ -257,6 +257,31 @@ func TestRecordingProvider_ObserverFiresOnError(t *testing.T) {
 	assert.Equal(t, domain.StatusError, observed[0].Status)
 }
 
+func TestRecordingProvider_ObserverPanicDoesNotCrashCall(t *testing.T) {
+	t.Parallel()
+	inner := &stubProvider{
+		name:   "openai",
+		result: &ai.CompletionResult{Model: "gpt-4o-mini"},
+	}
+	rec := &fakeRecorder{}
+	rp := audit.NewRecordingProvider(inner, rec, silentDiscardLogger(),
+		audit.WithObserver(func(_ *domain.Entry) { panic("observer boom") }))
+
+	ctx := domain.ContextWithCallMeta(context.Background(), domain.CallMeta{
+		UserID:      uuid.New(),
+		RequestType: domain.RequestTypeQualification,
+	})
+
+	// A panicking observer must NOT take down the AI hot path — record()
+	// promises never to panic the call on an audit/metrics problem.
+	require.NotPanics(t, func() {
+		_, err := rp.Complete(ctx, ai.CompletionRequest{})
+		require.NoError(t, err)
+	})
+	// The audit row must still be recorded despite the observer panic.
+	assert.Len(t, rec.Entries(), 1, "recorder still runs after observer panic")
+}
+
 func TestRecordingProvider_ObserverSkippedWhenNoMeta(t *testing.T) {
 	t.Parallel()
 	inner := &stubProvider{
