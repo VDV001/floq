@@ -1,6 +1,7 @@
 package httputil
 
 import (
+	"errors"
 	"net/http"
 	"strings"
 )
@@ -87,6 +88,15 @@ func JSONBodyCap(maxBytes int64) func(http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 		})
 	}
+}
+
+// IsBodyTooLarge reports whether err is (or wraps) an *http.MaxBytesError — the
+// signal that a request body exceeded the cap set by a MaxBodyBytes* middleware.
+// Handlers that read bodies (multipart uploads, io.ReadAll) use it to answer 413
+// instead of a generic 400.
+func IsBodyTooLarge(err error) bool {
+	_, ok := errors.AsType[*http.MaxBytesError](err)
+	return ok
 }
 
 func isJSONContentType(ct string) bool {

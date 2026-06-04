@@ -292,6 +292,10 @@ func (h *Handler) importCSV() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		file, _, err := r.FormFile("file")
 		if err != nil {
+			if httputil.IsBodyTooLarge(err) {
+				httputil.WriteError(w, http.StatusRequestEntityTooLarge, "uploaded file too large")
+				return
+			}
 			httputil.WriteError(w, http.StatusBadRequest, "missing file field")
 			return
 		}
@@ -299,6 +303,10 @@ func (h *Handler) importCSV() http.HandlerFunc {
 
 		data, err := io.ReadAll(file)
 		if err != nil {
+			if httputil.IsBodyTooLarge(err) {
+				httputil.WriteError(w, http.StatusRequestEntityTooLarge, "uploaded file too large")
+				return
+			}
 			httputil.WriteError(w, http.StatusBadRequest, "failed to read file")
 			return
 		}
