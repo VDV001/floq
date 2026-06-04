@@ -155,8 +155,19 @@ func (r *RecordingProvider) record(ctx context.Context, resp *ai.CompletionResul
 	if r.observe != nil {
 		// Real-time metrics hook — fires for every real call (success or
 		// error), before the async Record so a saturated recorder cannot
-		// suppress the "call happened" signal.
-		r.observe(entry)
+		// suppress the "call happened" signal. Wrapped in recover: an
+		// observer must never panic the AI hot path (same contract as
+		// the rest of record()), and the audit Record below must still
+		// run even if a misbehaving observer blows up.
+		func() {
+			defer func() {
+				if rec := recover(); rec != nil {
+					r.logger.WarnContext(ctx, "audit: metrics observer panicked, ignoring",
+						"recover", rec, "provider", r.inner.Name())
+				}
+			}()
+			r.observe(entry)
+		}()
 	}
 	r.recorder.Record(ctx, entry)
 }
