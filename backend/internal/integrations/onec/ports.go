@@ -75,6 +75,15 @@ type OneCClient interface {
 	CreateCounterparty(ctx context.Context, creds *domain.OutboundCredentials, draft *domain.CounterpartyDraft) (externalRef string, err error)
 }
 
+// ConnectionTester probes a tenant's 1C endpoint to verify reachability and
+// credentials for the settings "test connection" action (#110). Kept separate
+// from OneCClient (ISP): the config usecase depends only on the probe, and
+// adding it here doesn't disturb the outbound OneCClient fakes. The HTTP/OData
+// implementation (client.go) satisfies it.
+type ConnectionTester interface {
+	TestConnection(ctx context.Context, creds *domain.OutboundCredentials) error
+}
+
 // EventApplier performs the domain action for a resolved 1C event. Implemented
 // by a cross-context adapter (cmd/server/adapters.go) over leads/prospects —
 // onec never imports those contexts directly. Actions that target an existing
