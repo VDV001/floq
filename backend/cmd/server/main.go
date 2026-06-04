@@ -309,6 +309,8 @@ func main() {
 		chat.RegisterRoutes(r, chat.NewHandler(chat.NewRepository(pool), newChatAIAdapter(aiClient)))
 		inbox.RegisterPendingReplyRoutes(r, pendingReplyUC, leadsUC, pendingReplyDecideMW)
 		audit.RegisterRoutes(r, audit.NewHandler(audit.NewUseCase(auditRepo)))
+		onec.RegisterConfigRoutes(r, onec.NewConfigHandler(
+			onec.NewConfigUseCase(onecRepo, onecRepo, onecClient, buildOnecSecretGenerator())))
 		analyticsRepo := analytics.NewRepository(pool)
 		analytics.RegisterRoutes(r, analytics.NewUseCase(analyticsRepo, analyticsRepo,
 			analytics.WithHotLeadsReader(analyticsRepo),
