@@ -465,6 +465,29 @@ func TestHandler_ImportCSV(t *testing.T) {
 	assert.Equal(t, 1, resp["imported"])
 }
 
+func TestHandler_ImportCSV_TooLarge(t *testing.T) {
+	repo := newMockRepo()
+	// Tiny caps exercise the 413 path without a real 50 MiB body: upload=50 bytes.
+	r := chi.NewRouter()
+	r.Use(httputil.MaxBodyBytesWithUploads(10, 50))
+	RegisterRoutes(r, NewUseCase(repo, &mockAI{}, nil))
+
+	var buf bytes.Buffer
+	mw := multipart.NewWriter(&buf)
+	fw, err := mw.CreateFormFile("file", "big.csv")
+	require.NoError(t, err)
+	_, err = fw.Write(bytes.Repeat([]byte("x"), 200)) // exceeds the 50-byte upload cap
+	require.NoError(t, err)
+	mw.Close()
+
+	w := httptest.NewRecorder()
+	req := reqWithUser("POST", "/api/leads/import", &buf, uuid.New())
+	req.Header.Set("Content-Type", mw.FormDataContentType())
+	r.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusRequestEntityTooLarge, w.Code, "oversized upload must be 413, not 400")
+}
+
 func TestHandler_ImportCSV_NoFile(t *testing.T) {
 	r := newTestRouter(NewUseCase(newMockRepo(), &mockAI{}, nil))
 	w := httptest.NewRecorder()
