@@ -63,6 +63,24 @@ func TestOnAuditEntry_RecordsCostCallsAndDuration(t *testing.T) {
 	assert.Contains(t, body, `ai_call_duration_seconds_count{model="gpt-4o-mini",provider="openai",request_type="qualification"} 2`)
 }
 
+func TestOnAuditEntry_LatencyHistogramCapturesSlowCalls(t *testing.T) {
+	m := metrics.New()
+	m.OnAuditEntry(&domain.Entry{
+		UserID:      uuid.New(),
+		Provider:    "openai",
+		Model:       "o1",
+		RequestType: domain.RequestTypeQualification,
+		LatencyMS:   30_000, // 30s — realistic for reasoning / image analysis
+		Status:      domain.StatusSuccess,
+	})
+
+	body := scrape(t, m)
+	// A 30s call must land in a FINITE bucket, not only +Inf. The default
+	// Prometheus buckets cap at 10s, which would collapse the AI latency
+	// tail (exactly where p95/p99 matter) — so a >10s bucket must exist.
+	assert.Contains(t, body, `ai_call_duration_seconds_bucket{model="o1",provider="openai",request_type="qualification",le="60"} 1`)
+}
+
 func TestOnAuditEntry_NeverLabelsByUserID(t *testing.T) {
 	m := metrics.New()
 	userID := uuid.New()
