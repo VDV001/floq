@@ -212,3 +212,63 @@ func TestRecordingProvider_PassThroughName(t *testing.T) {
 	rp := audit.NewRecordingProvider(&stubProvider{name: "claude"}, &fakeRecorder{}, silentDiscardLogger())
 	assert.Equal(t, "claude", rp.Name())
 }
+
+func TestRecordingProvider_ObserverFiresOnSuccess(t *testing.T) {
+	t.Parallel()
+	inner := &stubProvider{
+		name: "openai",
+		result: &ai.CompletionResult{
+			Usage: ai.TokenUsage{InputTokens: 100, OutputTokens: 50},
+			Model: "gpt-4o-mini",
+		},
+	}
+	var observed []*domain.Entry
+	rp := audit.NewRecordingProvider(inner, &fakeRecorder{}, silentDiscardLogger(),
+		audit.WithObserver(func(e *domain.Entry) { observed = append(observed, e) }))
+
+	ctx := domain.ContextWithCallMeta(context.Background(), domain.CallMeta{
+		UserID:      uuid.New(),
+		RequestType: domain.RequestTypeQualification,
+	})
+	_, err := rp.Complete(ctx, ai.CompletionRequest{})
+	require.NoError(t, err)
+
+	require.Len(t, observed, 1, "observer must fire once per constructed entry")
+	assert.Equal(t, "openai", observed[0].Provider)
+	assert.Equal(t, domain.RequestTypeQualification, observed[0].RequestType)
+}
+
+func TestRecordingProvider_ObserverFiresOnError(t *testing.T) {
+	t.Parallel()
+	inner := &stubProvider{name: "openai", err: errors.New("rate limited")}
+	var observed []*domain.Entry
+	rp := audit.NewRecordingProvider(inner, &fakeRecorder{}, silentDiscardLogger(),
+		audit.WithObserver(func(e *domain.Entry) { observed = append(observed, e) }))
+
+	ctx := domain.ContextWithCallMeta(context.Background(), domain.CallMeta{
+		UserID:      uuid.New(),
+		RequestType: domain.RequestTypeDraftReply,
+	})
+	_, err := rp.Complete(ctx, ai.CompletionRequest{})
+	require.Error(t, err)
+
+	// Failed-but-billed calls are real spend signal — observe them too.
+	require.Len(t, observed, 1)
+	assert.Equal(t, domain.StatusError, observed[0].Status)
+}
+
+func TestRecordingProvider_ObserverSkippedWhenNoMeta(t *testing.T) {
+	t.Parallel()
+	inner := &stubProvider{
+		name:   "openai",
+		result: &ai.CompletionResult{Model: "gpt-4o-mini"},
+	}
+	called := 0
+	rp := audit.NewRecordingProvider(inner, &fakeRecorder{}, silentDiscardLogger(),
+		audit.WithObserver(func(_ *domain.Entry) { called++ }))
+
+	// No CallMeta in ctx → no entry constructed → observer must not fire.
+	_, err := rp.Complete(context.Background(), ai.CompletionRequest{})
+	require.NoError(t, err)
+	assert.Equal(t, 0, called)
+}
