@@ -45,6 +45,15 @@ type Config struct {
 	// order of magnitude above any legitimate human cadence, still
 	// capped enough to bound abuse from a compromised JWT.
 	PendingReplyRateLimitPerMin int
+	// AuthLoginRateLimit caps login attempts per client IP within the
+	// login window (5 minutes, fixed in the composition root). Default 5
+	// — enough headroom for a fat-fingered human, tight enough to make
+	// online brute-force / credential-stuffing impractical.
+	AuthLoginRateLimit int
+	// AuthRegisterRateLimit caps sign-ups per client IP within the
+	// register window (1 hour, fixed in the composition root). Default 3
+	// — anti-spam without blocking a legitimate signup retry.
+	AuthRegisterRateLimit int
 }
 
 // Load reads configuration from environment variables and returns a Config.
@@ -84,6 +93,8 @@ func Load() *Config {
 		StaleDays:       getEnvInt("STALE_DAYS", 2),
 		ProxyURL:        os.Getenv("PROXY_URL"),
 		PendingReplyRateLimitPerMin: getEnvInt("RATE_LIMIT_PENDING_REPLIES_PER_MIN", 30),
+		AuthLoginRateLimit:          getEnvInt("AUTH_LOGIN_RATE_LIMIT", 5),
+		AuthRegisterRateLimit:       getEnvInt("AUTH_REGISTER_RATE_LIMIT", 3),
 	}
 }
 
