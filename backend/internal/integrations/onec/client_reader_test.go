@@ -13,9 +13,9 @@ import (
 )
 
 func TestHTTPClient_ListEvents_Success(t *testing.T) {
-	var gotMethod, gotAuth, gotPath string
+	var gotMethod, gotAuth, gotPath, gotQuery string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		gotMethod, gotAuth, gotPath = r.Method, r.Header.Get("Authorization"), r.URL.Path
+		gotMethod, gotAuth, gotPath, gotQuery = r.Method, r.Header.Get("Authorization"), r.URL.Path, r.URL.RawQuery
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte(`[
 			{"external_id":"doc-1","external_type":"Документ.Оплата","kind":"payment","payload":{"email":"a@b.ru"}},
@@ -32,6 +32,7 @@ func TestHTTPClient_ListEvents_Success(t *testing.T) {
 	assert.Equal(t, http.MethodGet, gotMethod)
 	assert.Equal(t, "Bearer tok", gotAuth)
 	assert.Contains(t, gotPath, "floq_events")
+	assert.Contains(t, gotQuery, "$top=500", "read must request a bounded window")
 	assert.Equal(t, "doc-1", events[0].ExternalID)
 	assert.Equal(t, "Документ.Оплата", events[0].ExternalType)
 	assert.Equal(t, "payment", events[0].Kind)

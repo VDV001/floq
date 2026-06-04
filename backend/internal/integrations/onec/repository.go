@@ -58,12 +58,16 @@ func (r *Repository) InsertSyncRecord(ctx context.Context, rec *domain.SyncRecor
 }
 
 // MarkProcessed flips an inbound ledger entry to 'processed' after its domain
-// action succeeded. Keyed on the dedup tuple so it targets the row InsertSyncRecord
-// wrote. Idempotent — re-marking an already-processed row is a no-op.
+// action succeeded. Keyed on the dedup tuple so it targets the row
+// InsertSyncRecord wrote, and scoped to direction='inbound' so it can never
+// touch an outbound push record that happens to share an (external_id,
+// external_type) — the dedup constraint is direction-agnostic, so this scope is
+// the explicit guard. Idempotent — re-marking an already-processed row is a no-op.
 func (r *Repository) MarkProcessed(ctx context.Context, rec *domain.SyncRecord) error {
 	_, err := r.pool.Exec(ctx, `
 		UPDATE onec_sync_records SET status = $4
-		WHERE user_id = $1 AND external_id = $2 AND external_type = $3`,
+		WHERE user_id = $1 AND external_id = $2 AND external_type = $3
+		  AND direction = 'inbound'`,
 		rec.UserID, rec.ExternalID, rec.ExternalType, string(domain.SyncStatusProcessed))
 	return err
 }
