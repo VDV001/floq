@@ -149,6 +149,9 @@ Documented trade-off: observed-cost ledger, not financial truth.
   a user" access pattern; partial indexes per `lead_id` /
   `prospect_id` for per-entity drilldowns.
 
+`036_audit_log_daily.up.sql` adds the retention rollup table — see
+[Retention & rotation](#retention--rotation-audit_log_daily).
+
 ## Style-check sub-call attribution
 
 When `AIClient.GenerateColdMessage` (or the Telegram / followup variants)
@@ -225,6 +228,50 @@ this user's spend is the style critic vs. the actual draft."
   erasure). Lead / prospect deletion leaves the row with NULL FK so
   per-user totals stay correct. Locked by integration test
   `TestAcceptance_UserDeletionCascadesToAuditLog`.
+
+## Retention & rotation (audit_log_daily)
+
+The per-call ledger grows unbounded (~200 bytes/row; 10k calls/day ≈
+730 MB/year). Migration `036_audit_log_daily.up.sql` adds a day-granular
+rollup, and a daily cron (`audit.RetentionCron`) ages detail out of
+`audit_log` into it.
+
+**Strategy — aggregate-then-delete (#101).** Cost trends are preserved;
+per-call detail beyond the window is shed. Chosen over hard-delete
+(loses trends) and partitioning (operational complexity).
+
+- **Schema.** `audit_log_daily (day, user_id, provider, model,
+  request_type, total_calls, total_cost_usd_micro, total_input_tokens,
+  total_output_tokens)`, PK on the five dimensions. `user_id` FK
+  `ON DELETE CASCADE` mirrors `audit_log` (GDPR erasure pulls the
+  rollup too). No `request_type` CHECK — it is a rollup of
+  already-validated source rows, and coupling it to the enum would force
+  a constraint bump here on every extension (cf. migration 029). Extra
+  `(user_id, day)` index for the cost-summary read path (PK leads with
+  `day`).
+- **Cron.** `audit.RetentionCron` mirrors `onec.ReconcileCron`: runs once
+  on startup, then every `AUDIT_RETENTION_INTERVAL` (default `24h`),
+  stops on ctx cancel. `RetentionUseCase` turns `AUDIT_RETENTION_DAYS`
+  (default `30`) into the cut-off `now() - days`.
+- **Repository.** `AggregateAndPurgeOlderThan(ctx, threshold)` runs the
+  roll-up and delete as ONE data-modifying CTE
+  (`DELETE … RETURNING` → `GROUP BY` → `INSERT … ON CONFLICT DO UPDATE`
+  accumulate), so the aggregated rows are exactly the deleted rows — no
+  window where a row is purged-but-not-counted. Idempotent: a second run
+  finds nothing < threshold and leaves buckets untouched. Day bucket =
+  UTC calendar date of `created_at` (session-timezone independent).
+- **Cost summary.** `Repository.CostSummary` `UNION ALL`s `audit_log`
+  (recent detail) with `audit_log_daily` (aggregated history) and sums in
+  an outer `GROUP BY`. The two are disjoint (a row lives in exactly one),
+  so no double-count. The daily side is filtered by UTC day, so
+  aggregated history is **day-granular**: a from/to landing mid-day on an
+  already-rolled-up day pulls that whole day's bucket — the accepted
+  cost of shedding per-call precision past the window. Recent data, where
+  sub-day precision matters, is still served from `audit_log`.
+
+Tuning: `AUDIT_RETENTION_DAYS` (window), `AUDIT_RETENTION_INTERVAL` (cron
+cadence). Setting the window very low loses detail faster; the rollup
+keeps cost trends regardless.
 
 ## Phase 3 backlog
 
