@@ -56,7 +56,7 @@ func (h *Handler) Webhook(w http.ResponseWriter, r *http.Request) {
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		// A body that exceeds the JSONBodyCap is a size violation (413), not
 		// malformed JSON (400).
-		if _, ok := errors.AsType[*http.MaxBytesError](err); ok {
+		if httputil.IsBodyTooLarge(err) {
 			http.Error(w, "payload too large", http.StatusRequestEntityTooLarge)
 			return
 		}

@@ -106,6 +106,9 @@ func (h *Handler) importCSV() http.HandlerFunc {
 
 		data, err := io.ReadAll(file)
 		if err != nil {
+			// Belt-and-suspenders: an oversized body almost always trips the cap
+			// earlier in FormFile/ParseMultipartForm, but keep the 413 mapping
+			// here too so a streamed read can never surface as a generic 400.
 			if httputil.IsBodyTooLarge(err) {
 				httputil.WriteError(w, http.StatusRequestEntityTooLarge, "uploaded file too large")
 				return
