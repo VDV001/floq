@@ -62,6 +62,10 @@ type ProcessResult struct {
 	Deduped bool
 	// PayloadDrifted is true when a replay arrived with changed content.
 	PayloadDrifted bool
+	// Applied is true when this call ran the mapped domain action and it
+	// succeeded — either a fresh event or the recovery of a recorded-but-unapplied
+	// one. Reconciliation counts this to know what it recovered.
+	Applied bool
 }
 
 // ProcessInboundEvent resolves, records, and applies one 1C event for a user.
@@ -97,13 +101,24 @@ func (u *UseCase) ProcessInboundEvent(ctx context.Context, userID uuid.UUID, in 
 			"user_id", userID, "external_id", ev.ExternalID, "external_type", ev.ExternalType, "kind", kind.String())
 	}
 
-	// Apply only on a fresh insert, and only when a rule exists (we need its
-	// fields to extract the counterparty). Replays are not re-applied.
-	if out.Inserted && hasRule && u.applier != nil {
-		u.apply(ctx, userID, kind, rule, in.Payload)
+	// Apply when the action hasn't yet succeeded and a rule exists (we need its
+	// fields to extract the counterparty). That covers a fresh insert AND a
+	// replay of a recorded-but-unapplied event — the reconciliation recovery
+	// path. A replay of an already-processed event is skipped.
+	applied := false
+	if hasRule && u.applier != nil && !out.AlreadyProcessed {
+		if applyErr := u.apply(ctx, userID, kind, rule, in.Payload); applyErr == nil {
+			applied = true
+			// Domain actions are idempotent, so a missed mark only risks a
+			// harmless re-apply on the next pass — log, don't fail.
+			if mErr := u.store.MarkProcessed(ctx, rec); mErr != nil {
+				u.logger.Warn("onec: action applied but marking processed failed; may re-apply",
+					"user_id", userID, "external_id", ev.ExternalID, "err", mErr)
+			}
+		}
 	}
 
-	return ProcessResult{Deduped: !out.Inserted, PayloadDrifted: out.PayloadDrifted}, nil
+	return ProcessResult{Deduped: !out.Inserted, PayloadDrifted: out.PayloadDrifted, Applied: applied}, nil
 }
 
 // lookupRule resolves the mapping rule for an external type. A missing active
@@ -142,9 +157,10 @@ func resolveKind(explicit string, rule domain.MappingRule, hasRule bool, lookupE
 	return "", ErrUnresolvableKind
 }
 
-// apply routes a recorded event to its domain action. Apply failures are logged,
-// not returned — the event is already persisted.
-func (u *UseCase) apply(ctx context.Context, userID uuid.UUID, kind domain.EventKind, rule domain.MappingRule, payload []byte) {
+// apply routes a recorded event to its domain action and returns the action's
+// error. A failure is logged here and returned so the caller leaves the record
+// unprocessed (reconciliation will retry); the event itself stays persisted.
+func (u *UseCase) apply(ctx context.Context, userID uuid.UUID, kind domain.EventKind, rule domain.MappingRule, payload []byte) error {
 	fields := parseStringFields(payload)
 	email := fields[rule.EmailField]
 	var err error
@@ -159,9 +175,10 @@ func (u *UseCase) apply(ctx context.Context, userID uuid.UUID, kind domain.Event
 		err = u.applier.HandleShipment(ctx, userID, email)
 	}
 	if err != nil {
-		u.logger.Warn("onec: applying event failed; recorded but not applied",
+		u.logger.Warn("onec: applying event failed; recorded but left unprocessed for reconciliation",
 			"user_id", userID, "kind", kind.String(), "err", err)
 	}
+	return err
 }
 
 // parseStringFields flattens a raw JSON object's string-valued top-level keys

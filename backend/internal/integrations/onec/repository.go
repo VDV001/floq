@@ -40,16 +40,36 @@ func (r *Repository) InsertSyncRecord(ctx context.Context, rec *domain.SyncRecor
 		return InsertOutcome{Inserted: true}, nil
 	}
 
-	// Dedup hit: check whether the replayed payload differs from the stored one.
-	var storedHash string
+	// Dedup hit: read the stored payload hash (drift) and status (whether the
+	// domain action already succeeded — drives whether reconciliation re-applies).
+	var storedHash, storedStatus string
 	err = r.pool.QueryRow(ctx, `
-		SELECT payload_hash FROM onec_sync_records
+		SELECT payload_hash, status FROM onec_sync_records
 		WHERE user_id = $1 AND external_id = $2 AND external_type = $3`,
-		rec.UserID, rec.ExternalID, rec.ExternalType).Scan(&storedHash)
+		rec.UserID, rec.ExternalID, rec.ExternalType).Scan(&storedHash, &storedStatus)
 	if err != nil {
 		return InsertOutcome{}, err
 	}
-	return InsertOutcome{Inserted: false, PayloadDrifted: storedHash != rec.PayloadHash}, nil
+	return InsertOutcome{
+		Inserted:         false,
+		PayloadDrifted:   storedHash != rec.PayloadHash,
+		AlreadyProcessed: storedStatus == string(domain.SyncStatusProcessed),
+	}, nil
+}
+
+// MarkProcessed flips an inbound ledger entry to 'processed' after its domain
+// action succeeded. Keyed on the dedup tuple so it targets the row
+// InsertSyncRecord wrote, and scoped to direction='inbound' so it can never
+// touch an outbound push record that happens to share an (external_id,
+// external_type) — the dedup constraint is direction-agnostic, so this scope is
+// the explicit guard. Idempotent — re-marking an already-processed row is a no-op.
+func (r *Repository) MarkProcessed(ctx context.Context, rec *domain.SyncRecord) error {
+	_, err := r.pool.Exec(ctx, `
+		UPDATE onec_sync_records SET status = $4
+		WHERE user_id = $1 AND external_id = $2 AND external_type = $3
+		  AND direction = 'inbound'`,
+		rec.UserID, rec.ExternalID, rec.ExternalType, string(domain.SyncStatusProcessed))
+	return err
 }
 
 // UserIDByWebhookSecret resolves the owning user from a webhook secret. Only

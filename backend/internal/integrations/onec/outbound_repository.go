@@ -52,6 +52,30 @@ func (r *Repository) UpsertOutboundRecord(ctx context.Context, rec *domain.SyncR
 	return err
 }
 
+// ActiveOnecUserIDs lists every tenant with a usable 1C connection (active +
+// non-empty base URL) — the targets reconciliation (#109) polls for missed
+// events. Ordered for deterministic iteration.
+func (r *Repository) ActiveOnecUserIDs(ctx context.Context) ([]uuid.UUID, error) {
+	rows, err := r.pool.Query(ctx, `
+		SELECT user_id FROM onec_credentials
+		WHERE is_active = TRUE AND base_url <> ''
+		ORDER BY user_id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var ids []uuid.UUID
+	for rows.Next() {
+		var id uuid.UUID
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
+}
+
 // OutboundProcessedExists reports whether the object was already pushed to 1C
 // successfully (a 'processed' record for the dedup key). The outbound flow uses
 // it to skip re-creating a counterparty; an 'error' record does NOT count, so a

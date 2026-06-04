@@ -10,6 +10,7 @@ import (
 	"github.com/daniil/floq/internal/integrations/onec"
 	"github.com/daniil/floq/internal/integrations/onec/domain"
 	"github.com/daniil/floq/internal/testutil"
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -60,6 +61,33 @@ func TestRepository_GetOutboundCredentials(t *testing.T) {
 		_, err = repo.GetOutboundCredentials(ctx, user)
 		assert.True(t, errors.Is(err, onec.ErrOutboundNotConfigured), "empty base_url is not usable; got %v", err)
 	})
+}
+
+func TestRepository_ActiveOnecUserIDs(t *testing.T) {
+	pool := testutil.TestDB(t)
+	repo := onec.NewRepository(pool)
+	ctx := context.Background()
+
+	active := testutil.SeedUser(t, pool)
+	inactive := testutil.SeedUser(t, pool)
+	noURL := testutil.SeedUser(t, pool)
+
+	_, err := pool.Exec(ctx, `INSERT INTO onec_credentials (user_id, base_url, auth_type, is_active) VALUES
+		($1, 'https://1c.example', 'basic', TRUE),
+		($2, 'https://1c.example', 'basic', FALSE),
+		($3, '', 'basic', TRUE)`, active, inactive, noURL)
+	require.NoError(t, err)
+
+	ids, err := repo.ActiveOnecUserIDs(ctx)
+	require.NoError(t, err)
+
+	set := map[uuid.UUID]bool{}
+	for _, id := range ids {
+		set[id] = true
+	}
+	assert.True(t, set[active], "active + base_url must be listed")
+	assert.False(t, set[inactive], "inactive must be excluded")
+	assert.False(t, set[noURL], "active but empty base_url must be excluded")
 }
 
 func TestRepository_OutboundRecord_UpsertAndExists(t *testing.T) {

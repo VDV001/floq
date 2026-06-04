@@ -12,17 +12,25 @@ import (
 
 // fakeStore is an in-memory SyncStore for unit tests.
 type fakeStore struct {
-	inserted bool  // InsertOutcome.Inserted to return
-	drifted  bool  // InsertOutcome.PayloadDrifted to return
-	err      error // error to return
-	calls    int   // how many times InsertSyncRecord was called
-	last     *domain.SyncRecord
+	inserted         bool  // InsertOutcome.Inserted to return
+	drifted          bool  // InsertOutcome.PayloadDrifted to return
+	alreadyProcessed bool  // InsertOutcome.AlreadyProcessed to return (dedup of a processed record)
+	err              error // error to return
+	calls            int   // how many times InsertSyncRecord was called
+	last             *domain.SyncRecord
+	markedProcessed  bool
+	markErr          error
 }
 
 func (f *fakeStore) InsertSyncRecord(_ context.Context, rec *domain.SyncRecord) (onec.InsertOutcome, error) {
 	f.calls++
 	f.last = rec
-	return onec.InsertOutcome{Inserted: f.inserted, PayloadDrifted: f.drifted}, f.err
+	return onec.InsertOutcome{Inserted: f.inserted, PayloadDrifted: f.drifted, AlreadyProcessed: f.alreadyProcessed}, f.err
+}
+
+func (f *fakeStore) MarkProcessed(_ context.Context, _ *domain.SyncRecord) error {
+	f.markedProcessed = true
+	return f.markErr
 }
 
 // fakeMapping is an in-memory MappingStore.
@@ -250,7 +258,7 @@ func TestProcessInbound_ExtractionEdgeCases(t *testing.T) {
 }
 
 func TestProcessInbound_DedupSkipsApply(t *testing.T) {
-	store := &fakeStore{inserted: false} // dedup hit
+	store := &fakeStore{inserted: false, alreadyProcessed: true} // dedup hit of an already-applied event
 	mapping := activeMapping(t, "Документ.Оплата", domain.EventKindPayment)
 	applier := &fakeApplier{}
 	uc := onec.NewUseCase(store, onec.WithMapping(mapping), onec.WithApplier(applier))
@@ -263,7 +271,66 @@ func TestProcessInbound_DedupSkipsApply(t *testing.T) {
 		t.Error("expected deduped")
 	}
 	if applier.action != "" {
-		t.Errorf("deduped replay must not re-apply, got %q", applier.action)
+		t.Errorf("replay of an already-processed event must not re-apply, got %q", applier.action)
+	}
+	if res.Applied {
+		t.Error("already-processed replay is not a fresh apply")
+	}
+}
+
+func TestProcessInbound_MarksProcessedOnApplySuccess(t *testing.T) {
+	store := &fakeStore{inserted: true}
+	mapping := activeMapping(t, "Документ.Оплата", domain.EventKindPayment)
+	applier := &fakeApplier{}
+	uc := onec.NewUseCase(store, onec.WithMapping(mapping), onec.WithApplier(applier))
+
+	res, err := uc.ProcessInboundEvent(context.Background(), uuid.New(), raw(""))
+	if err != nil {
+		t.Fatalf("unexpected err: %v", err)
+	}
+	if !res.Applied {
+		t.Error("a fresh successful apply must report Applied")
+	}
+	if !store.markedProcessed {
+		t.Error("a successful apply must mark the record processed")
+	}
+}
+
+func TestProcessInbound_DoesNotMarkProcessedOnApplyFailure(t *testing.T) {
+	store := &fakeStore{inserted: true}
+	mapping := activeMapping(t, "Документ.Оплата", domain.EventKindPayment)
+	applier := &fakeApplier{err: errors.New("downstream boom")}
+	uc := onec.NewUseCase(store, onec.WithMapping(mapping), onec.WithApplier(applier))
+
+	res, err := uc.ProcessInboundEvent(context.Background(), uuid.New(), raw(""))
+	if err != nil {
+		t.Fatalf("apply failure must not fail the webhook: %v", err)
+	}
+	if res.Applied {
+		t.Error("a failed apply must not report Applied")
+	}
+	if store.markedProcessed {
+		t.Error("a failed apply must leave the record un-processed so reconciliation retries it")
+	}
+}
+
+func TestProcessInbound_ReappliesRecordedButUnprocessed(t *testing.T) {
+	// Dedup hit (record exists) but it was never successfully applied — the
+	// safety-net case: reconciliation re-feeds it and apply runs again.
+	store := &fakeStore{inserted: false, alreadyProcessed: false}
+	mapping := activeMapping(t, "Документ.Оплата", domain.EventKindPayment)
+	applier := &fakeApplier{}
+	uc := onec.NewUseCase(store, onec.WithMapping(mapping), onec.WithApplier(applier))
+
+	res, err := uc.ProcessInboundEvent(context.Background(), uuid.New(), raw(""))
+	if err != nil {
+		t.Fatalf("unexpected err: %v", err)
+	}
+	if applier.action != "payment" {
+		t.Errorf("a recorded-but-unapplied event must be re-applied, got %q", applier.action)
+	}
+	if !res.Applied || !store.markedProcessed {
+		t.Error("recovery apply must report Applied and mark processed")
 	}
 }
 

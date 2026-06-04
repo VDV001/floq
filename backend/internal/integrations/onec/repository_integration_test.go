@@ -139,3 +139,33 @@ func TestRepository_UserIDByWebhookSecret(t *testing.T) {
 		require.False(t, found, "inactive credentials must not authenticate")
 	})
 }
+
+func TestRepository_InsertSyncRecord_AlreadyProcessedAndMark(t *testing.T) {
+	pool := testutil.TestDB(t)
+	repo := onec.NewRepository(pool)
+	ctx := context.Background()
+	user := testutil.SeedUser(t, pool)
+
+	rec, err := domain.NewSyncRecord(user, newEvent(t, "ОП-9001"), domain.DirectionInbound)
+	require.NoError(t, err)
+
+	out, err := repo.InsertSyncRecord(ctx, rec)
+	require.NoError(t, err)
+	require.True(t, out.Inserted)
+	require.False(t, out.AlreadyProcessed, "a fresh record starts unprocessed")
+
+	// Replay before processing → dedup, still not processed (reconciliation must re-apply).
+	out, err = repo.InsertSyncRecord(ctx, rec)
+	require.NoError(t, err)
+	require.False(t, out.Inserted)
+	require.False(t, out.AlreadyProcessed, "recorded-but-unapplied must read as not-processed")
+
+	// Apply succeeded → mark processed.
+	require.NoError(t, repo.MarkProcessed(ctx, rec))
+
+	// Replay after processing → dedup AND already-processed (no re-apply).
+	out, err = repo.InsertSyncRecord(ctx, rec)
+	require.NoError(t, err)
+	require.False(t, out.Inserted)
+	require.True(t, out.AlreadyProcessed, "a processed record must read as already-processed")
+}
