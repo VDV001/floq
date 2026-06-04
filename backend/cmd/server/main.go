@@ -311,7 +311,8 @@ func main() {
 		audit.RegisterRoutes(r, audit.NewHandler(audit.NewUseCase(auditRepo)))
 		analyticsRepo := analytics.NewRepository(pool)
 		analytics.RegisterRoutes(r, analytics.NewUseCase(analyticsRepo, analyticsRepo,
-			analytics.WithHotLeadsReader(analyticsRepo)))
+			analytics.WithHotLeadsReader(analyticsRepo),
+			analytics.WithInboxFlowReader(analyticsRepo)))
 		tgOpts := []tgclient.Option{}
 		if proxyDialer != nil {
 			tgOpts = append(tgOpts, tgclient.WithDialer(proxyDialer))
