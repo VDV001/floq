@@ -42,6 +42,14 @@ type MappingStore interface {
 	GetActiveMappingConfig(ctx context.Context, userID uuid.UUID) (*domain.MappingConfig, error)
 }
 
+// OneCReader reads recent events back from a tenant's 1C endpoint, used by
+// reconciliation (#109) to re-apply events whose webhook was lost. The
+// HTTP/OData implementation satisfies it. Kind may be empty per event — it is
+// resolved from the mapping downstream, same as the webhook path.
+type OneCReader interface {
+	ListEvents(ctx context.Context, creds *domain.OutboundCredentials) ([]RawInboundEvent, error)
+}
+
 // OutboundStore resolves a tenant's outbound connection and persists the push
 // ledger. The postgres Repository satisfies it. GetOutboundCredentials returns
 // ErrOutboundNotConfigured when the tenant has no usable 1C endpoint.
