@@ -71,14 +71,26 @@ func (r *Repository) Save(ctx context.Context, entries []*domain.Entry) error {
 	return nil
 }
 
-// CostSummary aggregates audit_log rows for one user over the half-
-// open interval [from, to). Two grouped queries (by request_type, by
-// model) — totals are derived from the request-type breakdown to
-// avoid a third round-trip and stay consistent by construction.
+// CostSummary aggregates spend for one user over the half-open interval
+// [from, to). It stitches together two sources so reports survive the
+// retention cron: the detailed per-call audit_log (recent rows) and the
+// audit_log_daily rollup (older rows the cron has already purged from
+// audit_log). The two are disjoint by construction — a row lives in
+// exactly one of them, since the cron deletes and aggregates atomically
+// — so a UNION ALL summed in an outer GROUP BY cannot double-count.
 //
-// Breakdowns are ordered by USDMicro DESC so the operator dashboard
-// shows the most expensive surface first. Empty slices are returned
-// instead of nil so the JSON wire-shape stays predictable.
+// The daily side is filtered on its day column by the UTC calendar date
+// of the bounds. Aggregated history is therefore day-granular: a from/to
+// that lands mid-day on an already-rolled-up day pulls that whole day's
+// bucket. This is the accepted trade-off of aggregate-then-delete
+// (per-call precision is shed beyond the retention window); recent data,
+// where sub-day precision matters, is still served from audit_log.
+//
+// Two grouped queries (by request_type, by model); totals derive from
+// the request-type breakdown to avoid a third round-trip and stay
+// consistent by construction. Breakdowns are ordered by USDMicro DESC so
+// the dashboard shows the most expensive surface first. Empty slices
+// (not nil) keep the JSON wire-shape predictable.
 func (r *Repository) CostSummary(ctx context.Context, userID uuid.UUID, from, to time.Time) (*domain.CostSummary, error) {
 	summary := &domain.CostSummary{
 		ByRequestType: []domain.RequestTypeBreakdown{},
@@ -88,12 +100,28 @@ func (r *Repository) CostSummary(ctx context.Context, userID uuid.UUID, from, to
 	}
 
 	rows, err := r.pool.Query(ctx,
-		`SELECT request_type, COUNT(*), COALESCE(SUM(cost_usd_micro), 0),
-		        COALESCE(SUM(input_tokens), 0), COALESCE(SUM(output_tokens), 0)
-		 FROM audit_log
-		 WHERE user_id = $1 AND created_at >= $2 AND created_at < $3
-		 GROUP BY request_type
-		 ORDER BY SUM(cost_usd_micro) DESC`,
+		`SELECT dim, SUM(calls), SUM(cost), SUM(in_tok), SUM(out_tok)
+		 FROM (
+		     SELECT request_type AS dim, COUNT(*) AS calls,
+		            COALESCE(SUM(cost_usd_micro), 0) AS cost,
+		            COALESCE(SUM(input_tokens), 0) AS in_tok,
+		            COALESCE(SUM(output_tokens), 0) AS out_tok
+		     FROM audit_log
+		     WHERE user_id = $1 AND created_at >= $2 AND created_at < $3
+		     GROUP BY request_type
+		     UNION ALL
+		     SELECT request_type AS dim, COALESCE(SUM(total_calls), 0),
+		            COALESCE(SUM(total_cost_usd_micro), 0),
+		            COALESCE(SUM(total_input_tokens), 0),
+		            COALESCE(SUM(total_output_tokens), 0)
+		     FROM audit_log_daily
+		     WHERE user_id = $1
+		       AND day >= ($2 AT TIME ZONE 'UTC')::date
+		       AND day <  ($3 AT TIME ZONE 'UTC')::date
+		     GROUP BY request_type
+		 ) u
+		 GROUP BY dim
+		 ORDER BY SUM(cost) DESC`,
 		userID, from, to)
 	if err != nil {
 		return nil, fmt.Errorf("audit cost-summary by request_type: %w", err)
@@ -114,12 +142,28 @@ func (r *Repository) CostSummary(ctx context.Context, userID uuid.UUID, from, to
 	}
 
 	rows, err = r.pool.Query(ctx,
-		`SELECT model, COUNT(*), COALESCE(SUM(cost_usd_micro), 0),
-		        COALESCE(SUM(input_tokens), 0), COALESCE(SUM(output_tokens), 0)
-		 FROM audit_log
-		 WHERE user_id = $1 AND created_at >= $2 AND created_at < $3
-		 GROUP BY model
-		 ORDER BY SUM(cost_usd_micro) DESC`,
+		`SELECT dim, SUM(calls), SUM(cost), SUM(in_tok), SUM(out_tok)
+		 FROM (
+		     SELECT model AS dim, COUNT(*) AS calls,
+		            COALESCE(SUM(cost_usd_micro), 0) AS cost,
+		            COALESCE(SUM(input_tokens), 0) AS in_tok,
+		            COALESCE(SUM(output_tokens), 0) AS out_tok
+		     FROM audit_log
+		     WHERE user_id = $1 AND created_at >= $2 AND created_at < $3
+		     GROUP BY model
+		     UNION ALL
+		     SELECT model AS dim, COALESCE(SUM(total_calls), 0),
+		            COALESCE(SUM(total_cost_usd_micro), 0),
+		            COALESCE(SUM(total_input_tokens), 0),
+		            COALESCE(SUM(total_output_tokens), 0)
+		     FROM audit_log_daily
+		     WHERE user_id = $1
+		       AND day >= ($2 AT TIME ZONE 'UTC')::date
+		       AND day <  ($3 AT TIME ZONE 'UTC')::date
+		     GROUP BY model
+		 ) u
+		 GROUP BY dim
+		 ORDER BY SUM(cost) DESC`,
 		userID, from, to)
 	if err != nil {
 		return nil, fmt.Errorf("audit cost-summary by model: %w", err)
