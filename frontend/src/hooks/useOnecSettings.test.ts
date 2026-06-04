@@ -56,8 +56,8 @@ describe("useOnecSettings", () => {
     await waitFor(() => expect(result.current.loading).toBe(false));
 
     // The secret input still holds the masked value the user never touched.
+    act(() => result.current.setAuthSecret("...e123"));
     await act(async () => {
-      result.current.setAuthSecret("...e123");
       await result.current.save();
     });
     const payload = vi.mocked(api.updateOnecConfig).mock.calls[0]![0];
@@ -68,8 +68,8 @@ describe("useOnecSettings", () => {
     const { result } = renderHook(() => useOnecSettings());
     await waitFor(() => expect(result.current.loading).toBe(false));
 
+    act(() => result.current.setAuthSecret("brand-new-secret"));
     await act(async () => {
-      result.current.setAuthSecret("brand-new-secret");
       await result.current.save();
     });
     const payload = vi.mocked(api.updateOnecConfig).mock.calls[0]![0];
@@ -109,8 +109,8 @@ describe("useOnecSettings", () => {
     const { result } = renderHook(() => useOnecSettings());
     await waitFor(() => expect(result.current.loading).toBe(false));
 
+    act(() => result.current.setBaseURL("https://new.example.com"));
     await act(async () => {
-      result.current.setBaseURL("https://new.example.com");
       await result.current.test();
     });
     const payload = vi.mocked(api.testOnec).mock.calls[0]![0];
