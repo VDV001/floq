@@ -21,7 +21,12 @@ func NewHandler(repo UserRepository, jwtSecret string) *Handler {
 	return &Handler{repo: repo, jwtSecret: []byte(jwtSecret)}
 }
 
-func RegisterRoutes(r chi.Router, h *Handler) {
+// RegisterRoutes mounts the public auth endpoints. loginMW and
+// registerMW are per-route rate-limit middlewares supplied by the
+// composition root (DI) — the limits and storage backend live there,
+// not in this package. Either may be nil (e.g. in tests), in which case
+// that route is mounted without a limiter.
+func RegisterRoutes(r chi.Router, h *Handler, loginMW, registerMW func(http.Handler) http.Handler) {
 	r.Post("/api/auth/register", h.Register)
 	r.Post("/api/auth/login", h.Login)
 	r.Post("/api/auth/refresh", h.Refresh)
