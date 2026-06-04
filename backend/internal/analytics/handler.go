@@ -196,7 +196,7 @@ func (h *handler) getHotLeads(w http.ResponseWriter, r *http.Request) {
 	httputil.WriteJSON(w, http.StatusOK, hotLeadsResponse{
 		Leads:         wire,
 		TotalMatching: dto.TotalMatching,
-		LimitApplied:  limit,
+		LimitApplied:  dto.LimitApplied,
 	})
 }
 
