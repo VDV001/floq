@@ -214,6 +214,32 @@ func (r *PendingReplyRepo) CountPendingByUser(ctx context.Context, userID uuid.U
 	return out, rows.Err()
 }
 
+// CountPendingByKind returns the total number of rows still awaiting an
+// operator decision (status='pending'), grouped by reply kind ACROSS all
+// users. It is deliberately tenant-aggregate: the only consumer is the
+// public queue-depth metric, which must not carry a per-user label.
+func (r *PendingReplyRepo) CountPendingByKind(ctx context.Context) (map[string]int, error) {
+	rows, err := r.q(ctx).Query(ctx,
+		`SELECT kind, COUNT(*)
+		 FROM pending_replies
+		 WHERE status = 'pending'
+		 GROUP BY kind`)
+	if err != nil {
+		return nil, fmt.Errorf("count pending replies by kind: %w", err)
+	}
+	defer rows.Close()
+	out := make(map[string]int)
+	for rows.Next() {
+		var kind string
+		var count int
+		if err := rows.Scan(&kind, &count); err != nil {
+			return nil, fmt.Errorf("scan pending kind count: %w", err)
+		}
+		out[kind] = count
+	}
+	return out, rows.Err()
+}
+
 // Update persists status, decided_at and sent_at for an existing row.
 // Scoped by user_id and id to prevent a malformed entity from updating
 // somebody else's row even if the caller forgets to re-check ownership.
