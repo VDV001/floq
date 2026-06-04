@@ -26,6 +26,7 @@ func NewRepository(pool *pgxpool.Pool) *Repository {
 var (
 	_ SequenceStatsReader = (*Repository)(nil)
 	_ CostRatiosReader    = (*Repository)(nil)
+	_ HotLeadsReader      = (*Repository)(nil)
 )
 
 // GetSequenceStats returns one row per sequence with activity in the
@@ -170,6 +171,63 @@ func (r *Repository) GetCostRatios(ctx context.Context, userID uuid.UUID, from, 
 	dto.CostPerQualifiedUSDMicro = safeRatioInt(dto.TotalCostUSDMicro, dto.QualifiedLeadsCount)
 	dto.CostPerConvertedUSDMicro = safeRatioInt(dto.TotalCostUSDMicro, dto.ConvertedCount)
 	dto.CostPerDraftSentUSDMicro = safeRatioInt(dto.TotalCostUSDMicro, dto.DraftsSentCount)
+	return dto, nil
+}
+
+// GetHotLeads returns the ranked lead list for View 4: leads LEFT JOIN
+// their (1:1, lead_id is UNIQUE) qualification, scored highest-first.
+// A single query with COUNT(*) OVER() yields the page and the pre-LIMIT
+// total in one round-trip. Unqualified leads keep a NULL score and sort
+// last (NULLS LAST). status=any excludes the terminal 'closed' state;
+// an explicit status returns exactly that state.
+//
+// Tenant scope via leads.user_id. Sort is (score DESC NULLS LAST,
+// updated_at DESC) so the freshest hottest leads surface first.
+func (r *Repository) GetHotLeads(ctx context.Context, userID uuid.UUID, filter HotLeadsFilter) (*HotLeadsDTO, error) {
+	cutoff, hasCutoff := periodCutoff(filter.Period, time.Now().UTC())
+
+	rows, err := r.pool.Query(ctx, `
+		SELECT l.id, l.contact_name, l.channel::text, l.status::text, l.updated_at,
+		       q.score, q.score_reason, q.generated_at,
+		       COUNT(*) OVER() AS total_matching
+		FROM leads l
+		LEFT JOIN qualifications q ON q.lead_id = l.id
+		WHERE l.user_id = $1
+		  AND ($2::timestamptz IS NULL OR l.created_at >= $2)
+		  AND (
+		        ($3 = 'any' AND l.status::text <> 'closed')
+		     OR ($3 <> 'any' AND l.status::text = $3)
+		      )
+		  AND ($4 = 'any' OR l.channel::text = $4)
+		ORDER BY q.score DESC NULLS LAST, l.updated_at DESC
+		LIMIT $5`,
+		userID, nullableCutoff(cutoff, hasCutoff), filter.Status, filter.Channel, filter.Limit,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("analytics get hot leads: %w", err)
+	}
+	defer rows.Close()
+
+	dto := &HotLeadsDTO{Leads: []HotLeadDTO{}, LimitApplied: filter.Limit}
+	for rows.Next() {
+		var (
+			row    HotLeadDTO
+			reason *string
+			total  int
+		)
+		if err := rows.Scan(&row.ID, &row.ContactName, &row.Channel, &row.Status, &row.LastActivityAt,
+			&row.Score, &reason, &row.QualifiedAt, &total); err != nil {
+			return nil, fmt.Errorf("analytics scan hot lead: %w", err)
+		}
+		if reason != nil {
+			row.ScoreReason = *reason
+		}
+		dto.Leads = append(dto.Leads, row)
+		dto.TotalMatching = total // identical on every row; window count
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("analytics hot leads rows iter: %w", err)
+	}
 	return dto, nil
 }
 
