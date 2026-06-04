@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"strconv"
+	"time"
 )
 
 // Config holds all application configuration read from environment variables.
@@ -62,6 +63,15 @@ type Config struct {
 	// dodge the cap. Set TRUST_PROXY=true only when a reverse proxy that
 	// overwrites these headers sits in front of the app.
 	TrustProxyHeaders bool
+	// AuditRetentionDays is how long per-call audit_log rows are kept
+	// before the retention cron aggregates them into audit_log_daily and
+	// deletes them. Default 30 — matches the cost-summary default
+	// lookback, so recent reports still hit the detailed table.
+	AuditRetentionDays int
+	// AuditRetentionInterval is how often the retention cron runs.
+	// Default 24h — the rollup is day-granular, so sub-daily passes
+	// would only add churn.
+	AuditRetentionInterval time.Duration
 }
 
 // Load reads configuration from environment variables and returns a Config.
@@ -104,6 +114,8 @@ func Load() *Config {
 		AuthLoginRateLimit:          getEnvInt("AUTH_LOGIN_RATE_LIMIT", 5),
 		AuthRegisterRateLimit:       getEnvInt("AUTH_REGISTER_RATE_LIMIT", 3),
 		TrustProxyHeaders:           getEnvBool("TRUST_PROXY", false),
+		AuditRetentionDays:          getEnvInt("AUDIT_RETENTION_DAYS", 30),
+		AuditRetentionInterval:      getEnvDuration("AUDIT_RETENTION_INTERVAL", 24*time.Hour),
 	}
 }
 
@@ -127,6 +139,15 @@ func getEnvBool(key string, fallback bool) bool {
 	if v := os.Getenv(key); v != "" {
 		if b, err := strconv.ParseBool(v); err == nil {
 			return b
+		}
+	}
+	return fallback
+}
+
+func getEnvDuration(key string, fallback time.Duration) time.Duration {
+	if v := os.Getenv(key); v != "" {
+		if d, err := time.ParseDuration(v); err == nil {
+			return d
 		}
 	}
 	return fallback

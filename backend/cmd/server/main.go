@@ -330,6 +330,12 @@ func main() {
 	// 1C reconciliation cron — recovers lost webhooks every 15 minutes, stops on ctx.
 	go onec.NewReconcileCron(onecReconcileUC, 15*time.Minute, slog.Default()).Start(ctx)
 
+	// Audit-log retention cron (#101) — rolls per-call rows older than the
+	// retention window into audit_log_daily and purges them, bounding
+	// unbounded growth of the cost ledger. Stops on ctx.
+	auditRetentionUC := audit.NewRetentionUseCase(auditRepo, cfg.AuditRetentionDays)
+	go audit.NewRetentionCron(auditRetentionUC, cfg.AuditRetentionInterval, slog.Default()).Start(ctx)
+
 	// 8. Optional: Telegram inbox bot
 	// Read token from DB first, fall back to .env
 	prospectAdapter := newProspectRepoAdapter(prospectsRepo, txManager)

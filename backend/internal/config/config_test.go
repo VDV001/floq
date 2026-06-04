@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -16,6 +17,7 @@ func TestLoad_Defaults(t *testing.T) {
 		"BOOKING_LINK", "SENDER_NAME", "SENDER_COMPANY", "STALE_DAYS",
 		"DATABASE_URL", "REDIS_URL", "JWT_SECRET",
 		"AUTH_LOGIN_RATE_LIMIT", "AUTH_REGISTER_RATE_LIMIT", "TRUST_PROXY",
+		"AUDIT_RETENTION_DAYS", "AUDIT_RETENTION_INTERVAL",
 	} {
 		t.Setenv(key, "")
 		os.Unsetenv(key)
@@ -39,6 +41,8 @@ func TestLoad_Defaults(t *testing.T) {
 	assert.Equal(t, 5, cfg.AuthLoginRateLimit)
 	assert.Equal(t, 3, cfg.AuthRegisterRateLimit)
 	assert.False(t, cfg.TrustProxyHeaders, "TRUST_PROXY must default to false — app is exposed directly")
+	assert.Equal(t, 30, cfg.AuditRetentionDays)
+	assert.Equal(t, 24*time.Hour, cfg.AuditRetentionInterval)
 	assert.Empty(t, cfg.DatabaseURL)
 	assert.Empty(t, cfg.JWTSecret)
 }
@@ -53,6 +57,8 @@ func TestLoad_CustomEnvVars(t *testing.T) {
 	t.Setenv("AUTH_LOGIN_RATE_LIMIT", "10")
 	t.Setenv("AUTH_REGISTER_RATE_LIMIT", "1")
 	t.Setenv("TRUST_PROXY", "true")
+	t.Setenv("AUDIT_RETENTION_DAYS", "90")
+	t.Setenv("AUDIT_RETENTION_INTERVAL", "6h")
 
 	cfg := Load()
 	require.NotNil(t, cfg)
@@ -66,6 +72,8 @@ func TestLoad_CustomEnvVars(t *testing.T) {
 	assert.Equal(t, 10, cfg.AuthLoginRateLimit)
 	assert.Equal(t, 1, cfg.AuthRegisterRateLimit)
 	assert.True(t, cfg.TrustProxyHeaders)
+	assert.Equal(t, 90, cfg.AuditRetentionDays)
+	assert.Equal(t, 6*time.Hour, cfg.AuditRetentionInterval)
 }
 
 func TestGetEnvInt_ValidInt(t *testing.T) {
