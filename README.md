@@ -186,7 +186,7 @@ floq/
 │   │   ├── config/                  # Чтение .env
 │   │   ├── db/                      # TxManager, транзакции
 │   │   └── httputil/                # JSON-ответы, контекст запроса
-│   └── migrations/                  # 32 SQL-миграции (up + down)
+│   └── migrations/                  # 36 SQL-миграций (up + down)
 ├── frontend/
 │   ├── src/app/                     # 13+ страниц (App Router)
 │   ├── src/components/              # 30+ компонентов (shadcn/ui)
@@ -281,9 +281,9 @@ go test -race ./...
 ### Добавить миграцию
 
 ```bash
-# Создать файлы миграции
-touch backend/migrations/033_описание.up.sql
-touch backend/migrations/033_описание.down.sql
+# Создать файлы миграции (следующий свободный номер — 037)
+touch backend/migrations/037_описание.up.sql
+touch backend/migrations/037_описание.down.sql
 ```
 
 Миграции применяются автоматически при старте сервера.

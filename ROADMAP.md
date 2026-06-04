@@ -1,7 +1,7 @@
 # Floq — Roadmap
 
 > AI-помощник для полного цикла B2B-продаж: inbound (Telegram/Email) + outbound (cold outreach) + AI-квалификация и драфты.
-> Обновлено: 2026-05-20
+> Обновлено: 2026-06-04
 
 ---
 
@@ -25,8 +25,9 @@
 | **parser** | `internal/parser/` | 2GIS, website scraping |
 | **tgclient** | `internal/tgclient/` | MTProto (gotd/td) для отправки с личного TG |
 | **audit** | `internal/audit/` | AsyncRecorder cost-tracking за каждый AI-call, decorator над ai.Provider |
-| **analytics** | `internal/analytics/` | Read-side projections (sequence performance, cost ratios) — DTO-only |
-| **ratelimit** | `internal/ratelimit/` | Redis-backed sliding window + in-memory fallback |
+| **analytics** | `internal/analytics/` | Read-side projections (sequence performance, cost ratios, hot leads) — DTO-only |
+| **ratelimit** | `internal/ratelimit/` | Redis-backed sliding window + in-memory fallback; per-IP auth-route limits |
+| **metrics** | `internal/metrics/` | Prometheus `/metrics`: HTTP + AI-cost + audit-drops + queue-depth + runtime |
 | **httputil** | `internal/httputil/` | JSON-response helpers + defence-in-depth body-size middleware |
 
 ### Frontend (Next.js 16, React 19)
@@ -40,7 +41,7 @@
 | Prospects | `/prospects` | CRUD + CSV + verify integration |
 | Sequences | `/sequences` | Multi-step builder, channel-per-step |
 | Outbound | `/outbound` | Очередь отправки + tracking |
-| Analytics | `/analytics/sequences`, `/analytics/cost` | Sequence performance + cost-effectiveness (v0.28.0) |
+| Analytics | `/analytics/sequences`, `/analytics/cost`, `/analytics/hot-leads` | Sequence performance + cost-effectiveness + hot-leads list (v0.28.0, hot-leads v0.39.0) |
 | Parser | `/parser` | 2GIS + website scraping |
 | Settings | `/settings` | Sub-hooks per concern (AI/SMTP/IMAP/Resend/Telegram bot/account) |
 
@@ -78,7 +79,7 @@
 Inbound имеет full approve-before-send. Outbound (sequences) пока шлёт автоматически. Возможный mirror: each scheduled outbound message → `pending_replies` queue → operator approve. Trade-off: добавляет latency + manual surface vs. lower risk на cold outreach.
 
 ### Analytics dashboard (частично shipped в v0.28.0)
-`/analytics/sequences` (#95) — per-sequence sent/delivered/opened/replied/converted с rates. `/analytics/cost` (#96) — total AI-cost + cost-per-{lead,qualified,converted,draft} + by-request-type/by-model breakdowns. Осталось: View 3 inbox flow (#97), View 4 hot leads (#98) — закроют parent #91.
+`/analytics/sequences` (#95) — per-sequence sent/delivered/opened/replied/converted с rates. `/analytics/cost` (#96) — total AI-cost + cost-per-{lead,qualified,converted,draft} + by-request-type/by-model breakdowns. `/analytics/hot-leads` (#98, v0.39.0) — лиды по убыванию скора квалификации, фильтры status/channel/period. Осталось: View 3 inbox flow (#97) — закроет parent #91.
 
 ### Multi-workspace
 Текущая модель: один владелец (`cfg.OwnerUserID`), single-tenant в продакшене с multi-tenant adapters внутри. Реальная multi-team разработка требует переосмысления — workspace как aggregate, RBAC, billing-per-workspace.
