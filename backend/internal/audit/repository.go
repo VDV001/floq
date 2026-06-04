@@ -12,8 +12,11 @@ import (
 	"github.com/daniil/floq/internal/audit/domain"
 )
 
-// Compile-time check: Repository satisfies the domain port.
-var _ domain.AuditRepository = (*Repository)(nil)
+// Compile-time check: Repository satisfies the domain ports.
+var (
+	_ domain.AuditRepository     = (*Repository)(nil)
+	_ domain.RetentionRepository = (*Repository)(nil)
+)
 
 // Repository persists audit_log rows via pgx. Bulk inserts use
 // pgx.CopyFrom so a buffered batch from the async recorder writes in
@@ -133,6 +136,59 @@ func (r *Repository) CostSummary(ctx context.Context, userID uuid.UUID, from, to
 		return nil, fmt.Errorf("audit cost-summary by model rows: %w", err)
 	}
 	return summary, nil
+}
+
+// AggregateAndPurgeOlderThan implements domain.RetentionRepository. The
+// roll-up and the delete run as ONE data-modifying CTE so they share a
+// single snapshot: the rows fed into the aggregate are exactly the rows
+// deleted, with no window in which a concurrent writer's row could be
+// purged-but-not-counted. (In practice the recorder always stamps
+// created_at=now(), so no fresh row is ever < threshold — but the CTE
+// makes that safety structural rather than incidental.)
+//
+// Day bucketing uses the UTC calendar date of created_at so the result
+// is independent of the connection's session timezone and lines up with
+// the day-range filter the cost-summary read path applies to this table.
+// ON CONFLICT accumulates onto an existing bucket, which keeps the
+// operation idempotent and correct when a day is purged across multiple
+// runs.
+func (r *Repository) AggregateAndPurgeOlderThan(ctx context.Context, threshold time.Time) (int, error) {
+	var purged int
+	err := r.pool.QueryRow(ctx, `
+WITH purged AS (
+    DELETE FROM audit_log
+    WHERE created_at < $1
+    RETURNING (created_at AT TIME ZONE 'UTC')::date AS day,
+              user_id, provider, model, request_type,
+              cost_usd_micro, input_tokens, output_tokens
+),
+agg AS (
+    SELECT day, user_id, provider, model, request_type,
+           COUNT(*)                        AS total_calls,
+           COALESCE(SUM(cost_usd_micro), 0) AS total_cost,
+           COALESCE(SUM(input_tokens), 0)   AS total_in,
+           COALESCE(SUM(output_tokens), 0)  AS total_out
+    FROM purged
+    GROUP BY day, user_id, provider, model, request_type
+),
+ins AS (
+    INSERT INTO audit_log_daily AS d
+        (day, user_id, provider, model, request_type,
+         total_calls, total_cost_usd_micro, total_input_tokens, total_output_tokens)
+    SELECT day, user_id, provider, model, request_type,
+           total_calls, total_cost, total_in, total_out
+    FROM agg
+    ON CONFLICT (day, user_id, provider, model, request_type) DO UPDATE SET
+        total_calls          = d.total_calls          + EXCLUDED.total_calls,
+        total_cost_usd_micro = d.total_cost_usd_micro + EXCLUDED.total_cost_usd_micro,
+        total_input_tokens   = d.total_input_tokens   + EXCLUDED.total_input_tokens,
+        total_output_tokens  = d.total_output_tokens  + EXCLUDED.total_output_tokens
+)
+SELECT COUNT(*) FROM purged`, threshold).Scan(&purged)
+	if err != nil {
+		return 0, fmt.Errorf("audit retention aggregate-and-purge: %w", err)
+	}
+	return purged, nil
 }
 
 // nullableUUID converts an optional UUID into the form pgx expects for
