@@ -29,6 +29,7 @@ import (
 	"github.com/daniil/floq/internal/inbox/attachments"
 	"github.com/daniil/floq/internal/integrations/onec"
 	"github.com/daniil/floq/internal/leads"
+	"github.com/daniil/floq/internal/metrics"
 	"github.com/daniil/floq/internal/notify"
 	"github.com/daniil/floq/internal/outbound"
 	"github.com/daniil/floq/internal/parser"
@@ -228,7 +229,11 @@ func main() {
 	authHandler := auth.NewHandler(auth.NewRepository(pool), cfg.JWTSecret)
 
 	// 6. Router
+	appMetrics := metrics.New()
 	r := chi.NewRouter()
+	// Metrics middleware is outermost so it observes the FINAL status,
+	// including the 500 the Recoverer writes for a panicked handler.
+	r.Use(appMetrics.HTTPMiddleware)
 	r.Use(middleware.Logger)
 	r.Use(middleware.Recoverer)
 	r.Use(corsMiddleware)
@@ -253,6 +258,10 @@ func main() {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte(`{"status":"ok"}`))
 	})
+
+	// Prometheus scrape endpoint (public, no auth — pull model). The
+	// HTTP middleware skips this route so scrapes don't self-inflate.
+	r.Handle("/metrics", appMetrics.Handler())
 
 	// Tracking pixel (public, no auth — loaded by email clients)
 	sequences.RegisterPublicRoutes(r, sequencesUC)
