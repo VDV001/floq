@@ -80,11 +80,16 @@ func (r *Repository) Save(ctx context.Context, entries []*domain.Entry) error {
 // — so a UNION ALL summed in an outer GROUP BY cannot double-count.
 //
 // The daily side is filtered on its day column by the UTC calendar date
-// of the bounds. Aggregated history is therefore day-granular: a from/to
-// that lands mid-day on an already-rolled-up day pulls that whole day's
-// bucket. This is the accepted trade-off of aggregate-then-delete
-// (per-call precision is shed beyond the retention window); recent data,
-// where sub-day precision matters, is still served from audit_log.
+// of the bounds. Aggregated history is therefore day-granular: when
+// `from` lands mid-day on an already-rolled-up day, the whole day's
+// bucket is included — i.e. the result OVER-includes the part of that
+// edge day before `from` (it can never lose or double-count rows, only
+// pull in extra pre-`from` spend on the boundary day). This is the
+// accepted trade-off of aggregate-then-delete: per-call/sub-day
+// precision is shed beyond the retention window, while recent data —
+// where sub-day precision matters — is still served from audit_log. The
+// default lookback equals the retention window, so the boundary almost
+// always falls outside the rolled-up range.
 //
 // Two grouped queries (by request_type, by model); totals derive from
 // the request-type breakdown to avoid a third round-trip and stay

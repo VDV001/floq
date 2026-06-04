@@ -97,6 +97,43 @@ func TestRepository_CostSummary_IncludesAggregatedHistory(t *testing.T) {
 	assert.Equal(t, 2, byModel["m2"].Calls)
 }
 
+// TestRepository_CostSummary_SplitDayNoLossNoDoubleCount pins the
+// tightest invariant of the union: a SINGLE calendar day whose rows are
+// split between audit_log (afternoon, not yet purged) and
+// audit_log_daily (morning, already rolled up by the cron) must sum to
+// the day's true total — neither dropping the detailed tail nor
+// double-counting the rolled-up head. The two sides hold different
+// physical rows, so the outer SUM is exact.
+func TestRepository_CostSummary_SplitDayNoLossNoDoubleCount(t *testing.T) {
+	pool := testutil.TestDB(t)
+	userID := testutil.SeedUser(t, pool)
+	repo := audit.NewRepository(pool)
+	ctx := context.Background()
+
+	now := time.Now().UTC()
+	// A day near the retention boundary, split across both tables.
+	splitDay := now.AddDate(0, 0, -30)
+	splitDayAfternoon := time.Date(splitDay.Year(), splitDay.Month(), splitDay.Day(), 18, 0, 0, 0, time.UTC)
+
+	// Morning of splitDay: already purged → lives only in the rollup.
+	seedDailyRollup(t, pool, userID, splitDay, "test-provider", "m1", "qualification", 3, 3_000_000, 300, 150)
+	// Afternoon of the SAME day: still detailed in audit_log.
+	seedAuditEntry(t, pool, userID, "qualification", "m1", 1_000_000, 100, 50, splitDayAfternoon)
+
+	from := now.AddDate(0, 0, -60)
+	to := now.Add(time.Hour)
+	got, err := repo.CostSummary(ctx, userID, from, to)
+	require.NoError(t, err)
+
+	assert.Equal(t, 4, got.TotalCalls, "morning rollup (3) + afternoon detail (1), no loss/no double-count")
+	assert.EqualValues(t, 4_000_000, got.TotalUSDMicro)
+	require.Len(t, got.ByRequestType, 1)
+	assert.Equal(t, "qualification", got.ByRequestType[0].RequestType)
+	assert.Equal(t, 4, got.ByRequestType[0].Calls)
+	assert.EqualValues(t, 400, got.ByRequestType[0].InputTokens)
+	assert.EqualValues(t, 200, got.ByRequestType[0].OutputTokens)
+}
+
 func TestRepository_CostSummary_DailyRollupScopedByUserAndRange(t *testing.T) {
 	pool := testutil.TestDB(t)
 	userA := testutil.SeedUser(t, pool)

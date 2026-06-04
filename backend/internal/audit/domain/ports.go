@@ -17,10 +17,11 @@ import (
 // pgx.CopyFrom. An empty slice is a no-op.
 type AuditRepository interface {
 	Save(ctx context.Context, entries []*Entry) error
-	// CostSummary aggregates audit_log rows for one user over a closed
-	// time range [from, to). Returns zero-valued breakdown slices (not
-	// nil) when nothing matches so JSON serialisation produces [] rather
-	// than null.
+	// CostSummary aggregates spend for one user over the half-open range
+	// [from, to), stitching the detailed audit_log together with the
+	// audit_log_daily rollup so reports survive the retention cron.
+	// Returns zero-valued breakdown slices (not nil) when nothing matches
+	// so JSON serialisation produces [] rather than null.
 	CostSummary(ctx context.Context, userID uuid.UUID, from, to time.Time) (*CostSummary, error)
 }
 
