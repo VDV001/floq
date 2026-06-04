@@ -54,6 +54,16 @@ import (
 // comes from config so ops can tighten on demand without rebuild.
 const pendingReplyRateWindow = time.Minute
 
+// Auth rate-limit windows are fixed in the composition root; only the
+// per-window budgets come from config (cfg.AuthLoginRateLimit /
+// cfg.AuthRegisterRateLimit). Login: 5 attempts / 5 min — sane online
+// brute-force protection. Register: 3 / hour — anti-spam without
+// blocking a legitimate signup retry.
+const (
+	authLoginRateWindow    = 5 * time.Minute
+	authRegisterRateWindow = time.Hour
+)
+
 func main() {
 	// Load .env file (ignore error if missing — production uses real env vars).
 	_ = godotenv.Load()
@@ -147,29 +157,49 @@ func main() {
 	// bot -> usecase -> dispatcher -> bot cycle.
 	pendingReplyUC := inbox.NewPendingReplyUseCase(pendingReplyRepo, nil)
 
-	// Rate limiter for pending-reply approve/reject. Redis-backed when
-	// REDIS_URL is set (multi-instance safe); falls back to an in-
-	// process sliding-window for single-instance dev/test. Middleware
-	// fails open on Limiter errors so a Redis outage does not lock
-	// operators out of urgent approvals.
-	var pendingReplyLimiter ratelimit.Limiter
+	// Rate limiters. Redis-backed when REDIS_URL is set (multi-instance
+	// safe); falls back to an in-process sliding-window for single-
+	// instance dev/test. The Middleware fails open on Limiter errors so
+	// a Redis outage cannot lock legitimate users out. One Redis client
+	// is shared by every limiter so the connection pool is not
+	// duplicated per route.
+	var redisClient redis.UniversalClient
 	if cfg.RedisURL != "" {
 		redisOpt, err := redis.ParseURL(cfg.RedisURL)
 		if err != nil {
 			log.Fatalf("invalid REDIS_URL: %v", err)
 		}
-		redisClient := redis.NewClient(redisOpt)
+		rc := redis.NewClient(redisOpt)
 		pingCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-		if err := redisClient.Ping(pingCtx).Err(); err != nil {
+		if err := rc.Ping(pingCtx).Err(); err != nil {
 			slog.Warn("redis ping failed at startup; rate limiter will fail-open until reachable", "err", err)
 		}
 		cancel()
-		pendingReplyLimiter = ratelimit.NewRedisLimiter(redisClient, cfg.PendingReplyRateLimitPerMin, pendingReplyRateWindow)
+		redisClient = rc
 	} else {
 		slog.Warn("REDIS_URL not set; using in-process rate limiter (single-instance only)")
-		pendingReplyLimiter = ratelimit.NewInMemoryLimiter(cfg.PendingReplyRateLimitPerMin, pendingReplyRateWindow)
 	}
-	pendingReplyDecideMW := ratelimit.Middleware(pendingReplyLimiter, pendingReplyKeyFn, slog.Default())
+	newLimiter := func(limit int, window time.Duration) ratelimit.Limiter {
+		if redisClient != nil {
+			return ratelimit.NewRedisLimiter(redisClient, limit, window)
+		}
+		return ratelimit.NewInMemoryLimiter(limit, window)
+	}
+
+	// HITL approve/reject — keyed per authenticated user_id.
+	pendingReplyDecideMW := ratelimit.Middleware(
+		newLimiter(cfg.PendingReplyRateLimitPerMin, pendingReplyRateWindow),
+		pendingReplyKeyFn, slog.Default())
+
+	// Public auth endpoints — keyed per client IP (caller is not yet
+	// authenticated). Separate key prefixes keep login and register
+	// buckets from colliding in the shared Redis keyspace.
+	authLoginMW := ratelimit.Middleware(
+		newLimiter(cfg.AuthLoginRateLimit, authLoginRateWindow),
+		ratelimit.IPKeyFunc("ratelimit:auth-login:"), slog.Default())
+	authRegisterMW := ratelimit.Middleware(
+		newLimiter(cfg.AuthRegisterRateLimit, authRegisterRateWindow),
+		ratelimit.IPKeyFunc("ratelimit:auth-register:"), slog.Default())
 
 	// 4. Adapters
 	leadsAI := leads.NewAIAdapter(aiClient)
@@ -227,8 +257,8 @@ func main() {
 	// Tracking pixel (public, no auth — loaded by email clients)
 	sequences.RegisterPublicRoutes(r, sequencesUC)
 
-	// Auth (public)
-	auth.RegisterRoutes(r, authHandler)
+	// Auth (public) — login/register rate-limited per client IP.
+	auth.RegisterRoutes(r, authHandler, authLoginMW, authRegisterMW)
 
 	// 1C inbound webhook (public — authenticated by per-user secret, not JWT).
 	// Mapping resolves event kinds + counterparty fields; the applier routes
