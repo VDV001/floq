@@ -27,7 +27,19 @@ var (
 	_ SequenceStatsReader = (*Repository)(nil)
 	_ CostRatiosReader    = (*Repository)(nil)
 	_ HotLeadsReader      = (*Repository)(nil)
+	_ InboxFlowReader     = (*Repository)(nil)
 )
+
+// GetInboxFlow is stubbed pending the GREEN implementation — returns an
+// empty read model so the integration tests compile and fail on the
+// real assertions rather than panicking on a nil deref.
+func (r *Repository) GetInboxFlow(ctx context.Context, userID uuid.UUID, from, to time.Time) (*InboxFlowDTO, error) {
+	return &InboxFlowDTO{
+		PeriodFrom: from,
+		PeriodTo:   to,
+		Leads:      LeadsBreakdownDTO{ByChannel: map[string]int{}, ByStatus: map[string]int{}},
+	}, nil
+}
 
 // GetSequenceStats returns one row per sequence with activity in the
 // requested period. Sequences with zero outbound rows in the window
