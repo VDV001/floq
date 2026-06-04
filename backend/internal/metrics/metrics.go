@@ -51,9 +51,13 @@ func New() *Metrics {
 			Help: "Cumulative AI spend in micro-USD by provider, model and request type.",
 		}, aiLabels),
 		aiDuration: prometheus.NewHistogramVec(prometheus.HistogramOpts{
-			Name:    "ai_call_duration_seconds",
-			Help:    "AI provider call latency by provider, model and request type.",
-			Buckets: prometheus.DefBuckets,
+			Name: "ai_call_duration_seconds",
+			Help: "AI provider call latency by provider, model and request type.",
+			// AI calls routinely run for tens of seconds (reasoning
+			// models, image analysis, long drafts), so the default
+			// buckets (cap 10s) would collapse the tail into +Inf and
+			// make p95/p99 useless. Buckets extend to 2 minutes.
+			Buckets: []float64{0.5, 1, 2.5, 5, 10, 20, 30, 60, 120},
 		}, aiLabels),
 	}
 	reg.MustRegister(
