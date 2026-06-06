@@ -201,7 +201,17 @@ func (r *Repository) ConvertToLead(ctx context.Context, prospectID, leadID uuid.
 // prospect. The nullable consent_at maps a zero timestamp to NULL, mirroring
 // CreateProspect.
 func (r *Repository) UpdateConsent(ctx context.Context, prospectID uuid.UUID, c domain.Consent) error {
-	return nil // stub
+	var consentAt *time.Time
+	if !c.Timestamp.IsZero() {
+		consentAt = &c.Timestamp
+	}
+	_, err := r.q(ctx).Exec(ctx,
+		`UPDATE prospects SET consent_status = $2, consent_source = $3, consent_at = $4, updated_at = $5 WHERE id = $1`,
+		prospectID, c.Status, c.Source, consentAt, time.Now().UTC())
+	if err != nil {
+		return fmt.Errorf("update consent: %w", err)
+	}
+	return nil
 }
 
 // AddSuppression records that an address must never be contacted again on its
