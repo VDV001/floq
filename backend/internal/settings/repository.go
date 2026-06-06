@@ -16,16 +16,17 @@ import (
 var _ domain.Repository = (*Repository)(nil)
 
 type Repository struct {
-	q db.Querier
+	q      db.Querier
+	cipher SecretCipher
 }
 
-func NewRepository(pool *pgxpool.Pool) *Repository {
-	return &Repository{q: pool}
+func NewRepository(pool *pgxpool.Pool, cipher SecretCipher) *Repository {
+	return &Repository{q: pool, cipher: cipher}
 }
 
 // NewRepositoryFromQuerier creates a Repository from any db.Querier (useful for testing).
-func NewRepositoryFromQuerier(q db.Querier) *Repository {
-	return &Repository{q: q}
+func NewRepositoryFromQuerier(q db.Querier, cipher SecretCipher) *Repository {
+	return &Repository{q: q, cipher: cipher}
 }
 
 func (r *Repository) GetSettings(ctx context.Context, userID uuid.UUID) (*domain.Settings, error) {

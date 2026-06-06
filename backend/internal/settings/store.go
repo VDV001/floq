@@ -14,16 +14,17 @@ var _ domain.ConfigStore = (*Store)(nil)
 
 // Store reads user settings from the database.
 type Store struct {
-	q db.Querier
+	q      db.Querier
+	cipher SecretCipher
 }
 
-func NewStore(pool *pgxpool.Pool) *Store {
-	return &Store{q: pool}
+func NewStore(pool *pgxpool.Pool, cipher SecretCipher) *Store {
+	return &Store{q: pool, cipher: cipher}
 }
 
 // NewStoreFromQuerier creates a Store from any db.Querier (useful for testing).
-func NewStoreFromQuerier(q db.Querier) *Store {
-	return &Store{q: q}
+func NewStoreFromQuerier(q db.Querier, cipher SecretCipher) *Store {
+	return &Store{q: q, cipher: cipher}
 }
 
 // GetConfig reads settings for the given user. Returns zero-value UserConfig if no row exists.

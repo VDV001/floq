@@ -38,6 +38,7 @@ import (
 	"github.com/daniil/floq/internal/ratelimit"
 	"github.com/daniil/floq/internal/reminders"
 	"github.com/daniil/floq/internal/sequences"
+	"github.com/daniil/floq/internal/secrets"
 	"github.com/daniil/floq/internal/settings"
 	"github.com/daniil/floq/internal/sources"
 	"github.com/daniil/floq/internal/tgclient"
@@ -70,6 +71,14 @@ func main() {
 	_ = godotenv.Load()
 
 	cfg := config.Load()
+
+	// 0a. Secret cipher (at-rest encryption for client credentials). Fail
+	// fast: a missing or malformed FLOQ_SECRETS_KEK must crash the server,
+	// never fall back to storing credentials in plaintext.
+	secretCipher, err := secrets.NewCipher(cfg.SecretsKEK)
+	if err != nil {
+		log.Fatalf("FLOQ_SECRETS_KEK invalid (must be base64-encoded 32 bytes): %v", err)
+	}
 
 	// 0. Proxy provider (empty PROXY_URL = direct connection)
 	proxyProvider, err := proxy.NewFromURL(cfg.ProxyURL)
@@ -110,8 +119,8 @@ func main() {
 	}
 
 	// 2. Settings store (reads user_settings from DB, used by services)
-	settingsStore := settings.NewStore(pool)
-	settingsRepo := settings.NewRepository(pool)
+	settingsStore := settings.NewStore(pool, secretCipher)
+	settingsRepo := settings.NewRepository(pool, secretCipher)
 	settingsUC := settings.NewUseCase(settingsRepo, &settings.HTTPTelegramValidator{HTTPClient: httpClient})
 
 	ownerID, err := uuid.Parse(cfg.OwnerUserID)

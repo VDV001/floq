@@ -12,6 +12,11 @@ type Config struct {
 	DatabaseURL     string
 	RedisURL        string
 	JWTSecret       string
+	// SecretsKEK is the base64-encoded 32-byte key-encryption-key used to
+	// encrypt client credentials at rest. Validated at startup by
+	// secrets.NewCipher — the server fails fast if it is missing or not 32
+	// bytes, so credentials are never silently stored in plaintext.
+	SecretsKEK string
 	AIProvider      string
 	AnthropicAPIKey string
 	OpenAIAPIKey    string
@@ -81,6 +86,7 @@ func Load() *Config {
 		DatabaseURL:     os.Getenv("DATABASE_URL"),
 		RedisURL:        os.Getenv("REDIS_URL"),
 		JWTSecret:       os.Getenv("JWT_SECRET"),
+		SecretsKEK:      os.Getenv("FLOQ_SECRETS_KEK"),
 		AIProvider:      getEnv("AI_PROVIDER", "anthropic"),
 		AnthropicAPIKey: os.Getenv("ANTHROPIC_API_KEY"),
 		OpenAIAPIKey:    os.Getenv("OPENAI_API_KEY"),

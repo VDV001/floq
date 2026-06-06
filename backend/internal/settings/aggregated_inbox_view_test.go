@@ -37,7 +37,7 @@ func TestRepository_GetSettings_AggregatedInboxViewDefaultsTrue(t *testing.T) {
 		},
 	}
 
-	r := NewRepositoryFromQuerier(q)
+	r := NewRepositoryFromQuerier(q, fakeCipher{})
 	s, err := r.GetSettings(context.Background(), uuid.New())
 	require.NoError(t, err)
 	assert.True(t, s.AggregatedInboxView,
@@ -73,7 +73,7 @@ func TestRepository_GetSettings_AggregatedInboxViewFromDB(t *testing.T) {
 		},
 	}
 
-	r := NewRepositoryFromQuerier(q)
+	r := NewRepositoryFromQuerier(q, fakeCipher{})
 	s, err := r.GetSettings(context.Background(), uuid.New())
 	require.NoError(t, err)
 	assert.False(t, s.AggregatedInboxView,
