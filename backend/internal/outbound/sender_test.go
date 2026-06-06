@@ -57,10 +57,12 @@ func (m *mockOutboundRepository) MarkBounced(_ context.Context, id uuid.UUID, _ 
 }
 
 type mockProspectLookup struct {
-	prospects         map[uuid.UUID]*prospectsdomain.Prospect
-	err               error
-	verifyUpdatedIDs  []uuid.UUID
-	verifyStatuses    []prospectsdomain.VerifyStatus
+	prospects        map[uuid.UUID]*prospectsdomain.Prospect
+	err              error
+	verifyUpdatedIDs []uuid.UUID
+	verifyStatuses   []prospectsdomain.VerifyStatus
+	suppressed       bool
+	suppressErr      error
 }
 
 func (m *mockProspectLookup) GetProspect(_ context.Context, id uuid.UUID) (*prospectsdomain.Prospect, error) {
@@ -68,6 +70,10 @@ func (m *mockProspectLookup) GetProspect(_ context.Context, id uuid.UUID) (*pros
 		return nil, m.err
 	}
 	return m.prospects[id], nil
+}
+
+func (m *mockProspectLookup) IsSuppressed(_ context.Context, _ uuid.UUID, _ prospectsdomain.SuppressionChannel, _ string) (bool, error) {
+	return m.suppressed, m.suppressErr
 }
 
 func (m *mockProspectLookup) UpdateVerification(_ context.Context, id uuid.UUID, status prospectsdomain.VerifyStatus, _ int, _ string, _ time.Time) error {
@@ -1186,7 +1192,7 @@ func TestSendViaResend_NoKey(t *testing.T) {
 		"", "", "", "",
 		nil, nil, nil, nil, nil, nil)
 
-	err := s.sendViaResend(context.Background(), "to@test.com", "subj", "body", "")
+	err := s.sendViaResend(context.Background(), "to@test.com", "subj", "body", "", nil)
 	if !errors.Is(err, ErrNoResendAPIKey) {
 		t.Fatalf("expected errors.Is to match ErrNoResendAPIKey, got: %v", err)
 	}
@@ -1198,7 +1204,7 @@ func TestSendViaResend_ConfigStoreError(t *testing.T) {
 		"", "", "", "",
 		nil, nil, nil, nil, nil, nil)
 
-	err := s.sendViaResend(context.Background(), "to@test.com", "subj", "body", "")
+	err := s.sendViaResend(context.Background(), "to@test.com", "subj", "body", "", nil)
 	if !errors.Is(err, ErrNoResendAPIKey) {
 		t.Fatalf("expected errors.Is to match ErrNoResendAPIKey, got: %v", err)
 	}
@@ -1206,7 +1212,7 @@ func TestSendViaResend_ConfigStoreError(t *testing.T) {
 
 func TestSendViaSMTPWith_FromFallback(t *testing.T) {
 	s := &Sender{}
-	err := s.sendViaSMTPWith(context.Background(), "127.0.0.1", "587", "user@test.com", "pass", "", "to@test.com", "subj", "body")
+	err := s.sendViaSMTPWith(context.Background(), "127.0.0.1", "587", "user@test.com", "pass", "", "to@test.com", "subj", "body", nil)
 	if err == nil {
 		t.Fatal("expected error from SMTP dial")
 	}
@@ -1214,7 +1220,7 @@ func TestSendViaSMTPWith_FromFallback(t *testing.T) {
 
 func TestSendViaSMTPWith_Port465(t *testing.T) {
 	s := &Sender{}
-	err := s.sendViaSMTPWith(context.Background(), "127.0.0.1", "465", "user@test.com", "pass", "from@test.com", "to@test.com", "subj", "body")
+	err := s.sendViaSMTPWith(context.Background(), "127.0.0.1", "465", "user@test.com", "pass", "from@test.com", "to@test.com", "subj", "body", nil)
 	if err == nil {
 		t.Fatal("expected error from TLS dial")
 	}
@@ -1380,5 +1386,134 @@ func mustConsent(t *testing.T, err error) {
 	t.Helper()
 	if err != nil {
 		t.Fatalf("consent setup failed: %v", err)
+	}
+}
+
+// TestSendPending_SuppressionBlocksSend pins the suppression pre-check: a
+// suppressed address must not be contacted even with obtained consent. Covers
+// both a positive hit and fail-closed behavior when the check errors.
+func TestSendPending_SuppressionBlocksSend(t *testing.T) {
+	tests := []struct {
+		name        string
+		suppressed  bool
+		suppressErr error
+		wantSends   int
+	}{
+		{"address on suppression list", true, nil, 0},
+		{"check errors → fail closed", false, fmt.Errorf("suppression db down"), 0},
+		{"not suppressed → passes", false, nil, 1},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			prospectID := uuid.New()
+			msgID := uuid.New()
+			ownerID := uuid.New()
+
+			seqRepo := &mockOutboundRepository{
+				pending: []seqdomain.OutboundMessage{
+					{
+						ID:         msgID,
+						ProspectID: prospectID,
+						Channel:    seqdomain.StepChannelTelegram,
+						Status:     seqdomain.OutboundStatusApproved,
+						Body:       "hi",
+					},
+				},
+			}
+			p := &prospectsdomain.Prospect{ID: prospectID, TelegramUsername: "target_user"}
+			mustConsent(t, p.GrantConsent("inbound_reply", time.Now().UTC())) // obtained — consent alone would allow
+			prospectRepo := &mockProspectLookup{
+				prospects:   map[uuid.UUID]*prospectsdomain.Prospect{prospectID: p},
+				suppressed:  tt.suppressed,
+				suppressErr: tt.suppressErr,
+			}
+			tgRepo := &mockTelegramSessionStore{phone: "+70001234567", sessionData: []byte("session")}
+			tgMessenger := &mockTelegramMessenger{}
+			cfgStore := &mockConfigStore{cfg: &settingsdomain.UserConfig{}}
+
+			s := NewSender(cfgStore, ownerID, "", "", "",
+				"", "", "", "",
+				seqRepo, prospectRepo, tgRepo, tgMessenger, nil, nil)
+
+			if err := s.SendPending(context.Background()); err != nil {
+				t.Fatalf("expected no top-level error, got %v", err)
+			}
+
+			if len(tgMessenger.calls) != tt.wantSends {
+				t.Errorf("expected %d TG sends, got %d", tt.wantSends, len(tgMessenger.calls))
+			}
+			if len(seqRepo.sentIDs) != tt.wantSends {
+				t.Errorf("expected %d sent, got %d", tt.wantSends, len(seqRepo.sentIDs))
+			}
+		})
+	}
+}
+
+// TestUnsubscribeURL covers the per-email unsubscribe link: present and
+// round-trippable when secret+baseURL are set, absent otherwise.
+func TestUnsubscribeURL(t *testing.T) {
+	prospectID := uuid.New()
+
+	t.Run("absent without secret", func(t *testing.T) {
+		s := NewSender(nil, uuid.New(), "", "", "https://app.test", "", "", "", "", nil, nil, nil, nil, nil, nil)
+		if _, ok := s.unsubscribeURL(prospectID); ok {
+			t.Error("expected no URL without an unsubscribe secret")
+		}
+	})
+
+	t.Run("absent without base URL", func(t *testing.T) {
+		s := NewSender(nil, uuid.New(), "", "", "", "", "", "", "", nil, nil, nil, nil, nil, nil)
+		s.SetUnsubscribeSecret("sekret")
+		if _, ok := s.unsubscribeURL(prospectID); ok {
+			t.Error("expected no URL without a base URL")
+		}
+	})
+
+	t.Run("present and verifiable", func(t *testing.T) {
+		s := NewSender(nil, uuid.New(), "", "", "https://app.test/", "", "", "", "", nil, nil, nil, nil, nil, nil)
+		s.SetUnsubscribeSecret("sekret")
+		url, ok := s.unsubscribeURL(prospectID)
+		if !ok {
+			t.Fatal("expected a URL")
+		}
+		const prefix = "https://app.test/unsubscribe/"
+		if !strings.HasPrefix(url, prefix) {
+			t.Fatalf("url %q missing prefix %q", url, prefix)
+		}
+		token := strings.TrimPrefix(url, prefix)
+		got, err := prospectsdomain.ParseUnsubscribeToken(token, "sekret")
+		if err != nil {
+			t.Fatalf("token in URL must verify: %v", err)
+		}
+		if got != prospectID {
+			t.Errorf("token resolves to %s, want %s", got, prospectID)
+		}
+	})
+}
+
+func TestUnsubscribeEmailHeaders(t *testing.T) {
+	h := unsubscribeEmailHeaders("https://app.test/unsubscribe/tok")
+	if h["List-Unsubscribe"] != "<https://app.test/unsubscribe/tok>" {
+		t.Errorf("List-Unsubscribe = %q", h["List-Unsubscribe"])
+	}
+	if h["List-Unsubscribe-Post"] != "List-Unsubscribe=One-Click" {
+		t.Errorf("List-Unsubscribe-Post = %q", h["List-Unsubscribe-Post"])
+	}
+}
+
+func TestBuildSMTPMessage_IncludesExtraHeaders(t *testing.T) {
+	msg := string(buildSMTPMessage("from@x.com", "to@y.com", "Subj", "<p>hi</p>",
+		map[string]string{"List-Unsubscribe": "<https://app.test/u/tok>"}))
+
+	for _, want := range []string{
+		"From: from@x.com\r\n",
+		"To: to@y.com\r\n",
+		"Subject: Subj\r\n",
+		"List-Unsubscribe: <https://app.test/u/tok>\r\n",
+		"\r\n\r\n<p>hi</p>", // blank line separates headers from body
+	} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("message missing %q\n---\n%s", want, msg)
+		}
 	}
 }

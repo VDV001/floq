@@ -318,3 +318,90 @@ func TestConsentReadAcrossAllPaths(t *testing.T) {
 		assert.Equal(t, domain.ConsentStatusObtained, got.Consent.Status)
 	})
 }
+
+// TestSuppression_AddAndCheck verifies the suppression list round-trips and
+// that lookups are case-insensitive (via domain normalization) and scoped per
+// channel.
+func TestSuppression_AddAndCheck(t *testing.T) {
+	pool := testutil.TestDB(t)
+	userID := testutil.SeedUser(t, pool)
+	repo := prospects.NewRepository(pool)
+	ctx := context.Background()
+
+	ok, err := repo.IsSuppressed(ctx, userID, domain.SuppressionChannelEmail, "Bob@Example.com")
+	require.NoError(t, err)
+	require.False(t, ok, "should not be suppressed initially")
+
+	s, err := domain.NewSuppression(userID, domain.SuppressionChannelEmail, "bob@example.com", "unsubscribe")
+	require.NoError(t, err)
+	require.NoError(t, repo.AddSuppression(ctx, s))
+
+	ok, err = repo.IsSuppressed(ctx, userID, domain.SuppressionChannelEmail, "  BOB@example.COM ")
+	require.NoError(t, err)
+	require.True(t, ok, "should be suppressed after add, case-insensitively")
+
+	ok, err = repo.IsSuppressed(ctx, userID, domain.SuppressionChannelTelegram, "bob@example.com")
+	require.NoError(t, err)
+	require.False(t, ok, "other channel must be independent")
+}
+
+// TestSuppression_Idempotent verifies a repeated suppression of the same
+// address is a no-op, not a unique-constraint error.
+func TestSuppression_Idempotent(t *testing.T) {
+	pool := testutil.TestDB(t)
+	userID := testutil.SeedUser(t, pool)
+	repo := prospects.NewRepository(pool)
+	ctx := context.Background()
+
+	s1, err := domain.NewSuppression(userID, domain.SuppressionChannelEmail, "dup@example.com", "unsubscribe")
+	require.NoError(t, err)
+	require.NoError(t, repo.AddSuppression(ctx, s1))
+
+	s2, err := domain.NewSuppression(userID, domain.SuppressionChannelEmail, "dup@example.com", "manual")
+	require.NoError(t, err)
+	require.NoError(t, repo.AddSuppression(ctx, s2), "re-adding the same address must not conflict")
+
+	ok, err := repo.IsSuppressed(ctx, userID, domain.SuppressionChannelEmail, "dup@example.com")
+	require.NoError(t, err)
+	require.True(t, ok)
+}
+
+// TestSuppression_TenantIsolation verifies suppression is scoped per user.
+func TestSuppression_TenantIsolation(t *testing.T) {
+	pool := testutil.TestDB(t)
+	userA := testutil.SeedUser(t, pool)
+	userB := testutil.SeedUser(t, pool)
+	repo := prospects.NewRepository(pool)
+	ctx := context.Background()
+
+	s, err := domain.NewSuppression(userA, domain.SuppressionChannelEmail, "shared@example.com", "unsubscribe")
+	require.NoError(t, err)
+	require.NoError(t, repo.AddSuppression(ctx, s))
+
+	ok, err := repo.IsSuppressed(ctx, userB, domain.SuppressionChannelEmail, "shared@example.com")
+	require.NoError(t, err)
+	require.False(t, ok, "another tenant must not see the suppression")
+}
+
+// TestUpdateConsent persists a withdrawal on an existing prospect and verifies
+// it reloads, exercising the nullable consent_at mapping on the update path.
+func TestUpdateConsent(t *testing.T) {
+	pool := testutil.TestDB(t)
+	userID := testutil.SeedUser(t, pool)
+	repo := prospects.NewRepository(pool)
+	ctx := context.Background()
+
+	p := newTestProspect(userID) // starts at consent 'none'
+	require.NoError(t, repo.CreateProspect(ctx, p))
+
+	at := time.Now().UTC().Truncate(time.Microsecond)
+	require.NoError(t, p.WithdrawConsent("unsubscribe", at))
+	require.NoError(t, repo.UpdateConsent(ctx, p.ID, p.Consent))
+
+	got, err := repo.GetProspect(ctx, p.ID)
+	require.NoError(t, err)
+	require.NotNil(t, got)
+	assert.Equal(t, domain.ConsentStatusWithdrawn, got.Consent.Status)
+	assert.Equal(t, "unsubscribe", got.Consent.Source)
+	assert.False(t, got.Consent.Timestamp.IsZero())
+}

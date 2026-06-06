@@ -78,7 +78,7 @@ func TestSendViaResend_SendsIdempotencyKeyHeader(t *testing.T) {
 		"", "", "", "",
 		nil, nil, nil, nil, nil, nil)
 
-	err := s.sendViaResend(context.Background(), "to@test.com", "subj", "body", "outbound:abc-123")
+	err := s.sendViaResend(context.Background(), "to@test.com", "subj", "body", "outbound:abc-123", nil)
 	require.NoError(t, err)
 
 	keys := c.idempotencyKeys()
@@ -109,7 +109,7 @@ func TestSendViaResend_RetriesOn5xxAndSucceeds(t *testing.T) {
 		"", "", "", "",
 		nil, nil, nil, nil, nil, nil)
 
-	err := s.sendViaResend(context.Background(), "to@test.com", "subj", "body", "outbound:retry-1")
+	err := s.sendViaResend(context.Background(), "to@test.com", "subj", "body", "outbound:retry-1", nil)
 	require.NoError(t, err, "second attempt must succeed; retry loop must absorb the transient 503")
 	assert.Equal(t, 2, c.calls(), "expected exactly 2 attempts (1 fail + 1 success)")
 
@@ -131,7 +131,7 @@ func TestSendViaResend_StopsAfterMaxAttemptsOn5xx(t *testing.T) {
 		"", "", "", "",
 		nil, nil, nil, nil, nil, nil)
 
-	err := s.sendViaResend(context.Background(), "to@test.com", "subj", "body", "outbound:stuck")
+	err := s.sendViaResend(context.Background(), "to@test.com", "subj", "body", "outbound:stuck", nil)
 	require.Error(t, err, "consecutive 5xx must surface after max attempts; retry cannot loop forever")
 
 	got := c.calls()
@@ -162,7 +162,7 @@ func TestSendViaResend_RetriesOn429RateLimit(t *testing.T) {
 		"", "", "", "",
 		nil, nil, nil, nil, nil, nil)
 
-	err := s.sendViaResend(context.Background(), "to@test.com", "subj", "body", "outbound:rate-1")
+	err := s.sendViaResend(context.Background(), "to@test.com", "subj", "body", "outbound:rate-1", nil)
 	require.NoError(t, err, "429 must be retried as transient; second attempt succeeds")
 	assert.Equal(t, 2, c.calls(), "expected exactly 2 attempts on 429 → 200")
 }
@@ -181,7 +181,7 @@ func TestSendViaResend_DoesNotRetryOn4xx(t *testing.T) {
 		"", "", "", "",
 		nil, nil, nil, nil, nil, nil)
 
-	err := s.sendViaResend(context.Background(), "to@test.com", "subj", "body", "outbound:bad")
+	err := s.sendViaResend(context.Background(), "to@test.com", "subj", "body", "outbound:bad", nil)
 	require.Error(t, err)
 	assert.Equal(t, 1, c.calls(), "4xx must NOT retry — same body + same key cannot succeed on attempt 2")
 }

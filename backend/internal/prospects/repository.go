@@ -197,6 +197,53 @@ func (r *Repository) ConvertToLead(ctx context.Context, prospectID, leadID uuid.
 	return nil
 }
 
+// UpdateConsent persists a consent transition (grant/withdraw) on an existing
+// prospect. The nullable consent_at maps a zero timestamp to NULL, mirroring
+// CreateProspect.
+func (r *Repository) UpdateConsent(ctx context.Context, prospectID uuid.UUID, c domain.Consent) error {
+	var consentAt *time.Time
+	if !c.Timestamp.IsZero() {
+		consentAt = &c.Timestamp
+	}
+	_, err := r.q(ctx).Exec(ctx,
+		`UPDATE prospects SET consent_status = $2, consent_source = $3, consent_at = $4, updated_at = $5 WHERE id = $1`,
+		prospectID, c.Status, c.Source, consentAt, time.Now().UTC())
+	if err != nil {
+		return fmt.Errorf("update consent: %w", err)
+	}
+	return nil
+}
+
+// AddSuppression records that an address must never be contacted again on its
+// channel. Idempotent: a repeated unsubscribe collapses to a no-op rather than
+// a unique-constraint error.
+func (r *Repository) AddSuppression(ctx context.Context, s *domain.Suppression) error {
+	_, err := r.q(ctx).Exec(ctx,
+		`INSERT INTO suppressions (id, user_id, channel, address, reason, created_at)
+		 VALUES ($1, $2, $3, $4, $5, $6)
+		 ON CONFLICT (user_id, channel, address) DO NOTHING`,
+		s.ID, s.UserID, s.Channel, s.Address, s.Reason, s.CreatedAt)
+	if err != nil {
+		return fmt.Errorf("add suppression: %w", err)
+	}
+	return nil
+}
+
+// IsSuppressed reports whether address is on the suppression list for userID on
+// the given channel. The address is normalized the same way it was stored so
+// the lookup is case-insensitive.
+func (r *Repository) IsSuppressed(ctx context.Context, userID uuid.UUID, channel domain.SuppressionChannel, address string) (bool, error) {
+	addr := domain.NormalizeSuppressionAddress(channel, address)
+	var exists bool
+	err := r.q(ctx).QueryRow(ctx,
+		`SELECT EXISTS (SELECT 1 FROM suppressions WHERE user_id = $1 AND channel = $2 AND address = $3)`,
+		userID, channel, addr).Scan(&exists)
+	if err != nil {
+		return false, fmt.Errorf("is suppressed: %w", err)
+	}
+	return exists, nil
+}
+
 func (r *Repository) UpdateVerification(ctx context.Context, id uuid.UUID, verifyStatus domain.VerifyStatus, verifyScore int, verifyDetails string, verifiedAt time.Time) error {
 	_, err := r.q(ctx).Exec(ctx,
 		`UPDATE prospects SET verify_status = $2, verify_score = $3, verify_details = $4, verified_at = $5, updated_at = $6 WHERE id = $1`,

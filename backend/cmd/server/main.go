@@ -302,6 +302,10 @@ func main() {
 	// Tracking pixel (public, no auth — loaded by email clients)
 	sequences.RegisterPublicRoutes(r, sequencesUC)
 
+	// Unsubscribe (public — authorized by the signed token in the URL, not JWT;
+	// reached from email link clicks and RFC 8058 one-click POSTs).
+	prospects.RegisterUnsubscribeRoutes(r, prospects.NewUnsubscribeService(prospectsRepo, cfg.JWTSecret))
+
 	// Auth (public) — login/register rate-limited per client IP.
 	auth.RegisterRoutes(r, authHandler, authLoginMW, authRegisterMW)
 
@@ -360,6 +364,9 @@ func main() {
 	// Always starts — reads Resend API key from DB each tick (falls back to .env)
 	tgRepo := tgclient.NewRepository(pool)
 	emailSender := outbound.NewSender(settingsStore, ownerID, cfg.ResendAPIKey, cfg.SMTPFrom, cfg.AppBaseURL, cfg.SMTPHost, cfg.SMTPPort, cfg.SMTPUser, cfg.SMTPPassword, sequencesRepo, prospectsRepo, tgRepo, outbound.NewMTProtoMessenger(), proxyDialer, httpClient)
+	// Sign unsubscribe tokens with the same secret the public /unsubscribe route
+	// verifies them with, so campaign emails carry working one-click links.
+	emailSender.SetUnsubscribeSecret(cfg.JWTSecret)
 	go func() {
 		ticker := time.NewTicker(30 * time.Second)
 		defer ticker.Stop()

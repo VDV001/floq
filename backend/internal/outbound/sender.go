@@ -12,6 +12,7 @@ import (
 	"net"
 	"net/http"
 	"net/smtp"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -55,6 +56,27 @@ func authorizeConsent(prospect *prospectsdomain.Prospect, msgID uuid.UUID) bool 
 	return true
 }
 
+// isSuppressed reports whether a send to address on channel must be skipped:
+// either the address is on the suppression list, or the check itself failed.
+// It fails CLOSED — an unverifiable suppression state must never result in a
+// send, since suppression is the hard compliance pre-check ahead of consent.
+// An empty address has nothing to match and is not suppressed.
+func (s *Sender) isSuppressed(ctx context.Context, userID uuid.UUID, channel prospectsdomain.SuppressionChannel, address string, msgID uuid.UUID) bool {
+	if address == "" {
+		return false
+	}
+	suppressed, err := s.prospectRepo.IsSuppressed(ctx, userID, channel, address)
+	if err != nil {
+		log.Printf("[outbound][suppression] check failed for msg %s, skipping (fail-closed): %v", msgID, err)
+		return true
+	}
+	if suppressed {
+		log.Printf("[outbound][suppression] skipping msg %s: address suppressed on %s", msgID, channel)
+		return true
+	}
+	return false
+}
+
 type Sender struct {
 	store        ConfigStore
 	ownerID      uuid.UUID
@@ -72,8 +94,68 @@ type Sender struct {
 	dialer       proxy.ContextDialer
 	httpClient   *http.Client
 
+	// unsubscribeSecret signs the per-email unsubscribe tokens. Set via
+	// SetUnsubscribeSecret at wiring time; when empty, emails carry no
+	// unsubscribe link or List-Unsubscribe header.
+	unsubscribeSecret string
+
 	tgLastSent time.Time
 	tgRateMu   sync.Mutex
+}
+
+// SetUnsubscribeSecret configures the HMAC secret used to mint per-email
+// unsubscribe links. Called once at composition time (mirrors the optional-
+// dependency setter pattern used elsewhere in wiring). When unset, outbound
+// emails omit the unsubscribe link and List-Unsubscribe headers.
+func (s *Sender) SetUnsubscribeSecret(secret string) { s.unsubscribeSecret = secret }
+
+// unsubscribeURL returns the one-click unsubscribe URL for a prospect, and
+// false when unsubscribe links are not configured (no secret or no base URL).
+func (s *Sender) unsubscribeURL(prospectID uuid.UUID) (string, bool) {
+	if s.unsubscribeSecret == "" || s.appBaseURL == "" {
+		return "", false
+	}
+	token := prospectsdomain.SignUnsubscribeToken(prospectID, s.unsubscribeSecret)
+	return strings.TrimRight(s.appBaseURL, "/") + "/unsubscribe/" + token, true
+}
+
+// unsubscribeEmailHeaders returns the RFC 8058 one-click unsubscribe headers
+// for url. List-Unsubscribe-Post signals that a bare POST to the URL performs
+// the unsubscribe without further interaction.
+func unsubscribeEmailHeaders(url string) map[string]string {
+	return map[string]string{
+		"List-Unsubscribe":      "<" + url + ">",
+		"List-Unsubscribe-Post": "List-Unsubscribe=One-Click",
+	}
+}
+
+// unsubscribeFooter is the visible unsubscribe link appended to the email body.
+func unsubscribeFooter(url string) string {
+	return `<p style="font-size:12px;color:#888;margin-top:24px">` +
+		`Если вы не хотите получать эти письма, <a href="` + url + `">отписаться</a>.</p>`
+}
+
+// buildSMTPMessage assembles the raw RFC 822 message: the standard headers,
+// any extraHeaders (e.g. List-Unsubscribe), a blank line, then the HTML body.
+func buildSMTPMessage(from, to, subject, htmlBody string, extraHeaders map[string]string) []byte {
+	var b strings.Builder
+	fmt.Fprintf(&b, "From: %s\r\n", from)
+	fmt.Fprintf(&b, "To: %s\r\n", to)
+	fmt.Fprintf(&b, "Subject: %s\r\n", subject)
+	b.WriteString("MIME-Version: 1.0\r\n")
+	b.WriteString("Content-Type: text/html; charset=\"utf-8\"\r\n")
+	// Sort keys for deterministic header ordering (stable output, testable).
+	keys := make([]string, 0, len(extraHeaders))
+	for k := range extraHeaders {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	for _, k := range keys {
+		fmt.Fprintf(&b, "%s: %s\r\n", k, extraHeaders[k])
+	}
+	b.WriteString("\r\n")
+	b.WriteString(htmlBody)
+	return []byte(b.String())
 }
 
 func NewSender(
@@ -137,10 +219,12 @@ func (s *Sender) SendOneEmailFor(ctx context.Context, userID uuid.UUID, to, subj
 		}
 	}
 	htmlBody := "<html><body>" + body + "</body></html>"
+	// Ad-hoc inbox replies carry no unsubscribe header — they answer an inbound
+	// contact, not a cold outbound campaign.
 	if smtpHost != "" && smtpUser != "" && smtpPassword != "" {
-		return s.sendViaSMTPWith(ctx, smtpHost, smtpPort, smtpUser, smtpPassword, fromAddr, to, subject, htmlBody)
+		return s.sendViaSMTPWith(ctx, smtpHost, smtpPort, smtpUser, smtpPassword, fromAddr, to, subject, htmlBody, nil)
 	}
-	return s.dispatchToResend(ctx, apiKey, to, subject, htmlBody, idempotencyKey)
+	return s.dispatchToResend(ctx, apiKey, to, subject, htmlBody, idempotencyKey, nil)
 }
 
 // SendPending finds all approved email messages ready to send.
@@ -182,6 +266,9 @@ func (s *Sender) SendPending(ctx context.Context) error {
 		if prospect == nil || prospect.Email == "" {
 			continue
 		}
+		if s.isSuppressed(ctx, prospect.UserID, prospectsdomain.SuppressionChannelEmail, prospect.Email, msg.ID) {
+			continue
+		}
 		if !authorizeConsent(prospect, msg.ID) {
 			continue
 		}
@@ -196,13 +283,21 @@ func (s *Sender) SendPending(ctx context.Context) error {
 			trackingPixel = fmt.Sprintf(`<img src="%s/api/track/open/%s" width="1" height="1" style="display:none" />`, s.appBaseURL, msg.ID)
 		}
 
-		htmlBody := "<html><body>" + msg.Body + trackingPixel + "</body></html>"
+		// Unsubscribe link + RFC 8058 one-click headers, keyed to the prospect.
+		footer := ""
+		var extraHeaders map[string]string
+		if url, ok := s.unsubscribeURL(prospect.ID); ok {
+			footer = unsubscribeFooter(url)
+			extraHeaders = unsubscribeEmailHeaders(url)
+		}
+
+		htmlBody := "<html><body>" + msg.Body + footer + trackingPixel + "</body></html>"
 
 		var sendErr error
 		if smtpHost != "" && smtpUser != "" && smtpPassword != "" {
-			sendErr = s.sendViaSMTPWith(ctx, smtpHost, smtpPort, smtpUser, smtpPassword, fromAddr, prospect.Email, subject, htmlBody)
+			sendErr = s.sendViaSMTPWith(ctx, smtpHost, smtpPort, smtpUser, smtpPassword, fromAddr, prospect.Email, subject, htmlBody, extraHeaders)
 		} else {
-			sendErr = s.sendViaResend(ctx, prospect.Email, subject, htmlBody, idempotencyKeyPrefix+msg.ID.String())
+			sendErr = s.sendViaResend(ctx, prospect.Email, subject, htmlBody, idempotencyKeyPrefix+msg.ID.String(), extraHeaders)
 		}
 
 		if sendErr != nil {
@@ -252,14 +347,12 @@ func (s *Sender) SendPending(ctx context.Context) error {
 // handoff and ack on this path may result in duplicate delivery on a
 // subsequent cron tick that re-fetches the same row. Tracked as a
 // known gap; the Resend path (the production default) is safe.
-func (s *Sender) sendViaSMTPWith(ctx context.Context, host, port, user, password, from, to, subject, htmlBody string) error {
+func (s *Sender) sendViaSMTPWith(ctx context.Context, host, port, user, password, from, to, subject, htmlBody string, extraHeaders map[string]string) error {
 	if from == "" {
 		from = user
 	}
 
-	headers := fmt.Sprintf("From: %s\r\nTo: %s\r\nSubject: %s\r\nMIME-Version: 1.0\r\nContent-Type: text/html; charset=\"utf-8\"\r\n\r\n",
-		from, to, subject)
-	message := []byte(headers + htmlBody)
+	message := buildSMTPMessage(from, to, subject, htmlBody, extraHeaders)
 
 	addr := host + ":" + port
 	auth := smtp.PlainAuth("", user, password, host)
@@ -405,6 +498,9 @@ func (s *Sender) handleTelegramMessage(ctx context.Context, msg seqdomain.Outbou
 	if prospect == nil {
 		return
 	}
+	if s.isSuppressed(ctx, prospect.UserID, prospectsdomain.SuppressionChannelTelegram, prospect.TelegramUsername, msg.ID) {
+		return
+	}
 	if !authorizeConsent(prospect, msg.ID) {
 		return
 	}
@@ -483,29 +579,33 @@ const idempotencyKeyPrefix = "outbound:"
 // Retries up to resendMaxAttempts on transport errors and 5xx
 // responses with exponential backoff. 4xx is treated as terminal —
 // same body + same key cannot succeed by trying again.
-func (s *Sender) sendViaResend(ctx context.Context, to, subject, htmlBody, idempotencyKey string) error {
+func (s *Sender) sendViaResend(ctx context.Context, to, subject, htmlBody, idempotencyKey string, extraHeaders map[string]string) error {
 	apiKey := s.fallbackKey
 	if cfg, err := s.store.GetConfig(ctx, s.ownerID); err == nil {
 		apiKey = settingsdomain.ResolveConfig(cfg.ResendAPIKey, apiKey)
 	}
-	return s.dispatchToResend(ctx, apiKey, to, subject, htmlBody, idempotencyKey)
+	return s.dispatchToResend(ctx, apiKey, to, subject, htmlBody, idempotencyKey, extraHeaders)
 }
 
 // dispatchToResend is the wire-level Resend HTTP call factored out of
 // sendViaResend so multi-tenant callers (SendOneEmailFor) can resolve
 // the API key for an explicit userID and pass it down without
 // triggering a second GetConfig keyed on s.ownerID.
-func (s *Sender) dispatchToResend(ctx context.Context, apiKey, to, subject, htmlBody, idempotencyKey string) error {
+func (s *Sender) dispatchToResend(ctx context.Context, apiKey, to, subject, htmlBody, idempotencyKey string, extraHeaders map[string]string) error {
 	if apiKey == "" {
 		return ErrNoResendAPIKey
 	}
 
-	body, _ := json.Marshal(map[string]interface{}{
+	payload := map[string]interface{}{
 		"from":    s.fromAddress,
 		"to":      []string{to},
 		"subject": subject,
 		"html":    htmlBody,
-	})
+	}
+	if len(extraHeaders) > 0 {
+		payload["headers"] = extraHeaders
+	}
+	body, _ := json.Marshal(payload)
 
 	client := s.httpClient
 	if client == nil {
