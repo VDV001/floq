@@ -382,3 +382,26 @@ func TestSuppression_TenantIsolation(t *testing.T) {
 	require.NoError(t, err)
 	require.False(t, ok, "another tenant must not see the suppression")
 }
+
+// TestUpdateConsent persists a withdrawal on an existing prospect and verifies
+// it reloads, exercising the nullable consent_at mapping on the update path.
+func TestUpdateConsent(t *testing.T) {
+	pool := testutil.TestDB(t)
+	userID := testutil.SeedUser(t, pool)
+	repo := prospects.NewRepository(pool)
+	ctx := context.Background()
+
+	p := newTestProspect(userID) // starts at consent 'none'
+	require.NoError(t, repo.CreateProspect(ctx, p))
+
+	at := time.Now().UTC().Truncate(time.Microsecond)
+	require.NoError(t, p.WithdrawConsent("unsubscribe", at))
+	require.NoError(t, repo.UpdateConsent(ctx, p.ID, p.Consent))
+
+	got, err := repo.GetProspect(ctx, p.ID)
+	require.NoError(t, err)
+	require.NotNil(t, got)
+	assert.Equal(t, domain.ConsentStatusWithdrawn, got.Consent.Status)
+	assert.Equal(t, "unsubscribe", got.Consent.Source)
+	assert.False(t, got.Consent.Timestamp.IsZero())
+}

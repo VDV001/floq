@@ -197,6 +197,13 @@ func (r *Repository) ConvertToLead(ctx context.Context, prospectID, leadID uuid.
 	return nil
 }
 
+// UpdateConsent persists a consent transition (grant/withdraw) on an existing
+// prospect. The nullable consent_at maps a zero timestamp to NULL, mirroring
+// CreateProspect.
+func (r *Repository) UpdateConsent(ctx context.Context, prospectID uuid.UUID, c domain.Consent) error {
+	return nil // stub
+}
+
 // AddSuppression records that an address must never be contacted again on its
 // channel. Idempotent: a repeated unsubscribe collapses to a no-op rather than
 // a unique-constraint error.
