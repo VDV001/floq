@@ -1300,3 +1300,81 @@ func (s *spyConfigStore) GetConfig(_ context.Context, id uuid.UUID) (*settingsdo
 	}
 	return s.cfg, s.err
 }
+
+// TestSendPending_ConsentGate pins the outbound consent gate on the Telegram
+// path (where the mock messenger makes a successful send observable):
+// withdrawn is hard-blocked, obtained sends freely, and a cold 'none' prospect
+// still sends under the logged lawful-basis override. Table-driven (3 states).
+func TestSendPending_ConsentGate(t *testing.T) {
+	tests := []struct {
+		name      string
+		consent   func(t *testing.T, p *prospectsdomain.Prospect)
+		wantSends int
+	}{
+		{
+			name:      "withdrawn is hard-blocked",
+			consent:   func(t *testing.T, p *prospectsdomain.Prospect) { mustConsent(t, p.WithdrawConsent("unsubscribe", time.Now().UTC())) },
+			wantSends: 0,
+		},
+		{
+			name:      "obtained sends freely",
+			consent:   func(t *testing.T, p *prospectsdomain.Prospect) { mustConsent(t, p.GrantConsent("inbound_reply", time.Now().UTC())) },
+			wantSends: 1,
+		},
+		{
+			name:      "none sends as cold under lawful-basis override",
+			consent:   func(t *testing.T, p *prospectsdomain.Prospect) {},
+			wantSends: 1,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			prospectID := uuid.New()
+			msgID := uuid.New()
+			ownerID := uuid.New()
+
+			seqRepo := &mockOutboundRepository{
+				pending: []seqdomain.OutboundMessage{
+					{
+						ID:         msgID,
+						ProspectID: prospectID,
+						Channel:    seqdomain.StepChannelTelegram,
+						Status:     seqdomain.OutboundStatusApproved,
+						Body:       "hi",
+					},
+				},
+			}
+			p := &prospectsdomain.Prospect{ID: prospectID, TelegramUsername: "target_user"}
+			tt.consent(t, p)
+			prospectRepo := &mockProspectLookup{
+				prospects: map[uuid.UUID]*prospectsdomain.Prospect{prospectID: p},
+			}
+			tgRepo := &mockTelegramSessionStore{phone: "+70001234567", sessionData: []byte("session")}
+			tgMessenger := &mockTelegramMessenger{}
+			cfgStore := &mockConfigStore{cfg: &settingsdomain.UserConfig{}}
+
+			s := NewSender(cfgStore, ownerID, "", "", "",
+				"", "", "", "",
+				seqRepo, prospectRepo, tgRepo, tgMessenger, nil, nil)
+
+			if err := s.SendPending(context.Background()); err != nil {
+				t.Fatalf("expected no top-level error, got %v", err)
+			}
+
+			if len(tgMessenger.calls) != tt.wantSends {
+				t.Errorf("expected %d TG send calls, got %d", tt.wantSends, len(tgMessenger.calls))
+			}
+			if len(seqRepo.sentIDs) != tt.wantSends {
+				t.Errorf("expected %d sent, got %d", tt.wantSends, len(seqRepo.sentIDs))
+			}
+		})
+	}
+}
+
+func mustConsent(t *testing.T, err error) {
+	t.Helper()
+	if err != nil {
+		t.Fatalf("consent setup failed: %v", err)
+	}
+}
