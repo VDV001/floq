@@ -60,6 +60,16 @@ func (r *Repository) GetSettings(ctx context.Context, userID uuid.UUID) (*domain
 		AutoProspectToLead:  true,
 	}
 
+	// Encrypted secret columns are appended at the end of the projection so
+	// the legacy plaintext column ordering stays stable. Each is decrypted
+	// below, preferring the ciphertext over the (possibly stale) plaintext.
+	var (
+		ttEnc, ttNonce       []byte
+		imapEnc, imapNonce   []byte
+		resendEnc, resendNon []byte
+		smtpEnc, smtpNonce   []byte
+		aiEnc, aiNonce       []byte
+	)
 	err = r.q.QueryRow(ctx,
 		`SELECT telegram_bot_token, telegram_bot_active,
 		        imap_host, imap_port, imap_user, imap_password,
@@ -70,7 +80,12 @@ func (r *Repository) GetSettings(ctx context.Context, userID uuid.UUID) (*domain
 		        auto_qualify, auto_draft, auto_send, auto_send_delay_min,
 		        auto_followup, auto_followup_days, auto_prospect_to_lead, auto_verify_import,
 		        ai_style_check_enabled,
-		        aggregated_inbox_view
+		        aggregated_inbox_view,
+		        telegram_bot_token_enc, telegram_bot_token_nonce,
+		        imap_password_enc, imap_password_nonce,
+		        resend_api_key_enc, resend_api_key_nonce,
+		        smtp_password_enc, smtp_password_nonce,
+		        ai_api_key_enc, ai_api_key_nonce
 		 FROM user_settings WHERE user_id = $1`, userID,
 	).Scan(
 		&s.TelegramBotToken, &s.TelegramBotActive,
@@ -83,9 +98,31 @@ func (r *Repository) GetSettings(ctx context.Context, userID uuid.UUID) (*domain
 		&s.AutoFollowup, &s.AutoFollowupDays, &s.AutoProspectToLead, &s.AutoVerifyImport,
 		&s.AIStyleCheckEnabled,
 		&s.AggregatedInboxView,
+		&ttEnc, &ttNonce,
+		&imapEnc, &imapNonce,
+		&resendEnc, &resendNon,
+		&smtpEnc, &smtpNonce,
+		&aiEnc, &aiNonce,
 	)
 	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return nil, fmt.Errorf("load settings: %w", err)
+	}
+
+	for _, sec := range []struct {
+		enc, nonce []byte
+		field      *string
+	}{
+		{ttEnc, ttNonce, &s.TelegramBotToken},
+		{imapEnc, imapNonce, &s.IMAPPassword},
+		{resendEnc, resendNon, &s.ResendAPIKey},
+		{smtpEnc, smtpNonce, &s.SMTPPassword},
+		{aiEnc, aiNonce, &s.AIAPIKey},
+	} {
+		plain, derr := decryptOrFallback(r.cipher, sec.enc, sec.nonce, *sec.field)
+		if derr != nil {
+			return nil, fmt.Errorf("decrypt secret: %w", derr)
+		}
+		*sec.field = plain
 	}
 
 	return s, nil
@@ -105,6 +142,28 @@ func (r *Repository) UpdateSettings(ctx context.Context, userID uuid.UUID, field
 
 	i := 2
 	for name, val := range fields {
+		// Secret columns are encrypted at this boundary and stored in their
+		// <col>_enc/<col>_nonce byte columns; the legacy plaintext column is
+		// never written (it survives only for read-fallback until migration
+		// 038). A non-string value for a secret column is a programming
+		// error — settings secrets are always strings.
+		if secretColumns[name] {
+			plaintext, ok := val.(string)
+			if !ok {
+				return fmt.Errorf("secret column %q must be a string, got %T", name, val)
+			}
+			ciphertext, nonce, err := r.cipher.Encrypt(plaintext)
+			if err != nil {
+				return fmt.Errorf("encrypt %s: %w", name, err)
+			}
+			encCol, nonceCol := name+"_enc", name+"_nonce"
+			insertCols += fmt.Sprintf(", %s, %s", encCol, nonceCol)
+			insertVals += fmt.Sprintf(", $%d, $%d", i, i+1)
+			updateSet += fmt.Sprintf(", %s = $%d, %s = $%d", encCol, i, nonceCol, i+1)
+			args = append(args, ciphertext, nonce)
+			i += 2
+			continue
+		}
 		insertCols += fmt.Sprintf(", %s", name)
 		insertVals += fmt.Sprintf(", $%d", i)
 		updateSet += fmt.Sprintf(", %s = $%d", name, i)
@@ -129,11 +188,13 @@ func (r *Repository) UpdateSettings(ctx context.Context, userID uuid.UUID, field
 // This is an extra method on the concrete type, not part of the domain interface.
 func (r *Repository) GetStoredIMAPPassword(ctx context.Context, userID uuid.UUID) (string, error) {
 	var pwd string
+	var enc, nonce []byte
 	err := r.q.QueryRow(ctx,
-		`SELECT imap_password FROM user_settings WHERE user_id = $1`, userID,
-	).Scan(&pwd)
+		`SELECT imap_password, imap_password_enc, imap_password_nonce
+		 FROM user_settings WHERE user_id = $1`, userID,
+	).Scan(&pwd, &enc, &nonce)
 	if err != nil {
 		return "", err
 	}
-	return pwd, nil
+	return decryptOrFallback(r.cipher, enc, nonce, pwd)
 }
