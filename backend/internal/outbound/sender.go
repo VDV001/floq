@@ -55,6 +55,27 @@ func authorizeConsent(prospect *prospectsdomain.Prospect, msgID uuid.UUID) bool 
 	return true
 }
 
+// isSuppressed reports whether a send to address on channel must be skipped:
+// either the address is on the suppression list, or the check itself failed.
+// It fails CLOSED — an unverifiable suppression state must never result in a
+// send, since suppression is the hard compliance pre-check ahead of consent.
+// An empty address has nothing to match and is not suppressed.
+func (s *Sender) isSuppressed(ctx context.Context, userID uuid.UUID, channel prospectsdomain.SuppressionChannel, address string, msgID uuid.UUID) bool {
+	if address == "" {
+		return false
+	}
+	suppressed, err := s.prospectRepo.IsSuppressed(ctx, userID, channel, address)
+	if err != nil {
+		log.Printf("[outbound][suppression] check failed for msg %s, skipping (fail-closed): %v", msgID, err)
+		return true
+	}
+	if suppressed {
+		log.Printf("[outbound][suppression] skipping msg %s: address suppressed on %s", msgID, channel)
+		return true
+	}
+	return false
+}
+
 type Sender struct {
 	store        ConfigStore
 	ownerID      uuid.UUID
@@ -180,6 +201,9 @@ func (s *Sender) SendPending(ctx context.Context) error {
 			continue
 		}
 		if prospect == nil || prospect.Email == "" {
+			continue
+		}
+		if s.isSuppressed(ctx, prospect.UserID, prospectsdomain.SuppressionChannelEmail, prospect.Email, msg.ID) {
 			continue
 		}
 		if !authorizeConsent(prospect, msg.ID) {
@@ -403,6 +427,9 @@ func (s *Sender) handleTelegramMessage(ctx context.Context, msg seqdomain.Outbou
 		return
 	}
 	if prospect == nil {
+		return
+	}
+	if s.isSuppressed(ctx, prospect.UserID, prospectsdomain.SuppressionChannelTelegram, prospect.TelegramUsername, msg.ID) {
 		return
 	}
 	if !authorizeConsent(prospect, msg.ID) {
