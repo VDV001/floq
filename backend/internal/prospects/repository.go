@@ -201,14 +201,30 @@ func (r *Repository) ConvertToLead(ctx context.Context, prospectID, leadID uuid.
 // channel. Idempotent: a repeated unsubscribe collapses to a no-op rather than
 // a unique-constraint error.
 func (r *Repository) AddSuppression(ctx context.Context, s *domain.Suppression) error {
-	return nil // stub
+	_, err := r.q(ctx).Exec(ctx,
+		`INSERT INTO suppressions (id, user_id, channel, address, reason, created_at)
+		 VALUES ($1, $2, $3, $4, $5, $6)
+		 ON CONFLICT (user_id, channel, address) DO NOTHING`,
+		s.ID, s.UserID, s.Channel, s.Address, s.Reason, s.CreatedAt)
+	if err != nil {
+		return fmt.Errorf("add suppression: %w", err)
+	}
+	return nil
 }
 
 // IsSuppressed reports whether address is on the suppression list for userID on
 // the given channel. The address is normalized the same way it was stored so
 // the lookup is case-insensitive.
 func (r *Repository) IsSuppressed(ctx context.Context, userID uuid.UUID, channel domain.SuppressionChannel, address string) (bool, error) {
-	return false, nil // stub
+	addr := domain.NormalizeSuppressionAddress(channel, address)
+	var exists bool
+	err := r.q(ctx).QueryRow(ctx,
+		`SELECT EXISTS (SELECT 1 FROM suppressions WHERE user_id = $1 AND channel = $2 AND address = $3)`,
+		userID, channel, addr).Scan(&exists)
+	if err != nil {
+		return false, fmt.Errorf("is suppressed: %w", err)
+	}
+	return exists, nil
 }
 
 func (r *Repository) UpdateVerification(ctx context.Context, id uuid.UUID, verifyStatus domain.VerifyStatus, verifyScore int, verifyDetails string, verifiedAt time.Time) error {
