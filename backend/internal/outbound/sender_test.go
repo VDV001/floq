@@ -1312,13 +1312,17 @@ func TestSendPending_ConsentGate(t *testing.T) {
 		wantSends int
 	}{
 		{
-			name:      "withdrawn is hard-blocked",
-			consent:   func(t *testing.T, p *prospectsdomain.Prospect) { mustConsent(t, p.WithdrawConsent("unsubscribe", time.Now().UTC())) },
+			name: "withdrawn is hard-blocked",
+			consent: func(t *testing.T, p *prospectsdomain.Prospect) {
+				mustConsent(t, p.WithdrawConsent("unsubscribe", time.Now().UTC()))
+			},
 			wantSends: 0,
 		},
 		{
-			name:      "obtained sends freely",
-			consent:   func(t *testing.T, p *prospectsdomain.Prospect) { mustConsent(t, p.GrantConsent("inbound_reply", time.Now().UTC())) },
+			name: "obtained sends freely",
+			consent: func(t *testing.T, p *prospectsdomain.Prospect) {
+				mustConsent(t, p.GrantConsent("inbound_reply", time.Now().UTC()))
+			},
 			wantSends: 1,
 		},
 		{

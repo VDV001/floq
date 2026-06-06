@@ -39,9 +39,9 @@ func (s ConsentStatus) String() string { return string(s) }
 // Domain errors. ErrConsentWithdrawn and ErrConsentRequired are the two
 // send-time rejections; the rest guard VO construction.
 var (
-	ErrInvalidConsentStatus  = errors.New("consent: invalid status")
-	ErrConsentSourceRequired = errors.New("consent: source is required for obtained/withdrawn")
-	ErrConsentTimeRequired   = errors.New("consent: timestamp is required for obtained/withdrawn")
+	ErrInvalidConsentStatus   = errors.New("consent: invalid status")
+	ErrConsentSourceRequired  = errors.New("consent: source is required for obtained/withdrawn")
+	ErrConsentTimeRequired    = errors.New("consent: timestamp is required for obtained/withdrawn")
 	ErrOverrideReasonRequired = errors.New("consent: override reason is required")
 
 	// ErrConsentWithdrawn is returned when outbound is attempted to a prospect

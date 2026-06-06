@@ -16,8 +16,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/daniil/floq/internal/proxy"
 	prospectsdomain "github.com/daniil/floq/internal/prospects/domain"
+	"github.com/daniil/floq/internal/proxy"
 	seqdomain "github.com/daniil/floq/internal/sequences/domain"
 	settingsdomain "github.com/daniil/floq/internal/settings/domain"
 	"github.com/google/uuid"
