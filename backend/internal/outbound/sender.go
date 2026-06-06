@@ -23,6 +23,38 @@ import (
 	"github.com/google/uuid"
 )
 
+// consentReason is the lawful-basis recorded for a cold (none-consent)
+// outbound send. A message only reaches the send queue after operator HITL
+// approval of the draft, which is the legitimate-interest basis for the
+// contact. Logged per cold send (see authorizeConsent) so the justification
+// is auditable rather than a silent bypass.
+const consentReason = "operator-approved outbound sequence send"
+
+// authorizeConsent applies the domain consent gate before a send. Withdrawal
+// is honored absolutely; a cold 'none' prospect is let through under a logged
+// lawful-basis override; an 'obtained' prospect sends freely. Returns false
+// (and logs why) when the send must be skipped.
+//
+// Suppression-list checks land ahead of this in slice 1.2 (see ADR-002); for
+// now the gate is the AuthorizeOutbound rule alone.
+func authorizeConsent(prospect *prospectsdomain.Prospect, msgID uuid.UUID) bool {
+	override, err := prospectsdomain.NewOutboundOverride(consentReason)
+	if err != nil {
+		// Unreachable: consentReason is a non-empty constant. Skip defensively.
+		log.Printf("[outbound][consent] invalid override for msg %s: %v", msgID, err)
+		return false
+	}
+	if err := prospect.AuthorizeOutbound(&override); err != nil {
+		log.Printf("[outbound][consent] skipping msg %s to prospect %s: %v", msgID, prospect.ID, err)
+		return false
+	}
+	if prospect.Consent.Status != prospectsdomain.ConsentStatusObtained {
+		log.Printf("[outbound][consent] cold send msg %s to prospect %s (consent=%q) under lawful-basis override: %s",
+			msgID, prospect.ID, prospect.Consent.Status, consentReason)
+	}
+	return true
+}
+
 type Sender struct {
 	store        ConfigStore
 	ownerID      uuid.UUID
@@ -148,6 +180,9 @@ func (s *Sender) SendPending(ctx context.Context) error {
 			continue
 		}
 		if prospect == nil || prospect.Email == "" {
+			continue
+		}
+		if !authorizeConsent(prospect, msg.ID) {
 			continue
 		}
 
@@ -368,6 +403,9 @@ func (s *Sender) handleTelegramMessage(ctx context.Context, msg seqdomain.Outbou
 		return
 	}
 	if prospect == nil {
+		return
+	}
+	if !authorizeConsent(prospect, msg.ID) {
 		return
 	}
 
