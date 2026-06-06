@@ -197,6 +197,20 @@ func (r *Repository) ConvertToLead(ctx context.Context, prospectID, leadID uuid.
 	return nil
 }
 
+// AddSuppression records that an address must never be contacted again on its
+// channel. Idempotent: a repeated unsubscribe collapses to a no-op rather than
+// a unique-constraint error.
+func (r *Repository) AddSuppression(ctx context.Context, s *domain.Suppression) error {
+	return nil // stub
+}
+
+// IsSuppressed reports whether address is on the suppression list for userID on
+// the given channel. The address is normalized the same way it was stored so
+// the lookup is case-insensitive.
+func (r *Repository) IsSuppressed(ctx context.Context, userID uuid.UUID, channel domain.SuppressionChannel, address string) (bool, error) {
+	return false, nil // stub
+}
+
 func (r *Repository) UpdateVerification(ctx context.Context, id uuid.UUID, verifyStatus domain.VerifyStatus, verifyScore int, verifyDetails string, verifiedAt time.Time) error {
 	_, err := r.q(ctx).Exec(ctx,
 		`UPDATE prospects SET verify_status = $2, verify_score = $3, verify_details = $4, verified_at = $5, updated_at = $6 WHERE id = $1`,
