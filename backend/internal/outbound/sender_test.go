@@ -57,10 +57,12 @@ func (m *mockOutboundRepository) MarkBounced(_ context.Context, id uuid.UUID, _ 
 }
 
 type mockProspectLookup struct {
-	prospects         map[uuid.UUID]*prospectsdomain.Prospect
-	err               error
-	verifyUpdatedIDs  []uuid.UUID
-	verifyStatuses    []prospectsdomain.VerifyStatus
+	prospects        map[uuid.UUID]*prospectsdomain.Prospect
+	err              error
+	verifyUpdatedIDs []uuid.UUID
+	verifyStatuses   []prospectsdomain.VerifyStatus
+	suppressed       bool
+	suppressErr      error
 }
 
 func (m *mockProspectLookup) GetProspect(_ context.Context, id uuid.UUID) (*prospectsdomain.Prospect, error) {
@@ -68,6 +70,10 @@ func (m *mockProspectLookup) GetProspect(_ context.Context, id uuid.UUID) (*pros
 		return nil, m.err
 	}
 	return m.prospects[id], nil
+}
+
+func (m *mockProspectLookup) IsSuppressed(_ context.Context, _ uuid.UUID, _ prospectsdomain.SuppressionChannel, _ string) (bool, error) {
+	return m.suppressed, m.suppressErr
 }
 
 func (m *mockProspectLookup) UpdateVerification(_ context.Context, id uuid.UUID, status prospectsdomain.VerifyStatus, _ int, _ string, _ time.Time) error {
@@ -1380,5 +1386,63 @@ func mustConsent(t *testing.T, err error) {
 	t.Helper()
 	if err != nil {
 		t.Fatalf("consent setup failed: %v", err)
+	}
+}
+
+// TestSendPending_SuppressionBlocksSend pins the suppression pre-check: a
+// suppressed address must not be contacted even with obtained consent. Covers
+// both a positive hit and fail-closed behavior when the check errors.
+func TestSendPending_SuppressionBlocksSend(t *testing.T) {
+	tests := []struct {
+		name        string
+		suppressed  bool
+		suppressErr error
+	}{
+		{"address on suppression list", true, nil},
+		{"check errors → fail closed", false, fmt.Errorf("suppression db down")},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			prospectID := uuid.New()
+			msgID := uuid.New()
+			ownerID := uuid.New()
+
+			seqRepo := &mockOutboundRepository{
+				pending: []seqdomain.OutboundMessage{
+					{
+						ID:         msgID,
+						ProspectID: prospectID,
+						Channel:    seqdomain.StepChannelTelegram,
+						Status:     seqdomain.OutboundStatusApproved,
+						Body:       "hi",
+					},
+				},
+			}
+			p := &prospectsdomain.Prospect{ID: prospectID, TelegramUsername: "target_user"}
+			mustConsent(t, p.GrantConsent("inbound_reply", time.Now().UTC())) // obtained — consent alone would allow
+			prospectRepo := &mockProspectLookup{
+				prospects:   map[uuid.UUID]*prospectsdomain.Prospect{prospectID: p},
+				suppressed:  tt.suppressed,
+				suppressErr: tt.suppressErr,
+			}
+			tgRepo := &mockTelegramSessionStore{phone: "+70001234567", sessionData: []byte("session")}
+			tgMessenger := &mockTelegramMessenger{}
+			cfgStore := &mockConfigStore{cfg: &settingsdomain.UserConfig{}}
+
+			s := NewSender(cfgStore, ownerID, "", "", "",
+				"", "", "", "",
+				seqRepo, prospectRepo, tgRepo, tgMessenger, nil, nil)
+
+			if err := s.SendPending(context.Background()); err != nil {
+				t.Fatalf("expected no top-level error, got %v", err)
+			}
+
+			if len(tgMessenger.calls) != 0 {
+				t.Errorf("expected 0 TG sends (suppressed), got %d", len(tgMessenger.calls))
+			}
+			if len(seqRepo.sentIDs) != 0 {
+				t.Errorf("expected 0 sent (suppressed), got %d", len(seqRepo.sentIDs))
+			}
+		})
 	}
 }
