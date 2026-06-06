@@ -110,8 +110,15 @@ func (a *prospectRepoAdapter) ConvertToLead(ctx context.Context, prospectID, lea
 		}
 		// An inbound reply is the prospect engaging with us — the legitimate
 		// basis for contact. Record obtained consent in the same transaction so
-		// future outbound to them needs no cold-contact override. Idempotent on
-		// re-grant; only reached on a successful (first) conversion.
+		// future outbound to them needs no cold-contact override.
+		//
+		// Withdrawal is the absolute red line: a prospect who opted out and then
+		// writes (about anything) must NOT be silently resurrected to obtained.
+		// Lifting a withdrawal is a deliberate fresh opt-in (the manual toggle),
+		// never an automatic side effect of a reply.
+		if p.Consent.Status == prospectsdomain.ConsentStatusWithdrawn {
+			return nil
+		}
 		if err := p.GrantConsent("inbound_reply", time.Now().UTC()); err != nil {
 			return fmt.Errorf("grant inbound consent: %w", err)
 		}
