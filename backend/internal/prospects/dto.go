@@ -26,6 +26,8 @@ type ProspectResponse struct {
 	SourceID         *uuid.UUID `json:"source_id,omitempty"`
 	SourceName       string     `json:"source_name,omitempty"`
 	Status           string     `json:"status"`
+	ConsentStatus    string     `json:"consent_status"`
+	ConsentSource    string     `json:"consent_source,omitempty"`
 	VerifyStatus     string     `json:"verify_status"`
 	VerifyScore      int        `json:"verify_score"`
 	VerifyDetails    string     `json:"verify_details"`
@@ -57,6 +59,8 @@ func ProspectToResponse(p *domain.Prospect) ProspectResponse {
 		Source:           p.Source,
 		SourceID:         p.SourceID,
 		Status:           string(p.Status),
+		ConsentStatus:    string(p.Consent.Status),
+		ConsentSource:    p.Consent.Source,
 		VerifyStatus:     string(p.VerifyStatus),
 		VerifyScore:      p.VerifyScore,
 		VerifyDetails:    p.VerifyDetails,
