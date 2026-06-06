@@ -67,7 +67,7 @@ func TestNewSuppression_Invalid(t *testing.T) {
 		reason  string
 		wantErr error
 	}{
-		{"nil userID", uuid.Nil, SuppressionChannelEmail, "a@b.com", "unsubscribe", nil},
+		{"nil userID", uuid.Nil, SuppressionChannelEmail, "a@b.com", "unsubscribe", ErrSuppressionUserRequired},
 		{"invalid channel", userID, SuppressionChannel("sms"), "a@b.com", "unsubscribe", ErrInvalidSuppressionChannel},
 		{"empty address", userID, SuppressionChannelEmail, "", "unsubscribe", ErrSuppressionAddressRequired},
 		{"whitespace address", userID, SuppressionChannelEmail, "   ", "unsubscribe", ErrSuppressionAddressRequired},
