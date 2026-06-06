@@ -12,7 +12,7 @@ export default function ProspectsPage() {
   const {
     prospects, searchQuery, setSearchQuery, sourceFilter, setSourceFilter,
     loading, verifying, toast, setToast, sourceStats, page, setPage,
-    fetchProspects, handleVerifyBatch, sourceNames, filteredProspects,
+    fetchProspects, handleVerifyBatch, handleSetConsent, sourceNames, filteredProspects,
     totalPages, pagedProspects, rangeStart, rangeEnd,
   } = useProspectsPage();
 
@@ -82,7 +82,7 @@ export default function ProspectsPage() {
           <ProspectTable
             prospects={pagedProspects} loading={loading} totalCount={filteredProspects.length}
             page={page} totalPages={totalPages} rangeStart={rangeStart} rangeEnd={rangeEnd}
-            onPageChange={setPage}
+            onPageChange={setPage} onToggleConsent={handleSetConsent}
           />
 
           <div className="col-span-12 space-y-6 lg:col-span-3">

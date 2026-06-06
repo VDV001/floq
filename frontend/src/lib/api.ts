@@ -248,6 +248,11 @@ export const api = {
     }),
   deleteProspect: (id: string) =>
     apiFetch(`/api/prospects/${id}`, { method: "DELETE" }),
+  setProspectConsent: (id: string, status: "obtained" | "withdrawn") =>
+    apiFetch<{ consent_status: string }>(`/api/prospects/${id}/consent`, {
+      method: "POST",
+      body: JSON.stringify({ status }),
+    }),
   exportProspectsCSV: () => apiDownload("/api/prospects/export"),
   downloadProspectTemplate: () => apiDownload("/api/prospects/template"),
   importProspectsCSV: (file: File) =>
@@ -571,6 +576,8 @@ export interface Prospect {
   source_id?: string;
   source_name?: string;
   status: "new" | "in_sequence" | "replied" | "converted" | "opted_out";
+  consent_status: "none" | "obtained" | "withdrawn";
+  consent_source?: string;
   verify_status: "not_checked" | "valid" | "risky" | "invalid";
   verify_score: number;
   verify_details: Record<string, unknown>;

@@ -39,6 +39,7 @@ function makeProspect(overrides: Partial<Prospect> = {}): Prospect {
     context: "",
     source: "csv",
     status: "new",
+    consent_status: "none",
     verify_status: "not_checked",
     verify_score: 0,
     verify_details: {},

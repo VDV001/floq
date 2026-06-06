@@ -2,7 +2,10 @@ import { MinusCircle, CheckCircle2, AlertTriangle, XCircle } from "lucide-react"
 
 export type ProspectStatus = "Новый" | "В секвенции" | "Ответил" | "Конвертирован" | "Отписался";
 
+export type ConsentStatus = "none" | "obtained" | "withdrawn";
+
 export interface UIProspect {
+  id: string;
   initials: string;
   avatarColor: string;
   name: string;
@@ -14,6 +17,7 @@ export interface UIProspect {
   telegramUsername: string;
   sourceName: string;
   status: ProspectStatus;
+  consentStatus: ConsentStatus;
   verifyStatus: "not_checked" | "valid" | "risky" | "invalid";
   verifyScore: number;
 }
@@ -29,8 +33,13 @@ export function mapProspectStatus(s: string): ProspectStatus {
   return m[s] || "Новый";
 }
 
-export function mapProspects(data: { name: string; company: string; title: string; email: string; phone: string; whatsapp: string; telegram_username: string; source_name?: string; status: string; verify_status: string; verify_score: number }[]): UIProspect[] {
+export function mapConsentStatus(s: string): ConsentStatus {
+  return s === "obtained" || s === "withdrawn" ? s : "none";
+}
+
+export function mapProspects(data: { id: string; name: string; company: string; title: string; email: string; phone: string; whatsapp: string; telegram_username: string; source_name?: string; status: string; consent_status?: string; verify_status: string; verify_score: number }[]): UIProspect[] {
   return data.map((p) => ({
+    id: p.id,
     initials: p.name.split(" ").map((w) => w[0]).join("").toUpperCase().slice(0, 2),
     avatarColor: "bg-[#d8e3fb]",
     name: p.name,
@@ -42,6 +51,7 @@ export function mapProspects(data: { name: string; company: string; title: strin
     telegramUsername: p.telegram_username || "",
     sourceName: p.source_name || "",
     status: mapProspectStatus(p.status),
+    consentStatus: mapConsentStatus(p.consent_status || "none"),
     verifyStatus: p.verify_status as UIProspect["verifyStatus"],
     verifyScore: p.verify_score,
   }));
@@ -53,6 +63,12 @@ export const STATUS_STYLES: Record<ProspectStatus, string> = {
   Ответил: "bg-green-100 text-green-700",
   Конвертирован: "bg-green-600 text-white",
   Отписался: "bg-slate-200 text-slate-600",
+};
+
+export const CONSENT_STYLES: Record<ConsentStatus, { style: string; label: string }> = {
+  none: { style: "bg-amber-100 text-amber-700", label: "Нет согласия" },
+  obtained: { style: "bg-green-100 text-green-700", label: "Согласие" },
+  withdrawn: { style: "bg-red-100 text-red-700", label: "Отписан" },
 };
 
 export const VERIFY_STYLES: Record<string, { text: string; icon: typeof MinusCircle; label: string }> = {
