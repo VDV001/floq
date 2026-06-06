@@ -391,6 +391,22 @@ func TestRepository_GetStoredIMAPPassword_DecryptsEnc(t *testing.T) {
 	assert.Equal(t, "real-pw", pwd)
 }
 
+func TestStore_GetConfig_PropagatesScanError(t *testing.T) {
+	q := &fakeQuerier{
+		queryRowFns: []func() pgx.Row{
+			func() pgx.Row {
+				return &fakeRow{scanFn: func(dest ...any) error {
+					return fmt.Errorf("db boom")
+				}}
+			},
+		},
+	}
+	s := NewStoreFromQuerier(q, fakeCipher{})
+
+	_, err := s.GetConfig(context.Background(), uuid.New())
+	assert.Error(t, err, "a real DB/decode error must not be masked as an empty config")
+}
+
 func TestStore_GetConfig_DecryptsSecrets(t *testing.T) {
 	q := &fakeQuerier{
 		queryRowFns: []func() pgx.Row{

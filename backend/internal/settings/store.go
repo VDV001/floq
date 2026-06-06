@@ -2,11 +2,13 @@ package settings
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/daniil/floq/internal/db"
 	"github.com/daniil/floq/internal/settings/domain"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -64,9 +66,14 @@ func (s *Store) GetConfig(ctx context.Context, userID uuid.UUID) (*domain.UserCo
 		&imapEnc, &imapNonce,
 		&ttEnc, &ttNonce,
 	)
-	if err != nil {
-		// No row = empty config, not an error for callers
+	if errors.Is(err, pgx.ErrNoRows) {
+		// No row = empty config, not an error for callers.
 		return &domain.UserConfig{}, nil
+	}
+	if err != nil {
+		// A real DB or decode error must surface, not masquerade as an empty
+		// config — otherwise background senders silently fall back to .env.
+		return nil, fmt.Errorf("load config: %w", err)
 	}
 
 	for _, sec := range []struct {
