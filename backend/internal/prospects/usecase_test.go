@@ -751,3 +751,55 @@ func TestExportCSV_ListError(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "list prospects")
 }
+
+// TestImportCSV_ConsentColumn verifies the optional consent column: a truthy
+// value grants obtained consent (source "import"); empty/falsy leaves the
+// prospect at the cold default 'none'. Table-driven over the accepted forms.
+func TestImportCSV_ConsentColumn(t *testing.T) {
+	truthy := []string{"yes", "true", "1", "obtained", "да", "Y"}
+	for _, v := range truthy {
+		t.Run("truthy="+v, func(t *testing.T) {
+			repo := newMockRepo()
+			uc := NewUseCase(repo, WithLeadChecker(&mockLeadChecker{}))
+			csv := []byte("name,email,consent\nAlice,alice@acme.com," + v + "\n")
+			_, err := uc.ImportCSV(context.Background(), uuid.New(), csv)
+			require.NoError(t, err)
+			require.Len(t, repo.batched, 1)
+			assert.Equal(t, domain.ConsentStatusObtained, repo.batched[0].Consent.Status)
+			assert.Equal(t, "import", repo.batched[0].Consent.Source)
+			assert.False(t, repo.batched[0].Consent.Timestamp.IsZero())
+		})
+	}
+
+	falsy := []string{"", "no", "0", "false"}
+	for _, v := range falsy {
+		t.Run("falsy="+v, func(t *testing.T) {
+			repo := newMockRepo()
+			uc := NewUseCase(repo, WithLeadChecker(&mockLeadChecker{}))
+			csv := []byte("name,email,consent\nBob,bob@beta.com," + v + "\n")
+			_, err := uc.ImportCSV(context.Background(), uuid.New(), csv)
+			require.NoError(t, err)
+			require.Len(t, repo.batched, 1)
+			assert.Equal(t, domain.ConsentStatusNone, repo.batched[0].Consent.Status)
+		})
+	}
+}
+
+// TestExportCSV_IncludesConsent verifies exported rows carry consent columns.
+func TestExportCSV_IncludesConsent(t *testing.T) {
+	repo := newMockRepo()
+	uc := NewUseCase(repo)
+	userID := uuid.New()
+	p, err := domain.NewProspect(userID, "Carol", "Acme", "CEO", "carol@acme.com", "manual")
+	require.NoError(t, err)
+	require.NoError(t, p.GrantConsent("inbound_reply", time.Now().UTC()))
+	require.NoError(t, repo.CreateProspect(context.Background(), p))
+
+	out, err := uc.ExportCSV(context.Background(), userID)
+	require.NoError(t, err)
+	s := string(out)
+	assert.Contains(t, s, "consent_status")
+	assert.Contains(t, s, "consent_source")
+	assert.Contains(t, s, "obtained")
+	assert.Contains(t, s, "inbound_reply")
+}
