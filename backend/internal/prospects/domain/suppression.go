@@ -2,8 +2,11 @@ package domain
 
 import (
 	"errors"
+	"fmt"
+	"strings"
 	"time"
 
+	"github.com/daniil/floq/internal/normalize"
 	"github.com/google/uuid"
 )
 
@@ -17,7 +20,12 @@ const (
 
 // IsValid reports whether c is a known suppression channel.
 func (c SuppressionChannel) IsValid() bool {
-	panic("not implemented")
+	switch c {
+	case SuppressionChannelEmail, SuppressionChannelTelegram:
+		return true
+	default:
+		return false
+	}
 }
 
 // String returns the string representation of the channel.
@@ -31,9 +39,17 @@ var (
 )
 
 // NormalizeSuppressionAddress canonicalizes an address for its channel so that
-// writes and lookups match regardless of casing or "@"/whitespace noise.
+// writes and lookups match regardless of casing or "@"/whitespace noise. Email
+// is lowercased+trimmed; Telegram handles drop a leading "@" and lowercase.
 func NormalizeSuppressionAddress(channel SuppressionChannel, address string) string {
-	panic("not implemented")
+	switch channel {
+	case SuppressionChannelEmail:
+		return normalize.Email(address)
+	case SuppressionChannelTelegram:
+		return normalize.TelegramUsername(address)
+	default:
+		return strings.TrimSpace(address)
+	}
 }
 
 // Suppression is an immutable record that an address must never be contacted
@@ -50,5 +66,26 @@ type Suppression struct {
 // NewSuppression builds a validated Suppression: a known channel, a non-empty
 // normalized address, and a non-empty reason (mandatory for the audit trail).
 func NewSuppression(userID uuid.UUID, channel SuppressionChannel, address, reason string) (*Suppression, error) {
-	panic("not implemented")
+	if userID == uuid.Nil {
+		return nil, fmt.Errorf("suppression userID is required")
+	}
+	if !channel.IsValid() {
+		return nil, ErrInvalidSuppressionChannel
+	}
+	addr := NormalizeSuppressionAddress(channel, address)
+	if addr == "" {
+		return nil, ErrSuppressionAddressRequired
+	}
+	reason = strings.TrimSpace(reason)
+	if reason == "" {
+		return nil, ErrSuppressionReasonRequired
+	}
+	return &Suppression{
+		ID:        uuid.New(),
+		UserID:    userID,
+		Channel:   channel,
+		Address:   addr,
+		Reason:    reason,
+		CreatedAt: time.Now().UTC(),
+	}, nil
 }
