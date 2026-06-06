@@ -102,6 +102,13 @@ func (m *mockRepo) UpdateVerification(_ context.Context, _ uuid.UUID, _ domain.V
 	return nil
 }
 
+func (m *mockRepo) UpdateConsent(_ context.Context, prospectID uuid.UUID, c domain.Consent) error {
+	if p, ok := m.prospects[prospectID]; ok {
+		p.Consent = c
+	}
+	return nil
+}
+
 // --- Mock LeadChecker ---
 
 type mockLeadChecker struct {

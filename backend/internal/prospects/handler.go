@@ -2,6 +2,7 @@ package prospects
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -9,6 +10,7 @@ import (
 	"time"
 
 	"github.com/daniil/floq/internal/httputil"
+	"github.com/daniil/floq/internal/prospects/domain"
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 )
@@ -26,6 +28,42 @@ func RegisterRoutes(r chi.Router, uc *UseCase) {
 	r.Post("/api/prospects/import", h.importCSV())
 	r.Get("/api/prospects/{id}", h.getProspect())
 	r.Delete("/api/prospects/{id}", h.deleteProspect())
+	r.Post("/api/prospects/{id}/consent", h.setConsent())
+}
+
+// setConsent applies an operator's manual consent decision (obtained/withdrawn)
+// to a prospect they own.
+func (h *Handler) setConsent() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		userID, ok := httputil.UserIDFromContext(r.Context())
+		if !ok {
+			httputil.WriteError(w, http.StatusUnauthorized, "unauthorized")
+			return
+		}
+		id, err := httputil.ParseIDParam(r, "id")
+		if err != nil {
+			httputil.WriteError(w, http.StatusBadRequest, "invalid prospect id")
+			return
+		}
+		var body struct {
+			Status string `json:"status"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			httputil.WriteError(w, http.StatusBadRequest, "invalid request body")
+			return
+		}
+
+		err = h.uc.SetConsent(r.Context(), userID, id, domain.ConsentStatus(body.Status))
+		switch {
+		case errors.Is(err, ErrProspectNotFound):
+			httputil.WriteError(w, http.StatusNotFound, "prospect not found")
+		case err != nil:
+			// Unsupported status or domain validation — a client-side error.
+			httputil.WriteError(w, http.StatusBadRequest, err.Error())
+		default:
+			httputil.WriteJSON(w, http.StatusOK, map[string]string{"consent_status": body.Status})
+		}
+	}
 }
 
 func (h *Handler) listProspects() http.HandlerFunc {

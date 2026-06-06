@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/csv"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -113,6 +114,44 @@ func WithLogger(l *slog.Logger) func(*UseCase) {
 			uc.logger = l
 		}
 	}
+}
+
+// Use-case-level errors for the consent toggle.
+var (
+	// ErrProspectNotFound is returned when a prospect does not exist or is not
+	// owned by the requesting user (kept indistinguishable to avoid leaking
+	// cross-tenant existence).
+	ErrProspectNotFound = errors.New("prospect not found")
+	// ErrUnsupportedConsentStatus is returned when the manual toggle is asked
+	// to set a status other than obtained/withdrawn ('none' is not an operator
+	// action — a prospect starts cold and only the system clears consent).
+	ErrUnsupportedConsentStatus = errors.New("consent status not supported via manual toggle")
+)
+
+// SetConsent applies an operator's manual consent decision to a prospect:
+// obtained (grant) or withdrawn. Ownership is enforced via GetProspectForUser;
+// the change is recorded with source "manual" and persisted.
+func (uc *UseCase) SetConsent(ctx context.Context, userID, prospectID uuid.UUID, status domain.ConsentStatus) error {
+	p, err := uc.repo.GetProspectForUser(ctx, userID, prospectID)
+	if err != nil {
+		return err
+	}
+	if p == nil {
+		return ErrProspectNotFound
+	}
+	now := time.Now().UTC()
+	switch status {
+	case domain.ConsentStatusObtained:
+		err = p.GrantConsent("manual", now)
+	case domain.ConsentStatusWithdrawn:
+		err = p.WithdrawConsent("manual", now)
+	default:
+		return ErrUnsupportedConsentStatus
+	}
+	if err != nil {
+		return err
+	}
+	return uc.repo.UpdateConsent(ctx, p.ID, p.Consent)
 }
 
 func (uc *UseCase) ListProspects(ctx context.Context, userID uuid.UUID) ([]domain.ProspectWithSource, error) {
