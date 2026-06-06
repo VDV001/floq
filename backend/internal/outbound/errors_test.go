@@ -20,7 +20,7 @@ func TestSendViaResend_NoAPIKey_ReturnsErrNoResendAPIKey(t *testing.T) {
 		"", "", "", "",
 		nil, nil, nil, nil, nil, nil)
 
-	err := s.sendViaResend(context.Background(), "to@test.com", "subj", "body", "")
+	err := s.sendViaResend(context.Background(), "to@test.com", "subj", "body", "", nil)
 	require.Error(t, err)
 	assert.True(t, errors.Is(err, ErrNoResendAPIKey),
 		"expected errors.Is to match ErrNoResendAPIKey, got: %v", err)
@@ -42,7 +42,7 @@ func TestSendViaResend_HTTP400_WrapsErrResendAPI(t *testing.T) {
 		"", "", "", "",
 		nil, nil, nil, nil, nil, nil)
 
-	err := s.sendViaResend(context.Background(), "to@test.com", "subj", "body", "")
+	err := s.sendViaResend(context.Background(), "to@test.com", "subj", "body", "", nil)
 	require.Error(t, err)
 	assert.True(t, errors.Is(err, ErrResendAPI),
 		"expected errors.Is to match ErrResendAPI, got: %v", err)
@@ -63,7 +63,7 @@ func TestSendViaResend_HTTP500_WrapsErrResendAPI(t *testing.T) {
 		"", "", "", "",
 		nil, nil, nil, nil, nil, nil)
 
-	err := s.sendViaResend(context.Background(), "to@test.com", "subj", "body", "")
+	err := s.sendViaResend(context.Background(), "to@test.com", "subj", "body", "", nil)
 	require.Error(t, err)
 	assert.True(t, errors.Is(err, ErrResendAPI),
 		"expected errors.Is to match ErrResendAPI on 500, got: %v", err)
@@ -85,7 +85,7 @@ func TestSendViaResend_HTTP200_NoError(t *testing.T) {
 		"", "", "", "",
 		nil, nil, nil, nil, nil, nil)
 
-	err := s.sendViaResend(context.Background(), "to@test.com", "subj", "body", "")
+	err := s.sendViaResend(context.Background(), "to@test.com", "subj", "body", "", nil)
 	assert.NoError(t, err)
 }
 
@@ -104,7 +104,7 @@ func TestResendAPIError_CarriesStatusCode(t *testing.T) {
 		"", "", "", "",
 		nil, nil, nil, nil, nil, nil)
 
-	err := s.sendViaResend(context.Background(), "to@test.com", "subj", "body", "")
+	err := s.sendViaResend(context.Background(), "to@test.com", "subj", "body", "", nil)
 	require.Error(t, err)
 
 	var apiErr *ResendAPIError
@@ -130,7 +130,7 @@ func TestSendViaResend_NetworkError_NotResendAPIError(t *testing.T) {
 		"", "", "", "",
 		nil, nil, nil, nil, nil, nil)
 
-	err := s.sendViaResend(context.Background(), "to@test.com", "subj", "body", "")
+	err := s.sendViaResend(context.Background(), "to@test.com", "subj", "body", "", nil)
 	require.Error(t, err)
 	assert.False(t, errors.Is(err, ErrResendAPI),
 		"network error must not be classified as a Resend API protocol error")

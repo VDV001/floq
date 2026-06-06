@@ -1192,7 +1192,7 @@ func TestSendViaResend_NoKey(t *testing.T) {
 		"", "", "", "",
 		nil, nil, nil, nil, nil, nil)
 
-	err := s.sendViaResend(context.Background(), "to@test.com", "subj", "body", "")
+	err := s.sendViaResend(context.Background(), "to@test.com", "subj", "body", "", nil)
 	if !errors.Is(err, ErrNoResendAPIKey) {
 		t.Fatalf("expected errors.Is to match ErrNoResendAPIKey, got: %v", err)
 	}
@@ -1204,7 +1204,7 @@ func TestSendViaResend_ConfigStoreError(t *testing.T) {
 		"", "", "", "",
 		nil, nil, nil, nil, nil, nil)
 
-	err := s.sendViaResend(context.Background(), "to@test.com", "subj", "body", "")
+	err := s.sendViaResend(context.Background(), "to@test.com", "subj", "body", "", nil)
 	if !errors.Is(err, ErrNoResendAPIKey) {
 		t.Fatalf("expected errors.Is to match ErrNoResendAPIKey, got: %v", err)
 	}
@@ -1212,7 +1212,7 @@ func TestSendViaResend_ConfigStoreError(t *testing.T) {
 
 func TestSendViaSMTPWith_FromFallback(t *testing.T) {
 	s := &Sender{}
-	err := s.sendViaSMTPWith(context.Background(), "127.0.0.1", "587", "user@test.com", "pass", "", "to@test.com", "subj", "body")
+	err := s.sendViaSMTPWith(context.Background(), "127.0.0.1", "587", "user@test.com", "pass", "", "to@test.com", "subj", "body", nil)
 	if err == nil {
 		t.Fatal("expected error from SMTP dial")
 	}
@@ -1220,7 +1220,7 @@ func TestSendViaSMTPWith_FromFallback(t *testing.T) {
 
 func TestSendViaSMTPWith_Port465(t *testing.T) {
 	s := &Sender{}
-	err := s.sendViaSMTPWith(context.Background(), "127.0.0.1", "465", "user@test.com", "pass", "from@test.com", "to@test.com", "subj", "body")
+	err := s.sendViaSMTPWith(context.Background(), "127.0.0.1", "465", "user@test.com", "pass", "from@test.com", "to@test.com", "subj", "body", nil)
 	if err == nil {
 		t.Fatal("expected error from TLS dial")
 	}
