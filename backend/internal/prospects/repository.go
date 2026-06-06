@@ -30,10 +30,31 @@ func (r *Repository) q(ctx context.Context) db.Querier {
 	return db.ConnFromCtx(ctx, r.pool)
 }
 
+// prospectColumns is the column list shared by every single-row prospect
+// SELECT, in the exact order scanProspect expects. Centralised so the SELECT
+// and Scan lists cannot drift apart and silently drop the consent state — a
+// legal risk for a compliance field.
+const prospectColumns = `id, user_id, name, company, title, email, phone, whatsapp, telegram_username, industry, company_size, context,
+	        source, source_id, status, verify_status, verify_score, verify_details, verified_at, converted_lead_id, consent_status, consent_source, consent_at, created_at, updated_at`
+
+// scanProspect scans prospectColumns from row into p, mapping the nullable
+// consent_at into the Consent VO (NULL → zero timestamp, the 'none' case).
+func scanProspect(row pgx.Row, p *domain.Prospect) error {
+	var consentAt *time.Time
+	if err := row.Scan(&p.ID, &p.UserID, &p.Name, &p.Company, &p.Title, &p.Email, &p.Phone, &p.WhatsApp, &p.TelegramUsername, &p.Industry, &p.CompanySize, &p.Context,
+		&p.Source, &p.SourceID, &p.Status, &p.VerifyStatus, &p.VerifyScore, &p.VerifyDetails, &p.VerifiedAt, &p.ConvertedLeadID, &p.Consent.Status, &p.Consent.Source, &consentAt, &p.CreatedAt, &p.UpdatedAt); err != nil {
+		return err
+	}
+	if consentAt != nil {
+		p.Consent.Timestamp = *consentAt
+	}
+	return nil
+}
+
 func (r *Repository) ListProspects(ctx context.Context, userID uuid.UUID) ([]domain.ProspectWithSource, error) {
 	rows, err := r.q(ctx).Query(ctx,
 		`SELECT p.id, p.user_id, p.name, p.company, p.title, p.email, p.phone, p.whatsapp, p.telegram_username, p.industry, p.company_size, p.context,
-		        p.source, p.source_id, COALESCE(ls.name, ''), p.status, p.verify_status, p.verify_score, p.verify_details, p.verified_at, p.converted_lead_id, p.created_at, p.updated_at
+		        p.source, p.source_id, COALESCE(ls.name, ''), p.status, p.verify_status, p.verify_score, p.verify_details, p.verified_at, p.converted_lead_id, p.consent_status, p.consent_source, p.consent_at, p.created_at, p.updated_at
 		 FROM prospects p
 		 LEFT JOIN lead_sources ls ON ls.id = p.source_id
 		 WHERE p.user_id = $1 ORDER BY p.created_at DESC`, userID)
@@ -45,9 +66,13 @@ func (r *Repository) ListProspects(ctx context.Context, userID uuid.UUID) ([]dom
 	var prospects []domain.ProspectWithSource
 	for rows.Next() {
 		var item domain.ProspectWithSource
+		var consentAt *time.Time
 		if err := rows.Scan(&item.ID, &item.UserID, &item.Name, &item.Company, &item.Title, &item.Email, &item.Phone, &item.WhatsApp, &item.TelegramUsername, &item.Industry, &item.CompanySize, &item.Context,
-			&item.Source, &item.SourceID, &item.SourceName, &item.Status, &item.VerifyStatus, &item.VerifyScore, &item.VerifyDetails, &item.VerifiedAt, &item.ConvertedLeadID, &item.CreatedAt, &item.UpdatedAt); err != nil {
+			&item.Source, &item.SourceID, &item.SourceName, &item.Status, &item.VerifyStatus, &item.VerifyScore, &item.VerifyDetails, &item.VerifiedAt, &item.ConvertedLeadID, &item.Consent.Status, &item.Consent.Source, &consentAt, &item.CreatedAt, &item.UpdatedAt); err != nil {
 			return nil, fmt.Errorf("scan prospect: %w", err)
+		}
+		if consentAt != nil {
+			item.Consent.Timestamp = *consentAt
 		}
 		prospects = append(prospects, item)
 	}
@@ -56,12 +81,9 @@ func (r *Repository) ListProspects(ctx context.Context, userID uuid.UUID) ([]dom
 
 func (r *Repository) GetProspect(ctx context.Context, id uuid.UUID) (*domain.Prospect, error) {
 	var p domain.Prospect
-	err := r.q(ctx).QueryRow(ctx,
-		`SELECT id, user_id, name, company, title, email, phone, whatsapp, telegram_username, industry, company_size, context,
-		        source, source_id, status, verify_status, verify_score, verify_details, verified_at, converted_lead_id, created_at, updated_at
-		 FROM prospects WHERE id = $1`, id).
-		Scan(&p.ID, &p.UserID, &p.Name, &p.Company, &p.Title, &p.Email, &p.Phone, &p.WhatsApp, &p.TelegramUsername, &p.Industry, &p.CompanySize, &p.Context,
-			&p.Source, &p.SourceID, &p.Status, &p.VerifyStatus, &p.VerifyScore, &p.VerifyDetails, &p.VerifiedAt, &p.ConvertedLeadID, &p.CreatedAt, &p.UpdatedAt)
+	err := scanProspect(r.q(ctx).QueryRow(ctx,
+		`SELECT `+prospectColumns+`
+		 FROM prospects WHERE id = $1`, id), &p)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
 	}
@@ -76,12 +98,9 @@ func (r *Repository) GetProspect(ctx context.Context, id uuid.UUID) (*domain.Pro
 // leads/domain.ErrProspectNotFound to avoid leaking cross-tenant existence.
 func (r *Repository) GetProspectForUser(ctx context.Context, userID, prospectID uuid.UUID) (*domain.Prospect, error) {
 	var p domain.Prospect
-	err := r.q(ctx).QueryRow(ctx,
-		`SELECT id, user_id, name, company, title, email, phone, whatsapp, telegram_username, industry, company_size, context,
-		        source, source_id, status, verify_status, verify_score, verify_details, verified_at, converted_lead_id, created_at, updated_at
-		 FROM prospects WHERE id = $1 AND user_id = $2`, prospectID, userID).
-		Scan(&p.ID, &p.UserID, &p.Name, &p.Company, &p.Title, &p.Email, &p.Phone, &p.WhatsApp, &p.TelegramUsername, &p.Industry, &p.CompanySize, &p.Context,
-			&p.Source, &p.SourceID, &p.Status, &p.VerifyStatus, &p.VerifyScore, &p.VerifyDetails, &p.VerifiedAt, &p.ConvertedLeadID, &p.CreatedAt, &p.UpdatedAt)
+	err := scanProspect(r.q(ctx).QueryRow(ctx,
+		`SELECT `+prospectColumns+`
+		 FROM prospects WHERE id = $1 AND user_id = $2`, prospectID, userID), &p)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
 	}
@@ -93,12 +112,9 @@ func (r *Repository) GetProspectForUser(ctx context.Context, userID, prospectID 
 
 func (r *Repository) FindByEmail(ctx context.Context, userID uuid.UUID, email string) (*domain.Prospect, error) {
 	var p domain.Prospect
-	err := r.q(ctx).QueryRow(ctx,
-		`SELECT id, user_id, name, company, title, email, phone, whatsapp, telegram_username, industry, company_size, context,
-		        source, source_id, status, verify_status, verify_score, verify_details, verified_at, converted_lead_id, created_at, updated_at
-		 FROM prospects WHERE user_id = $1 AND LOWER(email) = LOWER($2) LIMIT 1`, userID, email).
-		Scan(&p.ID, &p.UserID, &p.Name, &p.Company, &p.Title, &p.Email, &p.Phone, &p.WhatsApp, &p.TelegramUsername, &p.Industry, &p.CompanySize, &p.Context,
-			&p.Source, &p.SourceID, &p.Status, &p.VerifyStatus, &p.VerifyScore, &p.VerifyDetails, &p.VerifiedAt, &p.ConvertedLeadID, &p.CreatedAt, &p.UpdatedAt)
+	err := scanProspect(r.q(ctx).QueryRow(ctx,
+		`SELECT `+prospectColumns+`
+		 FROM prospects WHERE user_id = $1 AND LOWER(email) = LOWER($2) LIMIT 1`, userID, email), &p)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
 	}
@@ -110,12 +126,9 @@ func (r *Repository) FindByEmail(ctx context.Context, userID uuid.UUID, email st
 
 func (r *Repository) FindByTelegramUsername(ctx context.Context, userID uuid.UUID, username string) (*domain.Prospect, error) {
 	var p domain.Prospect
-	err := r.q(ctx).QueryRow(ctx,
-		`SELECT id, user_id, name, company, title, email, phone, whatsapp, telegram_username, industry, company_size, context,
-		        source, source_id, status, verify_status, verify_score, verify_details, verified_at, converted_lead_id, created_at, updated_at
-		 FROM prospects WHERE user_id = $1 AND LOWER(telegram_username) = LOWER($2) LIMIT 1`, userID, username).
-		Scan(&p.ID, &p.UserID, &p.Name, &p.Company, &p.Title, &p.Email, &p.Phone, &p.WhatsApp, &p.TelegramUsername, &p.Industry, &p.CompanySize, &p.Context,
-			&p.Source, &p.SourceID, &p.Status, &p.VerifyStatus, &p.VerifyScore, &p.VerifyDetails, &p.VerifiedAt, &p.ConvertedLeadID, &p.CreatedAt, &p.UpdatedAt)
+	err := scanProspect(r.q(ctx).QueryRow(ctx,
+		`SELECT `+prospectColumns+`
+		 FROM prospects WHERE user_id = $1 AND LOWER(telegram_username) = LOWER($2) LIMIT 1`, userID, username), &p)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
 	}
@@ -126,12 +139,20 @@ func (r *Repository) FindByTelegramUsername(ctx context.Context, userID uuid.UUI
 }
 
 func (r *Repository) CreateProspect(ctx context.Context, p *domain.Prospect) error {
+	// consent_at is NULL for 'none' (no basis recorded); a zero time.Time would
+	// otherwise persist as '0001-01-01' and read back non-NULL.
+	var consentAt *time.Time
+	if !p.Consent.Timestamp.IsZero() {
+		consentAt = &p.Consent.Timestamp
+	}
 	_, err := r.q(ctx).Exec(ctx,
 		`INSERT INTO prospects (id, user_id, name, company, title, email, phone, whatsapp, telegram_username, industry, company_size, context,
-		                        source, source_id, status, verify_status, verify_score, verify_details, verified_at, converted_lead_id, created_at, updated_at)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22)`,
+		                        source, source_id, status, verify_status, verify_score, verify_details, verified_at, converted_lead_id, created_at, updated_at,
+		                        consent_status, consent_source, consent_at)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25)`,
 		p.ID, p.UserID, p.Name, p.Company, p.Title, p.Email, p.Phone, p.WhatsApp, p.TelegramUsername, p.Industry, p.CompanySize, p.Context,
-		p.Source, p.SourceID, p.Status, p.VerifyStatus, p.VerifyScore, p.VerifyDetails, p.VerifiedAt, p.ConvertedLeadID, p.CreatedAt, p.UpdatedAt)
+		p.Source, p.SourceID, p.Status, p.VerifyStatus, p.VerifyScore, p.VerifyDetails, p.VerifiedAt, p.ConvertedLeadID, p.CreatedAt, p.UpdatedAt,
+		p.Consent.Status, p.Consent.Source, consentAt)
 	if err != nil {
 		return fmt.Errorf("create prospect: %w", err)
 	}
