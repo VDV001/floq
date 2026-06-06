@@ -206,3 +206,115 @@ func TestCreateProspectsBatch(t *testing.T) {
 	require.NoError(t, err)
 	assert.GreaterOrEqual(t, len(list), 3)
 }
+
+// TestConsentRoundTrip verifies the consent VO survives a persist→reload cycle
+// through GetProspect for every consent state. Table-driven (≥3 variants):
+// none carries no source/timestamp; obtained/withdrawn carry both.
+func TestConsentRoundTrip(t *testing.T) {
+	pool := testutil.TestDB(t)
+	userID := testutil.SeedUser(t, pool)
+	repo := prospects.NewRepository(pool)
+	ctx := context.Background()
+
+	at := time.Now().UTC().Truncate(time.Microsecond)
+
+	tests := []struct {
+		name       string
+		mutate     func(p *domain.Prospect)
+		wantStatus domain.ConsentStatus
+		wantSource string
+		wantAtSet  bool
+	}{
+		{
+			name:       "none is the cold default",
+			mutate:     func(p *domain.Prospect) {},
+			wantStatus: domain.ConsentStatusNone,
+			wantSource: "",
+			wantAtSet:  false,
+		},
+		{
+			name:       "obtained carries source and timestamp",
+			mutate:     func(p *domain.Prospect) { require.NoError(t, p.GrantConsent("inbound_reply", at)) },
+			wantStatus: domain.ConsentStatusObtained,
+			wantSource: "inbound_reply",
+			wantAtSet:  true,
+		},
+		{
+			name:       "withdrawn carries source and timestamp",
+			mutate:     func(p *domain.Prospect) { require.NoError(t, p.WithdrawConsent("unsubscribe", at)) },
+			wantStatus: domain.ConsentStatusWithdrawn,
+			wantSource: "unsubscribe",
+			wantAtSet:  true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			p := newTestProspect(userID)
+			tt.mutate(p)
+			require.NoError(t, repo.CreateProspect(ctx, p))
+
+			got, err := repo.GetProspect(ctx, p.ID)
+			require.NoError(t, err)
+			require.NotNil(t, got)
+			assert.Equal(t, tt.wantStatus, got.Consent.Status)
+			assert.Equal(t, tt.wantSource, got.Consent.Source)
+			if tt.wantAtSet {
+				assert.False(t, got.Consent.Timestamp.IsZero(), "timestamp should be set")
+			} else {
+				assert.True(t, got.Consent.Timestamp.IsZero(), "timestamp should be zero for none")
+			}
+		})
+	}
+}
+
+// TestConsentReadAcrossAllPaths guards every SELECT that hydrates a Prospect:
+// each statement maintains its own column list, so a missing consent column in
+// any one of them would silently drop the compliance state on that path.
+func TestConsentReadAcrossAllPaths(t *testing.T) {
+	pool := testutil.TestDB(t)
+	userID := testutil.SeedUser(t, pool)
+	repo := prospects.NewRepository(pool)
+	ctx := context.Background()
+
+	at := time.Now().UTC().Truncate(time.Microsecond)
+	p := newTestProspect(userID)
+	require.NoError(t, p.GrantConsent("manual", at))
+	require.NoError(t, repo.CreateProspect(ctx, p))
+
+	t.Run("ListProspects", func(t *testing.T) {
+		list, err := repo.ListProspects(ctx, userID)
+		require.NoError(t, err)
+		var found bool
+		for _, item := range list {
+			if item.ID == p.ID {
+				found = true
+				assert.Equal(t, domain.ConsentStatusObtained, item.Consent.Status)
+				assert.Equal(t, "manual", item.Consent.Source)
+			}
+		}
+		assert.True(t, found, "prospect not in list")
+	})
+
+	t.Run("GetProspectForUser", func(t *testing.T) {
+		got, err := repo.GetProspectForUser(ctx, userID, p.ID)
+		require.NoError(t, err)
+		require.NotNil(t, got)
+		assert.Equal(t, domain.ConsentStatusObtained, got.Consent.Status)
+		assert.Equal(t, "manual", got.Consent.Source)
+	})
+
+	t.Run("FindByEmail", func(t *testing.T) {
+		got, err := repo.FindByEmail(ctx, userID, p.Email)
+		require.NoError(t, err)
+		require.NotNil(t, got)
+		assert.Equal(t, domain.ConsentStatusObtained, got.Consent.Status)
+	})
+
+	t.Run("FindByTelegramUsername", func(t *testing.T) {
+		got, err := repo.FindByTelegramUsername(ctx, userID, p.TelegramUsername)
+		require.NoError(t, err)
+		require.NotNil(t, got)
+		assert.Equal(t, domain.ConsentStatusObtained, got.Consent.Status)
+	})
+}
