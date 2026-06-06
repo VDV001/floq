@@ -142,9 +142,9 @@ func (uc *UseCase) SetConsent(ctx context.Context, userID, prospectID uuid.UUID,
 	now := time.Now().UTC()
 	switch status {
 	case domain.ConsentStatusObtained:
-		err = p.GrantConsent("manual", now)
+		err = p.GrantConsent(domain.ConsentSourceManual, now)
 	case domain.ConsentStatusWithdrawn:
-		err = p.WithdrawConsent("manual", now)
+		err = p.WithdrawConsent(domain.ConsentSourceManual, now)
 	default:
 		return ErrUnsupportedConsentStatus
 	}
@@ -339,7 +339,7 @@ func (uc *UseCase) ImportCSV(ctx context.Context, userID uuid.UUID, csvData []by
 		// Optional declared consent: only an explicit truthy cell opts the
 		// prospect in (source "import"); a blank cell stays at 'none'.
 		if consentDeclaredInCSV(getCol(record, "consent")) {
-			if err := p.GrantConsent("import", time.Now().UTC()); err != nil {
+			if err := p.GrantConsent(domain.ConsentSourceImport, time.Now().UTC()); err != nil {
 				skipped = append(skipped, SkippedRow{Line: lineNum, Reason: err.Error()})
 				continue
 			}

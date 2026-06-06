@@ -119,7 +119,7 @@ func (a *prospectRepoAdapter) ConvertToLead(ctx context.Context, prospectID, lea
 		if p.Consent.Status == prospectsdomain.ConsentStatusWithdrawn {
 			return nil
 		}
-		if err := p.GrantConsent("inbound_reply", time.Now().UTC()); err != nil {
+		if err := p.GrantConsent(prospectsdomain.ConsentSourceInboundReply, time.Now().UTC()); err != nil {
 			return fmt.Errorf("grant inbound consent: %w", err)
 		}
 		return a.repo.UpdateConsent(txCtx, p.ID, p.Consent)
