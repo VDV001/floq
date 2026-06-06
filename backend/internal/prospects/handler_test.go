@@ -444,3 +444,29 @@ func TestHandler_ImportCSV_BadCSV(t *testing.T) {
 
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
+
+func TestHandler_SetConsent(t *testing.T) {
+	repo := newMockRepo()
+	userID := uuid.New()
+	p, err := domain.NewProspect(userID, "Bob", "Acme", "CEO", "bob@acme.com", "manual")
+	require.NoError(t, err)
+	repo.prospects[p.ID] = p
+	uc := NewUseCase(repo)
+	router := setupRouter(uc)
+
+	do := func(id, body string, uid *uuid.UUID) int {
+		req := httptest.NewRequest(http.MethodPost, "/api/prospects/"+id+"/consent", bytes.NewBufferString(body))
+		if uid != nil {
+			req = authedRequest(req, *uid)
+		}
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+		return w.Code
+	}
+
+	assert.Equal(t, http.StatusOK, do(p.ID.String(), `{"status":"obtained"}`, &userID))
+	assert.Equal(t, domain.ConsentStatusObtained, repo.prospects[p.ID].Consent.Status)
+	assert.Equal(t, http.StatusBadRequest, do(p.ID.String(), `{"status":"bogus"}`, &userID))
+	assert.Equal(t, http.StatusUnauthorized, do(p.ID.String(), `{"status":"obtained"}`, nil))
+	assert.Equal(t, http.StatusNotFound, do(uuid.New().String(), `{"status":"obtained"}`, &userID))
+}

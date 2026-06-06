@@ -803,3 +803,51 @@ func TestExportCSV_IncludesConsent(t *testing.T) {
 	assert.Contains(t, s, "obtained")
 	assert.Contains(t, s, "inbound_reply")
 }
+
+// TestSetConsent verifies the manual operator toggle: grant and withdraw
+// transition the prospect and persist (source "manual"); unsupported statuses
+// and unknown/foreign prospects are rejected.
+func TestSetConsent(t *testing.T) {
+	newOwned := func(repo *mockRepo, userID uuid.UUID) uuid.UUID {
+		p, err := domain.NewProspect(userID, "Bob", "Acme", "CEO", "bob@acme.com", "manual")
+		require.NoError(t, err)
+		repo.prospects[p.ID] = p
+		return p.ID
+	}
+
+	t.Run("grant", func(t *testing.T) {
+		repo := newMockRepo()
+		uc := NewUseCase(repo)
+		userID := uuid.New()
+		id := newOwned(repo, userID)
+		require.NoError(t, uc.SetConsent(context.Background(), userID, id, domain.ConsentStatusObtained))
+		assert.Equal(t, domain.ConsentStatusObtained, repo.prospects[id].Consent.Status)
+		assert.Equal(t, "manual", repo.prospects[id].Consent.Source)
+	})
+
+	t.Run("withdraw", func(t *testing.T) {
+		repo := newMockRepo()
+		uc := NewUseCase(repo)
+		userID := uuid.New()
+		id := newOwned(repo, userID)
+		require.NoError(t, uc.SetConsent(context.Background(), userID, id, domain.ConsentStatusWithdrawn))
+		assert.Equal(t, domain.ConsentStatusWithdrawn, repo.prospects[id].Consent.Status)
+	})
+
+	t.Run("unsupported status (none) rejected", func(t *testing.T) {
+		repo := newMockRepo()
+		uc := NewUseCase(repo)
+		userID := uuid.New()
+		id := newOwned(repo, userID)
+		require.Error(t, uc.SetConsent(context.Background(), userID, id, domain.ConsentStatusNone))
+	})
+
+	t.Run("foreign prospect → not found", func(t *testing.T) {
+		repo := newMockRepo()
+		uc := NewUseCase(repo)
+		owner := uuid.New()
+		id := newOwned(repo, owner)
+		err := uc.SetConsent(context.Background(), uuid.New(), id, domain.ConsentStatusObtained)
+		require.ErrorIs(t, err, ErrProspectNotFound)
+	})
+}
