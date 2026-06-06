@@ -108,8 +108,12 @@ type Prospect struct {
 	VerifyDetails    string
 	VerifiedAt       *time.Time
 	ConvertedLeadID  *uuid.UUID
-	CreatedAt        time.Time
-	UpdatedAt        time.Time
+	// Consent is the outbound-contact consent VO. A fresh prospect starts at
+	// none (cold) — sends then require a logged override until consent is
+	// obtained. See consent.go for the send-time rule.
+	Consent   Consent
+	CreatedAt time.Time
+	UpdatedAt time.Time
 }
 
 // ProspectWithSource is a read model for list views: Prospect plus its
@@ -148,6 +152,7 @@ func NewProspect(userID uuid.UUID, name, company, title, email, source string) (
 		Status:        ProspectStatusNew,
 		VerifyStatus:  VerifyStatusNotChecked,
 		VerifyDetails: "{}",
+		Consent:       Consent{Status: ConsentStatusNone},
 		CreatedAt:     now,
 		UpdatedAt:     now,
 	}, nil
