@@ -1446,3 +1446,72 @@ func TestSendPending_SuppressionBlocksSend(t *testing.T) {
 		})
 	}
 }
+
+// TestUnsubscribeURL covers the per-email unsubscribe link: present and
+// round-trippable when secret+baseURL are set, absent otherwise.
+func TestUnsubscribeURL(t *testing.T) {
+	prospectID := uuid.New()
+
+	t.Run("absent without secret", func(t *testing.T) {
+		s := NewSender(nil, uuid.New(), "", "", "https://app.test", "", "", "", "", nil, nil, nil, nil, nil, nil)
+		if _, ok := s.unsubscribeURL(prospectID); ok {
+			t.Error("expected no URL without an unsubscribe secret")
+		}
+	})
+
+	t.Run("absent without base URL", func(t *testing.T) {
+		s := NewSender(nil, uuid.New(), "", "", "", "", "", "", "", nil, nil, nil, nil, nil, nil)
+		s.SetUnsubscribeSecret("sekret")
+		if _, ok := s.unsubscribeURL(prospectID); ok {
+			t.Error("expected no URL without a base URL")
+		}
+	})
+
+	t.Run("present and verifiable", func(t *testing.T) {
+		s := NewSender(nil, uuid.New(), "", "", "https://app.test/", "", "", "", "", nil, nil, nil, nil, nil, nil)
+		s.SetUnsubscribeSecret("sekret")
+		url, ok := s.unsubscribeURL(prospectID)
+		if !ok {
+			t.Fatal("expected a URL")
+		}
+		const prefix = "https://app.test/unsubscribe/"
+		if !strings.HasPrefix(url, prefix) {
+			t.Fatalf("url %q missing prefix %q", url, prefix)
+		}
+		token := strings.TrimPrefix(url, prefix)
+		got, err := prospectsdomain.ParseUnsubscribeToken(token, "sekret")
+		if err != nil {
+			t.Fatalf("token in URL must verify: %v", err)
+		}
+		if got != prospectID {
+			t.Errorf("token resolves to %s, want %s", got, prospectID)
+		}
+	})
+}
+
+func TestUnsubscribeEmailHeaders(t *testing.T) {
+	h := unsubscribeEmailHeaders("https://app.test/unsubscribe/tok")
+	if h["List-Unsubscribe"] != "<https://app.test/unsubscribe/tok>" {
+		t.Errorf("List-Unsubscribe = %q", h["List-Unsubscribe"])
+	}
+	if h["List-Unsubscribe-Post"] != "List-Unsubscribe=One-Click" {
+		t.Errorf("List-Unsubscribe-Post = %q", h["List-Unsubscribe-Post"])
+	}
+}
+
+func TestBuildSMTPMessage_IncludesExtraHeaders(t *testing.T) {
+	msg := string(buildSMTPMessage("from@x.com", "to@y.com", "Subj", "<p>hi</p>",
+		map[string]string{"List-Unsubscribe": "<https://app.test/u/tok>"}))
+
+	for _, want := range []string{
+		"From: from@x.com\r\n",
+		"To: to@y.com\r\n",
+		"Subject: Subj\r\n",
+		"List-Unsubscribe: <https://app.test/u/tok>\r\n",
+		"\r\n\r\n<p>hi</p>", // blank line separates headers from body
+	} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("message missing %q\n---\n%s", want, msg)
+		}
+	}
+}

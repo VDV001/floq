@@ -302,6 +302,10 @@ func main() {
 	// Tracking pixel (public, no auth — loaded by email clients)
 	sequences.RegisterPublicRoutes(r, sequencesUC)
 
+	// Unsubscribe (public — authorized by the signed token in the URL, not JWT;
+	// reached from email link clicks and RFC 8058 one-click POSTs).
+	prospects.RegisterUnsubscribeRoutes(r, prospects.NewUnsubscribeService(prospectsRepo, cfg.JWTSecret))
+
 	// Auth (public) — login/register rate-limited per client IP.
 	auth.RegisterRoutes(r, authHandler, authLoginMW, authRegisterMW)
 

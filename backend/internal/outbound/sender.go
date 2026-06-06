@@ -93,8 +93,47 @@ type Sender struct {
 	dialer       proxy.ContextDialer
 	httpClient   *http.Client
 
+	// unsubscribeSecret signs the per-email unsubscribe tokens. Set via
+	// SetUnsubscribeSecret at wiring time; when empty, emails carry no
+	// unsubscribe link or List-Unsubscribe header.
+	unsubscribeSecret string
+
 	tgLastSent time.Time
 	tgRateMu   sync.Mutex
+}
+
+// SetUnsubscribeSecret configures the HMAC secret used to mint per-email
+// unsubscribe links. Called once at composition time (mirrors the optional-
+// dependency setter pattern used elsewhere in wiring). When unset, outbound
+// emails omit the unsubscribe link and List-Unsubscribe headers.
+func (s *Sender) SetUnsubscribeSecret(secret string) { s.unsubscribeSecret = secret }
+
+// unsubscribeURL returns the one-click unsubscribe URL for a prospect, and
+// false when unsubscribe links are not configured (no secret or no base URL).
+func (s *Sender) unsubscribeURL(prospectID uuid.UUID) (string, bool) {
+	panic("not implemented")
+}
+
+// unsubscribeEmailHeaders returns the RFC 8058 one-click unsubscribe headers
+// for url. List-Unsubscribe-Post signals that a bare POST to the URL performs
+// the unsubscribe without further interaction.
+func unsubscribeEmailHeaders(url string) map[string]string {
+	return map[string]string{
+		"List-Unsubscribe":      "<" + url + ">",
+		"List-Unsubscribe-Post": "List-Unsubscribe=One-Click",
+	}
+}
+
+// unsubscribeFooter is the visible unsubscribe link appended to the email body.
+func unsubscribeFooter(url string) string {
+	return `<p style="font-size:12px;color:#888;margin-top:24px">` +
+		`Если вы не хотите получать эти письма, <a href="` + url + `">отписаться</a>.</p>`
+}
+
+// buildSMTPMessage assembles the raw RFC 822 message: the standard headers,
+// any extraHeaders (e.g. List-Unsubscribe), a blank line, then the HTML body.
+func buildSMTPMessage(from, to, subject, htmlBody string, extraHeaders map[string]string) []byte {
+	panic("not implemented")
 }
 
 func NewSender(
