@@ -286,7 +286,7 @@ func main() {
 	// 1C inbound webhook (public — authenticated by per-user secret, not JWT).
 	// Mapping resolves event kinds + counterparty fields; the applier routes
 	// mapped events to leads/prospects via a cross-context adapter.
-	onecRepo := onec.NewRepository(pool)
+	onecRepo := onec.NewRepository(pool, secretCipher)
 	onecApplier := newOnecApplierAdapter(leadsRepo, leadsUC, prospectsUC, slog.Default())
 	onecUC := onec.NewUseCase(onecRepo,
 		onec.WithMapping(onecRepo),

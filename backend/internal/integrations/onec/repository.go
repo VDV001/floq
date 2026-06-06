@@ -12,12 +12,14 @@ import (
 
 // Repository is the postgres-backed store for the 1C sync ledger.
 type Repository struct {
-	pool *pgxpool.Pool
+	pool   *pgxpool.Pool
+	cipher SecretCipher
 }
 
-// NewRepository builds a Repository over the given pool.
-func NewRepository(pool *pgxpool.Pool) *Repository {
-	return &Repository{pool: pool}
+// NewRepository builds a Repository over the given pool. The cipher encrypts
+// the 1C auth secret at rest.
+func NewRepository(pool *pgxpool.Pool, cipher SecretCipher) *Repository {
+	return &Repository{pool: pool, cipher: cipher}
 }
 
 // InsertSyncRecord persists a ledger entry idempotently. On the dedup key
