@@ -8,7 +8,15 @@
 // here as a leaf package, the ports live with the consumers (DIP).
 package secrets
 
-import "errors"
+import (
+	"crypto/aes"
+	"crypto/cipher"
+	"crypto/rand"
+	"encoding/base64"
+	"errors"
+	"fmt"
+	"io"
+)
 
 // ErrInvalidKey is returned by NewCipher when the decoded KEK is not exactly
 // 32 bytes (AES-256 requires a 256-bit key).
@@ -20,22 +28,60 @@ var ErrInvalidKey = errors.New("secrets: KEK must decode to exactly 32 bytes")
 var ErrDecrypt = errors.New("secrets: decrypt failed")
 
 // Cipher encrypts and decrypts short secret strings with AES-256-GCM.
-type Cipher struct{}
+type Cipher struct {
+	aead cipher.AEAD
+}
 
-// NewCipher builds a Cipher from a base64-encoded 32-byte KEK.
+// NewCipher builds a Cipher from a base64-encoded 32-byte KEK. A malformed
+// base64 string is a distinct error; a correctly-decoded but wrong-length key
+// returns ErrInvalidKey.
 func NewCipher(kekBase64 string) (*Cipher, error) {
-	return nil, errors.New("secrets: not implemented")
+	key, err := base64.StdEncoding.DecodeString(kekBase64)
+	if err != nil {
+		return nil, fmt.Errorf("secrets: KEK is not valid base64: %w", err)
+	}
+	if len(key) != 32 {
+		return nil, ErrInvalidKey
+	}
+	block, err := aes.NewCipher(key)
+	if err != nil {
+		return nil, fmt.Errorf("secrets: build AES cipher: %w", err)
+	}
+	aead, err := cipher.NewGCM(block)
+	if err != nil {
+		return nil, fmt.Errorf("secrets: build GCM: %w", err)
+	}
+	return &Cipher{aead: aead}, nil
 }
 
 // Encrypt seals plaintext under a fresh random nonce. Empty plaintext is a
 // no-op returning (nil, nil, nil) so we never store ciphertext for an unset
 // secret.
 func (c *Cipher) Encrypt(plaintext string) (ciphertext, nonce []byte, err error) {
-	return nil, nil, errors.New("secrets: not implemented")
+	if plaintext == "" {
+		return nil, nil, nil
+	}
+	nonce = make([]byte, c.aead.NonceSize())
+	if _, err := io.ReadFull(rand.Reader, nonce); err != nil {
+		return nil, nil, fmt.Errorf("secrets: read nonce: %w", err)
+	}
+	ciphertext = c.aead.Seal(nil, nonce, []byte(plaintext), nil)
+	return ciphertext, nonce, nil
 }
 
 // Decrypt opens ciphertext sealed by Encrypt. Empty (nil, nil) input is a
 // no-op returning ("", nil), the inverse of Encrypt's empty-plaintext case.
+// Any authentication failure collapses to ErrDecrypt.
 func (c *Cipher) Decrypt(ciphertext, nonce []byte) (string, error) {
-	return "", errors.New("secrets: not implemented")
+	if len(ciphertext) == 0 && len(nonce) == 0 {
+		return "", nil
+	}
+	if len(nonce) != c.aead.NonceSize() {
+		return "", ErrDecrypt
+	}
+	plaintext, err := c.aead.Open(nil, nonce, ciphertext, nil)
+	if err != nil {
+		return "", ErrDecrypt
+	}
+	return string(plaintext), nil
 }
