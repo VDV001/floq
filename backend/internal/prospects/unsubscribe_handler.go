@@ -5,6 +5,7 @@ import (
 	"errors"
 	"log"
 	"net/http"
+	"time"
 
 	"github.com/daniil/floq/internal/prospects/domain"
 	"github.com/go-chi/chi/v5"
@@ -40,7 +41,36 @@ func NewUnsubscribeService(store unsubscribeStore, secret string) *UnsubscribeSe
 // for a prospect that no longer exists is a silent no-op, never an existence
 // oracle. Returns domain.ErrInvalidUnsubscribeToken for a bad token.
 func (s *UnsubscribeService) Unsubscribe(ctx context.Context, token string) error {
-	panic("not implemented")
+	prospectID, err := domain.ParseUnsubscribeToken(token, s.secret)
+	if err != nil {
+		return err
+	}
+	p, err := s.store.GetProspect(ctx, prospectID)
+	if err != nil {
+		return err
+	}
+	if p == nil {
+		// Token valid but the prospect is gone — nothing to contact. Stay silent
+		// so the endpoint can't confirm whether a prospect ID exists.
+		return nil
+	}
+
+	// Suppress the email first (the hard, address-level block) so even a stale
+	// duplicate prospect record with the same email is covered, then record the
+	// consent withdrawal on this prospect for its compliance state and the UI.
+	if p.Email != "" {
+		sup, err := domain.NewSuppression(p.UserID, domain.SuppressionChannelEmail, p.Email, "unsubscribe")
+		if err != nil {
+			return err
+		}
+		if err := s.store.AddSuppression(ctx, sup); err != nil {
+			return err
+		}
+	}
+	if err := p.WithdrawConsent("unsubscribe", time.Now().UTC()); err != nil {
+		return err
+	}
+	return s.store.UpdateConsent(ctx, p.ID, p.Consent)
 }
 
 // HandleUnsubscribe serves the public unsubscribe endpoint for both a user's
