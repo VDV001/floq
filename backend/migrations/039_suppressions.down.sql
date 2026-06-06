@@ -1,1 +1,1 @@
-DROP TABLE suppressions;
+DROP TABLE IF EXISTS suppressions;

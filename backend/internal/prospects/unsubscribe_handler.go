@@ -3,6 +3,7 @@ package prospects
 import (
 	"context"
 	"errors"
+	"html"
 	"log"
 	"net/http"
 	"time"
@@ -101,11 +102,13 @@ func RegisterUnsubscribeRoutes(r chi.Router, s *UnsubscribeService) {
 }
 
 // writeUnsubscribePage renders a minimal self-contained HTML confirmation.
+// message is HTML-escaped: this is a public, unauthenticated endpoint, so the
+// page must stay injection-safe even if a caller ever passes non-static text.
 func writeUnsubscribePage(w http.ResponseWriter, status int, message string) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(status)
 	_, _ = w.Write([]byte(`<!doctype html><html lang="ru"><head><meta charset="utf-8">` +
 		`<meta name="viewport" content="width=device-width,initial-scale=1">` +
 		`<title>Отписка</title></head><body style="font-family:system-ui,sans-serif;max-width:32rem;margin:4rem auto;padding:0 1rem;text-align:center">` +
-		`<p style="font-size:1.1rem">` + message + `</p></body></html>`))
+		`<p style="font-size:1.1rem">` + html.EscapeString(message) + `</p></body></html>`))
 }

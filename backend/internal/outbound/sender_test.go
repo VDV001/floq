@@ -1397,9 +1397,11 @@ func TestSendPending_SuppressionBlocksSend(t *testing.T) {
 		name        string
 		suppressed  bool
 		suppressErr error
+		wantSends   int
 	}{
-		{"address on suppression list", true, nil},
-		{"check errors → fail closed", false, fmt.Errorf("suppression db down")},
+		{"address on suppression list", true, nil, 0},
+		{"check errors → fail closed", false, fmt.Errorf("suppression db down"), 0},
+		{"not suppressed → passes", false, nil, 1},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -1437,11 +1439,11 @@ func TestSendPending_SuppressionBlocksSend(t *testing.T) {
 				t.Fatalf("expected no top-level error, got %v", err)
 			}
 
-			if len(tgMessenger.calls) != 0 {
-				t.Errorf("expected 0 TG sends (suppressed), got %d", len(tgMessenger.calls))
+			if len(tgMessenger.calls) != tt.wantSends {
+				t.Errorf("expected %d TG sends, got %d", tt.wantSends, len(tgMessenger.calls))
 			}
-			if len(seqRepo.sentIDs) != 0 {
-				t.Errorf("expected 0 sent (suppressed), got %d", len(seqRepo.sentIDs))
+			if len(seqRepo.sentIDs) != tt.wantSends {
+				t.Errorf("expected %d sent, got %d", tt.wantSends, len(seqRepo.sentIDs))
 			}
 		})
 	}

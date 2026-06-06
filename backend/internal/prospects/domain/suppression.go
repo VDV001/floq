@@ -2,7 +2,6 @@ package domain
 
 import (
 	"errors"
-	"fmt"
 	"strings"
 	"time"
 
@@ -33,6 +32,7 @@ func (c SuppressionChannel) String() string { return string(c) }
 
 // Domain errors guarding Suppression construction.
 var (
+	ErrSuppressionUserRequired    = errors.New("suppression: userID is required")
 	ErrInvalidSuppressionChannel  = errors.New("suppression: invalid channel")
 	ErrSuppressionAddressRequired = errors.New("suppression: address is required")
 	ErrSuppressionReasonRequired  = errors.New("suppression: reason is required")
@@ -67,7 +67,7 @@ type Suppression struct {
 // normalized address, and a non-empty reason (mandatory for the audit trail).
 func NewSuppression(userID uuid.UUID, channel SuppressionChannel, address, reason string) (*Suppression, error) {
 	if userID == uuid.Nil {
-		return nil, fmt.Errorf("suppression userID is required")
+		return nil, ErrSuppressionUserRequired
 	}
 	if !channel.IsValid() {
 		return nil, ErrInvalidSuppressionChannel
