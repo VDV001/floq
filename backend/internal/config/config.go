@@ -8,39 +8,44 @@ import (
 
 // Config holds all application configuration read from environment variables.
 type Config struct {
-	AppPort         string
-	DatabaseURL     string
-	RedisURL        string
-	JWTSecret       string
-	AIProvider      string
-	AnthropicAPIKey string
-	OpenAIAPIKey    string
-	OpenAIModel     string
-	OllamaBaseURL   string
-	OllamaModel     string
-	GroqAPIKey      string
-	GroqModel       string
+	AppPort     string
+	DatabaseURL string
+	RedisURL    string
+	JWTSecret   string
+	// SecretsKEK is the base64-encoded 32-byte key-encryption-key used to
+	// encrypt client credentials at rest. Validated at startup by
+	// secrets.NewCipher — the server fails fast if it is missing or not 32
+	// bytes, so credentials are never silently stored in plaintext.
+	SecretsKEK       string
+	AIProvider       string
+	AnthropicAPIKey  string
+	OpenAIAPIKey     string
+	OpenAIModel      string
+	OllamaBaseURL    string
+	OllamaModel      string
+	GroqAPIKey       string
+	GroqModel        string
 	TelegramBotToken string
-	ResendAPIKey    string
-	SMTPFrom        string
-	IMAPHost        string
-	IMAPPort        string
-	IMAPUser        string
-	IMAPPassword    string
-	SMTPHost        string
-	SMTPPort        string
-	SMTPUser        string
-	SMTPPassword    string
-	OwnerUserID     string
-	AppBaseURL      string
-	TwoGISAPIKey    string
-	BookingLink     string
-	SenderName      string
-	SenderCompany   string
-	SenderPhone     string
-	SenderWebsite   string
-	StaleDays       int
-	ProxyURL        string
+	ResendAPIKey     string
+	SMTPFrom         string
+	IMAPHost         string
+	IMAPPort         string
+	IMAPUser         string
+	IMAPPassword     string
+	SMTPHost         string
+	SMTPPort         string
+	SMTPUser         string
+	SMTPPassword     string
+	OwnerUserID      string
+	AppBaseURL       string
+	TwoGISAPIKey     string
+	BookingLink      string
+	SenderName       string
+	SenderCompany    string
+	SenderPhone      string
+	SenderWebsite    string
+	StaleDays        int
+	ProxyURL         string
 	// PendingReplyRateLimitPerMin caps combined approve+reject requests
 	// per user per minute on the HITL endpoints. Default 30 — over an
 	// order of magnitude above any legitimate human cadence, still
@@ -77,39 +82,40 @@ type Config struct {
 // Load reads configuration from environment variables and returns a Config.
 func Load() *Config {
 	return &Config{
-		AppPort:         getEnv("APP_PORT", "8080"),
-		DatabaseURL:     os.Getenv("DATABASE_URL"),
-		RedisURL:        os.Getenv("REDIS_URL"),
-		JWTSecret:       os.Getenv("JWT_SECRET"),
-		AIProvider:      getEnv("AI_PROVIDER", "anthropic"),
-		AnthropicAPIKey: os.Getenv("ANTHROPIC_API_KEY"),
-		OpenAIAPIKey:    os.Getenv("OPENAI_API_KEY"),
-		OpenAIModel:     getEnv("OPENAI_MODEL", "gpt-4o"),
-		OllamaBaseURL:   getEnv("OLLAMA_BASE_URL", "http://localhost:11434"),
-		OllamaModel:     getEnv("OLLAMA_MODEL", "llama3"),
-		GroqAPIKey:      os.Getenv("GROQ_API_KEY"),
-		GroqModel:       getEnv("GROQ_MODEL", "openai/gpt-oss-120b"),
-		TelegramBotToken: os.Getenv("TELEGRAM_BOT_TOKEN"),
-		ResendAPIKey:    os.Getenv("RESEND_API_KEY"),
-		SMTPFrom:        os.Getenv("SMTP_FROM"),
-		IMAPHost:        os.Getenv("IMAP_HOST"),
-		IMAPPort:        getEnv("IMAP_PORT", "993"),
-		IMAPUser:        os.Getenv("IMAP_USER"),
-		IMAPPassword:    os.Getenv("IMAP_PASSWORD"),
-		SMTPHost:        os.Getenv("SMTP_HOST"),
-		SMTPPort:        getEnv("SMTP_PORT", "465"),
-		SMTPUser:        os.Getenv("SMTP_USER"),
-		SMTPPassword:    os.Getenv("SMTP_PASSWORD"),
-		OwnerUserID:     getEnv("OWNER_USER_ID", "00000000-0000-0000-0000-000000000001"),
-		AppBaseURL:      os.Getenv("APP_BASE_URL"),
-		TwoGISAPIKey:    os.Getenv("TWOGIS_API_KEY"),
-		BookingLink:     getEnv("BOOKING_LINK", "https://calendar.app.google/CQciFBayHqi6CstB7"),
-		SenderName:      getEnv("SENDER_NAME", "Дмитрий"),
-		SenderCompany:   getEnv("SENDER_COMPANY", "dev-bot.su"),
-		SenderPhone:     os.Getenv("SENDER_PHONE"),
-		SenderWebsite:   os.Getenv("SENDER_WEBSITE"),
-		StaleDays:       getEnvInt("STALE_DAYS", 2),
-		ProxyURL:        os.Getenv("PROXY_URL"),
+		AppPort:                     getEnv("APP_PORT", "8080"),
+		DatabaseURL:                 os.Getenv("DATABASE_URL"),
+		RedisURL:                    os.Getenv("REDIS_URL"),
+		JWTSecret:                   os.Getenv("JWT_SECRET"),
+		SecretsKEK:                  os.Getenv("FLOQ_SECRETS_KEK"),
+		AIProvider:                  getEnv("AI_PROVIDER", "anthropic"),
+		AnthropicAPIKey:             os.Getenv("ANTHROPIC_API_KEY"),
+		OpenAIAPIKey:                os.Getenv("OPENAI_API_KEY"),
+		OpenAIModel:                 getEnv("OPENAI_MODEL", "gpt-4o"),
+		OllamaBaseURL:               getEnv("OLLAMA_BASE_URL", "http://localhost:11434"),
+		OllamaModel:                 getEnv("OLLAMA_MODEL", "llama3"),
+		GroqAPIKey:                  os.Getenv("GROQ_API_KEY"),
+		GroqModel:                   getEnv("GROQ_MODEL", "openai/gpt-oss-120b"),
+		TelegramBotToken:            os.Getenv("TELEGRAM_BOT_TOKEN"),
+		ResendAPIKey:                os.Getenv("RESEND_API_KEY"),
+		SMTPFrom:                    os.Getenv("SMTP_FROM"),
+		IMAPHost:                    os.Getenv("IMAP_HOST"),
+		IMAPPort:                    getEnv("IMAP_PORT", "993"),
+		IMAPUser:                    os.Getenv("IMAP_USER"),
+		IMAPPassword:                os.Getenv("IMAP_PASSWORD"),
+		SMTPHost:                    os.Getenv("SMTP_HOST"),
+		SMTPPort:                    getEnv("SMTP_PORT", "465"),
+		SMTPUser:                    os.Getenv("SMTP_USER"),
+		SMTPPassword:                os.Getenv("SMTP_PASSWORD"),
+		OwnerUserID:                 getEnv("OWNER_USER_ID", "00000000-0000-0000-0000-000000000001"),
+		AppBaseURL:                  os.Getenv("APP_BASE_URL"),
+		TwoGISAPIKey:                os.Getenv("TWOGIS_API_KEY"),
+		BookingLink:                 getEnv("BOOKING_LINK", "https://calendar.app.google/CQciFBayHqi6CstB7"),
+		SenderName:                  getEnv("SENDER_NAME", "Дмитрий"),
+		SenderCompany:               getEnv("SENDER_COMPANY", "dev-bot.su"),
+		SenderPhone:                 os.Getenv("SENDER_PHONE"),
+		SenderWebsite:               os.Getenv("SENDER_WEBSITE"),
+		StaleDays:                   getEnvInt("STALE_DAYS", 2),
+		ProxyURL:                    os.Getenv("PROXY_URL"),
 		PendingReplyRateLimitPerMin: getEnvInt("RATE_LIMIT_PENDING_REPLIES_PER_MIN", 30),
 		AuthLoginRateLimit:          getEnvInt("AUTH_LOGIN_RATE_LIMIT", 5),
 		AuthRegisterRateLimit:       getEnvInt("AUTH_REGISTER_RATE_LIMIT", 3),

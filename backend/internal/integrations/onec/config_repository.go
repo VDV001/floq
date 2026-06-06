@@ -23,13 +23,18 @@ var (
 func (r *Repository) GetCredentialsConfig(ctx context.Context, userID uuid.UUID) (*domain.CredentialsConfig, bool, error) {
 	var baseURL, authType, authSecret, webhookSecret string
 	var isActive bool
+	var secretEnc, secretNonce []byte
 	err := r.pool.QueryRow(ctx, `
-		SELECT base_url, auth_type, auth_secret, webhook_secret, is_active
+		SELECT base_url, auth_type, auth_secret, auth_secret_enc, auth_secret_nonce, webhook_secret, is_active
 		FROM onec_credentials WHERE user_id = $1`, userID).
-		Scan(&baseURL, &authType, &authSecret, &webhookSecret, &isActive)
+		Scan(&baseURL, &authType, &authSecret, &secretEnc, &secretNonce, &webhookSecret, &isActive)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, false, nil
 	}
+	if err != nil {
+		return nil, false, err
+	}
+	authSecret, err = decryptOrFallback(r.cipher, secretEnc, secretNonce, authSecret)
 	if err != nil {
 		return nil, false, err
 	}
@@ -44,17 +49,27 @@ func (r *Repository) GetCredentialsConfig(ctx context.Context, userID uuid.UUID)
 // read-merge-write happens in the usecase, so this just writes the resulting
 // validated VO; ON CONFLICT keeps the single-row-per-user invariant.
 func (r *Repository) UpsertCredentialsConfig(ctx context.Context, userID uuid.UUID, cfg *domain.CredentialsConfig) error {
-	_, err := r.pool.Exec(ctx, `
+	// Encrypt the auth secret at this boundary; the plaintext auth_secret
+	// column is reset to '' so a DB dump never exposes it. webhook_secret
+	// stays plaintext on purpose — it is a server-generated lookup token, not
+	// a client password (see migration 037).
+	secretEnc, secretNonce, err := r.cipher.Encrypt(cfg.AuthSecret)
+	if err != nil {
+		return err
+	}
+	_, err = r.pool.Exec(ctx, `
 		INSERT INTO onec_credentials
-			(user_id, base_url, auth_type, auth_secret, webhook_secret, is_active, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6, NOW())
+			(user_id, base_url, auth_type, auth_secret, auth_secret_enc, auth_secret_nonce, webhook_secret, is_active, updated_at)
+		VALUES ($1, $2, $3, '', $4, $5, $6, $7, NOW())
 		ON CONFLICT (user_id) DO UPDATE SET
-			base_url       = EXCLUDED.base_url,
-			auth_type      = EXCLUDED.auth_type,
-			auth_secret    = EXCLUDED.auth_secret,
-			webhook_secret = EXCLUDED.webhook_secret,
-			is_active      = EXCLUDED.is_active,
-			updated_at     = NOW()`,
-		userID, cfg.BaseURL, string(cfg.AuthType), cfg.AuthSecret, cfg.WebhookSecret, cfg.IsActive)
+			base_url          = EXCLUDED.base_url,
+			auth_type         = EXCLUDED.auth_type,
+			auth_secret       = '',
+			auth_secret_enc   = EXCLUDED.auth_secret_enc,
+			auth_secret_nonce = EXCLUDED.auth_secret_nonce,
+			webhook_secret    = EXCLUDED.webhook_secret,
+			is_active         = EXCLUDED.is_active,
+			updated_at        = NOW()`,
+		userID, cfg.BaseURL, string(cfg.AuthType), secretEnc, secretNonce, cfg.WebhookSecret, cfg.IsActive)
 	return err
 }

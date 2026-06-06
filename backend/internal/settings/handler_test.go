@@ -229,17 +229,34 @@ func TestHandler_GetUsage_Success_NoCounter(t *testing.T) {
 
 // --- Usecase tests ---
 
-func TestUseCase_GetSettings_MasksSecrets(t *testing.T) {
+func TestUseCase_GetSettings_ReturnsUnmaskedSecrets(t *testing.T) {
 	repo := newMockSettingsRepo()
 	uc := NewUseCase(repo, &mockTelegramValidator{})
 
+	// Masking is a presentation concern owned by the DTO mapping (handler
+	// layer); the usecase returns the raw domain values. Internal callers
+	// (GetStoredResendKey / GetStoredAISettings) depend on the unmasked form.
 	s, err := uc.GetSettings(context.Background(), uuid.New())
 	require.NoError(t, err)
-	assert.Equal(t, "...2345", s.AIAPIKey)
-	assert.Equal(t, "...word", s.IMAPPassword)
-	assert.Equal(t, "...2345", s.ResendAPIKey)
-	// Non-secret fields should not be masked.
+	assert.Equal(t, "sk-test-key-12345", s.AIAPIKey)
+	assert.Equal(t, "secret-password", s.IMAPPassword)
+	assert.Equal(t, "re_api_key_12345", s.ResendAPIKey)
 	assert.Equal(t, "John Doe", s.FullName)
+}
+
+func TestDomainToDTO_MasksSecrets(t *testing.T) {
+	dto := domainToDTO(&domain.Settings{
+		AIAPIKey:     "sk-test-key-12345",
+		IMAPPassword: "secret-password",
+		ResendAPIKey: "re_api_key_12345",
+		SMTPPassword: "smtp-pass-9999",
+		TelegramBotToken: "1234567890:tok",
+	})
+	assert.Equal(t, "...2345", dto.AIAPIKey)
+	assert.Equal(t, "...word", dto.IMAPPassword)
+	assert.Equal(t, "...2345", dto.ResendAPIKey)
+	assert.Equal(t, "...9999", dto.SMTPPassword)
+	assert.Equal(t, "...:tok", dto.TelegramBotToken)
 }
 
 func TestUseCase_UpdateSettings_SingleField(t *testing.T) {

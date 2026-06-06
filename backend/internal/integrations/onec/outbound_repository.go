@@ -19,13 +19,18 @@ var ErrOutboundNotConfigured = errors.New("onec: outbound 1C not configured")
 // ErrOutboundNotConfigured. The domain factory validates/normalises the result.
 func (r *Repository) GetOutboundCredentials(ctx context.Context, userID uuid.UUID) (*domain.OutboundCredentials, error) {
 	var baseURL, authType, authSecret string
+	var secretEnc, secretNonce []byte
 	err := r.pool.QueryRow(ctx, `
-		SELECT base_url, auth_type, auth_secret FROM onec_credentials
+		SELECT base_url, auth_type, auth_secret, auth_secret_enc, auth_secret_nonce FROM onec_credentials
 		WHERE user_id = $1 AND is_active = TRUE AND base_url <> ''`, userID).
-		Scan(&baseURL, &authType, &authSecret)
+		Scan(&baseURL, &authType, &authSecret, &secretEnc, &secretNonce)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrOutboundNotConfigured
 	}
+	if err != nil {
+		return nil, err
+	}
+	authSecret, err = decryptOrFallback(r.cipher, secretEnc, secretNonce, authSecret)
 	if err != nil {
 		return nil, err
 	}

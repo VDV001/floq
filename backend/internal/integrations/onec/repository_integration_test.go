@@ -21,7 +21,7 @@ func newEvent(t *testing.T, extID string) *domain.ExternalEvent {
 
 func TestRepository_InsertSyncRecord_Dedup(t *testing.T) {
 	pool := testutil.TestDB(t)
-	repo := onec.NewRepository(pool)
+	repo := onec.NewRepository(pool, testCipher(t))
 	ctx := context.Background()
 	user := testutil.SeedUser(t, pool)
 
@@ -49,7 +49,7 @@ func TestRepository_InsertSyncRecord_Dedup(t *testing.T) {
 
 func TestRepository_InsertSyncRecord_PerUserScope(t *testing.T) {
 	pool := testutil.TestDB(t)
-	repo := onec.NewRepository(pool)
+	repo := onec.NewRepository(pool, testCipher(t))
 	ctx := context.Background()
 	userA := testutil.SeedUser(t, pool)
 	userB := testutil.SeedUser(t, pool)
@@ -71,7 +71,7 @@ func TestRepository_InsertSyncRecord_PerUserScope(t *testing.T) {
 
 func TestRepository_InsertSyncRecord_PayloadDrift(t *testing.T) {
 	pool := testutil.TestDB(t)
-	repo := onec.NewRepository(pool)
+	repo := onec.NewRepository(pool, testCipher(t))
 	ctx := context.Background()
 	user := testutil.SeedUser(t, pool)
 
@@ -103,7 +103,7 @@ func TestRepository_InsertSyncRecord_PayloadDrift(t *testing.T) {
 
 func TestRepository_UserIDByWebhookSecret(t *testing.T) {
 	pool := testutil.TestDB(t)
-	repo := onec.NewRepository(pool)
+	repo := onec.NewRepository(pool, testCipher(t))
 	ctx := context.Background()
 	user := testutil.SeedUser(t, pool)
 
@@ -142,7 +142,7 @@ func TestRepository_UserIDByWebhookSecret(t *testing.T) {
 
 func TestRepository_InsertSyncRecord_AlreadyProcessedAndMark(t *testing.T) {
 	pool := testutil.TestDB(t)
-	repo := onec.NewRepository(pool)
+	repo := onec.NewRepository(pool, testCipher(t))
 	ctx := context.Background()
 	user := testutil.SeedUser(t, pool)
 

@@ -17,7 +17,7 @@ import (
 
 func TestRepository_GetOutboundCredentials(t *testing.T) {
 	pool := testutil.TestDB(t)
-	repo := onec.NewRepository(pool)
+	repo := onec.NewRepository(pool, testCipher(t))
 	ctx := context.Background()
 
 	t.Run("active with base url", func(t *testing.T) {
@@ -65,7 +65,7 @@ func TestRepository_GetOutboundCredentials(t *testing.T) {
 
 func TestRepository_ActiveOnecUserIDs(t *testing.T) {
 	pool := testutil.TestDB(t)
-	repo := onec.NewRepository(pool)
+	repo := onec.NewRepository(pool, testCipher(t))
 	ctx := context.Background()
 
 	active := testutil.SeedUser(t, pool)
@@ -92,7 +92,7 @@ func TestRepository_ActiveOnecUserIDs(t *testing.T) {
 
 func TestRepository_OutboundRecord_UpsertAndExists(t *testing.T) {
 	pool := testutil.TestDB(t)
-	repo := onec.NewRepository(pool)
+	repo := onec.NewRepository(pool, testCipher(t))
 	ctx := context.Background()
 	user := testutil.SeedUser(t, pool)
 

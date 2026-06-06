@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"flag"
 	"log"
 	"log/slog"
 	"net/http"
@@ -37,6 +38,7 @@ import (
 	"github.com/daniil/floq/internal/proxy"
 	"github.com/daniil/floq/internal/ratelimit"
 	"github.com/daniil/floq/internal/reminders"
+	"github.com/daniil/floq/internal/secrets"
 	"github.com/daniil/floq/internal/sequences"
 	"github.com/daniil/floq/internal/settings"
 	"github.com/daniil/floq/internal/sources"
@@ -69,7 +71,21 @@ func main() {
 	// Load .env file (ignore error if missing — production uses real env vars).
 	_ = godotenv.Load()
 
+	// -backfill-secrets runs the one-off at-rest encryption backfill (migration
+	// 037 → 038 transition) and exits without starting the server.
+	backfillSecrets := flag.Bool("backfill-secrets", false,
+		"encrypt legacy plaintext secrets into their *_enc columns, then exit")
+	flag.Parse()
+
 	cfg := config.Load()
+
+	// 0a. Secret cipher (at-rest encryption for client credentials). Fail
+	// fast: a missing or malformed FLOQ_SECRETS_KEK must crash the server,
+	// never fall back to storing credentials in plaintext.
+	secretCipher, err := secrets.NewCipher(cfg.SecretsKEK)
+	if err != nil {
+		log.Fatalf("FLOQ_SECRETS_KEK invalid (must be base64-encoded 32 bytes): %v", err)
+	}
 
 	// 0. Proxy provider (empty PROXY_URL = direct connection)
 	proxyProvider, err := proxy.NewFromURL(cfg.ProxyURL)
@@ -109,9 +125,24 @@ func main() {
 		break
 	}
 
+	// 1c. One-off secret backfill: encrypt legacy plaintext secrets, then exit.
+	// Idempotent, so it is safe to re-run if a previous pass was interrupted.
+	if *backfillSecrets {
+		nSettings, err := settings.BackfillSecrets(context.Background(), pool, secretCipher)
+		if err != nil {
+			log.Fatalf("backfill settings secrets: %v", err)
+		}
+		nOnec, err := onec.BackfillSecrets(context.Background(), pool, secretCipher)
+		if err != nil {
+			log.Fatalf("backfill onec secrets: %v", err)
+		}
+		log.Printf("secret backfill complete: %d settings secrets, %d 1C secrets encrypted", nSettings, nOnec)
+		return
+	}
+
 	// 2. Settings store (reads user_settings from DB, used by services)
-	settingsStore := settings.NewStore(pool)
-	settingsRepo := settings.NewRepository(pool)
+	settingsStore := settings.NewStore(pool, secretCipher)
+	settingsRepo := settings.NewRepository(pool, secretCipher)
 	settingsUC := settings.NewUseCase(settingsRepo, &settings.HTTPTelegramValidator{HTTPClient: httpClient})
 
 	ownerID, err := uuid.Parse(cfg.OwnerUserID)
@@ -277,7 +308,7 @@ func main() {
 	// 1C inbound webhook (public — authenticated by per-user secret, not JWT).
 	// Mapping resolves event kinds + counterparty fields; the applier routes
 	// mapped events to leads/prospects via a cross-context adapter.
-	onecRepo := onec.NewRepository(pool)
+	onecRepo := onec.NewRepository(pool, secretCipher)
 	onecApplier := newOnecApplierAdapter(leadsRepo, leadsUC, prospectsUC, slog.Default())
 	onecUC := onec.NewUseCase(onecRepo,
 		onec.WithMapping(onecRepo),

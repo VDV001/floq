@@ -140,14 +140,16 @@ func RegisterRoutes(r chi.Router, uc *UseCase, aiTester AITester, smtpTester SMT
 	r.Get("/api/usage", h.getUsage())
 }
 
-// maskSecret returns the last 4 characters of a secret prefixed with "...",
-// or an empty string if the input is empty.
+// maskSecret reveals only the last 4 characters of a secret so the read API
+// never exposes a usable credential. A secret too short to mask meaningfully
+// (≤4 chars) is replaced wholesale rather than leaked verbatim (matches the
+// onec package's copy).
 func maskSecret(s string) string {
 	if s == "" {
 		return ""
 	}
 	if len(s) <= 4 {
-		return "..." + s
+		return "••••"
 	}
 	return "..." + s[len(s)-4:]
 }
@@ -157,35 +159,37 @@ func domainToDTO(ds *domain.Settings) Settings {
 	aiActive := ds.AIProvider == "ollama" || (ds.AIProvider != "" && ds.AIAPIKey != "")
 
 	return Settings{
-		FullName:           ds.FullName,
-		Email:              ds.Email,
-		TelegramBotToken:   ds.TelegramBotToken,
-		TelegramBotActive:  ds.TelegramBotActive,
-		IMAPHost:           ds.IMAPHost,
-		IMAPPort:           ds.IMAPPort,
-		IMAPUser:           ds.IMAPUser,
-		IMAPPassword:       ds.IMAPPassword,
-		ResendAPIKey:       ds.ResendAPIKey,
-		SMTPHost:           ds.SMTPHost,
-		SMTPPort:           ds.SMTPPort,
-		SMTPUser:           ds.SMTPUser,
-		SMTPPassword:       ds.SMTPPassword,
-		SMTPActive:         ds.SMTPHost != "" && ds.SMTPUser != "" && ds.SMTPPassword != "",
+		FullName: ds.FullName,
+		Email:    ds.Email,
+		// Secrets are masked here, at the presentation boundary — the usecase
+		// returns them raw.
+		TelegramBotToken:    maskSecret(ds.TelegramBotToken),
+		TelegramBotActive:   ds.TelegramBotActive,
+		IMAPHost:            ds.IMAPHost,
+		IMAPPort:            ds.IMAPPort,
+		IMAPUser:            ds.IMAPUser,
+		IMAPPassword:        maskSecret(ds.IMAPPassword),
+		ResendAPIKey:        maskSecret(ds.ResendAPIKey),
+		SMTPHost:            ds.SMTPHost,
+		SMTPPort:            ds.SMTPPort,
+		SMTPUser:            ds.SMTPUser,
+		SMTPPassword:        maskSecret(ds.SMTPPassword),
+		SMTPActive:          ds.SMTPHost != "" && ds.SMTPUser != "" && ds.SMTPPassword != "",
 		AIProvider:          ds.AIProvider,
 		AIModel:             ds.AIModel,
-		AIAPIKey:            ds.AIAPIKey,
+		AIAPIKey:            maskSecret(ds.AIAPIKey),
 		AIStyleCheckEnabled: ds.AIStyleCheckEnabled,
-		IMAPActive:         ds.IMAPHost != "" && ds.IMAPUser != "" && ds.IMAPPassword != "",
-		ResendActive:       ds.ResendAPIKey != "",
-		AIActive:           aiActive,
-		NotifyTelegram:     ds.NotifyTelegram,
-		NotifyEmailDigest:  ds.NotifyEmailDigest,
-		AutoQualify:        ds.AutoQualify,
-		AutoDraft:          ds.AutoDraft,
-		AutoSend:           ds.AutoSend,
-		AutoSendDelayMin:   ds.AutoSendDelayMin,
-		AutoFollowup:       ds.AutoFollowup,
-		AutoFollowupDays:   ds.AutoFollowupDays,
+		IMAPActive:          ds.IMAPHost != "" && ds.IMAPUser != "" && ds.IMAPPassword != "",
+		ResendActive:        ds.ResendAPIKey != "",
+		AIActive:            aiActive,
+		NotifyTelegram:      ds.NotifyTelegram,
+		NotifyEmailDigest:   ds.NotifyEmailDigest,
+		AutoQualify:         ds.AutoQualify,
+		AutoDraft:           ds.AutoDraft,
+		AutoSend:            ds.AutoSend,
+		AutoSendDelayMin:    ds.AutoSendDelayMin,
+		AutoFollowup:        ds.AutoFollowup,
+		AutoFollowupDays:    ds.AutoFollowupDays,
 		AutoProspectToLead:  ds.AutoProspectToLead,
 		AutoVerifyImport:    ds.AutoVerifyImport,
 		AggregatedInboxView: ds.AggregatedInboxView,
@@ -462,10 +466,10 @@ func (h *Handler) getUsage() http.HandlerFunc {
 		limit := 1000
 
 		httputil.WriteJSON(w, http.StatusOK, map[string]any{
-			"plan":         plan,
-			"limit":        limit,
-			"month_leads":  monthLeads,
-			"total_leads":  totalLeads,
+			"plan":        plan,
+			"limit":       limit,
+			"month_leads": monthLeads,
+			"total_leads": totalLeads,
 		})
 	}
 }

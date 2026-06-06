@@ -18,7 +18,8 @@
 | **sources** | `internal/sources/` | Категории + источники + stats |
 | **inbox** | `internal/inbox/` | Telegram bot + IMAP poller, attachments analyzer, HITL queue (pending replies) |
 | **outbound** | `internal/outbound/` | Resend (primary), SMTP (fallback), MTProto (TG личный аккаунт) |
-| **settings** | `internal/settings/` | Multi-tenant: per-user AI/SMTP/IMAP/Resend config + testers |
+| **settings** | `internal/settings/` | Multi-tenant: per-user AI/SMTP/IMAP/Resend config + testers; секреты шифруются at-rest (AES-256-GCM) |
+| **secrets** | `internal/secrets/` | AES-256-GCM SecretCipher (KEK из `FLOQ_SECRETS_KEK`), at-rest шифрование клиентских учёток; fail-fast при невалидном ключе (v0.42.0) |
 | **chat** | `internal/chat/` | AI-ассистент для оператора (изолирован от ai через адаптер) |
 | **reminders** | `internal/reminders/` | Cron для stale leads |
 | **verify** | `internal/verify/` | Email syntax/MX/SMTP-probe, TG-username проверка, disposable-домены |
@@ -60,7 +61,7 @@
 
 - docker-compose: PostgreSQL 18, Redis 8, Ollama (опционально)
 - OrbStack на dev-машине
-- Миграции: golang-migrate, 001-036 (audit_log, pending_replies, decided_by FK, onec_credentials/mapping, audit_log_daily retention, и т.д.; 36 файлов .up.sql)
+- Миграции: golang-migrate, 001-037 (audit_log, pending_replies, decided_by FK, onec_credentials/mapping, audit_log_daily retention, encrypt_secrets at-rest, и т.д.; 37 файлов .up.sql). 038 (drop plaintext-колонок секретов) отложена до верификации бэкфилла на проде
 - Защита от DoS на body size: 10 MiB outer ceiling + 1 MiB JSON-specific cap (defence in depth)
 - CLA bot, CI gates: Backend Go, Frontend Next.js, Redteam corpus, Tooling
 - Release automation: `bin/release.sh X.Y.Z` синкает 4 version sync-points + tag + GH release
@@ -92,6 +93,8 @@ Outgoing webhooks на ключевые события: `lead.created`, `pending
 По domain'у компании — обогащение из публичных источников (HH.ru, Rusprofile, открытые реестры). Без paid API сначала; платные интеграции (Clearbit, Apollo) — отдельный gate.
 
 ### Security follow-ups
+- **At-rest шифрование секретов клиента — сделано (v0.42.0):** AES-256-GCM, KEK из env, миграция 037 (enc/nonce-колонки) + идемпотентный бэкфилл (`server -backfill-secrets`). Остаётся: миграция 038 (drop plaintext-колонок) после верификации бэкфилла на проде; ротация KEK
+- `webhook_secret` 1С — пока plaintext lookup-токен; хеширование (не шифрование, ломает lookup) — отдельная задача
 - Per-route file-upload cap'ы (сейчас 10 MiB outer на importCSV; possibly tighter per-route)
 - Audit-log retention/rotation (сейчас бесконечный grow)
 - A/B тестирование промптов через `internal/ai` + audit-log group-by

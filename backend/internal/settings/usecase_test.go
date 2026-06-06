@@ -12,11 +12,12 @@ func TestMaskSecret_Empty(t *testing.T) {
 }
 
 func TestMaskSecret_ShortString(t *testing.T) {
-	// len <= 4: returns "..." + entire string
-	assert.Equal(t, "...a", maskSecret("a"))
-	assert.Equal(t, "...ab", maskSecret("ab"))
-	assert.Equal(t, "...abc", maskSecret("abc"))
-	assert.Equal(t, "...abcd", maskSecret("abcd"))
+	// len <= 4: too short to mask meaningfully → replaced wholesale, never
+	// leaked verbatim (matches the onec package's maskSecret).
+	assert.Equal(t, "••••", maskSecret("a"))
+	assert.Equal(t, "••••", maskSecret("ab"))
+	assert.Equal(t, "••••", maskSecret("abc"))
+	assert.Equal(t, "••••", maskSecret("abcd"))
 }
 
 func TestMaskSecret_NormalString(t *testing.T) {
@@ -141,16 +142,17 @@ func TestDomainToDTO_FieldMapping(t *testing.T) {
 
 	assert.Equal(t, "John Doe", dto.FullName)
 	assert.Equal(t, "john@example.com", dto.Email)
-	assert.Equal(t, "masked-token", dto.TelegramBotToken)
+	// Secrets are masked by the DTO mapping (last 4 chars).
+	assert.Equal(t, "...oken", dto.TelegramBotToken)
 	assert.True(t, dto.TelegramBotActive)
 	assert.Equal(t, "imap.gmail.com", dto.IMAPHost)
 	assert.Equal(t, "993", dto.IMAPPort)
 	assert.Equal(t, "john@gmail.com", dto.IMAPUser)
-	assert.Equal(t, "secret", dto.IMAPPassword)
-	assert.Equal(t, "re_key", dto.ResendAPIKey)
+	assert.Equal(t, "...cret", dto.IMAPPassword)
+	assert.Equal(t, "..._key", dto.ResendAPIKey)
 	assert.Equal(t, "openai", dto.AIProvider)
 	assert.Equal(t, "gpt-4o", dto.AIModel)
-	assert.Equal(t, "sk-test", dto.AIAPIKey)
+	assert.Equal(t, "...test", dto.AIAPIKey)
 	assert.True(t, dto.NotifyTelegram)
 	assert.False(t, dto.NotifyEmailDigest)
 	assert.True(t, dto.AutoQualify)

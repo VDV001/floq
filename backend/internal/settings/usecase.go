@@ -53,19 +53,10 @@ func NewUseCase(repo domain.Repository, tgValidator domain.TelegramTokenValidato
 }
 
 func (uc *UseCase) GetSettings(ctx context.Context, userID uuid.UUID) (*domain.Settings, error) {
-	s, err := uc.repo.GetSettings(ctx, userID)
-	if err != nil {
-		return nil, err
-	}
-
-	// Mask sensitive fields before returning.
-	s.TelegramBotToken = maskSecret(s.TelegramBotToken)
-	s.IMAPPassword = maskSecret(s.IMAPPassword)
-	s.ResendAPIKey = maskSecret(s.ResendAPIKey)
-	s.SMTPPassword = maskSecret(s.SMTPPassword)
-	s.AIAPIKey = maskSecret(s.AIAPIKey)
-
-	return s, nil
+	// Returns raw domain values. Masking is a presentation concern applied
+	// in the DTO mapping (handler layer); internal callers need the unmasked
+	// secrets.
+	return uc.repo.GetSettings(ctx, userID)
 }
 
 func (uc *UseCase) UpdateSettings(ctx context.Context, userID uuid.UUID, raw map[string]json.RawMessage, input SettingsInput) (*domain.Settings, error) {
