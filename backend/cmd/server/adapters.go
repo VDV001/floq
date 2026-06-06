@@ -105,7 +105,17 @@ func (a *prospectRepoAdapter) ConvertToLead(ctx context.Context, prospectID, lea
 		if err := p.MarkConvertedToLead(leadID); err != nil {
 			return fmt.Errorf("convert to lead: %w", err)
 		}
-		return a.repo.ConvertToLead(txCtx, p.ID, leadID)
+		if err := a.repo.ConvertToLead(txCtx, p.ID, leadID); err != nil {
+			return err
+		}
+		// An inbound reply is the prospect engaging with us — the legitimate
+		// basis for contact. Record obtained consent in the same transaction so
+		// future outbound to them needs no cold-contact override. Idempotent on
+		// re-grant; only reached on a successful (first) conversion.
+		if err := p.GrantConsent("inbound_reply", time.Now().UTC()); err != nil {
+			return fmt.Errorf("grant inbound consent: %w", err)
+		}
+		return a.repo.UpdateConsent(txCtx, p.ID, p.Consent)
 	})
 }
 
