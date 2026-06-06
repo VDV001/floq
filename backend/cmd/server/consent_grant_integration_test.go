@@ -50,3 +50,36 @@ func TestConvertToLead_GrantsInboundConsent(t *testing.T) {
 	assert.Equal(t, prospectsdomain.ConsentStatusObtained, got.Consent.Status, "inbound reply should grant consent")
 	assert.Equal(t, "inbound_reply", got.Consent.Source)
 }
+
+// TestConvertToLead_WithdrawnConsentNotResurrected guards the compliance red
+// line: a prospect who withdrew consent and then sends an inbound message must
+// NOT be silently flipped back to obtained. Withdrawal is lifted only by an
+// explicit fresh opt-in (manual toggle), never automatically by a reply.
+func TestConvertToLead_WithdrawnConsentNotResurrected(t *testing.T) {
+	pool := testutil.TestDB(t)
+	userID := testutil.SeedUser(t, pool)
+	ctx := context.Background()
+
+	repo := prospects.NewRepository(pool)
+	adapter := newProspectRepoAdapter(repo, db.NewTxManager(pool))
+
+	p, err := prospectsdomain.NewProspect(userID, "Eve", "Acme", "CEO", "eve@acme.com", "manual")
+	require.NoError(t, err)
+	require.NoError(t, p.WithdrawConsent("manual", time.Now().UTC()))
+	require.NoError(t, repo.CreateProspect(ctx, p))
+
+	now := time.Now().UTC().Truncate(time.Microsecond)
+	leadID := uuid.New()
+	_, err = pool.Exec(ctx,
+		`INSERT INTO leads (id, user_id, channel, contact_name, company, first_message, status, created_at, updated_at)
+		 VALUES ($1, $2, 'email', 'Eve', 'Acme', 'msg', 'new', $3, $3)`,
+		leadID, userID, now)
+	require.NoError(t, err)
+
+	require.NoError(t, adapter.ConvertToLead(ctx, p.ID, leadID))
+
+	got, err := repo.GetProspect(ctx, p.ID)
+	require.NoError(t, err)
+	require.NotNil(t, got)
+	assert.Equal(t, prospectsdomain.ConsentStatusWithdrawn, got.Consent.Status, "withdrawal must survive an inbound reply")
+}
