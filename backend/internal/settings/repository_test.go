@@ -279,10 +279,11 @@ func TestRepository_UpdateSettings_EncryptsSecretColumn(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	// Writes the encrypted byte columns, never the legacy plaintext column.
+	// Writes the encrypted byte columns AND blanks the legacy plaintext
+	// column, so an old plaintext secret cannot survive a re-save.
 	assert.Contains(t, q.lastExecSQL, "imap_password_enc")
 	assert.Contains(t, q.lastExecSQL, "imap_password_nonce")
-	assert.NotContains(t, q.lastExecSQL, "imap_password =")
+	assert.Contains(t, q.lastExecSQL, "imap_password = ''")
 
 	foundCT := false
 	for _, a := range q.lastExecArgs {

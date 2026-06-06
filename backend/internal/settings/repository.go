@@ -156,10 +156,13 @@ func (r *Repository) UpdateSettings(ctx context.Context, userID uuid.UUID, field
 			if err != nil {
 				return fmt.Errorf("encrypt %s: %w", name, err)
 			}
+			// Blank the legacy plaintext column (literal '') alongside writing
+			// the ciphertext, so an older plaintext value cannot survive a
+			// re-save and linger in a DB dump until migration 038.
 			encCol, nonceCol := name+"_enc", name+"_nonce"
-			insertCols += fmt.Sprintf(", %s, %s", encCol, nonceCol)
-			insertVals += fmt.Sprintf(", $%d, $%d", i, i+1)
-			updateSet += fmt.Sprintf(", %s = $%d, %s = $%d", encCol, i, nonceCol, i+1)
+			insertCols += fmt.Sprintf(", %s, %s, %s", name, encCol, nonceCol)
+			insertVals += fmt.Sprintf(", '', $%d, $%d", i, i+1)
+			updateSet += fmt.Sprintf(", %s = '', %s = $%d, %s = $%d", name, encCol, i, nonceCol, i+1)
 			args = append(args, ciphertext, nonce)
 			i += 2
 			continue
