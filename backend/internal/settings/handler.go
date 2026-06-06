@@ -140,14 +140,16 @@ func RegisterRoutes(r chi.Router, uc *UseCase, aiTester AITester, smtpTester SMT
 	r.Get("/api/usage", h.getUsage())
 }
 
-// maskSecret returns the last 4 characters of a secret prefixed with "...",
-// or an empty string if the input is empty.
+// maskSecret reveals only the last 4 characters of a secret so the read API
+// never exposes a usable credential. A secret too short to mask meaningfully
+// (≤4 chars) is replaced wholesale rather than leaked verbatim (matches the
+// onec package's copy).
 func maskSecret(s string) string {
 	if s == "" {
 		return ""
 	}
 	if len(s) <= 4 {
-		return "..." + s
+		return "••••"
 	}
 	return "..." + s[len(s)-4:]
 }

@@ -12,11 +12,12 @@ func TestMaskSecret_Empty(t *testing.T) {
 }
 
 func TestMaskSecret_ShortString(t *testing.T) {
-	// len <= 4: returns "..." + entire string
-	assert.Equal(t, "...a", maskSecret("a"))
-	assert.Equal(t, "...ab", maskSecret("ab"))
-	assert.Equal(t, "...abc", maskSecret("abc"))
-	assert.Equal(t, "...abcd", maskSecret("abcd"))
+	// len <= 4: too short to mask meaningfully → replaced wholesale, never
+	// leaked verbatim (matches the onec package's maskSecret).
+	assert.Equal(t, "••••", maskSecret("a"))
+	assert.Equal(t, "••••", maskSecret("ab"))
+	assert.Equal(t, "••••", maskSecret("abc"))
+	assert.Equal(t, "••••", maskSecret("abcd"))
 }
 
 func TestMaskSecret_NormalString(t *testing.T) {
