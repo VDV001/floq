@@ -1,6 +1,6 @@
 import { ChevronLeft, ChevronRight, MoreHorizontal, Mail, Phone, MessageCircle, MessageSquare } from "lucide-react";
 import type { UIProspect } from "./constants";
-import { STATUS_STYLES, VERIFY_STYLES } from "./constants";
+import { STATUS_STYLES, VERIFY_STYLES, CONSENT_STYLES } from "./constants";
 
 interface ProspectTableProps {
   prospects: UIProspect[];
@@ -11,9 +11,10 @@ interface ProspectTableProps {
   rangeStart: number;
   rangeEnd: number;
   onPageChange: (page: number) => void;
+  onToggleConsent?: (id: string, status: "obtained" | "withdrawn") => void;
 }
 
-export function ProspectTable({ prospects, loading, totalCount, page, totalPages, rangeStart, rangeEnd, onPageChange }: ProspectTableProps) {
+export function ProspectTable({ prospects, loading, totalCount, page, totalPages, rangeStart, rangeEnd, onPageChange, onToggleConsent }: ProspectTableProps) {
   return (
     <div className="col-span-12 overflow-hidden rounded-xl border border-[#c3c6d7]/10 bg-white shadow-sm lg:col-span-9">
       {loading && (
@@ -32,12 +33,13 @@ export function ProspectTable({ prospects, loading, totalCount, page, totalPages
               <th className="px-6 py-4 text-xs font-bold uppercase tracking-wider text-[#434655]">Каналы</th>
               <th className="px-6 py-4 text-xs font-bold uppercase tracking-wider text-[#434655]">Проверка</th>
               <th className="px-6 py-4 text-xs font-bold uppercase tracking-wider text-[#434655]">Статус</th>
+              <th className="px-6 py-4 text-xs font-bold uppercase tracking-wider text-[#434655]">Согласие</th>
               <th className="px-6 py-4 text-xs font-bold uppercase tracking-wider text-[#434655]">Действия</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-[#c3c6d7]/5">
             {!loading && totalCount === 0 && (
-              <tr><td colSpan={8} className="px-6 py-12 text-center text-sm text-[#434655]">Нет проспектов</td></tr>
+              <tr><td colSpan={9} className="px-6 py-12 text-center text-sm text-[#434655]">Нет проспектов</td></tr>
             )}
             {prospects.map((p, idx) => {
               const vs = VERIFY_STYLES[p.verifyStatus];
@@ -74,6 +76,22 @@ export function ProspectTable({ prospects, loading, totalCount, page, totalPages
                   </td>
                   <td className="px-6 py-4">
                     <span className={`whitespace-nowrap rounded-full px-3 py-1 text-[11px] font-bold uppercase tracking-wide ${STATUS_STYLES[p.status]}`}>{p.status}</span>
+                  </td>
+                  <td className="px-6 py-4">
+                    {(() => {
+                      const c = CONSENT_STYLES[p.consentStatus];
+                      const next = p.consentStatus === "obtained" ? "withdrawn" : "obtained";
+                      const hint = p.consentStatus === "obtained" ? "Отозвать согласие" : "Отметить согласие";
+                      return (
+                        <button
+                          type="button"
+                          onClick={() => onToggleConsent?.(p.id, next)}
+                          disabled={!onToggleConsent}
+                          title={hint}
+                          className={`whitespace-nowrap rounded-full px-3 py-1 text-[11px] font-bold uppercase tracking-wide transition-opacity hover:opacity-80 disabled:cursor-default disabled:hover:opacity-100 ${c.style}`}
+                        >{c.label}</button>
+                      );
+                    })()}
                   </td>
                   <td className="px-6 py-4">
                     <button className="text-slate-400 transition-colors hover:text-[#0d1c2e]"><MoreHorizontal className="size-5" /></button>

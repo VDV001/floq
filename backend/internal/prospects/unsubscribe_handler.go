@@ -60,7 +60,7 @@ func (s *UnsubscribeService) Unsubscribe(ctx context.Context, token string) erro
 	// duplicate prospect record with the same email is covered, then record the
 	// consent withdrawal on this prospect for its compliance state and the UI.
 	if p.Email != "" {
-		sup, err := domain.NewSuppression(p.UserID, domain.SuppressionChannelEmail, p.Email, "unsubscribe")
+		sup, err := domain.NewSuppression(p.UserID, domain.SuppressionChannelEmail, p.Email, domain.ConsentSourceUnsubscribe)
 		if err != nil {
 			return err
 		}
@@ -68,7 +68,7 @@ func (s *UnsubscribeService) Unsubscribe(ctx context.Context, token string) erro
 			return err
 		}
 	}
-	if err := p.WithdrawConsent("unsubscribe", time.Now().UTC()); err != nil {
+	if err := p.WithdrawConsent(domain.ConsentSourceUnsubscribe, time.Now().UTC()); err != nil {
 		return err
 	}
 	return s.store.UpdateConsent(ctx, p.ID, p.Consent)

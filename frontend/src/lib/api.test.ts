@@ -316,6 +316,15 @@ describe("api module", () => {
       expect(JSON.parse(opts.body)).toEqual(data);
     });
 
+    it("setProspectConsent → POST /api/prospects/:id/consent with status", async () => {
+      fetchMock.mockResolvedValue(mockResponse({ consent_status: "obtained" }));
+      await api.setProspectConsent("prospect-1", "obtained");
+      const [url, opts] = fetchMock.mock.calls[0];
+      expect(url).toBe("http://localhost:8080/api/prospects/prospect-1/consent");
+      expect(opts.method).toBe("POST");
+      expect(JSON.parse(opts.body)).toEqual({ status: "obtained" });
+    });
+
     it("getSourceStats → GET /api/sources/stats", async () => {
       await api.getSourceStats();
       expect(fetchMock.mock.calls[0][0]).toBe("http://localhost:8080/api/sources/stats");

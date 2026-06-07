@@ -23,4 +23,8 @@ type Repository interface {
 	UpdateStatus(ctx context.Context, id uuid.UUID, status ProspectStatus) error
 	ConvertToLead(ctx context.Context, prospectID, leadID uuid.UUID) error
 	UpdateVerification(ctx context.Context, id uuid.UUID, verifyStatus VerifyStatus, verifyScore int, verifyDetails string, verifiedAt time.Time) error
+	// UpdateConsent persists a consent transition (grant/withdraw) on an
+	// existing prospect. Consent is part of the Prospect aggregate, so it
+	// belongs on the aggregate repository.
+	UpdateConsent(ctx context.Context, prospectID uuid.UUID, c Consent) error
 }

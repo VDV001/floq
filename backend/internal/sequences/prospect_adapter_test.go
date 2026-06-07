@@ -50,6 +50,10 @@ func (m *mockProspectsRepo) UpdateVerification(_ context.Context, _ uuid.UUID, _
 	return nil
 }
 
+func (m *mockProspectsRepo) UpdateConsent(_ context.Context, _ uuid.UUID, _ prospectsdomain.Consent) error {
+	return nil
+}
+
 // --- Tests ---
 
 func TestProspectReaderAdapter_GetProspect(t *testing.T) {

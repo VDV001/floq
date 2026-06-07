@@ -87,3 +87,20 @@ func TestProspectsToResponse_Empty(t *testing.T) {
 	resp := ProspectsToResponse([]domain.ProspectWithSource{})
 	assert.Empty(t, resp)
 }
+
+// TestProspectToResponse_ExposesConsent verifies the wire DTO carries the
+// prospect's consent state so the UI can show and manage it.
+func TestProspectToResponse_ExposesConsent(t *testing.T) {
+	at := time.Now().UTC()
+	p, err := domain.NewProspect(uuid.New(), "Bob", "Acme", "CEO", "bob@acme.com", "manual")
+	if err != nil {
+		t.Fatalf("NewProspect: %v", err)
+	}
+	if err := p.GrantConsent("inbound_reply", at); err != nil {
+		t.Fatalf("GrantConsent: %v", err)
+	}
+
+	resp := ProspectToResponse(p)
+	assert.Equal(t, "obtained", resp.ConsentStatus)
+	assert.Equal(t, "inbound_reply", resp.ConsentSource)
+}

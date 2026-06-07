@@ -24,6 +24,17 @@ const (
 	ConsentStatusWithdrawn ConsentStatus = "withdrawn"
 )
 
+// Consent sources — the recorded basis for a consent transition (ubiquitous
+// language; passed to NewConsent / Grant / Withdraw). Persisted to the audit
+// trail. ConsentSourceLegacy is set by the grandfather migration in SQL.
+const (
+	ConsentSourceLegacy       = "legacy"
+	ConsentSourceInboundReply = "inbound_reply"
+	ConsentSourceImport       = "import"
+	ConsentSourceManual       = "manual"
+	ConsentSourceUnsubscribe  = "unsubscribe"
+)
+
 // IsValid reports whether s is a known consent status.
 func (s ConsentStatus) IsValid() bool {
 	switch s {

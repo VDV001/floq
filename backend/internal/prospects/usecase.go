@@ -4,10 +4,12 @@ import (
 	"bytes"
 	"context"
 	"encoding/csv"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
 	"strings"
+	"time"
 
 	"github.com/daniil/floq/internal/normalize"
 	"github.com/daniil/floq/internal/prospects/domain"
@@ -43,6 +45,20 @@ var columnAliases = map[string]string{
 	"industry": "industry", "отрасль": "industry",
 	"company_size": "company_size",
 	"context": "context", "комментарий": "context", "описание": "context", "превью вакансии": "context",
+	"consent": "consent", "согласие": "consent", "consent_status": "consent",
+}
+
+// consentDeclaredInCSV reports whether a CSV consent-column value declares
+// obtained consent. Accepts common truthy forms (RU/EN), case-insensitive.
+// Anything else (including empty) leaves the prospect at the cold 'none'
+// default — consent is opt-in, never inferred from a blank cell.
+func consentDeclaredInCSV(v string) bool {
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case "yes", "true", "1", "obtained", "y", "да":
+		return true
+	default:
+		return false
+	}
 }
 
 type LeadChecker interface {
@@ -98,6 +114,44 @@ func WithLogger(l *slog.Logger) func(*UseCase) {
 			uc.logger = l
 		}
 	}
+}
+
+// Use-case-level errors for the consent toggle.
+var (
+	// ErrProspectNotFound is returned when a prospect does not exist or is not
+	// owned by the requesting user (kept indistinguishable to avoid leaking
+	// cross-tenant existence).
+	ErrProspectNotFound = errors.New("prospect not found")
+	// ErrUnsupportedConsentStatus is returned when the manual toggle is asked
+	// to set a status other than obtained/withdrawn ('none' is not an operator
+	// action — a prospect starts cold and only the system clears consent).
+	ErrUnsupportedConsentStatus = errors.New("consent status not supported via manual toggle")
+)
+
+// SetConsent applies an operator's manual consent decision to a prospect:
+// obtained (grant) or withdrawn. Ownership is enforced via GetProspectForUser;
+// the change is recorded with source "manual" and persisted.
+func (uc *UseCase) SetConsent(ctx context.Context, userID, prospectID uuid.UUID, status domain.ConsentStatus) error {
+	p, err := uc.repo.GetProspectForUser(ctx, userID, prospectID)
+	if err != nil {
+		return err
+	}
+	if p == nil {
+		return ErrProspectNotFound
+	}
+	now := time.Now().UTC()
+	switch status {
+	case domain.ConsentStatusObtained:
+		err = p.GrantConsent(domain.ConsentSourceManual, now)
+	case domain.ConsentStatusWithdrawn:
+		err = p.WithdrawConsent(domain.ConsentSourceManual, now)
+	default:
+		return ErrUnsupportedConsentStatus
+	}
+	if err != nil {
+		return err
+	}
+	return uc.repo.UpdateConsent(ctx, p.ID, p.Consent)
 }
 
 func (uc *UseCase) ListProspects(ctx context.Context, userID uuid.UUID) ([]domain.ProspectWithSource, error) {
@@ -282,6 +336,14 @@ func (uc *UseCase) ImportCSV(ctx context.Context, userID uuid.UUID, csvData []by
 		p.Industry = getCol(record, "industry")
 		p.CompanySize = getCol(record, "company_size")
 		p.Context = getCol(record, "context")
+		// Optional declared consent: only an explicit truthy cell opts the
+		// prospect in (source "import"); a blank cell stays at 'none'.
+		if consentDeclaredInCSV(getCol(record, "consent")) {
+			if err := p.GrantConsent(domain.ConsentSourceImport, time.Now().UTC()); err != nil {
+				skipped = append(skipped, SkippedRow{Line: lineNum, Reason: err.Error()})
+				continue
+			}
+		}
 		prospects = append(prospects, *p)
 	}
 
@@ -337,8 +399,8 @@ func (uc *UseCase) TemplateCSV() []byte {
 	var buf bytes.Buffer
 	buf.Write([]byte{0xEF, 0xBB, 0xBF})
 	w := csv.NewWriter(&buf)
-	_ = w.Write([]string{"name", "company", "title", "email", "phone", "whatsapp", "telegram_username", "industry", "company_size", "context"})
-	_ = w.Write([]string{"Иван Петров", "ООО Рога и Копыта", "Менеджер", "ivan@example.com", "+79991234567", "", "ivan_petrov", "IT", "10-50", "Заинтересован в интеграции"})
+	_ = w.Write([]string{"name", "company", "title", "email", "phone", "whatsapp", "telegram_username", "industry", "company_size", "context", "consent"})
+	_ = w.Write([]string{"Иван Петров", "ООО Рога и Копыта", "Менеджер", "ivan@example.com", "+79991234567", "", "ivan_petrov", "IT", "10-50", "Заинтересован в интеграции", "yes"})
 	w.Flush()
 	return buf.Bytes()
 }
@@ -354,7 +416,7 @@ func (uc *UseCase) ExportCSV(ctx context.Context, userID uuid.UUID) ([]byte, err
 	buf.Write([]byte{0xEF, 0xBB, 0xBF})
 
 	w := csv.NewWriter(&buf)
-	header := []string{"name", "company", "title", "email", "phone", "whatsapp", "telegram_username", "industry", "company_size", "context", "source", "status"}
+	header := []string{"name", "company", "title", "email", "phone", "whatsapp", "telegram_username", "industry", "company_size", "context", "consent_status", "consent_source", "source", "status"}
 	if err := w.Write(header); err != nil {
 		return nil, fmt.Errorf("write csv header: %w", err)
 	}
@@ -371,6 +433,8 @@ func (uc *UseCase) ExportCSV(ctx context.Context, userID uuid.UUID) ([]byte, err
 			p.Industry,
 			p.CompanySize,
 			p.Context,
+			p.Consent.Status.String(),
+			p.Consent.Source,
 			p.Source,
 			p.Status.String(),
 		}
