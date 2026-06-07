@@ -1,7 +1,7 @@
 # Floq — Roadmap
 
 > AI-помощник для полного цикла B2B-продаж: inbound (Telegram/Email) + outbound (cold outreach) + AI-квалификация и драфты.
-> Обновлено: 2026-06-06
+> Обновлено: 2026-06-07
 
 ---
 
@@ -13,7 +13,7 @@
 |---|---|---|
 | **auth** | `internal/auth/` | JWT, login flow, ratelimit на public-роуты |
 | **leads** | `internal/leads/` | CRUD, AI-квалификация, drafts, identity-aggregation |
-| **prospects** | `internal/prospects/` | CRUD, CSV import/export, dedup; consent VO {none/obtained/withdrawn} + suppression-список + подписанная отписка (HMAC) — compliance core (v0.43.0) |
+| **prospects** | `internal/prospects/` | CRUD, CSV import/export, dedup; consent VO {none/obtained/withdrawn} + suppression-список + подписанная отписка (HMAC) — compliance core (v0.43.0); получение согласия — CSV-колонка / ручной toggle (UI-бейдж) / авто при inbound-ответе, withdrawn нерушим (v0.44.0) |
 | **sequences** | `internal/sequences/` | Multi-step outreach, channel-aware steps, tracking pixel |
 | **sources** | `internal/sources/` | Категории + источники + stats |
 | **inbox** | `internal/inbox/` | Telegram bot + IMAP poller, attachments analyzer, HITL queue (pending replies) |
