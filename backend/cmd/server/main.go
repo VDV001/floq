@@ -368,6 +368,13 @@ func main() {
 	// Sign unsubscribe tokens with the same secret the public /unsubscribe route
 	// verifies them with, so campaign emails carry working one-click links.
 	emailSender.SetUnsubscribeSecret(cfg.JWTSecret)
+	// agent-security-defaults layer 3: validate channel/recipient schema and
+	// hold unconfirmed mass sends before the outbound dispatch loop.
+	emailSender.SetSendGuard(newOutboundGuardAdapter(security.NewOutboundGuard(security.OutboundPolicy{
+		AllowedChannels:   []string{"email", "telegram"},
+		MassSendThreshold: cfg.OutboundMassSendThreshold,
+		MassSendConfirmed: cfg.OutboundMassSendConfirmed,
+	})))
 	go func() {
 		ticker := time.NewTicker(30 * time.Second)
 		defer ticker.Stop()
