@@ -43,7 +43,13 @@ func (g *guardedQualifier) Qualify(ctx context.Context, contactName, channel, fi
 			RecommendedAction: "manual_review",
 		}, nil
 	}
-	return g.inner.Qualify(ctx, contactName, channel, firstMessage)
+	// Layer 1b: strip PII before the payload reaches the model. Qualification
+	// scores need/budget/urgency, not the prospect's real email or phone, so
+	// the model only ever sees placeholders. The mapping is intentionally
+	// discarded here — the qualification result is internal scoring and needs
+	// no re-hydration; draft generation (which does) restores separately.
+	scrubbed := g.scrubber.Scrub(firstMessage).Scrubbed
+	return g.inner.Qualify(ctx, contactName, channel, scrubbed)
 }
 
 func (g *guardedQualifier) ProviderName() string { return g.inner.ProviderName() }
