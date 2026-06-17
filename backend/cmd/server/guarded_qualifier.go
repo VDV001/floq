@@ -17,11 +17,12 @@ import (
 type guardedQualifier struct {
 	inner    inbox.AIQualifier
 	firewall *security.InputFirewall
+	scrubber *security.PIIScrubber
 	logger   *slog.Logger
 }
 
-func newGuardedQualifier(inner inbox.AIQualifier, firewall *security.InputFirewall, logger *slog.Logger) inbox.AIQualifier {
-	return &guardedQualifier{inner: inner, firewall: firewall, logger: logger}
+func newGuardedQualifier(inner inbox.AIQualifier, firewall *security.InputFirewall, scrubber *security.PIIScrubber, logger *slog.Logger) inbox.AIQualifier {
+	return &guardedQualifier{inner: inner, firewall: firewall, scrubber: scrubber, logger: logger}
 }
 
 // Qualify scans the inbound first message before delegating. A Block verdict
