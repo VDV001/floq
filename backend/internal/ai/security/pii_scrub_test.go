@@ -25,6 +25,16 @@ func TestPIIScrub_Phone(t *testing.T) {
 	}
 }
 
+func TestPIIScrub_PhoneNotMatchedInsideLongerNumber(t *testing.T) {
+	s := NewPIIScrubber()
+	// A 20-digit account number must not produce a partial phone match
+	// (which would both mis-tag and leak the un-redacted head/tail into the
+	// LLM context).
+	r := s.Scrub("Счёт получателя 40817810099910004312 для оплаты")
+	assert.NotContains(t, r.Scrubbed, "[PHONE", "must not partial-match a phone inside a longer number")
+	assert.Contains(t, r.Scrubbed, "40817810099910004312", "the number stays intact, not chopped around a placeholder")
+}
+
 func TestPIIScrub_INN(t *testing.T) {
 	s := NewPIIScrubber()
 	r := s.Scrub("ИНН 7707083893 для договора")
