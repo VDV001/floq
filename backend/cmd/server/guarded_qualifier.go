@@ -45,11 +45,20 @@ func (g *guardedQualifier) Qualify(ctx context.Context, contactName, channel, fi
 			RecommendedAction: "manual_review",
 		}, nil
 	}
-	// Layer 4: cap an oversized payload and gate the per-conversation LLM
-	// call budget BEFORE spending a token. A budget trip short-circuits to
+	// Layer 1b: strip PII BEFORE anything else touches the payload — and
+	// before the length cap below, so PII straddling the cap boundary can't
+	// leak its head to the model. Qualification scores need/budget/urgency,
+	// not the prospect's real email or phone, so the model only sees
+	// placeholders. The mapping is intentionally discarded here — the
+	// qualification result is internal scoring and needs no re-hydration;
+	// draft generation (which does) restores separately.
+	scrubbed := g.scrubber.Scrub(firstMessage).Scrubbed
+
+	// Layer 4: cap the (already-scrubbed) payload and gate the per-conversation
+	// LLM call budget BEFORE spending a token. A budget trip short-circuits to
 	// manual_review so a flood of inbound from one source cannot run the bill
 	// away or loop unbounded.
-	capped, truncated := g.breaker.CapInput(firstMessage)
+	capped, truncated := g.breaker.CapInput(scrubbed)
 	if truncated {
 		g.logger.Warn("cost breaker truncated oversized input", "channel", channel)
 	}
@@ -63,13 +72,7 @@ func (g *guardedQualifier) Qualify(ctx context.Context, contactName, channel, fi
 		}, nil
 	}
 
-	// Layer 1b: strip PII before the payload reaches the model. Qualification
-	// scores need/budget/urgency, not the prospect's real email or phone, so
-	// the model only ever sees placeholders. The mapping is intentionally
-	// discarded here — the qualification result is internal scoring and needs
-	// no re-hydration; draft generation (which does) restores separately.
-	scrubbed := g.scrubber.Scrub(capped).Scrubbed
-	res, err := g.inner.Qualify(ctx, contactName, channel, scrubbed)
+	res, err := g.inner.Qualify(ctx, contactName, channel, capped)
 	if err != nil {
 		return nil, err
 	}
