@@ -44,5 +44,38 @@ func NewOutputValidator(minConfidence int) *OutputValidator {
 
 // Validate applies the three guarantees and returns the corrected result.
 func (v *OutputValidator) Validate(q QualificationView) OutputVerdict {
-	return OutputVerdict{}
+	out := OutputVerdict{
+		Score:             q.Score,
+		ScoreReason:       q.ScoreReason,
+		RecommendedAction: q.RecommendedAction,
+	}
+
+	// 1. Range clamp.
+	if out.Score > 100 {
+		out.Score = 100
+		out.flag("score above range, clamped to 100")
+	}
+	if out.Score < 0 {
+		out.Score = 0
+		out.flag("score below range, clamped to 0")
+	}
+
+	// 2. PII containment — redact anything that leaked into the reason.
+	if scrub := v.scrubber.Scrub(out.ScoreReason); len(scrub.Mapping) > 0 {
+		out.ScoreReason = scrub.Scrubbed
+		out.flag("PII redacted from score reason")
+	}
+
+	// 3. Confidence gate — low score must not auto-engage.
+	if out.Score < v.minConfidence {
+		out.RecommendedAction = "manual_review"
+		out.flag("score below confidence floor, downgraded to manual_review")
+	}
+
+	return out
+}
+
+func (o *OutputVerdict) flag(reason string) {
+	o.Flagged = true
+	o.Reasons = append(o.Reasons, reason)
 }
