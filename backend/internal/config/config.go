@@ -77,6 +77,14 @@ type Config struct {
 	// Default 24h — the rollup is day-granular, so sub-daily passes
 	// would only add churn.
 	AuditRetentionInterval time.Duration
+	// OutboundMassSendThreshold: a single dispatch batch larger than this is
+	// treated as a mass send and held until OutboundMassSendConfirmed is set
+	// (agent-security-defaults layer 3, blast-radius bound). Default 500.
+	OutboundMassSendThreshold int
+	// OutboundMassSendConfirmed is the out-of-band confirmation that large
+	// batches are intended. Default false — an unconfirmed over-threshold
+	// batch is held rather than blasted.
+	OutboundMassSendConfirmed bool
 }
 
 // Load reads configuration from environment variables and returns a Config.
@@ -122,6 +130,8 @@ func Load() *Config {
 		TrustProxyHeaders:           getEnvBool("TRUST_PROXY", false),
 		AuditRetentionDays:          getEnvInt("AUDIT_RETENTION_DAYS", 30),
 		AuditRetentionInterval:      getEnvDuration("AUDIT_RETENTION_INTERVAL", 24*time.Hour),
+		OutboundMassSendThreshold:   getEnvInt("OUTBOUND_MASS_SEND_THRESHOLD", 500),
+		OutboundMassSendConfirmed:   getEnvBool("OUTBOUND_MASS_SEND_CONFIRMED", false),
 	}
 }
 

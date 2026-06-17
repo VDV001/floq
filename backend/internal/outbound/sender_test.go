@@ -1517,3 +1517,83 @@ func TestBuildSMTPMessage_IncludesExtraHeaders(t *testing.T) {
 		}
 	}
 }
+
+// --- Layer 3: outbound send guard wiring ---
+
+type spyGuard struct {
+	batchOK        bool
+	recipientOK    bool
+	batchSizes     []int
+	recipientCalls [][2]string
+}
+
+func (g *spyGuard) CheckBatch(size int) (bool, string) {
+	g.batchSizes = append(g.batchSizes, size)
+	if g.batchOK {
+		return true, ""
+	}
+	return false, "mass send refused"
+}
+
+func (g *spyGuard) CheckRecipient(channel, recipient string) (bool, string) {
+	g.recipientCalls = append(g.recipientCalls, [2]string{channel, recipient})
+	if g.recipientOK {
+		return true, ""
+	}
+	return false, "recipient refused"
+}
+
+func senderWithGuard(t *testing.T, guard SendGuard) (*Sender, *mockOutboundRepository) {
+	t.Helper()
+	prospectID := uuid.New()
+	seqRepo := &mockOutboundRepository{
+		pending: []seqdomain.OutboundMessage{{
+			ID: uuid.New(), ProspectID: prospectID,
+			Channel: seqdomain.StepChannelEmail, Status: seqdomain.OutboundStatusApproved,
+			Body: "<p>Hi</p>",
+		}},
+	}
+	prospectRepo := &mockProspectLookup{prospects: map[uuid.UUID]*prospectsdomain.Prospect{
+		prospectID: {ID: prospectID, Name: "Alice", Company: "Acme", Email: "alice@acme.com"},
+	}}
+	s := NewSender(&mockConfigStore{cfg: &settingsdomain.UserConfig{}}, uuid.New(), "", "from@test.com", "https://app.test",
+		"", "", "", "", seqRepo, prospectRepo, nil, nil, nil, nil)
+	s.SetSendGuard(guard)
+	return s, seqRepo
+}
+
+func TestSendPending_GuardChecksBatchAndRecipient(t *testing.T) {
+	guard := &spyGuard{batchOK: true, recipientOK: true}
+	s, _ := senderWithGuard(t, guard)
+	if err := s.SendPending(context.Background()); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(guard.batchSizes) != 1 || guard.batchSizes[0] != 1 {
+		t.Errorf("expected CheckBatch(1), got %v", guard.batchSizes)
+	}
+	if len(guard.recipientCalls) != 1 || guard.recipientCalls[0] != [2]string{"email", "alice@acme.com"} {
+		t.Errorf("expected CheckRecipient(email, alice@acme.com), got %v", guard.recipientCalls)
+	}
+}
+
+func TestSendPending_GuardRefusedBatchSkipsAll(t *testing.T) {
+	guard := &spyGuard{batchOK: false, recipientOK: true}
+	s, _ := senderWithGuard(t, guard)
+	if err := s.SendPending(context.Background()); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(guard.recipientCalls) != 0 {
+		t.Errorf("refused batch must skip the per-message loop, got recipient calls %v", guard.recipientCalls)
+	}
+}
+
+func TestSendPending_GuardRefusedRecipientSkipsSend(t *testing.T) {
+	guard := &spyGuard{batchOK: true, recipientOK: false}
+	s, seqRepo := senderWithGuard(t, guard)
+	if err := s.SendPending(context.Background()); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(seqRepo.sentIDs) != 0 {
+		t.Errorf("refused recipient must not be sent, got %d sent", len(seqRepo.sentIDs))
+	}
+}

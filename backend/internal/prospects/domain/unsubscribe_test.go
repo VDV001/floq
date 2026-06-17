@@ -64,13 +64,18 @@ func TestUnsubscribeToken_WrongSecret(t *testing.T) {
 func TestUnsubscribeToken_Tampered(t *testing.T) {
 	id := uuid.New()
 	token := SignUnsubscribeToken(id, testSecret)
-	// Flip the last character of the signature.
-	last := token[len(token)-1]
-	flipped := "A"
-	if last == 'A' {
-		flipped = "B"
+	// Flip the FIRST character of the signature part. The last base64 char of
+	// a 32-byte RawURLEncoding only carries padding bits, so flipping it can
+	// decode to the same bytes (the source of an earlier flaky failure); the
+	// first signature char always encodes significant bits, so changing it is
+	// a guaranteed real tamper.
+	dot := strings.IndexByte(token, '.')
+	sigStart := dot + 1
+	flipped := byte('A')
+	if token[sigStart] == 'A' {
+		flipped = 'B'
 	}
-	tampered := token[:len(token)-1] + flipped
+	tampered := token[:sigStart] + string(flipped) + token[sigStart+1:]
 	if _, err := ParseUnsubscribeToken(tampered, testSecret); !errors.Is(err, ErrInvalidUnsubscribeToken) {
 		t.Errorf("err = %v, want ErrInvalidUnsubscribeToken for tampered token", err)
 	}

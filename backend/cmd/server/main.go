@@ -19,6 +19,7 @@ import (
 
 	"github.com/daniil/floq/internal/ai"
 	"github.com/daniil/floq/internal/ai/providers"
+	"github.com/daniil/floq/internal/ai/security"
 	"github.com/daniil/floq/internal/analytics"
 	"github.com/daniil/floq/internal/audit"
 	"github.com/daniil/floq/internal/auth"
@@ -367,6 +368,13 @@ func main() {
 	// Sign unsubscribe tokens with the same secret the public /unsubscribe route
 	// verifies them with, so campaign emails carry working one-click links.
 	emailSender.SetUnsubscribeSecret(cfg.JWTSecret)
+	// agent-security-defaults layer 3: validate channel/recipient schema and
+	// hold unconfirmed mass sends before the outbound dispatch loop.
+	emailSender.SetSendGuard(newOutboundGuardAdapter(security.NewOutboundGuard(security.OutboundPolicy{
+		AllowedChannels:   []string{"email", "telegram"},
+		MassSendThreshold: cfg.OutboundMassSendThreshold,
+		MassSendConfirmed: cfg.OutboundMassSendConfirmed,
+	})))
 	go func() {
 		ticker := time.NewTicker(30 * time.Second)
 		defer ticker.Stop()
@@ -400,7 +408,9 @@ func main() {
 	// Read token from DB first, fall back to .env
 	prospectAdapter := newProspectRepoAdapter(prospectsRepo, txManager)
 	inboxLeadAdapter := newInboxLeadRepoAdapter(leadsRepo)
-	inboxAI := newInboxAIAdapter(aiClient)
+	// agent-security-defaults layer 1: the inbound payload passes the input
+	// firewall before it can reach the qualification LLM.
+	inboxAI := newGuardedQualifier(newInboxAIAdapter(aiClient), security.NewInputFirewall(), security.NewPIIScrubber(), security.NewOutputValidator(security.DefaultMinConfidence), security.NewDefaultCostBreaker(), slog.Default())
 	inboxCfg := newInboxConfigAdapter(settingsStore)
 	tgToken := cfg.TelegramBotToken
 	if dbCfg, err := settingsStore.GetConfig(context.Background(), ownerID); err == nil && dbCfg.TelegramBotToken != "" {

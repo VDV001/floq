@@ -93,6 +93,7 @@ Outgoing webhooks на ключевые события: `lead.created`, `pending
 По domain'у компании — обогащение из публичных источников (HH.ru, Rusprofile, открытые реестры). Без paid API сначала; платные интеграции (Clearbit, Apollo) — отдельный gate.
 
 ### Security follow-ups
+- **Agent-security guardrails — пилот (v0.45.0):** 4 слоя + PII в `internal/ai/security`, подключены на пути inbox→LLM (декоратор `guardedQualifier`) и outbound (`SendGuard` порт). Слой 1 inputFirewall (инъекции), 1b PIIScrubber (обратимый), 2 OutputValidator (clamp/redact/confidence), 3 OutboundGuard (канал/получатель/mass-send), 4 CostBreaker (cap+budget). Red-team корпус 38, CI-гейт. Threat-model `docs/security-model.md` v1.1 (MITRE ATLAS+OWASP LLM). **Остаётся:** L2 ToolCallFirewall в reply-dispatcher (нужна колонка `pending_replies.severity`); промоушен стандарта в `active` после ≥4 нед live-метрик (ASR пока structural на фикстурах, не live).
 - **At-rest шифрование секретов клиента — сделано (v0.42.0):** AES-256-GCM, KEK из env, миграция 037 (enc/nonce-колонки) + идемпотентный бэкфилл (`server -backfill-secrets`). Остаётся: drop plaintext-колонок (отдельная миграция — номер берётся следующий свободный, НЕ пре-резервируется; 038/039 заняты compliance-фичей) после верификации бэкфилла на проде; ротация KEK
 - `webhook_secret` 1С — пока plaintext lookup-токен; хеширование (не шифрование, ломает lookup) — отдельная задача
 - Per-route file-upload cap'ы (сейчас 10 MiB outer на importCSV; possibly tighter per-route)

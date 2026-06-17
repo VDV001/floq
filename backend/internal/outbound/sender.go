@@ -99,6 +99,11 @@ type Sender struct {
 	// unsubscribe link or List-Unsubscribe header.
 	unsubscribeSecret string
 
+	// guard is the layer-3 outbound send validator. Set via SetSendGuard at
+	// wiring time; nil means no extra validation (the consent + suppression
+	// gates still apply). Production always wires it.
+	guard SendGuard
+
 	tgLastSent time.Time
 	tgRateMu   sync.Mutex
 }
@@ -108,6 +113,22 @@ type Sender struct {
 // dependency setter pattern used elsewhere in wiring). When unset, outbound
 // emails omit the unsubscribe link and List-Unsubscribe headers.
 func (s *Sender) SetUnsubscribeSecret(secret string) { s.unsubscribeSecret = secret }
+
+// SetSendGuard injects the layer-3 outbound send guard.
+func (s *Sender) SetSendGuard(guard SendGuard) { s.guard = guard }
+
+// recipientAllowed applies the send guard's per-recipient check, failing
+// open only when no guard is configured. Logs and returns false on refusal.
+func (s *Sender) recipientAllowed(channel, recipient string, msgID uuid.UUID) bool {
+	if s.guard == nil {
+		return true
+	}
+	if ok, reason := s.guard.CheckRecipient(channel, recipient); !ok {
+		log.Printf("[outbound][guard] skipping msg %s: %s (%s)", msgID, reason, channel)
+		return false
+	}
+	return true
+}
 
 // unsubscribeURL returns the one-click unsubscribe URL for a prospect, and
 // false when unsubscribe links are not configured (no secret or no base URL).
@@ -249,6 +270,15 @@ func (s *Sender) SendPending(ctx context.Context) error {
 		return fmt.Errorf("get pending sends: %w", err)
 	}
 
+	// Layer 3: bound the blast radius of a single dispatch tick. An
+	// over-threshold batch is held until a mass send is confirmed out-of-band.
+	if s.guard != nil {
+		if ok, reason := s.guard.CheckBatch(len(msgs)); !ok {
+			log.Printf("[outbound][guard] holding batch of %d: %s", len(msgs), reason)
+			return nil
+		}
+	}
+
 	for _, msg := range msgs {
 		if msg.Channel == "telegram" {
 			s.handleTelegramMessage(ctx, msg)
@@ -264,6 +294,9 @@ func (s *Sender) SendPending(ctx context.Context) error {
 			continue
 		}
 		if prospect == nil || prospect.Email == "" {
+			continue
+		}
+		if !s.recipientAllowed("email", prospect.Email, msg.ID) {
 			continue
 		}
 		if s.isSuppressed(ctx, prospect.UserID, prospectsdomain.SuppressionChannelEmail, prospect.Email, msg.ID) {
@@ -523,6 +556,9 @@ func (s *Sender) handleTelegramMessage(ctx context.Context, msg seqdomain.Outbou
 
 	var lastErr error
 	for _, target := range targets {
+		if !s.recipientAllowed("telegram", target, msg.ID) {
+			continue
+		}
 		if err := s.tgMessenger.SendMessage(sendCtx, sessionData, target, msg.Body); err != nil {
 			log.Printf("[outbound] telegram attempt %s failed (msg %s): %v", target, msg.ID, err)
 			lastErr = err
