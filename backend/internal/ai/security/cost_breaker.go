@@ -44,12 +44,37 @@ func NewCostBreaker(maxInputRunes, maxCallsPerKey int, window time.Duration) *Co
 // text and whether truncation happened. Rune-safe (never splits a multibyte
 // character).
 func (b *CostBreaker) CapInput(text string) (string, bool) {
-	return "", false
+	if b.maxInputRunes <= 0 {
+		return text, false
+	}
+	runes := []rune(text)
+	if len(runes) <= b.maxInputRunes {
+		return text, false
+	}
+	return string(runes[:b.maxInputRunes]), true
 }
 
 // Allow records a call against key and reports whether it is within budget.
 // Calls older than the window are evicted. A tripped breaker returns false and
 // does NOT record the call (so the window can recover).
 func (b *CostBreaker) Allow(key string) bool {
-	return false
+	if b.maxCallsPerKey <= 0 {
+		return true
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	cutoff := b.now().Add(-b.window)
+	kept := b.calls[key][:0]
+	for _, t := range b.calls[key] {
+		if t.After(cutoff) {
+			kept = append(kept, t)
+		}
+	}
+	if len(kept) >= b.maxCallsPerKey {
+		b.calls[key] = kept
+		return false
+	}
+	b.calls[key] = append(kept, b.now())
+	return true
 }
