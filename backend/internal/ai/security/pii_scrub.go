@@ -50,14 +50,19 @@ var (
 type piiRule struct {
 	tag string
 	re  *regexp.Regexp
+	// digitGuarded rules must not match a substring embedded in a longer
+	// digit run (e.g. a phone pattern inside a 20-digit account number).
+	digitGuarded bool
 }
 
 var piiRules = []piiRule{
-	{"EMAIL", rePIIEmail},
-	{"PHONE", rePIIPhone},
-	{"INN", rePIIInn},
-	{"NAME", rePIIName},
+	{tag: "EMAIL", re: rePIIEmail},
+	{tag: "PHONE", re: rePIIPhone, digitGuarded: true},
+	{tag: "INN", re: rePIIInn},
+	{tag: "NAME", re: rePIIName},
 }
+
+func isASCIIDigit(b byte) bool { return b >= '0' && b <= '9' }
 
 // Scrub replaces detected PII with placeholders ([EMAIL_1], [PHONE_1],
 // [INN_1], [NAME_1]). Repeated occurrences of the same value collapse to the
@@ -67,23 +72,57 @@ func (s *PIIScrubber) Scrub(text string) ScrubResult {
 	seen := map[string]string{} // original → placeholder (dedup)
 	counter := map[string]int{}
 
-	for _, rule := range piiRules {
-		text = rule.re.ReplaceAllStringFunc(text, func(match string) string {
-			if ph, ok := seen[match]; ok {
-				return ph
-			}
-			counter[rule.tag]++
-			ph := fmt.Sprintf("[%s_%d]", rule.tag, counter[rule.tag])
-			seen[match] = ph
-			mapping[ph] = match
+	assign := func(tag, match string) string {
+		if ph, ok := seen[match]; ok {
 			return ph
-		})
+		}
+		counter[tag]++
+		ph := fmt.Sprintf("[%s_%d]", tag, counter[tag])
+		seen[match] = ph
+		mapping[ph] = match
+		return ph
+	}
+
+	for _, rule := range piiRules {
+		if rule.digitGuarded {
+			text = replaceDigitGuarded(text, rule.re, func(m string) string { return assign(rule.tag, m) })
+			continue
+		}
+		text = rule.re.ReplaceAllStringFunc(text, func(m string) string { return assign(rule.tag, m) })
 	}
 
 	if len(mapping) == 0 {
 		return ScrubResult{Scrubbed: text, Mapping: nil}
 	}
 	return ScrubResult{Scrubbed: text, Mapping: mapping}
+}
+
+// replaceDigitGuarded replaces only matches that are NOT embedded in a longer
+// digit run — i.e. the character immediately before the match start and after
+// the match end must not be an ASCII digit. This stops a phone pattern from
+// matching a substring inside, say, a 20-digit account number (which would
+// leak the un-redacted head/tail and mis-tag the value).
+func replaceDigitGuarded(text string, re *regexp.Regexp, repl func(string) string) string {
+	locs := re.FindAllStringIndex(text, -1)
+	if locs == nil {
+		return text
+	}
+	var b strings.Builder
+	last := 0
+	for _, loc := range locs {
+		start, end := loc[0], loc[1]
+		if start > 0 && isASCIIDigit(text[start-1]) {
+			continue
+		}
+		if end < len(text) && isASCIIDigit(text[end]) {
+			continue
+		}
+		b.WriteString(text[last:start])
+		b.WriteString(repl(text[start:end]))
+		last = end
+	}
+	b.WriteString(text[last:])
+	return b.String()
 }
 
 // Restore re-hydrates placeholders in text back to their original values using
