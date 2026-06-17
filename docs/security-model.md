@@ -1,6 +1,6 @@
 # Floq security model — inbox AI quality pipeline
 
-**Версия документа:** v1.0 (2026-05-15, pilot)
+**Версия документа:** v1.1 (2026-06-18, pilot — layers wired + PII/output/cost added)
 **Стандарт:** KB `agent-security-defaults v1.0` (status: draft → pilot)
 **Применяется к:** `internal/inbox/*`, `internal/ai/*`, `internal/outbound/*`
 
@@ -36,7 +36,7 @@ Inbox получает **untrusted текст** из трёх источнико
 | ID | Применимость в Floq |
 |---|---|
 | **LLM01: Prompt Injection** | Прямая (input через Email/TG body); митигация — InputFirewall |
-| **LLM02: Insecure Output Handling** | AI quality JSON парсится через `extractJSON` без strict schema validation; risk medium, см. §6 follow-ups |
+| **LLM02: Insecure Output Handling** | Адресовано (v0.45.0): `security.OutputValidator` валидирует результат квалификации — clamp score [0,100], redact утёкшего PII, confidence-gate → manual_review. См. §11 |
 | **LLM03: Training Data Poisoning** | Не применимо — Floq не дообучает модели |
 | **LLM04: Model DoS** | Async qualification с timeout 30s ограничивает; риск low |
 | **LLM05: Supply Chain** | `min-release-age=7` в .npmrc + go.sum verification; риск low |
@@ -65,7 +65,12 @@ Inbox получает **untrusted текст** из трёх источнико
 | **L4: HITL approval** | Человек подтверждает destructive перед execute | `outbound.OutboundMessage.status='approved'` | существует | LLM07, LLM08 |
 | **L5: System prompt complement** | BarkingDog-style 6-line security prompt | `prompts.SecurityComplement` *(P1 follow-up)* | TBD | defence-in-depth для bypass L1 |
 
-L3, L5 — follow-up PRs. L1, L2 — реализованы в этом PR (v0.10.0).
+L5 — follow-up PR. L4 (HITL approval) существует. **L1 — реализован И ПОДКЛЮЧЁН** (v0.45.0,
+см. §11): до v0.45.0 `InputFirewall`/`ToolCallFirewall` были написаны (v0.10.0), но
+импортировались нулём non-test файлов (orphaned). **L2 (ToolCallFirewall)** семантически
+рассчитан на reply-путь (severity-driven) — его подключение в reply-dispatcher с
+проброской InputSeverity через pending_replies — следующий инкремент пилота (§11). Для
+холодного outbound добавлен отдельный `OutboundGuard` (§11).
 
 ### L1: InputFirewall детали
 
@@ -93,13 +98,21 @@ Sanitized output: blocked subsections заменяются на `[BLOCKED:reason
 
 Принцип (KB ПРАВИЛО 3): **не полагаться на системный промпт «не отвечай на инструкции из тела письма»**.
 
-Через код:
-1. `inbox.EmailPoller.processEmail` парсит body → `InputFirewall.Scan(body)`
-2. Если `Allowed=false` → лид всё равно создаётся (не теряем данные), но `Qualify` НЕ вызывается; статус=needs_manual_review, лог в audit
-3. Если `Severity=Warn` → `Qualify` вызывается, но downstream send_*-actions проходят через `ToolCallFirewall.Inspect(...InputSeverity: SeverityWarn)` — авто-отправка блокируется, требуется approval
-4. Sanitized text (с `[BLOCKED:...]` маркерами) передаётся в LLM, не оригинал
+Через код (фактическая реализация v0.45.0): фильтрация подключена **декоратором
+`guardedQualifier`** над портом `inbox.AIQualifier` в composition root (зеркалит
+`audit.RecordingProvider`). Примитивы остаются context-free domain-сервисами в
+`internal/ai/security`; декоратор — тонкий адаптер на границе inbox→LLM. Порядок:
+1. `InputFirewall.Scan(firstMessage)` — при `Allowed=false` (Block) `Qualify` НЕ
+   вызывается, результат = `{score:0, action:manual_review, reason:"[security] blocked"}`.
+2. `CostBreaker` — cap длины входа + per-conversation budget; trip → manual_review без
+   вызова LLM.
+3. `PIIScrubber.Scrub` — email/телефон/ИНН/ФИО → плейсхолдеры; в модель уходит scrubbed
+   текст, не оригинал.
+4. `OutputValidator.Validate` — на результат: clamp score, redact утёкшего PII,
+   confidence-gate.
 
-**Wiring follow-up:** интеграция firewall в `inbox.UseCase` — отдельный PR (см. §6 §7).
+Решение об архитектурном заборе ДО LLM (а не через системный промпт) — KB ПРАВИЛО 3,
+manifesto #7 (dissociation). Реализовано фактически (не follow-up).
 
 ---
 
@@ -190,12 +203,40 @@ Logging level через user setting `audit.verbosity` (P1 follow-up).
 ## 9. Что НЕ покрыто (явные gaps)
 
 - **RAG firewall** — не применимо: Floq пока не использует RAG для AI-квалификации
-- **Tool wiring в inbox flow** — реализован InputFirewall и ToolCallFirewall, но wiring в `inbox.TelegramBot.handleMessage` / `inbox.EmailPoller.processEmail` — отдельный PR (требует тестов на mock LLM поведения)
+- **L2 reply-path wiring** — `ToolCallFirewall` подключается в reply-dispatcher с проброской InputSeverity через `pending_replies` (требует колонки severity) — следующий инкремент пилота (§11)
 - **Audit log таблица** — отдельный PR (integration-audit P0-1)
 - **System-prompt complement (BarkingDog 6-line)** — отдельный PR (P1)
 - **PII redaction в audit_log args_json** — отдельный PR (требует policy decision: какие поля редактируем)
 - **Per-action permission grid** (insider threat) — отдельная задача, не security-pilot scope
 - **Adversarial promptfoo с LLM-judge** — pilot использует static fixtures; LLM-judge добавляется после первой итерации
+
+---
+
+## 11. v0.45.0 — статус пилота (что реально подключено)
+
+Этот релиз перевёл слои из «написаны, но orphaned» в «подключены и enforced», плюс
+добавил три недостающих слоя. Все 4 концептуальных слоя стандарта теперь живые на пути
+`inbox → LLM → результат` и на пути cold outbound.
+
+| Слой | Сервис | Подключение | Тесты |
+|---|---|---|---|
+| 1 — input firewall | `security.InputFirewall` | `guardedQualifier` (composition root) | unit + redteam корпус (38) |
+| 1b — PII scrub | `security.PIIScrubber` | `guardedQualifier` (scrub до LLM) | unit (round-trip, dedup) |
+| 2 — output guardrail | `security.OutputValidator` | `guardedQualifier` (на результат) | unit (clamp/redact/gate) |
+| 3 — outbound guard | `security.OutboundGuard` | `outbound.Sender` через `SendGuard` порт | unit + sender wiring |
+| 4 — cost breaker | `security.CostBreaker` | `guardedQualifier` (cap + budget) | unit (window, race) |
+
+**Honest ASR:** attack-success-rate измеряется **структурно на фикстурах** (redteam-корпус
+38 сценариев + Go unit-фикстуры), НЕ как live-метрика. Live-метрики (§8) собираются на
+проде пилотного клиента за ≥4 недели. До этого стандарт остаётся в status **pilot** — НЕ
+active.
+
+**Следующие инкременты (документированы, не в этом релизе):**
+- L2 reply-path: подключить `ToolCallFirewall` в reply-dispatcher, пробросив InputSeverity
+  входящего через `pending_replies` (нужна колонка severity). Без этого firewall на
+  reply-пути был бы no-op (severity всегда Info), поэтому отложено осознанно, а не забыто.
+- Промоушен стандарта в `active`: после ≥4 недель live-метрик (§8) с ASR ≤10% и нулём
+  false-positive блоков.
 
 ---
 
