@@ -28,6 +28,20 @@ type CostBreaker struct {
 	now   func() time.Time
 }
 
+// Pilot defaults: ~8k runes is well above any genuine first message yet caps
+// a pasted dump; 20 qualification calls per conversation per minute bounds a
+// flood without tripping on legitimate back-and-forth.
+const (
+	DefaultMaxInputRunes  = 8000
+	DefaultMaxCallsPerKey = 20
+	DefaultCostWindow     = time.Minute
+)
+
+// NewDefaultCostBreaker builds a breaker with the pilot defaults.
+func NewDefaultCostBreaker() *CostBreaker {
+	return NewCostBreaker(DefaultMaxInputRunes, DefaultMaxCallsPerKey, DefaultCostWindow)
+}
+
 // NewCostBreaker builds a breaker. maxInputRunes ≤ 0 disables truncation;
 // maxCallsPerKey ≤ 0 disables the call budget.
 func NewCostBreaker(maxInputRunes, maxCallsPerKey int, window time.Duration) *CostBreaker {

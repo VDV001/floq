@@ -19,11 +19,12 @@ type guardedQualifier struct {
 	firewall  *security.InputFirewall
 	scrubber  *security.PIIScrubber
 	validator *security.OutputValidator
+	breaker   *security.CostBreaker
 	logger    *slog.Logger
 }
 
-func newGuardedQualifier(inner inbox.AIQualifier, firewall *security.InputFirewall, scrubber *security.PIIScrubber, validator *security.OutputValidator, logger *slog.Logger) inbox.AIQualifier {
-	return &guardedQualifier{inner: inner, firewall: firewall, scrubber: scrubber, validator: validator, logger: logger}
+func newGuardedQualifier(inner inbox.AIQualifier, firewall *security.InputFirewall, scrubber *security.PIIScrubber, validator *security.OutputValidator, breaker *security.CostBreaker, logger *slog.Logger) inbox.AIQualifier {
+	return &guardedQualifier{inner: inner, firewall: firewall, scrubber: scrubber, validator: validator, breaker: breaker, logger: logger}
 }
 
 // Qualify scans the inbound first message before delegating. A Block verdict
@@ -44,12 +45,30 @@ func (g *guardedQualifier) Qualify(ctx context.Context, contactName, channel, fi
 			RecommendedAction: "manual_review",
 		}, nil
 	}
+	// Layer 4: cap an oversized payload and gate the per-conversation LLM
+	// call budget BEFORE spending a token. A budget trip short-circuits to
+	// manual_review so a flood of inbound from one source cannot run the bill
+	// away or loop unbounded.
+	capped, truncated := g.breaker.CapInput(firstMessage)
+	if truncated {
+		g.logger.Warn("cost breaker truncated oversized input", "channel", channel)
+	}
+	key := channel + ":" + contactName
+	if !g.breaker.Allow(key) {
+		g.logger.Warn("cost breaker tripped, skipping qualification", "channel", channel)
+		return &inbox.QualificationResult{
+			Score:             0,
+			ScoreReason:       "[security] qualification skipped: cost breaker tripped",
+			RecommendedAction: "manual_review",
+		}, nil
+	}
+
 	// Layer 1b: strip PII before the payload reaches the model. Qualification
 	// scores need/budget/urgency, not the prospect's real email or phone, so
 	// the model only ever sees placeholders. The mapping is intentionally
 	// discarded here — the qualification result is internal scoring and needs
 	// no re-hydration; draft generation (which does) restores separately.
-	scrubbed := g.scrubber.Scrub(firstMessage).Scrubbed
+	scrubbed := g.scrubber.Scrub(capped).Scrubbed
 	res, err := g.inner.Qualify(ctx, contactName, channel, scrubbed)
 	if err != nil {
 		return nil, err
