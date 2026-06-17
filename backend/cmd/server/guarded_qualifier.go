@@ -15,14 +15,15 @@ import (
 // primitives stay context-free domain services in internal/ai/security; this
 // decorator is the thin adapter that applies them on the inbox→LLM boundary.
 type guardedQualifier struct {
-	inner    inbox.AIQualifier
-	firewall *security.InputFirewall
-	scrubber *security.PIIScrubber
-	logger   *slog.Logger
+	inner     inbox.AIQualifier
+	firewall  *security.InputFirewall
+	scrubber  *security.PIIScrubber
+	validator *security.OutputValidator
+	logger    *slog.Logger
 }
 
-func newGuardedQualifier(inner inbox.AIQualifier, firewall *security.InputFirewall, scrubber *security.PIIScrubber, logger *slog.Logger) inbox.AIQualifier {
-	return &guardedQualifier{inner: inner, firewall: firewall, scrubber: scrubber, logger: logger}
+func newGuardedQualifier(inner inbox.AIQualifier, firewall *security.InputFirewall, scrubber *security.PIIScrubber, validator *security.OutputValidator, logger *slog.Logger) inbox.AIQualifier {
+	return &guardedQualifier{inner: inner, firewall: firewall, scrubber: scrubber, validator: validator, logger: logger}
 }
 
 // Qualify scans the inbound first message before delegating. A Block verdict

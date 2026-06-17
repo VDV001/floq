@@ -403,7 +403,7 @@ func main() {
 	inboxLeadAdapter := newInboxLeadRepoAdapter(leadsRepo)
 	// agent-security-defaults layer 1: the inbound payload passes the input
 	// firewall before it can reach the qualification LLM.
-	inboxAI := newGuardedQualifier(newInboxAIAdapter(aiClient), security.NewInputFirewall(), security.NewPIIScrubber(), slog.Default())
+	inboxAI := newGuardedQualifier(newInboxAIAdapter(aiClient), security.NewInputFirewall(), security.NewPIIScrubber(), security.NewOutputValidator(security.DefaultMinConfidence), slog.Default())
 	inboxCfg := newInboxConfigAdapter(settingsStore)
 	tgToken := cfg.TelegramBotToken
 	if dbCfg, err := settingsStore.GetConfig(context.Background(), ownerID); err == nil && dbCfg.TelegramBotToken != "" {

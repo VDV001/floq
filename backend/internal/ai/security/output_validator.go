@@ -36,6 +36,10 @@ type OutputVerdict struct {
 	Reasons           []string
 }
 
+// DefaultMinConfidence is the qualification score floor below which a result
+// is downgraded to manual_review instead of being trusted to auto-engage.
+const DefaultMinConfidence = 20
+
 // NewOutputValidator builds a validator. Results scoring below minConfidence
 // are downgraded to manual_review.
 func NewOutputValidator(minConfidence int) *OutputValidator {
