@@ -50,7 +50,26 @@ func (g *guardedQualifier) Qualify(ctx context.Context, contactName, channel, fi
 	// discarded here — the qualification result is internal scoring and needs
 	// no re-hydration; draft generation (which does) restores separately.
 	scrubbed := g.scrubber.Scrub(firstMessage).Scrubbed
-	return g.inner.Qualify(ctx, contactName, channel, scrubbed)
+	res, err := g.inner.Qualify(ctx, contactName, channel, scrubbed)
+	if err != nil {
+		return nil, err
+	}
+
+	// Layer 2: validate the model's output before it is trusted downstream —
+	// clamp score, redact any leaked PII, gate low-confidence to manual_review.
+	verdict := g.validator.Validate(security.QualificationView{
+		Score:             res.Score,
+		ScoreReason:       res.ScoreReason,
+		RecommendedAction: res.RecommendedAction,
+	})
+	if verdict.Flagged {
+		g.logger.Warn("output guardrail corrected qualification",
+			"channel", channel, "reasons", verdict.Reasons)
+	}
+	res.Score = verdict.Score
+	res.ScoreReason = verdict.ScoreReason
+	res.RecommendedAction = verdict.RecommendedAction
+	return res, nil
 }
 
 func (g *guardedQualifier) ProviderName() string { return g.inner.ProviderName() }
