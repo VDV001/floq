@@ -16,6 +16,16 @@ type ConfigStore interface {
 	GetConfig(ctx context.Context, userID uuid.UUID) (*settingsdomain.UserConfig, error)
 }
 
+// SendGuard is the agent-security-defaults layer-3 validator for outbound
+// sends (channel allowlist, recipient schema, mass-send threshold). Declared
+// here in the consumer per DIP; the security.OutboundGuard implementation is
+// injected via an adapter from the composition root, so the outbound package
+// carries no dependency on internal/ai/security. Returns (allowed, reason).
+type SendGuard interface {
+	CheckBatch(size int) (bool, string)
+	CheckRecipient(channel, recipient string) (bool, string)
+}
+
 // OutboundRepository manages the outbound message queue.
 type OutboundRepository interface {
 	GetPendingSends(ctx context.Context) ([]seqdomain.OutboundMessage, error)
