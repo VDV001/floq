@@ -50,6 +50,19 @@ func TestGuardedQualifier_CapsOversizedInput(t *testing.T) {
 	assert.LessOrEqual(t, len([]rune(inner.gotText)), 100, "oversized input must be capped before the LLM")
 }
 
+func TestGuardedQualifier_ScrubsBeforeCapNoBoundaryLeak(t *testing.T) {
+	inner := &fakeQualifier{}
+	breaker := security.NewCostBreaker(20, 0, time.Minute) // cap at 20 runes
+	g := newGuardedQualifier(inner, security.NewInputFirewall(), security.NewPIIScrubber(), security.NewOutputValidator(20), breaker, discardLogger())
+
+	// The email straddles the 20-rune cap: a cap-then-scrub order would chop
+	// it mid-token and leak the un-scrubbed head ("ivan@") to the LLM.
+	_, err := g.Qualify(context.Background(), "Acme", "email", "aaaaaaaaaaaaaa ivan@example.com")
+	require.NoError(t, err)
+	require.True(t, inner.called)
+	assert.NotContains(t, inner.gotText, "ivan", "PII must be scrubbed before truncation")
+}
+
 func TestGuardedQualifier_TripsCallBudget(t *testing.T) {
 	inner := &fakeQualifier{}
 	breaker := security.NewCostBreaker(0, 1, time.Minute)
