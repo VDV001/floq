@@ -48,11 +48,39 @@ var reValidEmail = regexp.MustCompile(`^[\w.+-]+@[\w-]+\.[\w.-]+$`)
 
 // CheckRecipient validates one planned send's channel and recipient.
 func (g *OutboundGuard) CheckRecipient(channel, recipient string) OutboundDecision {
-	return OutboundDecision{}
+	if !g.channelAllowed(channel) {
+		return OutboundDecision{Allowed: false, Reason: "channel not allowed: " + channel}
+	}
+	switch channel {
+	case "email":
+		if !reValidEmail.MatchString(recipient) {
+			return OutboundDecision{Allowed: false, Reason: "malformed email recipient"}
+		}
+	default: // telegram and other allowed channels: require a non-empty target
+		if recipient == "" {
+			return OutboundDecision{Allowed: false, Reason: "empty recipient"}
+		}
+	}
+	return OutboundDecision{Allowed: true}
 }
 
 // CheckBatch validates the size of a dispatch batch against the mass-send
 // policy. Called once per send tick before the per-message loop.
 func (g *OutboundGuard) CheckBatch(size int) OutboundDecision {
-	return OutboundDecision{}
+	if g.policy.MassSendThreshold > 0 && size > g.policy.MassSendThreshold && !g.policy.MassSendConfirmed {
+		return OutboundDecision{
+			Allowed: false,
+			Reason:  "mass send exceeds threshold and is not confirmed out-of-band",
+		}
+	}
+	return OutboundDecision{Allowed: true}
+}
+
+func (g *OutboundGuard) channelAllowed(channel string) bool {
+	for _, c := range g.policy.AllowedChannels {
+		if c == channel {
+			return true
+		}
+	}
+	return false
 }
