@@ -96,6 +96,12 @@ var (
 	// so a system-cron caller passing uuid.Nil cannot silently land
 	// rows that would later 500 the repo Update on the decided_by FK.
 	ErrPendingReplyMissingDecider = errors.New("pending reply: decider id is required")
+	// ErrPendingReplyInvalidSeverity rejects construction with a severity
+	// outside the known ladder (info/warn/block). The classified factory
+	// validates it as a first-class invariant so a malformed verdict can
+	// never reach the dispatch gate, where it would be silently treated as
+	// non-blocking.
+	ErrPendingReplyInvalidSeverity = errors.New("pending reply: invalid input severity")
 	// ErrPendingReplyNotEditable rejects UpdateBody on rows that have
 	// left the Pending status. Approved / sent / rejected drafts are
 	// immutable: the operator already committed to the wording when
@@ -126,6 +132,11 @@ type PendingReply struct {
 	DecidedAt *time.Time
 	DecidedBy *uuid.UUID
 	SentAt    *time.Time
+	// InputSeverity is the InputFirewall verdict for the inbound message
+	// that triggered this reply. The reply-dispatch gate refuses to deliver
+	// a reply whose trigger was Block-flagged (a blocked payload must not
+	// fan out into a customer-visible message even after human approval).
+	InputSeverity Severity
 }
 
 // TransitionTo validates and applies a status change, rejecting transitions
@@ -210,7 +221,20 @@ func (p *PendingReply) UpdateBody(body string) error {
 // NewPendingReply constructs a PendingReply in the Pending status with a
 // generated ID and timestamp, enforcing required invariants. Body is trimmed
 // of surrounding whitespace; an entirely whitespace-only body is rejected.
+//
+// InputSeverity defaults to SeverityInfo — the safe baseline for a reply
+// created without a classified inbound context (matching the migration's
+// grandfather default). The production path classifies the triggering
+// message; use NewClassifiedPendingReply to record a non-info verdict.
 func NewPendingReply(userID, leadID uuid.UUID, channel Channel, kind PendingReplyKind, body string) (*PendingReply, error) {
+	return NewClassifiedPendingReply(userID, leadID, channel, kind, body, SeverityInfo)
+}
+
+// NewClassifiedPendingReply is NewPendingReply plus the InputFirewall
+// severity of the inbound message that triggered the reply. It enforces
+// the same base invariants AND rejects a severity outside the known
+// ladder, so a malformed verdict can never reach the dispatch gate.
+func NewClassifiedPendingReply(userID, leadID uuid.UUID, channel Channel, kind PendingReplyKind, body string, severity Severity) (*PendingReply, error) {
 	if userID == uuid.Nil {
 		return nil, ErrPendingReplyMissingUser
 	}
@@ -223,18 +247,22 @@ func NewPendingReply(userID, leadID uuid.UUID, channel Channel, kind PendingRepl
 	if !kind.IsValid() {
 		return nil, fmt.Errorf("%w: %q", ErrPendingReplyInvalidKind, kind)
 	}
+	if !severity.IsValid() {
+		return nil, fmt.Errorf("%w: %q", ErrPendingReplyInvalidSeverity, severity)
+	}
 	trimmed := strings.TrimSpace(body)
 	if trimmed == "" {
 		return nil, ErrPendingReplyEmptyBody
 	}
 	return &PendingReply{
-		ID:        uuid.New(),
-		UserID:    userID,
-		LeadID:    leadID,
-		Channel:   channel,
-		Kind:      kind,
-		Body:      trimmed,
-		Status:    PendingReplyStatusPending,
-		CreatedAt: time.Now().UTC(),
+		ID:            uuid.New(),
+		UserID:        userID,
+		LeadID:        leadID,
+		Channel:       channel,
+		Kind:          kind,
+		Body:          trimmed,
+		Status:        PendingReplyStatusPending,
+		CreatedAt:     time.Now().UTC(),
+		InputSeverity: severity,
 	}, nil
 }
