@@ -195,6 +195,10 @@ func main() {
 	// "telegram inbox bot" block) — this breaks the
 	// bot -> usecase -> dispatcher -> bot cycle.
 	pendingReplyUC := inbox.NewPendingReplyUseCase(pendingReplyRepo, nil)
+	// Stamp every proposed reply with the InputFirewall verdict of the
+	// inbound message that triggered it, so the dispatch gate can refuse a
+	// reply provoked by a Block-flagged payload (agent-security L2).
+	pendingReplyUC.SetClassifier(newInboxInputClassifier(security.NewInputFirewall()))
 
 	// Rate limiters. Redis-backed when REDIS_URL is set (multi-instance
 	// safe); falls back to an in-process sliding-window for single-
