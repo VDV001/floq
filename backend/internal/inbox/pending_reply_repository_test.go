@@ -57,6 +57,32 @@ func TestPendingReplyRepository_SaveAndGetByID(t *testing.T) {
 	assert.Nil(t, got.SentAt)
 }
 
+func TestPendingReplyRepository_PersistsInputSeverity(t *testing.T) {
+	pool := testutil.TestDB(t)
+	userID := testutil.SeedUser(t, pool)
+	leadID := seedLeadForUser(t, pool, userID)
+
+	repo := inbox.NewPendingReplyRepository(pool)
+	ctx := context.Background()
+
+	// A reply triggered by a warn-flagged inbound message must carry that
+	// verdict all the way through persistence so the dispatch gate sees it.
+	pr, err := inbox.NewClassifiedPendingReply(userID, leadID, inbox.ChannelTelegram, inbox.PendingReplyKindBookingLink, "book me", inbox.SeverityWarn)
+	require.NoError(t, err)
+	require.NoError(t, repo.Save(ctx, pr))
+
+	got, err := repo.GetByID(ctx, userID, pr.ID)
+	require.NoError(t, err)
+	require.NotNil(t, got)
+	assert.Equal(t, inbox.SeverityWarn, got.InputSeverity, "GetByID must round-trip input_severity")
+
+	// The list path the operator queue uses must preserve it too.
+	list, err := repo.ListByLead(ctx, userID, leadID)
+	require.NoError(t, err)
+	require.Len(t, list, 1)
+	assert.Equal(t, inbox.SeverityWarn, list[0].InputSeverity, "ListByLead must round-trip input_severity")
+}
+
 func TestPendingReplyRepository_CountPendingByKind(t *testing.T) {
 	pool := testutil.TestDB(t)
 	userA := testutil.SeedUser(t, pool)
