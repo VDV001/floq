@@ -15,8 +15,9 @@ import (
 // --- Mock Repository ---
 
 type mockRepo struct {
-	prospects map[uuid.UUID]*domain.Prospect
-	batched   []domain.Prospect
+	prospects          map[uuid.UUID]*domain.Prospect
+	batched            []domain.Prospect
+	updateConsentCalls int
 }
 
 func newMockRepo() *mockRepo {
@@ -103,6 +104,7 @@ func (m *mockRepo) UpdateVerification(_ context.Context, _ uuid.UUID, _ domain.V
 }
 
 func (m *mockRepo) UpdateConsent(_ context.Context, prospectID uuid.UUID, c domain.Consent) error {
+	m.updateConsentCalls++
 	if p, ok := m.prospects[prospectID]; ok {
 		p.Consent = c
 	}
@@ -839,6 +841,20 @@ func TestSetConsent(t *testing.T) {
 		id := newOwned(repo, userID)
 		require.NoError(t, uc.SetConsent(context.Background(), userID, id, domain.ConsentStatusWithdrawn))
 		assert.Equal(t, domain.ConsentStatusWithdrawn, repo.prospects[id].Consent.Status)
+	})
+
+	// The Consent.Status assertions above pass even if SetConsent never
+	// persists, because GrantConsent mutates the prospect pointer the mock
+	// shares with the repo. Asserting the repository write actually happened
+	// is what pins persistence — without it, a "if err != nil" → "if err == nil"
+	// mutation (early return before repo.UpdateConsent) survives.
+	t.Run("grant persists via repository", func(t *testing.T) {
+		repo := newMockRepo()
+		uc := NewUseCase(repo)
+		userID := uuid.New()
+		id := newOwned(repo, userID)
+		require.NoError(t, uc.SetConsent(context.Background(), userID, id, domain.ConsentStatusObtained))
+		assert.Equal(t, 1, repo.updateConsentCalls, "SetConsent must persist through repo.UpdateConsent exactly once")
 	})
 
 	t.Run("unsupported status (none) rejected", func(t *testing.T) {
