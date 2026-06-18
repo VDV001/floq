@@ -5,16 +5,7 @@ import (
 	"errors"
 
 	"github.com/daniil/floq/internal/inbox"
-	leadsdomain "github.com/daniil/floq/internal/leads/domain"
-	"github.com/google/uuid"
 )
-
-// leadEmailFetcher narrows leadsdomain.Repository to the single
-// lookup the email dispatcher needs (the lead's EmailAddress, which
-// is stored on Lead, not derivable from a pending reply alone).
-type leadEmailFetcher interface {
-	GetLead(ctx context.Context, id uuid.UUID) (*leadsdomain.Lead, error)
-}
 
 // emailReplyDispatcher delivers an approved PendingReply on the
 // email channel via the inbox.EmailSender port (an adapter over the
@@ -23,12 +14,12 @@ type leadEmailFetcher interface {
 // thread — symmetric with telegramReplyDispatcher.
 type emailReplyDispatcher struct {
 	sender    inbox.EmailSender
-	leads     leadEmailFetcher
+	targets   inbox.ReplyTargetLookup
 	inboxRepo inboxMessageWriter
 }
 
-func newEmailReplyDispatcher(sender inbox.EmailSender, leads leadEmailFetcher, inboxRepo inboxMessageWriter) *emailReplyDispatcher {
-	return &emailReplyDispatcher{sender: sender, leads: leads, inboxRepo: inboxRepo}
+func newEmailReplyDispatcher(sender inbox.EmailSender, targets inbox.ReplyTargetLookup, inboxRepo inboxMessageWriter) *emailReplyDispatcher {
+	return &emailReplyDispatcher{sender: sender, targets: targets, inboxRepo: inboxRepo}
 }
 
 // Dispatch sends the reply via the EmailSender port and, only on a
@@ -42,17 +33,17 @@ func (d *emailReplyDispatcher) Dispatch(ctx context.Context, pr *inbox.PendingRe
 	if pr.Channel != inbox.ChannelEmail {
 		return errors.New("email dispatcher: unsupported channel " + string(pr.Channel))
 	}
-	lead, err := d.leads.GetLead(ctx, pr.LeadID)
+	target, err := d.targets.LookupReplyTarget(ctx, pr.LeadID)
 	if err != nil {
 		return err
 	}
-	if lead == nil {
+	if target == nil {
 		return errors.New("email dispatcher: lead " + pr.LeadID.String() + " not found")
 	}
-	if lead.EmailAddress == nil || *lead.EmailAddress == "" {
+	if target.EmailAddress == nil || *target.EmailAddress == "" {
 		return errors.New("email dispatcher: lead " + pr.LeadID.String() + " has no email_address")
 	}
-	if err := d.sender.SendEmail(ctx, pr.UserID, *lead.EmailAddress, inbox.EmailSubjectFor(pr.Kind), pr.Body); err != nil {
+	if err := d.sender.SendEmail(ctx, pr.UserID, *target.EmailAddress, inbox.EmailSubjectFor(pr.Kind), pr.Body); err != nil {
 		return err
 	}
 	outMsg := inbox.NewInboxMessage(pr.LeadID, inbox.DirectionOutbound, pr.Body)

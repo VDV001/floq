@@ -7,7 +7,6 @@ import (
 	"testing"
 
 	"github.com/daniil/floq/internal/inbox"
-	leadsdomain "github.com/daniil/floq/internal/leads/domain"
 	"github.com/google/uuid"
 )
 
@@ -39,8 +38,8 @@ func (f *fakeEmailSender) Calls() []emailSendCall {
 	return append([]emailSendCall(nil), f.calls...)
 }
 
-func leadWithEmail(id uuid.UUID, email string) *leadsdomain.Lead {
-	return &leadsdomain.Lead{ID: id, EmailAddress: &email}
+func targetWithEmail(email string) *inbox.ReplyTarget {
+	return &inbox.ReplyTarget{EmailAddress: &email}
 }
 
 // --- Dispatch ---
@@ -48,10 +47,10 @@ func leadWithEmail(id uuid.UUID, email string) *leadsdomain.Lead {
 func TestEmailReplyDispatcher_HappyPath_SendsAndPersists(t *testing.T) {
 	leadID := uuid.New()
 	sender := &fakeEmailSender{}
-	leads := &fakeLeadFetcher{leads: map[uuid.UUID]*leadsdomain.Lead{leadID: leadWithEmail(leadID, "lead@example.com")}}
+	targets := &fakeReplyTargetLookup{targets: map[uuid.UUID]*inbox.ReplyTarget{leadID: targetWithEmail("lead@example.com")}}
 	writer := &fakeInboxMessageWriter{}
 
-	d := newEmailReplyDispatcher(sender, leads, writer)
+	d := newEmailReplyDispatcher(sender, targets, writer)
 	pr := newPendingReplyT(t, leadID, inbox.ChannelEmail)
 
 	if err := d.Dispatch(context.Background(), pr); err != nil {
@@ -80,7 +79,7 @@ func TestEmailReplyDispatcher_HappyPath_SendsAndPersists(t *testing.T) {
 }
 
 func TestEmailReplyDispatcher_RejectsNonEmailChannel(t *testing.T) {
-	d := newEmailReplyDispatcher(&fakeEmailSender{}, &fakeLeadFetcher{}, &fakeInboxMessageWriter{})
+	d := newEmailReplyDispatcher(&fakeEmailSender{}, &fakeReplyTargetLookup{}, &fakeInboxMessageWriter{})
 	pr := newPendingReplyT(t, uuid.New(), inbox.ChannelTelegram)
 
 	err := d.Dispatch(context.Background(), pr)
@@ -92,8 +91,8 @@ func TestEmailReplyDispatcher_RejectsNonEmailChannel(t *testing.T) {
 func TestEmailReplyDispatcher_LeadFetchError_PropagatesAndDoesNotSend(t *testing.T) {
 	leadID := uuid.New()
 	sender := &fakeEmailSender{}
-	leads := &fakeLeadFetcher{getErr: errors.New("db hiccup")}
-	d := newEmailReplyDispatcher(sender, leads, &fakeInboxMessageWriter{})
+	targets := &fakeReplyTargetLookup{getErr: errors.New("db hiccup")}
+	d := newEmailReplyDispatcher(sender, targets, &fakeInboxMessageWriter{})
 	pr := newPendingReplyT(t, leadID, inbox.ChannelEmail)
 
 	if err := d.Dispatch(context.Background(), pr); err == nil {
@@ -107,8 +106,8 @@ func TestEmailReplyDispatcher_LeadFetchError_PropagatesAndDoesNotSend(t *testing
 func TestEmailReplyDispatcher_LeadWithoutEmailAddress_Errors(t *testing.T) {
 	leadID := uuid.New()
 	sender := &fakeEmailSender{}
-	leads := &fakeLeadFetcher{leads: map[uuid.UUID]*leadsdomain.Lead{leadID: {ID: leadID}}} // no EmailAddress
-	d := newEmailReplyDispatcher(sender, leads, &fakeInboxMessageWriter{})
+	targets := &fakeReplyTargetLookup{targets: map[uuid.UUID]*inbox.ReplyTarget{leadID: { /* no EmailAddress */}}}
+	d := newEmailReplyDispatcher(sender, targets, &fakeInboxMessageWriter{})
 	pr := newPendingReplyT(t, leadID, inbox.ChannelEmail)
 
 	if err := d.Dispatch(context.Background(), pr); err == nil {
@@ -122,10 +121,10 @@ func TestEmailReplyDispatcher_LeadWithoutEmailAddress_Errors(t *testing.T) {
 func TestEmailReplyDispatcher_SendFailure_DoesNotPersistOutbound(t *testing.T) {
 	leadID := uuid.New()
 	sender := &fakeEmailSender{failWith: errors.New("smtp 5xx")}
-	leads := &fakeLeadFetcher{leads: map[uuid.UUID]*leadsdomain.Lead{leadID: leadWithEmail(leadID, "lead@example.com")}}
+	targets := &fakeReplyTargetLookup{targets: map[uuid.UUID]*inbox.ReplyTarget{leadID: targetWithEmail("lead@example.com")}}
 	writer := &fakeInboxMessageWriter{}
 
-	d := newEmailReplyDispatcher(sender, leads, writer)
+	d := newEmailReplyDispatcher(sender, targets, writer)
 	pr := newPendingReplyT(t, leadID, inbox.ChannelEmail)
 
 	if err := d.Dispatch(context.Background(), pr); err == nil {

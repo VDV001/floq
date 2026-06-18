@@ -5,9 +5,7 @@ import (
 	"fmt"
 
 	"github.com/daniil/floq/internal/inbox"
-	leadsdomain "github.com/daniil/floq/internal/leads/domain"
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
-	"github.com/google/uuid"
 )
 
 // Compile-time check that *telegramReplyDispatcher satisfies the inbox
@@ -20,13 +18,6 @@ var _ inbox.ReplyDispatcher = (*telegramReplyDispatcher)(nil)
 // the real client.
 type telegramBotSender interface {
 	Send(c tgbotapi.Chattable) (tgbotapi.Message, error)
-}
-
-// leadChatIDFetcher narrows leadsdomain.Repository to the single
-// lookup the dispatcher needs (the lead's TelegramChatID, which is
-// stored on Lead, not derivable from a pending reply alone).
-type leadChatIDFetcher interface {
-	GetLead(ctx context.Context, id uuid.UUID) (*leadsdomain.Lead, error)
 }
 
 // inboxMessageWriter narrows inbox.LeadRepository to the single
@@ -43,12 +34,12 @@ type inboxMessageWriter interface {
 // extends PendingReplyKind beyond booking_link.
 type telegramReplyDispatcher struct {
 	bot       telegramBotSender
-	leads     leadChatIDFetcher
+	targets   inbox.ReplyTargetLookup
 	inboxRepo inboxMessageWriter
 }
 
-func newTelegramReplyDispatcher(bot telegramBotSender, leads leadChatIDFetcher, inboxRepo inboxMessageWriter) *telegramReplyDispatcher {
-	return &telegramReplyDispatcher{bot: bot, leads: leads, inboxRepo: inboxRepo}
+func newTelegramReplyDispatcher(bot telegramBotSender, targets inbox.ReplyTargetLookup, inboxRepo inboxMessageWriter) *telegramReplyDispatcher {
+	return &telegramReplyDispatcher{bot: bot, targets: targets, inboxRepo: inboxRepo}
 }
 
 // Dispatch sends the reply via the Telegram Bot API and, only on a
@@ -61,17 +52,17 @@ func (d *telegramReplyDispatcher) Dispatch(ctx context.Context, pr *inbox.Pendin
 	if pr.Channel != inbox.ChannelTelegram {
 		return fmt.Errorf("telegram dispatcher: unsupported channel %q", pr.Channel)
 	}
-	lead, err := d.leads.GetLead(ctx, pr.LeadID)
+	target, err := d.targets.LookupReplyTarget(ctx, pr.LeadID)
 	if err != nil {
 		return fmt.Errorf("fetch lead for dispatch: %w", err)
 	}
-	if lead == nil {
+	if target == nil {
 		return fmt.Errorf("telegram dispatcher: lead %s not found", pr.LeadID)
 	}
-	if lead.TelegramChatID == nil {
+	if target.TelegramChatID == nil {
 		return fmt.Errorf("telegram dispatcher: lead %s has no telegram_chat_id", pr.LeadID)
 	}
-	msg := tgbotapi.NewMessage(*lead.TelegramChatID, pr.Body)
+	msg := tgbotapi.NewMessage(*target.TelegramChatID, pr.Body)
 	if _, err := d.bot.Send(msg); err != nil {
 		return fmt.Errorf("telegram send: %w", err)
 	}
