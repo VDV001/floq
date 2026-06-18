@@ -76,6 +76,7 @@ func TestOnecApplier_HandlePayment(t *testing.T) {
 	}{
 		{"matched lead → attempts won", "a@b.ru", leadWith(leadsdomain.StatusQualified), nil, 1, false},
 		{"illegal transition swallowed", "a@b.ru", leadWith(leadsdomain.StatusNew), leadsdomain.ErrInvalidTransition, 1, false},
+		{"vanished lead swallowed", "a@b.ru", leadWith(leadsdomain.StatusQualified), leadsdomain.ErrLeadNotFound, 1, false},
 		{"other mover error propagates", "a@b.ru", leadWith(leadsdomain.StatusQualified), otherErr, 1, true},
 		{"no lead → skip", "a@b.ru", nil, nil, 0, false},
 		{"empty email → skip", "", leadWith(leadsdomain.StatusQualified), nil, 0, false},
