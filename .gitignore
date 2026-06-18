@@ -59,3 +59,7 @@ docker-compose.override.yml
 backend/coverage.out
 *.docx
 backend/server
+
+# Local-only working files (not part of the repo)
+combined_leads.csv
+demo/
