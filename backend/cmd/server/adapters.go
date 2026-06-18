@@ -177,6 +177,49 @@ func (a *inboxLeadRepoAdapter) UpdateLeadStatus(ctx context.Context, id uuid.UUI
 	return a.repo.UpdateLeadStatus(ctx, id, leadsdomain.LeadStatus(status))
 }
 
+// --- ReplyTarget adapter (inbox reply-dispatch → leads boundary) ---
+//
+// leadReplyTargetAdapter resolves the channel-native destination (Telegram
+// chat id / email address) for an approved reply by lead id, mapping a
+// leads-context Lead onto inbox.ReplyTarget. It is the seam that lets the
+// inbox reply dispatchers stay free of the leads domain: the dispatchers
+// depend on inbox.ReplyTargetLookup, and this composition-root adapter is
+// the only place that knows both vocabularies.
+
+type leadReplyTargetSource interface {
+	GetLead(ctx context.Context, id uuid.UUID) (*leadsdomain.Lead, error)
+}
+
+type leadReplyTargetAdapter struct {
+	leads leadReplyTargetSource
+}
+
+func newLeadReplyTargetAdapter(leads leadReplyTargetSource) inbox.ReplyTargetLookup {
+	return &leadReplyTargetAdapter{leads: leads}
+}
+
+// LookupReplyTarget maps a found lead onto its reply destination. A missing
+// lead returns (nil, nil) so the inbox dispatcher surfaces its own clear
+// "lead not found" error rather than learning the leads-domain semantics; a
+// lookup error propagates unchanged so the usecase keeps the row Approved.
+func (a *leadReplyTargetAdapter) LookupReplyTarget(ctx context.Context, leadID uuid.UUID) (*inbox.ReplyTarget, error) {
+	lead, err := a.leads.GetLead(ctx, leadID)
+	if err != nil {
+		return nil, err
+	}
+	if lead == nil {
+		return nil, nil
+	}
+	return &inbox.ReplyTarget{
+		TelegramChatID: lead.TelegramChatID,
+		EmailAddress:   lead.EmailAddress,
+	}, nil
+}
+
+// Compile-time check that the adapter satisfies the inbox port so signature
+// drift breaks the build at the wiring edge.
+var _ inbox.ReplyTargetLookup = (*leadReplyTargetAdapter)(nil)
+
 // --- InboxAI adapter (inbox → ai boundary) ---
 
 type inboxAIAdapter struct {
