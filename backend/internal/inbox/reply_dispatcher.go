@@ -28,9 +28,9 @@ type inboxMessageWriter interface {
 // telegramReplyDispatcher delivers an approved PendingReply to the
 // customer through the Telegram Bot API and records the outbound
 // message in the inbox history so the operator UI shows the full
-// thread. Currently only the telegram channel is wired; email
-// dispatch will land alongside the email auto-reply work that
-// extends PendingReplyKind beyond booking_link.
+// thread. It handles the telegram channel only; the channel router
+// (channelReplyDispatcher) fans an approved reply out to this or the
+// email dispatcher based on pr.Channel.
 type telegramReplyDispatcher struct {
 	bot       telegramBotSender
 	targets   ReplyTargetLookup
