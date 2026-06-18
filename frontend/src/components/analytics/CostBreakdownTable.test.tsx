@@ -41,7 +41,7 @@ describe("CostBreakdownTable", () => {
       />,
     );
     expect(screen.getByText("Затраты по типам")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /Тип запроса/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Тип запроса" })).toBeInTheDocument();
     expect(screen.getByText("qualify")).toBeInTheDocument();
   });
 
@@ -52,12 +52,15 @@ describe("CostBreakdownTable", () => {
         labelHeader="Тип"
         rows={[
           row({ request_type: "big", usd: 1.5 }),
+          row({ request_type: "cent", usd: 0.01 }),
           row({ request_type: "tiny", usd: 0.0001 }),
         ]}
         labelKey="request_type"
       />,
     );
     expect(screen.getByText("$1.50")).toBeInTheDocument();
+    // boundary: 0.01 is not < 0.01, so 2 decimals
+    expect(screen.getByText("$0.01")).toBeInTheDocument();
     expect(screen.getByText("$0.0001")).toBeInTheDocument();
   });
 
@@ -91,7 +94,7 @@ describe("CostBreakdownTable", () => {
       />,
     );
     expect(labelOrder()).toEqual(["high", "low"]);
-    await user.click(screen.getByRole("button", { name: /USD/ }));
+    await user.click(screen.getByRole("button", { name: "USD" }));
     expect(labelOrder()).toEqual(["low", "high"]);
   });
 
@@ -109,7 +112,7 @@ describe("CostBreakdownTable", () => {
         labelKey="request_type"
       />,
     );
-    await user.click(screen.getByRole("button", { name: /Тип/ }));
+    await user.click(screen.getByRole("button", { name: "Тип" }));
     // localeCompare, descending => reverse alphabetical
     expect(labelOrder()).toEqual(["gamma", "beta", "alpha"]);
   });
@@ -129,7 +132,7 @@ describe("CostBreakdownTable", () => {
     );
     // default usd desc => few, many
     expect(labelOrder()).toEqual(["few", "many"]);
-    await user.click(screen.getByRole("button", { name: /Вызовов/ }));
+    await user.click(screen.getByRole("button", { name: "Вызовов" }));
     // calls desc => many, few
     expect(labelOrder()).toEqual(["many", "few"]);
   });

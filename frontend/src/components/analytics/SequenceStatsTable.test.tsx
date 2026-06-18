@@ -65,7 +65,7 @@ describe("SequenceStatsTable", () => {
       />,
     );
     expect(nameOrder()).toEqual(["High", "Low"]);
-    await user.click(screen.getByRole("button", { name: /Sent/ }));
+    await user.click(screen.getByRole("button", { name: "Sent" }));
     expect(nameOrder()).toEqual(["Low", "High"]);
   });
 
@@ -80,7 +80,7 @@ describe("SequenceStatsTable", () => {
         ]}
       />,
     );
-    await user.click(screen.getByRole("button", { name: /Sequence/ }));
+    await user.click(screen.getByRole("button", { name: "Sequence" }));
     // name, descending => reverse alphabetical
     expect(nameOrder()).toEqual(["gamma", "beta", "alpha"]);
   });
@@ -96,7 +96,7 @@ describe("SequenceStatsTable", () => {
       />,
     );
     expect(nameOrder()).toEqual(["FewOpens", "ManyOpens"]);
-    await user.click(screen.getByRole("button", { name: /Open %/ }));
+    await user.click(screen.getByRole("button", { name: "Open %" }));
     expect(nameOrder()).toEqual(["ManyOpens", "FewOpens"]);
   });
 });

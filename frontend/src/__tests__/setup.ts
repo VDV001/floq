@@ -1,4 +1,5 @@
 import "@testing-library/jest-dom/vitest";
+import { afterEach } from "vitest";
 
 // jsdom + Node's experimental localStorage do not reliably expose a working
 // Web Storage API under vitest, so provide a deterministic in-memory polyfill.
@@ -33,4 +34,11 @@ Object.defineProperty(globalThis, "sessionStorage", {
   value: new MemoryStorage(),
   writable: true,
   configurable: true,
+});
+
+// The polyfilled storage instances persist for the whole vitest session, so
+// reset them between tests to prevent state leaking across files.
+afterEach(() => {
+  localStorage.clear();
+  sessionStorage.clear();
 });
