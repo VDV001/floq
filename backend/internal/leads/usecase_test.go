@@ -678,7 +678,7 @@ func TestUpdateStatus_LeadNotFound(t *testing.T) {
 
 	err := uc.UpdateStatus(context.Background(), uuid.New(), "qualified")
 	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "lead not found")
+	assert.ErrorIs(t, err, domain.ErrLeadNotFound)
 }
 
 func TestUpdateStatus_InvalidTransition(t *testing.T) {

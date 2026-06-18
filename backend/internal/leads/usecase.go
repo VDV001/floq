@@ -95,7 +95,7 @@ func (uc *UseCase) UpdateStatus(ctx context.Context, id uuid.UUID, status string
 		return fmt.Errorf("get lead: %w", err)
 	}
 	if lead == nil {
-		return fmt.Errorf("lead not found")
+		return domain.ErrLeadNotFound
 	}
 
 	if err := lead.TransitionTo(target); err != nil {

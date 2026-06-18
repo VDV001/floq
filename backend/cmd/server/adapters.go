@@ -671,9 +671,13 @@ func (a *onecApplierAdapter) moveLeadByEmail(ctx context.Context, userID uuid.UU
 		return nil
 	}
 	if err := a.leadMover.UpdateStatus(ctx, lead.ID, target.String()); err != nil {
-		if errors.Is(err, leadsdomain.ErrInvalidTransition) {
-			a.logger.Info("onec: lead transition not allowed; action skipped",
-				"lead_id", lead.ID, "from", lead.Status.String(), "to", target.String())
+		// Benign outcomes for a 1C webhook: the lead's state machine forbids
+		// this edge, or the lead vanished between the email lookup and the
+		// update (a concurrent delete). Neither is a state the webhook should
+		// fail on — skip with a log line. Anything else propagates.
+		if errors.Is(err, leadsdomain.ErrInvalidTransition) || errors.Is(err, leadsdomain.ErrLeadNotFound) {
+			a.logger.Info("onec: lead action skipped",
+				"lead_id", lead.ID, "to", target.String(), "reason", err)
 			return nil
 		}
 		return err
