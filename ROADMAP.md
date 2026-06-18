@@ -61,7 +61,7 @@
 
 - docker-compose: PostgreSQL 18, Redis 8, Ollama (опционально)
 - OrbStack на dev-машине
-- Миграции: golang-migrate, 001-039 (audit_log, pending_replies, decided_by FK, onec_credentials/mapping, audit_log_daily retention, encrypt_secrets at-rest, 038 prospect_consent, 039 suppressions, и т.д.; 39 файлов .up.sql). Drop plaintext-колонок секретов — отдельной миграцией (следующий свободный номер) после верификации бэкфилла на проде
+- Миграции: golang-migrate, 001-040 (audit_log, pending_replies, decided_by FK, onec_credentials/mapping, audit_log_daily retention, encrypt_secrets at-rest, 038 prospect_consent, 039 suppressions, 040 pending_replies.input_severity, и т.д.; 40 файлов .up.sql). Drop plaintext-колонок секретов — отдельной миграцией (следующий свободный номер) после верификации бэкфилла на проде
 - Защита от DoS на body size: 10 MiB outer ceiling + 1 MiB JSON-specific cap (defence in depth)
 - CLA bot, CI gates: Backend Go, Frontend Next.js, Redteam corpus, Tooling
 - Release automation: `bin/release.sh X.Y.Z` синкает 4 version sync-points + tag + GH release
@@ -93,7 +93,8 @@ Outgoing webhooks на ключевые события: `lead.created`, `pending
 По domain'у компании — обогащение из публичных источников (HH.ru, Rusprofile, открытые реестры). Без paid API сначала; платные интеграции (Clearbit, Apollo) — отдельный gate.
 
 ### Security follow-ups
-- **Agent-security guardrails — пилот (v0.45.0):** 4 слоя + PII в `internal/ai/security`, подключены на пути inbox→LLM (декоратор `guardedQualifier`) и outbound (`SendGuard` порт). Слой 1 inputFirewall (инъекции), 1b PIIScrubber (обратимый), 2 OutputValidator (clamp/redact/confidence), 3 OutboundGuard (канал/получатель/mass-send), 4 CostBreaker (cap+budget). Red-team корпус 38, CI-гейт. Threat-model `docs/security-model.md` v1.1 (MITRE ATLAS+OWASP LLM). **Остаётся:** L2 ToolCallFirewall в reply-dispatcher (нужна колонка `pending_replies.severity`); промоушен стандарта в `active` после ≥4 нед live-метрик (ASR пока structural на фикстурах, не live).
+- **Agent-security guardrails — пилот (v0.45.0):** 4 слоя + PII в `internal/ai/security`, подключены на пути inbox→LLM (декоратор `guardedQualifier`) и outbound (`SendGuard` порт). Слой 1 inputFirewall (инъекции), 1b PIIScrubber (обратимый), 2 OutputValidator (clamp/redact/confidence), 3 OutboundGuard (канал/получатель/mass-send), 4 CostBreaker (cap+budget). Red-team корпус 38, CI-гейт. Threat-model `docs/security-model.md` v1.1 (MITRE ATLAS+OWASP LLM).
+- **L2 tool-call firewall reply-path — сделано (v0.46.0):** `ToolCallFirewall` подключён в путь отправки HITL-ответов. Входящее сообщение классифицируется при `Propose` (порт `inbox.InputClassifier` над `security.InputFirewall`), severity хранится в `pending_replies.input_severity` (миграция 040, grandfather-дефолт `info`), декоратор `guardedReplyDispatcher` гейтит отправку: Block → отказ даже после approval, Warn/Info → отправка. Reply-диспетчеры вынесены в `internal/inbox` через порт `ReplyTargetLookup` (рефактор, PR #138). **Остаётся:** промоушен стандарта agent-security в `active` после ≥4 нед live-метрик (ASR пока structural на фикстурах, не live).
 - **At-rest шифрование секретов клиента — сделано (v0.42.0):** AES-256-GCM, KEK из env, миграция 037 (enc/nonce-колонки) + идемпотентный бэкфилл (`server -backfill-secrets`). Остаётся: drop plaintext-колонок (отдельная миграция — номер берётся следующий свободный, НЕ пре-резервируется; 038/039 заняты compliance-фичей) после верификации бэкфилла на проде; ротация KEK
 - `webhook_secret` 1С — пока plaintext lookup-токен; хеширование (не шифрование, ломает lookup) — отдельная задача
 - Per-route file-upload cap'ы (сейчас 10 MiB outer на importCSV; possibly tighter per-route)
