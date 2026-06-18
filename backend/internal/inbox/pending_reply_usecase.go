@@ -55,6 +55,7 @@ var (
 type PendingReplyUseCase struct {
 	repo       PendingReplyRepository
 	dispatcher ReplyDispatcher
+	classifier InputClassifier
 }
 
 // NewPendingReplyUseCase wires the usecase with its persistence port.
@@ -74,6 +75,14 @@ func (uc *PendingReplyUseCase) SetDispatcher(d ReplyDispatcher) {
 	uc.dispatcher = d
 }
 
+// SetClassifier injects the InputClassifier at runtime (mirrors
+// SetDispatcher). When unset, Propose stamps SeverityInfo — the safe
+// baseline so a misconfigured deployment never blocks replies, while
+// the composition root always wires the real firewall in production.
+func (uc *PendingReplyUseCase) SetClassifier(c InputClassifier) {
+	uc.classifier = c
+}
+
 // Propose constructs a new PendingReply through the domain factory
 // (so invariants are enforced) and persists it. Dispatch is
 // deliberately skipped — that is the whole point of the HITL gate.
@@ -85,8 +94,15 @@ func (uc *PendingReplyUseCase) SetDispatcher(d ReplyDispatcher) {
 // Telegram-reconnect double-fire case at the repository boundary so
 // callers (the bot, future email auto-reply) do not need their own
 // retry-and-suppress logic.
-func (uc *PendingReplyUseCase) Propose(ctx context.Context, userID, leadID uuid.UUID, channel Channel, kind PendingReplyKind, body string) (*PendingReply, error) {
-	pr, err := NewPendingReply(userID, leadID, channel, kind, body)
+func (uc *PendingReplyUseCase) Propose(ctx context.Context, userID, leadID uuid.UUID, channel Channel, kind PendingReplyKind, body, inboundText string) (*PendingReply, error) {
+	// Classify the inbound (untrusted) message — not the outbound body —
+	// so the reply carries the firewall verdict of what triggered it. The
+	// dispatch gate refuses a reply provoked by a Block-flagged payload.
+	severity := SeverityInfo
+	if uc.classifier != nil {
+		severity = uc.classifier.Classify(inboundText)
+	}
+	pr, err := NewClassifiedPendingReply(userID, leadID, channel, kind, body, severity)
 	if err != nil {
 		return nil, err
 	}

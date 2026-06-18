@@ -313,17 +313,18 @@ type spyPendingProposer struct {
 }
 
 type proposeCall struct {
-	UserID  uuid.UUID
-	LeadID  uuid.UUID
-	Channel Channel
-	Kind    PendingReplyKind
-	Body    string
+	UserID      uuid.UUID
+	LeadID      uuid.UUID
+	Channel     Channel
+	Kind        PendingReplyKind
+	Body        string
+	InboundText string
 }
 
-func (s *spyPendingProposer) Propose(_ context.Context, userID, leadID uuid.UUID, channel Channel, kind PendingReplyKind, body string) (*PendingReply, error) {
+func (s *spyPendingProposer) Propose(_ context.Context, userID, leadID uuid.UUID, channel Channel, kind PendingReplyKind, body, inboundText string) (*PendingReply, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.calls = append(s.calls, proposeCall{userID, leadID, channel, kind, body})
+	s.calls = append(s.calls, proposeCall{userID, leadID, channel, kind, body, inboundText})
 	if s.err != nil {
 		return nil, s.err
 	}

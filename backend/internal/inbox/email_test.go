@@ -931,17 +931,18 @@ type recordingProposer struct {
 }
 
 type proposerCall struct {
-	userID  uuid.UUID
-	leadID  uuid.UUID
-	channel Channel
-	kind    PendingReplyKind
-	body    string
+	userID      uuid.UUID
+	leadID      uuid.UUID
+	channel     Channel
+	kind        PendingReplyKind
+	body        string
+	inboundText string
 }
 
-func (r *recordingProposer) Propose(_ context.Context, userID, leadID uuid.UUID, channel Channel, kind PendingReplyKind, body string) (*PendingReply, error) {
+func (r *recordingProposer) Propose(_ context.Context, userID, leadID uuid.UUID, channel Channel, kind PendingReplyKind, body, inboundText string) (*PendingReply, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	r.calls = append(r.calls, proposerCall{userID: userID, leadID: leadID, channel: channel, kind: kind, body: body})
+	r.calls = append(r.calls, proposerCall{userID: userID, leadID: leadID, channel: channel, kind: kind, body: body, inboundText: inboundText})
 	return nil, r.failErr
 }
 

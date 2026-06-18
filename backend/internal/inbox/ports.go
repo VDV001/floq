@@ -178,8 +178,21 @@ type EmailSender interface {
 // Implementations MUST be safe to call from background goroutines and
 // MUST NOT block on dispatch — actual delivery happens after operator
 // approval, not at Propose time.
+//
+// inboundText is the untrusted message that triggered the reply (the
+// lead's words), kept distinct from body (the outbound draft): the
+// usecase classifies inboundText to stamp the reply's InputSeverity, so
+// a reply provoked by a Block-flagged payload can be refused at dispatch.
 type PendingReplyProposer interface {
-	Propose(ctx context.Context, userID, leadID uuid.UUID, channel Channel, kind PendingReplyKind, body string) (*PendingReply, error)
+	Propose(ctx context.Context, userID, leadID uuid.UUID, channel Channel, kind PendingReplyKind, body, inboundText string) (*PendingReply, error)
+}
+
+// InputClassifier returns the firewall severity of an inbound message.
+// It is the inbox-side port for the security InputFirewall; the concrete
+// adapter (composition root) maps the security verdict onto inbox.Severity
+// so the inbox context never imports internal/ai/security directly.
+type InputClassifier interface {
+	Classify(text string) Severity
 }
 
 // PendingReplyRepository persists the HITL approval queue. Every read
