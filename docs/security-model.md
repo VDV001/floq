@@ -1,6 +1,6 @@
 # Floq security model — inbox AI quality pipeline
 
-**Версия документа:** v1.1 (2026-06-18, pilot — layers wired + PII/output/cost added)
+**Версия документа:** v1.2 (2026-06-18, pilot — L2 tool-call firewall wired into reply-path)
 **Стандарт:** KB `agent-security-defaults v1.0` (status: draft → pilot)
 **Применяется к:** `internal/inbox/*`, `internal/ai/*`, `internal/outbound/*`
 
@@ -67,9 +67,10 @@ Inbox получает **untrusted текст** из трёх источнико
 
 L5 — follow-up PR. L4 (HITL approval) существует. **L1 — реализован И ПОДКЛЮЧЁН** (v0.45.0,
 см. §11): до v0.45.0 `InputFirewall`/`ToolCallFirewall` были написаны (v0.10.0), но
-импортировались нулём non-test файлов (orphaned). **L2 (ToolCallFirewall)** семантически
-рассчитан на reply-путь (severity-driven) — его подключение в reply-dispatcher с
-проброской InputSeverity через pending_replies — следующий инкремент пилота (§11). Для
+импортировались нулём non-test файлов (orphaned). **L2 (ToolCallFirewall) — ПОДКЛЮЧЁН**
+(v0.46.0, см. §11): inbound severity классифицируется при `Propose`, хранится в
+`pending_replies.input_severity` (миграция 040) и гейтит отправку через декоратор
+`guardedReplyDispatcher` — Block-вход не фанится в reply даже после approval. Для
 холодного outbound добавлен отдельный `OutboundGuard` (§11).
 
 ### L1: InputFirewall детали
@@ -203,7 +204,7 @@ Logging level через user setting `audit.verbosity` (P1 follow-up).
 ## 9. Что НЕ покрыто (явные gaps)
 
 - **RAG firewall** — не применимо: Floq пока не использует RAG для AI-квалификации
-- **L2 reply-path wiring** — `ToolCallFirewall` подключается в reply-dispatcher с проброской InputSeverity через `pending_replies` (требует колонки severity) — следующий инкремент пилота (§11)
+- ~~**L2 reply-path wiring**~~ — ✅ подключено (v0.46.0): InputSeverity классифицируется при `Propose`, хранится в `pending_replies.input_severity` (миграция 040), гейтит отправку через `guardedReplyDispatcher`. См. §11
 - **Audit log таблица** — отдельный PR (integration-audit P0-1)
 - **System-prompt complement (BarkingDog 6-line)** — отдельный PR (P1)
 - **PII redaction в audit_log args_json** — отдельный PR (требует policy decision: какие поля редактируем)
@@ -225,16 +226,24 @@ Logging level через user setting `audit.verbosity` (P1 follow-up).
 | 2 — output guardrail | `security.OutputValidator` | `guardedQualifier` (на результат) | unit (clamp/redact/gate) |
 | 3 — outbound guard | `security.OutboundGuard` | `outbound.Sender` через `SendGuard` порт | unit + sender wiring |
 | 4 — cost breaker | `security.CostBreaker` | `guardedQualifier` (cap + budget) | unit (window, race) |
+| 2 — tool-call firewall (reply-path, **v0.46.0**) | `security.ToolCallFirewall` | `guardedReplyDispatcher` (composition root); severity через `pending_replies.input_severity`, миграция 040 | unit (gate) + integration (persistence) |
 
 **Honest ASR:** attack-success-rate измеряется **структурно на фикстурах** (redteam-корпус
 38 сценариев + Go unit-фикстуры), НЕ как live-метрика. Live-метрики (§8) собираются на
 проде пилотного клиента за ≥4 недели. До этого стандарт остаётся в status **pilot** — НЕ
 active.
 
-**Следующие инкременты (документированы, не в этом релизе):**
-- L2 reply-path: подключить `ToolCallFirewall` в reply-dispatcher, пробросив InputSeverity
-  входящего через `pending_replies` (нужна колонка severity). Без этого firewall на
-  reply-пути был бы no-op (severity всегда Info), поэтому отложено осознанно, а не забыто.
+**L2 reply-path — подключено в v0.46.0.** `InputFirewall`-вердикт входящего сообщения
+классифицируется при `Propose` (через `inbox.InputClassifier` порт → адаптер над
+`security.InputFirewall`), хранится в `pending_replies.input_severity` (миграция 040,
+grandfather-дефолт `info`) и при отправке прогоняется через `ToolCallFirewall.Inspect` в
+декораторе `guardedReplyDispatcher`. Семантика на reply-пути: **Block-вход → отказ в
+отправке** (даже после approval — это и есть новая защита: approval-очередь не должна
+пропускать reply, спровоцированный заблокированным payload'ом); **Warn → отправка идёт**
+(human-confirm уже удовлетворён одобрением оператора в HITL-очереди), пишется в лог; Info →
+отправка.
+
+**Следующий инкремент (документирован, не в этом релизе):**
 - Промоушен стандарта в `active`: после ≥4 недель live-метрик (§8) с ASR ≤10% и нулём
   false-positive блоков.
 
