@@ -477,7 +477,7 @@ func (e *EmailPoller) processEmail(ctx context.Context, fromName, fromEmail, bod
 				"lead_id", lead.ID.String(), "email", fromEmail)
 		default:
 			bookingMsg := fmt.Sprintf(bookingLinkReplyTemplate, e.bookingLink)
-			if _, err := e.pendingProposer.Propose(ctx, lead.UserID, lead.ID, ChannelEmail, PendingReplyKindBookingLink, bookingMsg); err != nil {
+			if _, err := e.pendingProposer.Propose(ctx, lead.UserID, lead.ID, ChannelEmail, PendingReplyKindBookingLink, bookingMsg, body); err != nil {
 				e.logger.WarnContext(ctx, "failed to enqueue email booking reply for approval",
 					"lead_id", lead.ID.String(), "error", err)
 			}

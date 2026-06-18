@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/daniil/floq/internal/ai"
+	"github.com/daniil/floq/internal/ai/security"
 	"github.com/daniil/floq/internal/chat"
 	"github.com/daniil/floq/internal/db"
 	"github.com/daniil/floq/internal/inbox"
@@ -203,6 +204,40 @@ func (a *inboxAIAdapter) Qualify(ctx context.Context, contactName, channel, firs
 
 func (a *inboxAIAdapter) ProviderName() string {
 	return a.client.ProviderName()
+}
+
+// --- InboxInputClassifier adapter (inbox → ai/security boundary) ---
+//
+// Adapts security.InputFirewall to the inbox.InputClassifier port so the
+// inbox context can stamp a reply's InputSeverity without importing
+// internal/ai/security. The severity-ladder translation lives here, at the
+// boundary — the only place that legitimately knows both vocabularies.
+
+type inboxInputClassifier struct {
+	firewall *security.InputFirewall
+}
+
+func newInboxInputClassifier(firewall *security.InputFirewall) inbox.InputClassifier {
+	return &inboxInputClassifier{firewall: firewall}
+}
+
+func (c *inboxInputClassifier) Classify(text string) inbox.Severity {
+	return mapSecuritySeverity(c.firewall.Scan(text).Severity)
+}
+
+// mapSecuritySeverity translates the security severity ladder onto the
+// inbox one. Kept a pure function (no firewall dependency) so the mapping
+// is unit-testable in isolation; an unknown value defaults to Info, the
+// safe baseline (never escalates an unrecognised verdict to a block).
+func mapSecuritySeverity(s security.Severity) inbox.Severity {
+	switch s {
+	case security.SeverityBlock:
+		return inbox.SeverityBlock
+	case security.SeverityWarn:
+		return inbox.SeverityWarn
+	default:
+		return inbox.SeverityInfo
+	}
 }
 
 // --- InboxConfig adapter (inbox → settings boundary) ---

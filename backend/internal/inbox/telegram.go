@@ -235,7 +235,7 @@ func (t *TelegramBot) handleMessage(ctx context.Context, msg *tgbotapi.Message) 
 				slog.Int64("chat_id", chatID), slog.String("lead_id", lead.ID.String()))
 		default:
 			bookingMsg := fmt.Sprintf(bookingLinkReplyTemplate, t.bookingLink)
-			if _, err := t.pendingProposer.Propose(ctx, lead.UserID, lead.ID, ChannelTelegram, PendingReplyKindBookingLink, bookingMsg); err != nil {
+			if _, err := t.pendingProposer.Propose(ctx, lead.UserID, lead.ID, ChannelTelegram, PendingReplyKindBookingLink, bookingMsg, text); err != nil {
 				t.logger.WarnContext(ctx, "failed to enqueue booking reply for approval",
 					slog.String("lead_id", lead.ID.String()), slog.Any("error", err))
 			}

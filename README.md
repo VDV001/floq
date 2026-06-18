@@ -4,7 +4,7 @@
 
 Единый инструмент: входящие лиды + холодный аутрич + AI-мозг.
 
-[![Version](https://img.shields.io/badge/version-0.45.0-blue)](VERSION)
+[![Version](https://img.shields.io/badge/version-0.46.0-blue)](VERSION)
 [![CI](https://github.com/VDV001/floq/actions/workflows/ci.yml/badge.svg)](https://github.com/VDV001/floq/actions/workflows/ci.yml)
 [![License: AGPL-3.0](https://img.shields.io/badge/license-AGPL--3.0-blue)](LICENSE)
 
@@ -186,7 +186,7 @@ floq/
 │   │   ├── config/                  # Чтение .env
 │   │   ├── db/                      # TxManager, транзакции
 │   │   └── httputil/                # JSON-ответы, контекст запроса
-│   └── migrations/                  # 39 SQL-миграций (up + down)
+│   └── migrations/                  # 40 SQL-миграций (up + down)
 ├── frontend/
 │   ├── src/app/                     # 13+ страниц (App Router)
 │   ├── src/components/              # 30+ компонентов (shadcn/ui)
@@ -281,9 +281,9 @@ go test -race ./...
 ### Добавить миграцию
 
 ```bash
-# Создать файлы миграции (следующий свободный номер — 040)
-touch backend/migrations/040_описание.up.sql
-touch backend/migrations/040_описание.down.sql
+# Создать файлы миграции (следующий свободный номер — 041)
+touch backend/migrations/041_описание.up.sql
+touch backend/migrations/041_описание.down.sql
 ```
 
 Миграции применяются автоматически при старте сервера.
