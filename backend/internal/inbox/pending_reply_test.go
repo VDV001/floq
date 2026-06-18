@@ -49,6 +49,50 @@ func TestNewPendingReply_RejectsEmptyBody(t *testing.T) {
 	}
 }
 
+func TestNewPendingReply_DefaultsToInfoSeverity(t *testing.T) {
+	// The plain factory is used by callers without a classified inbound
+	// context (tests, future non-security paths). Info is the safe baseline,
+	// matching the migration's grandfather default — never a higher severity
+	// by accident.
+	pr, err := NewPendingReply(uuid.New(), uuid.New(), ChannelTelegram, PendingReplyKindBookingLink, "hi")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if pr.InputSeverity != SeverityInfo {
+		t.Errorf("InputSeverity = %q, want %q", pr.InputSeverity, SeverityInfo)
+	}
+}
+
+func TestNewClassifiedPendingReply_RecordsSeverity(t *testing.T) {
+	for _, sev := range []Severity{SeverityInfo, SeverityWarn, SeverityBlock} {
+		t.Run(sev.String(), func(t *testing.T) {
+			pr, err := NewClassifiedPendingReply(uuid.New(), uuid.New(), ChannelTelegram, PendingReplyKindBookingLink, "book me", sev)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if pr.InputSeverity != sev {
+				t.Errorf("InputSeverity = %q, want %q", pr.InputSeverity, sev)
+			}
+		})
+	}
+}
+
+func TestNewClassifiedPendingReply_RejectsInvalidSeverity(t *testing.T) {
+	_, err := NewClassifiedPendingReply(uuid.New(), uuid.New(), ChannelTelegram, PendingReplyKindBookingLink, "body", Severity("critical"))
+	if !errors.Is(err, ErrPendingReplyInvalidSeverity) {
+		t.Fatalf("want ErrPendingReplyInvalidSeverity, got %v", err)
+	}
+}
+
+func TestNewClassifiedPendingReply_StillEnforcesBaseInvariants(t *testing.T) {
+	// Severity validation must not short-circuit the existing invariants —
+	// a missing user with a valid severity still fails on the user check.
+	_, err := NewClassifiedPendingReply(uuid.Nil, uuid.New(), ChannelTelegram, PendingReplyKindBookingLink, "body", SeverityInfo)
+	if !errors.Is(err, ErrPendingReplyMissingUser) {
+		t.Fatalf("want ErrPendingReplyMissingUser, got %v", err)
+	}
+}
+
 func TestNewPendingReply_StartsPendingWithGeneratedIDAndTimestamp(t *testing.T) {
 	userID := uuid.New()
 	leadID := uuid.New()
