@@ -426,6 +426,19 @@ func main() {
 	emailHITLSender := newInboxEmailSenderAdapter(emailSender)
 	emailDispatcher := newEmailReplyDispatcher(emailHITLSender, leadsRepo, inboxLeadAdapter)
 
+	// L2 reply gate (agent-security): both wiring branches below route the
+	// channel dispatcher through the tool-call firewall, so a reply whose
+	// inbound trigger was Block-flagged is refused at send even after
+	// operator approval. KnownActions is set per the standard (default-deny
+	// unknown actions); the two send_* actions are the only ones this path
+	// ever inspects.
+	replyFirewall := security.NewToolCallFirewall(security.ToolCallPolicy{
+		KnownActions: []string{"send_email", "send_telegram"},
+	})
+	guardReply := func(d inbox.ReplyDispatcher) inbox.ReplyDispatcher {
+		return newGuardedReplyDispatcher(d, replyFirewall, slog.Default())
+	}
+
 	var telegramDispatcher inbox.ReplyDispatcher
 	if tgToken != "" {
 		tgBot, err := inbox.NewTelegramBot(tgToken, inboxLeadAdapter, prospectAdapter, inboxAI, ownerID, cfg.BookingLink, httpClient,
@@ -441,7 +454,7 @@ func main() {
 			// being fully wired finds at worst a missing dispatcher
 			// error (logged) rather than a partially-initialised cycle.
 			telegramDispatcher = newTelegramReplyDispatcher(tgBot.Bot(), leadsRepo, inboxLeadAdapter)
-			pendingReplyUC.SetDispatcher(newChannelReplyDispatcher(telegramDispatcher, emailDispatcher))
+			pendingReplyUC.SetDispatcher(guardReply(newChannelReplyDispatcher(telegramDispatcher, emailDispatcher)))
 			tgBot.SetPendingProposer(pendingReplyUC)
 			go tgBot.Start(ctx)
 			// Set the telegram sender on the leads use case
@@ -458,7 +471,7 @@ func main() {
 	if telegramDispatcher == nil {
 		// Wire the router with only the email branch so the email
 		// HITL surface works in deployments without a Telegram bot.
-		pendingReplyUC.SetDispatcher(newChannelReplyDispatcher(nil, emailDispatcher))
+		pendingReplyUC.SetDispatcher(guardReply(newChannelReplyDispatcher(nil, emailDispatcher)))
 	}
 
 	// 9. Email IMAP poller (reads settings from DB, falls back to .env).
