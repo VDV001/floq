@@ -155,6 +155,34 @@ type IdentityLinker interface {
 	LinkLeadToIdentity(ctx context.Context, userID, leadID uuid.UUID, email, phone, telegramUsername string) error
 }
 
+// ReplyTarget is the inbox-local read model carrying the channel-native
+// destination for an approved reply: the lead's Telegram chat id and/or
+// email address. Neither value is derivable from a PendingReply alone —
+// both live on the lead row — so the reply dispatchers resolve a target by
+// lead id at send time. The composition-root adapter maps a leads-context
+// Lead onto this struct so the inbox dispatchers never import the leads
+// domain.
+//
+// Both fields are optional: a Telegram-only lead has a nil EmailAddress and
+// vice versa. The channel-specific dispatcher validates the one field it
+// needs and returns an error when that destination is absent, so a
+// misrouted reply never silently no-ops.
+type ReplyTarget struct {
+	TelegramChatID *int64
+	EmailAddress   *string
+}
+
+// ReplyTargetLookup resolves the channel destination for an approved reply
+// by lead id. Implementations live in the composition root (an adapter over
+// the leads repository). A (nil, nil) return signals "lead not found" so the
+// dispatcher can surface a clear error without the inbox context learning
+// the leads domain's not-found semantics; a non-nil error is a genuine
+// lookup failure the dispatcher propagates so the usecase keeps the row
+// Approved for retry.
+type ReplyTargetLookup interface {
+	LookupReplyTarget(ctx context.Context, leadID uuid.UUID) (*ReplyTarget, error)
+}
+
 // EmailSender is the narrow port inbox needs to dispatch an
 // approved PendingReply on the email channel. Implementations live
 // in the composition root (an adapter that wraps the outbound
