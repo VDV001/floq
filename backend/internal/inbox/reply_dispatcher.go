@@ -1,16 +1,15 @@
-package main
+package inbox
 
 import (
 	"context"
 	"fmt"
 
-	"github.com/daniil/floq/internal/inbox"
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
 
-// Compile-time check that *telegramReplyDispatcher satisfies the inbox
+// Compile-time check that *telegramReplyDispatcher satisfies the
 // ReplyDispatcher port.
-var _ inbox.ReplyDispatcher = (*telegramReplyDispatcher)(nil)
+var _ ReplyDispatcher = (*telegramReplyDispatcher)(nil)
 
 // telegramBotSender narrows the Telegram bot API surface to just the
 // Send method. The full *tgbotapi.BotAPI satisfies this interface,
@@ -20,10 +19,10 @@ type telegramBotSender interface {
 	Send(c tgbotapi.Chattable) (tgbotapi.Message, error)
 }
 
-// inboxMessageWriter narrows inbox.LeadRepository to the single
-// CreateMessage call the dispatcher makes for outbound history.
+// inboxMessageWriter narrows LeadRepository to the single CreateMessage
+// call the dispatcher makes for outbound history.
 type inboxMessageWriter interface {
-	CreateMessage(ctx context.Context, msg *inbox.InboxMessage) error
+	CreateMessage(ctx context.Context, msg *InboxMessage) error
 }
 
 // telegramReplyDispatcher delivers an approved PendingReply to the
@@ -34,11 +33,15 @@ type inboxMessageWriter interface {
 // extends PendingReplyKind beyond booking_link.
 type telegramReplyDispatcher struct {
 	bot       telegramBotSender
-	targets   inbox.ReplyTargetLookup
+	targets   ReplyTargetLookup
 	inboxRepo inboxMessageWriter
 }
 
-func newTelegramReplyDispatcher(bot telegramBotSender, targets inbox.ReplyTargetLookup, inboxRepo inboxMessageWriter) *telegramReplyDispatcher {
+// NewTelegramReplyDispatcher builds the telegram reply dispatcher. The bot
+// and the inbox message writer are supplied by the composition root; targets
+// resolves the lead's chat id without the inbox context importing the leads
+// domain.
+func NewTelegramReplyDispatcher(bot telegramBotSender, targets ReplyTargetLookup, inboxRepo inboxMessageWriter) ReplyDispatcher {
 	return &telegramReplyDispatcher{bot: bot, targets: targets, inboxRepo: inboxRepo}
 }
 
@@ -48,8 +51,8 @@ func newTelegramReplyDispatcher(bot telegramBotSender, targets inbox.ReplyTarget
 // showing a "sent" row for a message that never left the server; the
 // reverse risks history loss for a message the customer did receive,
 // which we accept as a smaller and more recoverable failure mode.
-func (d *telegramReplyDispatcher) Dispatch(ctx context.Context, pr *inbox.PendingReply) error {
-	if pr.Channel != inbox.ChannelTelegram {
+func (d *telegramReplyDispatcher) Dispatch(ctx context.Context, pr *PendingReply) error {
+	if pr.Channel != ChannelTelegram {
 		return fmt.Errorf("telegram dispatcher: unsupported channel %q", pr.Channel)
 	}
 	target, err := d.targets.LookupReplyTarget(ctx, pr.LeadID)
@@ -66,7 +69,7 @@ func (d *telegramReplyDispatcher) Dispatch(ctx context.Context, pr *inbox.Pendin
 	if _, err := d.bot.Send(msg); err != nil {
 		return fmt.Errorf("telegram send: %w", err)
 	}
-	outMsg := inbox.NewInboxMessage(pr.LeadID, inbox.DirectionOutbound, pr.Body)
+	outMsg := NewInboxMessage(pr.LeadID, DirectionOutbound, pr.Body)
 	if err := d.inboxRepo.CreateMessage(ctx, outMsg); err != nil {
 		return fmt.Errorf("persist outbound message: %w", err)
 	}

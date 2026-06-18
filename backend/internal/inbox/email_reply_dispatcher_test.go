@@ -1,4 +1,4 @@
-package main
+package inbox
 
 import (
 	"context"
@@ -6,7 +6,6 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/daniil/floq/internal/inbox"
 	"github.com/google/uuid"
 )
 
@@ -38,8 +37,8 @@ func (f *fakeEmailSender) Calls() []emailSendCall {
 	return append([]emailSendCall(nil), f.calls...)
 }
 
-func targetWithEmail(email string) *inbox.ReplyTarget {
-	return &inbox.ReplyTarget{EmailAddress: &email}
+func targetWithEmail(email string) *ReplyTarget {
+	return &ReplyTarget{EmailAddress: &email}
 }
 
 // --- Dispatch ---
@@ -47,11 +46,11 @@ func targetWithEmail(email string) *inbox.ReplyTarget {
 func TestEmailReplyDispatcher_HappyPath_SendsAndPersists(t *testing.T) {
 	leadID := uuid.New()
 	sender := &fakeEmailSender{}
-	targets := &fakeReplyTargetLookup{targets: map[uuid.UUID]*inbox.ReplyTarget{leadID: targetWithEmail("lead@example.com")}}
+	targets := &fakeReplyTargetLookup{targets: map[uuid.UUID]*ReplyTarget{leadID: targetWithEmail("lead@example.com")}}
 	writer := &fakeInboxMessageWriter{}
 
-	d := newEmailReplyDispatcher(sender, targets, writer)
-	pr := newPendingReplyT(t, leadID, inbox.ChannelEmail)
+	d := NewEmailReplyDispatcher(sender, targets, writer)
+	pr := newPendingReplyT(t, leadID, ChannelEmail)
 
 	if err := d.Dispatch(context.Background(), pr); err != nil {
 		t.Fatalf("Dispatch error: %v", err)
@@ -79,8 +78,8 @@ func TestEmailReplyDispatcher_HappyPath_SendsAndPersists(t *testing.T) {
 }
 
 func TestEmailReplyDispatcher_RejectsNonEmailChannel(t *testing.T) {
-	d := newEmailReplyDispatcher(&fakeEmailSender{}, &fakeReplyTargetLookup{}, &fakeInboxMessageWriter{})
-	pr := newPendingReplyT(t, uuid.New(), inbox.ChannelTelegram)
+	d := NewEmailReplyDispatcher(&fakeEmailSender{}, &fakeReplyTargetLookup{}, &fakeInboxMessageWriter{})
+	pr := newPendingReplyT(t, uuid.New(), ChannelTelegram)
 
 	err := d.Dispatch(context.Background(), pr)
 	if err == nil {
@@ -92,8 +91,8 @@ func TestEmailReplyDispatcher_LeadFetchError_PropagatesAndDoesNotSend(t *testing
 	leadID := uuid.New()
 	sender := &fakeEmailSender{}
 	targets := &fakeReplyTargetLookup{getErr: errors.New("db hiccup")}
-	d := newEmailReplyDispatcher(sender, targets, &fakeInboxMessageWriter{})
-	pr := newPendingReplyT(t, leadID, inbox.ChannelEmail)
+	d := NewEmailReplyDispatcher(sender, targets, &fakeInboxMessageWriter{})
+	pr := newPendingReplyT(t, leadID, ChannelEmail)
 
 	if err := d.Dispatch(context.Background(), pr); err == nil {
 		t.Fatal("expected error from lead fetch, got nil")
@@ -106,9 +105,9 @@ func TestEmailReplyDispatcher_LeadFetchError_PropagatesAndDoesNotSend(t *testing
 func TestEmailReplyDispatcher_LeadWithoutEmailAddress_Errors(t *testing.T) {
 	leadID := uuid.New()
 	sender := &fakeEmailSender{}
-	targets := &fakeReplyTargetLookup{targets: map[uuid.UUID]*inbox.ReplyTarget{leadID: { /* no EmailAddress */}}}
-	d := newEmailReplyDispatcher(sender, targets, &fakeInboxMessageWriter{})
-	pr := newPendingReplyT(t, leadID, inbox.ChannelEmail)
+	targets := &fakeReplyTargetLookup{targets: map[uuid.UUID]*ReplyTarget{leadID: { /* no EmailAddress */}}}
+	d := NewEmailReplyDispatcher(sender, targets, &fakeInboxMessageWriter{})
+	pr := newPendingReplyT(t, leadID, ChannelEmail)
 
 	if err := d.Dispatch(context.Background(), pr); err == nil {
 		t.Fatal("expected error when lead has no email_address, got nil")
@@ -121,11 +120,11 @@ func TestEmailReplyDispatcher_LeadWithoutEmailAddress_Errors(t *testing.T) {
 func TestEmailReplyDispatcher_SendFailure_DoesNotPersistOutbound(t *testing.T) {
 	leadID := uuid.New()
 	sender := &fakeEmailSender{failWith: errors.New("smtp 5xx")}
-	targets := &fakeReplyTargetLookup{targets: map[uuid.UUID]*inbox.ReplyTarget{leadID: targetWithEmail("lead@example.com")}}
+	targets := &fakeReplyTargetLookup{targets: map[uuid.UUID]*ReplyTarget{leadID: targetWithEmail("lead@example.com")}}
 	writer := &fakeInboxMessageWriter{}
 
-	d := newEmailReplyDispatcher(sender, targets, writer)
-	pr := newPendingReplyT(t, leadID, inbox.ChannelEmail)
+	d := NewEmailReplyDispatcher(sender, targets, writer)
+	pr := newPendingReplyT(t, leadID, ChannelEmail)
 
 	if err := d.Dispatch(context.Background(), pr); err == nil {
 		t.Fatal("expected error to propagate from sender")
@@ -140,8 +139,8 @@ func TestEmailReplyDispatcher_SendFailure_DoesNotPersistOutbound(t *testing.T) {
 func TestChannelReplyDispatcher_RoutesTelegramToTelegramBranch(t *testing.T) {
 	tg := &recordingDispatcher{name: "telegram"}
 	email := &recordingDispatcher{name: "email"}
-	d := newChannelReplyDispatcher(tg, email)
-	pr := newPendingReplyT(t, uuid.New(), inbox.ChannelTelegram)
+	d := NewChannelReplyDispatcher(tg, email)
+	pr := newPendingReplyT(t, uuid.New(), ChannelTelegram)
 
 	if err := d.Dispatch(context.Background(), pr); err != nil {
 		t.Fatalf("Dispatch error: %v", err)
@@ -154,8 +153,8 @@ func TestChannelReplyDispatcher_RoutesTelegramToTelegramBranch(t *testing.T) {
 func TestChannelReplyDispatcher_RoutesEmailToEmailBranch(t *testing.T) {
 	tg := &recordingDispatcher{name: "telegram"}
 	email := &recordingDispatcher{name: "email"}
-	d := newChannelReplyDispatcher(tg, email)
-	pr := newPendingReplyT(t, uuid.New(), inbox.ChannelEmail)
+	d := NewChannelReplyDispatcher(tg, email)
+	pr := newPendingReplyT(t, uuid.New(), ChannelEmail)
 
 	if err := d.Dispatch(context.Background(), pr); err != nil {
 		t.Fatalf("Dispatch error: %v", err)
@@ -166,8 +165,8 @@ func TestChannelReplyDispatcher_RoutesEmailToEmailBranch(t *testing.T) {
 }
 
 func TestChannelReplyDispatcher_NilBranchReturnsUnsupported(t *testing.T) {
-	d := newChannelReplyDispatcher(&recordingDispatcher{}, nil)
-	pr := newPendingReplyT(t, uuid.New(), inbox.ChannelEmail)
+	d := NewChannelReplyDispatcher(&recordingDispatcher{}, nil)
+	pr := newPendingReplyT(t, uuid.New(), ChannelEmail)
 
 	err := d.Dispatch(context.Background(), pr)
 	if !errors.Is(err, ErrChannelDispatcherUnsupported) {
@@ -181,7 +180,7 @@ type recordingDispatcher struct {
 	failErr error
 }
 
-func (r *recordingDispatcher) Dispatch(_ context.Context, _ *inbox.PendingReply) error {
+func (r *recordingDispatcher) Dispatch(_ context.Context, _ *PendingReply) error {
 	r.calls++
 	return r.failErr
 }

@@ -1,4 +1,4 @@
-package main
+package inbox
 
 import (
 	"context"
@@ -6,7 +6,6 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/daniil/floq/internal/inbox"
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 	"github.com/google/uuid"
 )
@@ -36,11 +35,11 @@ func (f *fakeBotSender) sentCount() int {
 }
 
 type fakeReplyTargetLookup struct {
-	targets map[uuid.UUID]*inbox.ReplyTarget
+	targets map[uuid.UUID]*ReplyTarget
 	getErr  error
 }
 
-func (f *fakeReplyTargetLookup) LookupReplyTarget(_ context.Context, id uuid.UUID) (*inbox.ReplyTarget, error) {
+func (f *fakeReplyTargetLookup) LookupReplyTarget(_ context.Context, id uuid.UUID) (*ReplyTarget, error) {
 	if f.getErr != nil {
 		return nil, f.getErr
 	}
@@ -49,11 +48,11 @@ func (f *fakeReplyTargetLookup) LookupReplyTarget(_ context.Context, id uuid.UUI
 
 type fakeInboxMessageWriter struct {
 	mu      sync.Mutex
-	written []*inbox.InboxMessage
+	written []*InboxMessage
 	failErr error
 }
 
-func (f *fakeInboxMessageWriter) CreateMessage(_ context.Context, msg *inbox.InboxMessage) error {
+func (f *fakeInboxMessageWriter) CreateMessage(_ context.Context, msg *InboxMessage) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.written = append(f.written, msg)
@@ -71,17 +70,17 @@ func (f *fakeInboxMessageWriter) writtenCount() int {
 
 // --- helpers ---
 
-func newPendingReplyT(t *testing.T, leadID uuid.UUID, channel inbox.Channel) *inbox.PendingReply {
+func newPendingReplyT(t *testing.T, leadID uuid.UUID, channel Channel) *PendingReply {
 	t.Helper()
-	pr, err := inbox.NewPendingReply(uuid.New(), leadID, channel, inbox.PendingReplyKindBookingLink, "hi")
+	pr, err := NewPendingReply(uuid.New(), leadID, channel, PendingReplyKindBookingLink, "hi")
 	if err != nil {
 		t.Fatalf("fixture build: %v", err)
 	}
 	return pr
 }
 
-func targetWithChat(chatID int64) *inbox.ReplyTarget {
-	return &inbox.ReplyTarget{TelegramChatID: &chatID}
+func targetWithChat(chatID int64) *ReplyTarget {
+	return &ReplyTarget{TelegramChatID: &chatID}
 }
 
 // --- Dispatch ---
@@ -89,11 +88,11 @@ func targetWithChat(chatID int64) *inbox.ReplyTarget {
 func TestTelegramReplyDispatcher_HappyPath_SendsAndPersists(t *testing.T) {
 	leadID := uuid.New()
 	bot := &fakeBotSender{}
-	targets := &fakeReplyTargetLookup{targets: map[uuid.UUID]*inbox.ReplyTarget{leadID: targetWithChat(12345)}}
+	targets := &fakeReplyTargetLookup{targets: map[uuid.UUID]*ReplyTarget{leadID: targetWithChat(12345)}}
 	writer := &fakeInboxMessageWriter{}
 
-	d := newTelegramReplyDispatcher(bot, targets, writer)
-	pr := newPendingReplyT(t, leadID, inbox.ChannelTelegram)
+	d := NewTelegramReplyDispatcher(bot, targets, writer)
+	pr := newPendingReplyT(t, leadID, ChannelTelegram)
 
 	if err := d.Dispatch(context.Background(), pr); err != nil {
 		t.Fatalf("Dispatch error: %v", err)
@@ -105,7 +104,7 @@ func TestTelegramReplyDispatcher_HappyPath_SendsAndPersists(t *testing.T) {
 	if writer.writtenCount() != 1 {
 		t.Errorf("CreateMessage calls = %d, want 1 (outbound history)", writer.writtenCount())
 	}
-	if got := writer.written[0]; got.Direction != inbox.DirectionOutbound || got.LeadID != leadID || got.Body != pr.Body {
+	if got := writer.written[0]; got.Direction != DirectionOutbound || got.LeadID != leadID || got.Body != pr.Body {
 		t.Errorf("written message = %+v, want outbound for lead %v with body %q", got, leadID, pr.Body)
 	}
 	if msg, ok := bot.sent[0].(tgbotapi.MessageConfig); !ok || msg.ChatID != 12345 || msg.Text != pr.Body {
@@ -114,8 +113,8 @@ func TestTelegramReplyDispatcher_HappyPath_SendsAndPersists(t *testing.T) {
 }
 
 func TestTelegramReplyDispatcher_RejectsNonTelegramChannel(t *testing.T) {
-	d := newTelegramReplyDispatcher(&fakeBotSender{}, &fakeReplyTargetLookup{}, &fakeInboxMessageWriter{})
-	pr := newPendingReplyT(t, uuid.New(), inbox.ChannelEmail)
+	d := NewTelegramReplyDispatcher(&fakeBotSender{}, &fakeReplyTargetLookup{}, &fakeInboxMessageWriter{})
+	pr := newPendingReplyT(t, uuid.New(), ChannelEmail)
 
 	err := d.Dispatch(context.Background(), pr)
 	if err == nil {
@@ -125,11 +124,11 @@ func TestTelegramReplyDispatcher_RejectsNonTelegramChannel(t *testing.T) {
 
 func TestTelegramReplyDispatcher_LeadNotFoundReturnsError(t *testing.T) {
 	bot := &fakeBotSender{}
-	targets := &fakeReplyTargetLookup{targets: map[uuid.UUID]*inbox.ReplyTarget{}} // empty
+	targets := &fakeReplyTargetLookup{targets: map[uuid.UUID]*ReplyTarget{}} // empty
 	writer := &fakeInboxMessageWriter{}
 
-	d := newTelegramReplyDispatcher(bot, targets, writer)
-	pr := newPendingReplyT(t, uuid.New(), inbox.ChannelTelegram)
+	d := NewTelegramReplyDispatcher(bot, targets, writer)
+	pr := newPendingReplyT(t, uuid.New(), ChannelTelegram)
 
 	if err := d.Dispatch(context.Background(), pr); err == nil {
 		t.Fatal("Dispatch must error when lead is missing")
@@ -145,11 +144,11 @@ func TestTelegramReplyDispatcher_LeadNotFoundReturnsError(t *testing.T) {
 func TestTelegramReplyDispatcher_LeadWithoutChatIDReturnsError(t *testing.T) {
 	leadID := uuid.New()
 	bot := &fakeBotSender{}
-	targets := &fakeReplyTargetLookup{targets: map[uuid.UUID]*inbox.ReplyTarget{leadID: { /* TelegramChatID nil */}}}
+	targets := &fakeReplyTargetLookup{targets: map[uuid.UUID]*ReplyTarget{leadID: { /* TelegramChatID nil */}}}
 	writer := &fakeInboxMessageWriter{}
 
-	d := newTelegramReplyDispatcher(bot, targets, writer)
-	pr := newPendingReplyT(t, leadID, inbox.ChannelTelegram)
+	d := NewTelegramReplyDispatcher(bot, targets, writer)
+	pr := newPendingReplyT(t, leadID, ChannelTelegram)
 
 	if err := d.Dispatch(context.Background(), pr); err == nil {
 		t.Fatal("Dispatch must error when lead has no TelegramChatID")
@@ -164,8 +163,8 @@ func TestTelegramReplyDispatcher_LeadFetchErrorPropagates(t *testing.T) {
 	targets := &fakeReplyTargetLookup{getErr: errors.New("db down")}
 	writer := &fakeInboxMessageWriter{}
 
-	d := newTelegramReplyDispatcher(bot, targets, writer)
-	pr := newPendingReplyT(t, uuid.New(), inbox.ChannelTelegram)
+	d := NewTelegramReplyDispatcher(bot, targets, writer)
+	pr := newPendingReplyT(t, uuid.New(), ChannelTelegram)
 
 	err := d.Dispatch(context.Background(), pr)
 	if err == nil || !errors.Is(err, targets.getErr) {
@@ -179,11 +178,11 @@ func TestTelegramReplyDispatcher_LeadFetchErrorPropagates(t *testing.T) {
 func TestTelegramReplyDispatcher_BotSendErrorSkipsPersist(t *testing.T) {
 	leadID := uuid.New()
 	bot := &fakeBotSender{failWith: errors.New("telegram 500")}
-	targets := &fakeReplyTargetLookup{targets: map[uuid.UUID]*inbox.ReplyTarget{leadID: targetWithChat(99)}}
+	targets := &fakeReplyTargetLookup{targets: map[uuid.UUID]*ReplyTarget{leadID: targetWithChat(99)}}
 	writer := &fakeInboxMessageWriter{}
 
-	d := newTelegramReplyDispatcher(bot, targets, writer)
-	pr := newPendingReplyT(t, leadID, inbox.ChannelTelegram)
+	d := NewTelegramReplyDispatcher(bot, targets, writer)
+	pr := newPendingReplyT(t, leadID, ChannelTelegram)
 
 	err := d.Dispatch(context.Background(), pr)
 	if err == nil || !errors.Is(err, bot.failWith) {
@@ -197,11 +196,11 @@ func TestTelegramReplyDispatcher_BotSendErrorSkipsPersist(t *testing.T) {
 func TestTelegramReplyDispatcher_PersistErrorReturnsErrorAfterSendSucceeds(t *testing.T) {
 	leadID := uuid.New()
 	bot := &fakeBotSender{}
-	targets := &fakeReplyTargetLookup{targets: map[uuid.UUID]*inbox.ReplyTarget{leadID: targetWithChat(1)}}
+	targets := &fakeReplyTargetLookup{targets: map[uuid.UUID]*ReplyTarget{leadID: targetWithChat(1)}}
 	writer := &fakeInboxMessageWriter{failErr: errors.New("db boom")}
 
-	d := newTelegramReplyDispatcher(bot, targets, writer)
-	pr := newPendingReplyT(t, leadID, inbox.ChannelTelegram)
+	d := NewTelegramReplyDispatcher(bot, targets, writer)
+	pr := newPendingReplyT(t, leadID, ChannelTelegram)
 
 	err := d.Dispatch(context.Background(), pr)
 	if err == nil {

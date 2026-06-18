@@ -1,16 +1,14 @@
-package main
+package inbox
 
 import (
 	"context"
 	"errors"
 	"fmt"
-
-	"github.com/daniil/floq/internal/inbox"
 )
 
-// Compile-time check that *channelReplyDispatcher satisfies the inbox
+// Compile-time check that *channelReplyDispatcher satisfies the
 // ReplyDispatcher port.
-var _ inbox.ReplyDispatcher = (*channelReplyDispatcher)(nil)
+var _ ReplyDispatcher = (*channelReplyDispatcher)(nil)
 
 // ErrChannelDispatcherUnsupported signals that a PendingReply arrived
 // on a channel the router has no dispatcher for. Distinct sentinel so
@@ -30,11 +28,14 @@ var ErrChannelDispatcherUnsupported = errors.New("channel reply dispatcher: unsu
 // sentinel so misconfiguration surfaces as a clear error rather than
 // a panic.
 type channelReplyDispatcher struct {
-	telegram inbox.ReplyDispatcher
-	email    inbox.ReplyDispatcher
+	telegram ReplyDispatcher
+	email    ReplyDispatcher
 }
 
-func newChannelReplyDispatcher(telegram, email inbox.ReplyDispatcher) *channelReplyDispatcher {
+// NewChannelReplyDispatcher builds the channel router. Called from the
+// composition root, which supplies the per-channel dispatchers (either
+// may be nil when its transport is not configured).
+func NewChannelReplyDispatcher(telegram, email ReplyDispatcher) ReplyDispatcher {
 	return &channelReplyDispatcher{telegram: telegram, email: email}
 }
 
@@ -42,12 +43,12 @@ func newChannelReplyDispatcher(telegram, email inbox.ReplyDispatcher) *channelRe
 // nil branch surfaces ErrChannelDispatcherUnsupported so an
 // unwired channel returns a clear, errors.Is-matchable sentinel
 // instead of panicking.
-func (d *channelReplyDispatcher) Dispatch(ctx context.Context, pr *inbox.PendingReply) error {
-	var target inbox.ReplyDispatcher
+func (d *channelReplyDispatcher) Dispatch(ctx context.Context, pr *PendingReply) error {
+	var target ReplyDispatcher
 	switch pr.Channel {
-	case inbox.ChannelTelegram:
+	case ChannelTelegram:
 		target = d.telegram
-	case inbox.ChannelEmail:
+	case ChannelEmail:
 		target = d.email
 	default:
 		return fmt.Errorf("%w: %q", ErrChannelDispatcherUnsupported, pr.Channel)

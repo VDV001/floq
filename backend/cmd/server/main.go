@@ -428,7 +428,7 @@ func main() {
 	// lead id, mapping leadsdomain.Lead -> inbox.ReplyTarget so the inbox
 	// dispatchers stay free of the leads domain.
 	leadReplyTargets := newLeadReplyTargetAdapter(leadsRepo)
-	emailDispatcher := newEmailReplyDispatcher(emailHITLSender, leadReplyTargets, inboxLeadAdapter)
+	emailDispatcher := inbox.NewEmailReplyDispatcher(emailHITLSender, leadReplyTargets, inboxLeadAdapter)
 
 	// L2 reply gate (agent-security): both wiring branches below route the
 	// channel dispatcher through the tool-call firewall, so a reply whose
@@ -457,8 +457,8 @@ func main() {
 			// arriving in the gap between bot start and approval flow
 			// being fully wired finds at worst a missing dispatcher
 			// error (logged) rather than a partially-initialised cycle.
-			telegramDispatcher = newTelegramReplyDispatcher(tgBot.Bot(), leadReplyTargets, inboxLeadAdapter)
-			pendingReplyUC.SetDispatcher(guardReply(newChannelReplyDispatcher(telegramDispatcher, emailDispatcher)))
+			telegramDispatcher = inbox.NewTelegramReplyDispatcher(tgBot.Bot(), leadReplyTargets, inboxLeadAdapter)
+			pendingReplyUC.SetDispatcher(guardReply(inbox.NewChannelReplyDispatcher(telegramDispatcher, emailDispatcher)))
 			tgBot.SetPendingProposer(pendingReplyUC)
 			go tgBot.Start(ctx)
 			// Set the telegram sender on the leads use case
@@ -475,7 +475,7 @@ func main() {
 	if telegramDispatcher == nil {
 		// Wire the router with only the email branch so the email
 		// HITL surface works in deployments without a Telegram bot.
-		pendingReplyUC.SetDispatcher(guardReply(newChannelReplyDispatcher(nil, emailDispatcher)))
+		pendingReplyUC.SetDispatcher(guardReply(inbox.NewChannelReplyDispatcher(nil, emailDispatcher)))
 	}
 
 	// 9. Email IMAP poller (reads settings from DB, falls back to .env).
