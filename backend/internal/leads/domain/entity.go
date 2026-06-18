@@ -1,11 +1,22 @@
 package domain
 
 import (
+	"errors"
 	"fmt"
 	"time"
 
 	"github.com/daniil/floq/internal/normalize"
 	"github.com/google/uuid"
+)
+
+// Transition errors. Declared as package vars so callers can use
+// errors.Is — notably the 1C applier adapter, which swallows only a
+// benign disallowed-edge (ErrInvalidTransition) and propagates anything
+// else. A bare fmt.Errorf for these business outcomes would force string
+// matching at the boundary; the sentinels keep the rule in the domain.
+var (
+	ErrInvalidLeadStatus = errors.New("leads: invalid lead status")
+	ErrInvalidTransition = errors.New("leads: invalid lead status transition")
 )
 
 // --- LeadStatus value object ---
@@ -177,10 +188,10 @@ func (l *Lead) OnOutboundSent() (changed bool) {
 // TransitionTo validates and applies a status transition.
 func (l *Lead) TransitionTo(target LeadStatus) error {
 	if !target.IsValid() {
-		return fmt.Errorf("invalid lead status: %q", target)
+		return fmt.Errorf("%w: %q", ErrInvalidLeadStatus, target)
 	}
 	if !l.Status.CanTransitionTo(target) {
-		return fmt.Errorf("cannot transition lead from %q to %q", l.Status, target)
+		return fmt.Errorf("%w: %q -> %q", ErrInvalidTransition, l.Status, target)
 	}
 	l.Status = target
 	l.UpdatedAt = time.Now().UTC()
