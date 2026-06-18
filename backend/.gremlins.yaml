@@ -1,0 +1,43 @@
+# Mutation-testing config for gremlins (github.com/go-gremlins/gremlins).
+#
+# Requested mutator set: arithmetic, conditionals_boundary,
+# conditionals_negation, increment_decrement, invert_negatives, remove_return.
+# gremlins implements the first five; it has NO remove_return mutator
+# (that one exists in go-mutesting / Stryker), so it is absent here by
+# necessity — see the mutation-testing report for the honest qualifier.
+#
+# All other gremlins mutators are explicitly disabled so the run matches
+# the requested set exactly.
+unleash:
+  # Per-mutant test timeout = (baseline test runtime) × coefficient. The
+  # baseline run of these domain tests is sub-millisecond, while each mutant
+  # forces a cold recompile of the package in gremlins' temp workdir; with the
+  # default coefficient every mutant TIMED OUT before its (fast) test could even
+  # start. 50 gives the recompile room to finish — domain code has no real
+  # infinite-loop mutants, so a generous coefficient is safe here.
+  timeout-coefficient: 50
+  workers: 2
+  mutants:
+    arithmetic_base:
+      enabled: true
+    conditionals_boundary:
+      enabled: true
+    conditionals_negation:
+      enabled: true
+    increment_decrement:
+      enabled: true
+    invert_negatives:
+      enabled: true
+    # --- explicitly disabled (not in the requested set) ---
+    invert_assignments:
+      enabled: false
+    invert_bitwise:
+      enabled: false
+    invert_bwassign:
+      enabled: false
+    invert_logical:
+      enabled: false
+    invert_loopctrl:
+      enabled: false
+    remove_self_assignments:
+      enabled: false
