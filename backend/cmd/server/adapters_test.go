@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"io"
 	"log/slog"
 	"testing"
@@ -58,34 +59,45 @@ func leadWith(status leadsdomain.LeadStatus) *leadsdomain.Lead {
 }
 
 func TestOnecApplier_HandlePayment(t *testing.T) {
+	// The adapter delegates the transition-legality decision to the domain
+	// (via the leadMover → usecase → Lead.TransitionTo): it ALWAYS attempts
+	// the move for a matched lead and reacts to the result. A benign
+	// disallowed-edge (ErrInvalidTransition) is swallowed; any other error
+	// propagates. Transition legality itself is the domain's test, not this
+	// one — hence the mover simulates the verdict via moverErr.
+	otherErr := errors.New("db exploded")
 	tests := []struct {
-		name       string
-		email      string
-		lead       *leadsdomain.Lead
-		wantMoved  bool
-		wantStatus string
+		name      string
+		email     string
+		lead      *leadsdomain.Lead
+		moverErr  error
+		wantCalls int
+		wantErr   bool
 	}{
-		{"qualified lead → won", "a@b.ru", leadWith(leadsdomain.StatusQualified), true, "won"},
-		{"new lead can't go to won → skip", "a@b.ru", leadWith(leadsdomain.StatusNew), false, ""},
-		{"no lead → skip", "a@b.ru", nil, false, ""},
-		{"empty email → skip", "", leadWith(leadsdomain.StatusQualified), false, ""},
+		{"matched lead → attempts won", "a@b.ru", leadWith(leadsdomain.StatusQualified), nil, 1, false},
+		{"illegal transition swallowed", "a@b.ru", leadWith(leadsdomain.StatusNew), leadsdomain.ErrInvalidTransition, 1, false},
+		{"vanished lead swallowed", "a@b.ru", leadWith(leadsdomain.StatusQualified), leadsdomain.ErrLeadNotFound, 1, false},
+		{"other mover error propagates", "a@b.ru", leadWith(leadsdomain.StatusQualified), otherErr, 1, true},
+		{"no lead → skip", "a@b.ru", nil, nil, 0, false},
+		{"empty email → skip", "", leadWith(leadsdomain.StatusQualified), nil, 0, false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			mover := &fakeLeadMover{}
+			mover := &fakeLeadMover{err: tt.moverErr}
 			a := newOnecApplierAdapter(&fakeLeadLookup{lead: tt.lead}, mover, &fakeProspects{}, quietLogger())
 
-			if err := a.HandlePayment(context.Background(), uuid.New(), tt.email); err != nil {
+			err := a.HandlePayment(context.Background(), uuid.New(), tt.email)
+			if tt.wantErr && err == nil {
+				t.Fatal("expected error to propagate, got nil")
+			}
+			if !tt.wantErr && err != nil {
 				t.Fatalf("unexpected err: %v", err)
 			}
-			if tt.wantMoved && mover.calls != 1 {
-				t.Fatalf("expected UpdateStatus call, got %d", mover.calls)
+			if mover.calls != tt.wantCalls {
+				t.Fatalf("UpdateStatus calls = %d, want %d", mover.calls, tt.wantCalls)
 			}
-			if !tt.wantMoved && mover.calls != 0 {
-				t.Fatalf("expected no transition, got %d calls", mover.calls)
-			}
-			if tt.wantMoved && mover.status != tt.wantStatus {
-				t.Errorf("status = %q, want %q", mover.status, tt.wantStatus)
+			if tt.wantCalls > 0 && mover.status != "won" {
+				t.Errorf("status = %q, want won", mover.status)
 			}
 		})
 	}

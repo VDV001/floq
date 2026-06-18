@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"time"
@@ -688,7 +689,10 @@ func (a *onecApplierAdapter) HandleShipment(ctx context.Context, userID uuid.UUI
 
 // moveLeadByEmail transitions the lead matched by email to target, skipping
 // benignly when there is no match or the transition is illegal for the lead's
-// current state.
+// current state. The legality decision belongs to the domain
+// (Lead.TransitionTo), not this adapter: we attempt the move and swallow only
+// the benign ErrInvalidTransition sentinel, surfaced as a log line — a 1C
+// webhook must not be failed for a state mismatch. Any other error propagates.
 func (a *onecApplierAdapter) moveLeadByEmail(ctx context.Context, userID uuid.UUID, email string, target leadsdomain.LeadStatus) error {
 	if email == "" {
 		return nil
@@ -701,12 +705,19 @@ func (a *onecApplierAdapter) moveLeadByEmail(ctx context.Context, userID uuid.UU
 		a.logger.Info("onec: no lead for counterparty email; action skipped", "target", target.String())
 		return nil
 	}
-	if !lead.Status.CanTransitionTo(target) {
-		a.logger.Info("onec: lead transition not allowed; action skipped",
-			"lead_id", lead.ID, "from", lead.Status.String(), "to", target.String())
-		return nil
+	if err := a.leadMover.UpdateStatus(ctx, lead.ID, target.String()); err != nil {
+		// Benign outcomes for a 1C webhook: the lead's state machine forbids
+		// this edge, or the lead vanished between the email lookup and the
+		// update (a concurrent delete). Neither is a state the webhook should
+		// fail on — skip with a log line. Anything else propagates.
+		if errors.Is(err, leadsdomain.ErrInvalidTransition) || errors.Is(err, leadsdomain.ErrLeadNotFound) {
+			a.logger.Info("onec: lead action skipped",
+				"lead_id", lead.ID, "to", target.String(), "reason", err)
+			return nil
+		}
+		return err
 	}
-	return a.leadMover.UpdateStatus(ctx, lead.ID, target.String())
+	return nil
 }
 
 // HandleCounterpartyCreated upserts a prospect for a new 1C counterparty. An
