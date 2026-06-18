@@ -692,7 +692,7 @@ func TestUpdateStatus_InvalidTransition(t *testing.T) {
 
 	err := uc.UpdateStatus(context.Background(), leadID, "won")
 	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "cannot transition")
+	assert.ErrorIs(t, err, domain.ErrInvalidTransition)
 }
 
 func TestUpdateStatus_HappyPath(t *testing.T) {
@@ -904,7 +904,7 @@ func TestQualifyLead_TransitionError(t *testing.T) {
 	q, err := uc.QualifyLead(context.Background(), leadID)
 	assert.Error(t, err)
 	assert.Nil(t, q)
-	assert.Contains(t, err.Error(), "cannot transition")
+	assert.ErrorIs(t, err, domain.ErrInvalidTransition)
 }
 
 func TestImportCSV_MissingChannelColumn(t *testing.T) {
