@@ -1,6 +1,7 @@
 package domain
 
 import (
+	"errors"
 	"testing"
 	"time"
 
@@ -233,15 +234,29 @@ func TestLead_TransitionTo_Valid(t *testing.T) {
 
 func TestLead_TransitionTo_InvalidTarget(t *testing.T) {
 	lead := &Lead{Status: StatusNew}
-	if err := lead.TransitionTo(LeadStatus("bogus")); err == nil {
-		t.Error("expected error for invalid target status")
+	err := lead.TransitionTo(LeadStatus("bogus"))
+	if err == nil {
+		t.Fatal("expected error for invalid target status")
+	}
+	if !errors.Is(err, ErrInvalidLeadStatus) {
+		t.Errorf("expected errors.Is(ErrInvalidLeadStatus), got %v", err)
 	}
 }
 
 func TestLead_TransitionTo_DisallowedTransition(t *testing.T) {
 	lead := &Lead{Status: StatusNew}
-	if err := lead.TransitionTo(StatusWon); err == nil {
-		t.Error("expected error for disallowed transition new -> won")
+	err := lead.TransitionTo(StatusWon)
+	if err == nil {
+		t.Fatal("expected error for disallowed transition new -> won")
+	}
+	// A disallowed (but valid-status) edge must be distinguishable from an
+	// invalid-status error so callers — notably the 1C applier adapter —
+	// can errors.Is the benign business mismatch and swallow only that.
+	if !errors.Is(err, ErrInvalidTransition) {
+		t.Errorf("expected errors.Is(ErrInvalidTransition), got %v", err)
+	}
+	if errors.Is(err, ErrInvalidLeadStatus) {
+		t.Error("disallowed-edge error must NOT also match ErrInvalidLeadStatus")
 	}
 	if lead.Status != StatusNew {
 		t.Error("status should not change on failed transition")
