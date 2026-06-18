@@ -31,19 +31,6 @@ func newEmailReplyDispatcher(sender inbox.EmailSender, leads leadEmailFetcher, i
 	return &emailReplyDispatcher{sender: sender, leads: leads, inboxRepo: inboxRepo}
 }
 
-// subjectFor maps a PendingReplyKind to a customer-visible email
-// subject. New kinds added to PendingReplyKind MUST add a case here;
-// the default fallback is intentionally generic so a misconfigured
-// dispatcher never sends "" as subject.
-func subjectFor(kind inbox.PendingReplyKind) string {
-	switch kind {
-	case inbox.PendingReplyKindBookingLink:
-		return "Запись на встречу"
-	default:
-		return "Сообщение"
-	}
-}
-
 // Dispatch sends the reply via the EmailSender port and, only on a
 // successful send, writes the outbound message into the inbox
 // history. Ordering matters: persisting before sending would risk
@@ -65,7 +52,7 @@ func (d *emailReplyDispatcher) Dispatch(ctx context.Context, pr *inbox.PendingRe
 	if lead.EmailAddress == nil || *lead.EmailAddress == "" {
 		return errors.New("email dispatcher: lead " + pr.LeadID.String() + " has no email_address")
 	}
-	if err := d.sender.SendEmail(ctx, pr.UserID, *lead.EmailAddress, subjectFor(pr.Kind), pr.Body); err != nil {
+	if err := d.sender.SendEmail(ctx, pr.UserID, *lead.EmailAddress, inbox.EmailSubjectFor(pr.Kind), pr.Body); err != nil {
 		return err
 	}
 	outMsg := inbox.NewInboxMessage(pr.LeadID, inbox.DirectionOutbound, pr.Body)
