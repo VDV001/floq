@@ -97,6 +97,30 @@ func TestLeadCreatorAdapter_CreateLeadFromProspect(t *testing.T) {
 	assert.Equal(t, &sourceID, repo.createdLead.SourceID)
 }
 
+// TestLeadCreatorAdapter_PropagatesEmail pins that a prospect's email is
+// carried onto the new lead. The happy-path test above leaves Email empty and
+// never asserts EmailAddress, so a "prospect.Email != ''" → "== ''" mutation
+// survived: it drops a real email (leaving EmailAddress nil) yet still creates
+// the lead.
+func TestLeadCreatorAdapter_PropagatesEmail(t *testing.T) {
+	repo := &mockLeadsRepo{}
+	adapter := NewLeadCreatorAdapter(repo)
+
+	userID := uuid.New()
+	prospect := &domain.ProspectView{
+		ID:     uuid.New(),
+		UserID: userID,
+		Name:   "Alice",
+		Email:  "alice@acme.com",
+	}
+
+	_, err := adapter.CreateLeadFromProspect(context.Background(), prospect, userID)
+	require.NoError(t, err)
+	require.NotNil(t, repo.createdLead)
+	require.NotNil(t, repo.createdLead.EmailAddress, "lead must carry the prospect's email, not drop it")
+	assert.Equal(t, "alice@acme.com", *repo.createdLead.EmailAddress)
+}
+
 func TestLeadCreatorAdapter_CreateLeadFromProspect_Error(t *testing.T) {
 	repo := &mockLeadsRepo{createErr: errors.New("db error")}
 	adapter := NewLeadCreatorAdapter(repo)

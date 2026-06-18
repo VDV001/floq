@@ -49,6 +49,35 @@ func TestNewEntry_Success(t *testing.T) {
 	}
 }
 
+// TestNewEntry_ZeroBoundariesAreValid pins the lower boundary of the
+// non-negative numeric invariants: exactly 0 is VALID — only negatives are
+// rejected. The existing suite exercises the happy value (e.g. LatencyMS=432)
+// and the -1 rejection, but never the 0 boundary itself, so a
+// "< 0" → "<= 0" boundary mutation on any of these checks survived (it only
+// changes behaviour at the value 0). Pinning 0-is-allowed kills it.
+func TestNewEntry_ZeroBoundariesAreValid(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name   string
+		mutate func(*domain.EntryParams)
+	}{
+		{"zero latency", func(p *domain.EntryParams) { p.LatencyMS = 0 }},
+		{"zero input tokens", func(p *domain.EntryParams) { p.InputTokens = 0 }},
+		{"zero output tokens", func(p *domain.EntryParams) { p.OutputTokens = 0 }},
+		{"zero cost", func(p *domain.EntryParams) { p.CostUSDMicro = 0 }},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			p := validParams()
+			tc.mutate(&p)
+			if _, err := domain.NewEntry(p); err != nil {
+				t.Errorf("NewEntry with %s must be valid (0 is allowed; only negatives are rejected), got %v", tc.name, err)
+			}
+		})
+	}
+}
+
 func TestNewEntry_InvariantViolations(t *testing.T) {
 	t.Parallel()
 	cases := []struct {

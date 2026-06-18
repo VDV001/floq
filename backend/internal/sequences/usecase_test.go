@@ -258,6 +258,26 @@ func TestLaunch_HappyPath(t *testing.T) {
 	assert.Equal(t, 2, ai.calls)
 }
 
+// TestLaunch_EmptyProspectIDs pins that launching with no prospects is a
+// no-op, not a crash. The feedback-examples block dereferences prospectIDs[0]
+// guarded by "len(prospectIDs) > 0"; a ">= 0" boundary mutation enters that
+// block on an empty slice and panics with an index-out-of-range. Steps are
+// present so the earlier "no steps" guard passes and execution reaches the
+// boundary.
+func TestLaunch_EmptyProspectIDs(t *testing.T) {
+	seqID := uuid.New()
+	repo := &mockRepo{
+		steps: []domain.SequenceStep{
+			{ID: uuid.New(), SequenceID: seqID, StepOrder: 1, DelayDays: 0, Channel: domain.StepChannelEmail, PromptHint: "intro"},
+		},
+	}
+	uc := NewUseCase(repo, &mockAI{}, newMockProspectReader(), &mockLeadCreator{})
+
+	err := uc.Launch(context.Background(), seqID, []uuid.UUID{})
+	require.NoError(t, err)
+	assert.Empty(t, repo.messages, "no prospects → no outbound messages")
+}
+
 func TestLaunch_SkipConverted(t *testing.T) {
 	seqID := uuid.New()
 	pid := uuid.New()

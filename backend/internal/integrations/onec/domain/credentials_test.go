@@ -121,6 +121,11 @@ func TestIsValidWebhookSecretFormat(t *testing.T) {
 		{valid, true},
 		{strings.Repeat("a", domain.WebhookSecretBytes*2), true},
 		{"deadbeef" + strings.Repeat("0", 56), true},
+		// Full hex alphabet (0-9a-f ×4 = 64 chars). Pins every boundary of
+		// the [0-9] and [a-f] range checks at once; in particular the digit
+		// '9' was absent from every other valid case, letting a
+		// "c <= '9'" → "c < '9'" boundary mutant survive.
+		{strings.Repeat("0123456789abcdef", 4), true},
 		{"", false},
 		{strings.Repeat("a", domain.WebhookSecretBytes*2-1), false}, // too short
 		{strings.Repeat("A", domain.WebhookSecretBytes*2), false},   // uppercase not hex.EncodeToString output
