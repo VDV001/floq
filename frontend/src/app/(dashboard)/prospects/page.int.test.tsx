@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render, screen, fireEvent } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { http, HttpResponse } from "msw";
 
@@ -35,7 +35,6 @@ describe("prospects page (integration)", () => {
   });
 
   it("filters the rendered rows by the search query", async () => {
-    const user = userEvent.setup({ delay: null });
     mountWith([
       prospect({ id: "a", name: "Иван Петров" }),
       prospect({ id: "b", name: "Мария Сидорова" }),
@@ -44,7 +43,9 @@ describe("prospects page (integration)", () => {
     render(<ProspectsPage />);
     await screen.findByText("Иван Петров");
 
-    await user.type(screen.getByPlaceholderText("Поиск проспектов..."), "Мария");
+    fireEvent.change(screen.getByPlaceholderText("Поиск проспектов..."), {
+      target: { value: "Мария" },
+    });
 
     expect(screen.queryByText("Иван Петров")).not.toBeInTheDocument();
     expect(screen.getByText("Мария Сидорова")).toBeInTheDocument();

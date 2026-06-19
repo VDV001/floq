@@ -28,7 +28,7 @@ export default defineConfig({
         "src/hooks/**/*.{ts,tsx}",
         "src/lib/api.ts",
       ],
-      exclude: ["src/**/*.test.*", "src/**/*.int.test.*", "src/__tests__/**"],
+      exclude: ["src/**/*.test.*", "src/__tests__/**"],
       reportOnFailure: true,
     },
   },

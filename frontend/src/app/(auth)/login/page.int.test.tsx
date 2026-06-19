@@ -1,6 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
-import userEvent from "@testing-library/user-event";
+import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { http, HttpResponse } from "msw";
 
 import { server, url } from "@/__tests__/integration/server";
@@ -13,6 +12,13 @@ vi.mock("next/navigation", () => ({
 
 import LoginPage from "./page";
 
+// Fill a controlled input in one shot. Per-character userEvent.type forces a
+// re-render of this heavy page per keystroke (~7s/test); fireEvent.change is a
+// single update and keeps the meaningful interaction (submit click) realistic.
+function fill(placeholder: string, value: string) {
+  fireEvent.change(screen.getByPlaceholderText(placeholder), { target: { value } });
+}
+
 // Integration: real LoginPage -> real lib/api.ts -> network (MSW). Nothing
 // from @/lib/api is stubbed, so this exercises apiFetch, token persistence,
 // and the page's submit/redirect wiring together.
@@ -22,7 +28,6 @@ describe("login flow (integration)", () => {
   });
 
   it("logs in, persists tokens via the real api client, and redirects", async () => {
-    const user = userEvent.setup({ delay: null });
     let receivedBody: { email?: string; password?: string } = {};
     server.use(
       http.post(url("/api/auth/login"), async ({ request }) => {
@@ -32,9 +37,9 @@ describe("login flow (integration)", () => {
     );
 
     render(<LoginPage />);
-    await user.type(screen.getByPlaceholderText("name@company.com"), "user@floq.io");
-    await user.type(screen.getByPlaceholderText("••••••••"), "secret123");
-    await user.click(screen.getByRole("button", { name: "Войти" }));
+    fill("name@company.com", "user@floq.io");
+    fill("••••••••", "secret123");
+    fireEvent.click(screen.getByRole("button", { name: "Войти" }));
 
     await waitFor(() => expect(pushMock).toHaveBeenCalledWith("/inbox"));
     expect(receivedBody).toEqual({ email: "user@floq.io", password: "secret123" });
@@ -43,7 +48,6 @@ describe("login flow (integration)", () => {
   });
 
   it("shows an error and does not redirect when the backend rejects credentials", async () => {
-    const user = userEvent.setup({ delay: null });
     server.use(
       http.post(url("/api/auth/login"), () =>
         HttpResponse.json({ error: "invalid" }, { status: 401 }),
@@ -51,9 +55,9 @@ describe("login flow (integration)", () => {
     );
 
     render(<LoginPage />);
-    await user.type(screen.getByPlaceholderText("name@company.com"), "user@floq.io");
-    await user.type(screen.getByPlaceholderText("••••••••"), "wrongpass");
-    await user.click(screen.getByRole("button", { name: "Войти" }));
+    fill("name@company.com", "user@floq.io");
+    fill("••••••••", "wrongpass");
+    fireEvent.click(screen.getByRole("button", { name: "Войти" }));
 
     expect(await screen.findByText("Неверный email или пароль")).toBeInTheDocument();
     expect(pushMock).not.toHaveBeenCalled();
@@ -61,7 +65,6 @@ describe("login flow (integration)", () => {
   });
 
   it("registers a new account through the register endpoint", async () => {
-    const user = userEvent.setup({ delay: null });
     server.use(
       http.post(url("/api/auth/register"), () =>
         HttpResponse.json({ token: "rt", refresh_token: "rr" }),
@@ -70,11 +73,11 @@ describe("login flow (integration)", () => {
 
     render(<LoginPage />);
     // Switch to register mode via the toggle link.
-    await user.click(screen.getByText("Зарегистрироваться"));
-    await user.type(screen.getByPlaceholderText("Иван Иванов"), "Новый Пользователь");
-    await user.type(screen.getByPlaceholderText("name@company.com"), "new@floq.io");
-    await user.type(screen.getByPlaceholderText("••••••••"), "Strong1!");
-    await user.click(screen.getByRole("button", { name: "Создать аккаунт" }));
+    fireEvent.click(screen.getByText("Зарегистрироваться"));
+    fill("Иван Иванов", "Новый Пользователь");
+    fill("name@company.com", "new@floq.io");
+    fill("••••••••", "Strong1!");
+    fireEvent.click(screen.getByRole("button", { name: "Создать аккаунт" }));
 
     await waitFor(() => expect(pushMock).toHaveBeenCalledWith("/inbox"));
     expect(localStorage.getItem("token")).toBe("rt");
