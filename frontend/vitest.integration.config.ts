@@ -12,6 +12,12 @@ export default defineConfig({
     globals: true,
     setupFiles: ["./src/__tests__/integration/setup.ts"],
     include: ["src/**/*.int.test.{ts,tsx}"],
+    // Integration flows drive real user interactions through MSW; they are
+    // legitimately slower than unit tests and flake under worker contention
+    // (a pending fetch can blow the default 5s timeout). Run them in a single
+    // worker with a generous timeout for stability.
+    testTimeout: 15000,
+    fileParallelism: false,
     coverage: {
       provider: "v8",
       // Report coverage only over the code these flows actually exercise

@@ -22,7 +22,7 @@ describe("login flow (integration)", () => {
   });
 
   it("logs in, persists tokens via the real api client, and redirects", async () => {
-    const user = userEvent.setup();
+    const user = userEvent.setup({ delay: null });
     let receivedBody: { email?: string; password?: string } = {};
     server.use(
       http.post(url("/api/auth/login"), async ({ request }) => {
@@ -43,7 +43,7 @@ describe("login flow (integration)", () => {
   });
 
   it("shows an error and does not redirect when the backend rejects credentials", async () => {
-    const user = userEvent.setup();
+    const user = userEvent.setup({ delay: null });
     server.use(
       http.post(url("/api/auth/login"), () =>
         HttpResponse.json({ error: "invalid" }, { status: 401 }),
@@ -61,7 +61,7 @@ describe("login flow (integration)", () => {
   });
 
   it("registers a new account through the register endpoint", async () => {
-    const user = userEvent.setup();
+    const user = userEvent.setup({ delay: null });
     server.use(
       http.post(url("/api/auth/register"), () =>
         HttpResponse.json({ token: "rt", refresh_token: "rr" }),
