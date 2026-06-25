@@ -76,6 +76,26 @@ func (uc *UseCase) authorizeSequence(ctx context.Context, userID, id uuid.UUID) 
 	return s, nil
 }
 
+// authorizeStep verifies the caller owns the sequence a step belongs to. A
+// step is addressed only by its own id, so the owning sequence is resolved via
+// GetStep. A missing step and a step under a foreign sequence both return
+// ErrSequenceNotOwned (anti-enumeration). userID == uuid.Nil skips the check
+// (unit-test affordance; see authorizeSequence).
+func (uc *UseCase) authorizeStep(ctx context.Context, userID, stepID uuid.UUID) error {
+	if userID == uuid.Nil {
+		return nil
+	}
+	step, err := uc.repo.GetStep(ctx, stepID)
+	if err != nil {
+		return err
+	}
+	if step == nil {
+		return domain.ErrSequenceNotOwned
+	}
+	_, err = uc.authorizeSequence(ctx, userID, step.SequenceID)
+	return err
+}
+
 // authorizeMessage loads an outbound message and verifies it belongs to the
 // caller, resolving ownership through the message's prospect — the same owner
 // definition the queue/sent/stats reads use. Missing and foreign both return
@@ -447,21 +467,8 @@ func (uc *UseCase) MarkOpened(ctx context.Context, id uuid.UUID) error {
 }
 
 func (uc *UseCase) DeleteStep(ctx context.Context, userID, stepID uuid.UUID) error {
-	// A step is addressed only by its own id, so resolve the owning sequence to
-	// authorize the delete. A missing step and a step under a foreign sequence
-	// both answer ErrSequenceNotOwned (anti-enumeration). The nil-caller branch
-	// is a unit-test affordance (see authorizeSequence).
-	if userID != uuid.Nil {
-		step, err := uc.repo.GetStep(ctx, stepID)
-		if err != nil {
-			return err
-		}
-		if step == nil {
-			return domain.ErrSequenceNotOwned
-		}
-		if _, err := uc.authorizeSequence(ctx, userID, step.SequenceID); err != nil {
-			return err
-		}
+	if err := uc.authorizeStep(ctx, userID, stepID); err != nil {
+		return err
 	}
 	return uc.repo.DeleteStep(ctx, stepID)
 }

@@ -46,6 +46,14 @@ func AuthMiddleware(jwtSecret string) func(http.Handler) http.Handler {
 				http.Error(w, `{"error":"invalid token claims"}`, http.StatusUnauthorized)
 				return
 			}
+			// Reject the nil UUID explicitly: it can never be a real user id
+			// (ids come from gen_random_uuid()/uuid.New()), and downstream
+			// authorization treats uuid.Nil as a test-only "skip ownership"
+			// sentinel — so a forged nil-uuid token must never reach a handler.
+			if userID == uuid.Nil {
+				http.Error(w, `{"error":"invalid token claims"}`, http.StatusUnauthorized)
+				return
+			}
 
 			ctx := httputil.WithUserID(r.Context(), userID)
 			next.ServeHTTP(w, r.WithContext(ctx))

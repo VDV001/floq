@@ -195,6 +195,32 @@ func TestAuthMiddleware_InvalidUserIDInToken(t *testing.T) {
 	assert.Contains(t, rec.Body.String(), "invalid token claims")
 }
 
+// A token carrying the nil UUID is rejected: it's never a real user id, and
+// downstream authorization treats uuid.Nil as a "skip ownership" sentinel, so a
+// forged nil-uuid token must never reach a handler.
+func TestAuthMiddleware_NilUUIDRejected(t *testing.T) {
+	token := makeToken(t, jwt.MapClaims{
+		"user_id": "00000000-0000-0000-0000-000000000000",
+		"type":    "access",
+		"iat":     time.Now().Unix(),
+		"exp":     time.Now().Add(time.Hour).Unix(),
+	}, testSecret)
+
+	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Fatal("handler should not be called")
+	})
+
+	mw := AuthMiddleware(testSecret)(next)
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	rec := httptest.NewRecorder()
+
+	mw.ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusUnauthorized, rec.Code)
+	assert.Contains(t, rec.Body.String(), "invalid token claims")
+}
+
 func TestAuthMiddleware_MissingTypeInToken(t *testing.T) {
 	token := makeToken(t, jwt.MapClaims{
 		"user_id": uuid.New().String(),

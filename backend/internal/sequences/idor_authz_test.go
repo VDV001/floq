@@ -140,6 +140,48 @@ func TestEditMessage_ForeignCaller_NotOwned(t *testing.T) {
 	assert.Empty(t, repo.feedbackSaved, "a foreign message must not be edited")
 }
 
+// --- Owner-allowed (lock the allow-path against an over-broad future denial) ---
+
+func TestGetSequence_Owner_Allowed(t *testing.T) {
+	seqID := uuid.New()
+	caller := uuid.New()
+	repo := &mockRepo{sequences: []domain.Sequence{{ID: seqID, UserID: caller, Name: "Mine"}}}
+	uc := NewUseCase(repo, &mockAI{}, newMockProspectReader(), &mockLeadCreator{})
+
+	s, err := uc.GetSequence(context.Background(), caller, seqID)
+	require.NoError(t, err)
+	require.NotNil(t, s)
+	assert.Equal(t, "Mine", s.Name)
+}
+
+func TestApproveMessage_Owner_Allowed(t *testing.T) {
+	pid := uuid.New()
+	caller := uuid.New()
+	msg := domain.NewOutboundMessage(pid, uuid.New(), 1, domain.StepChannelEmail, "hi", time.Now())
+	repo := &mockRepo{messages: []*domain.OutboundMessage{msg}}
+	pr := newMockProspectReader()
+	pr.prospects[pid] = &domain.ProspectView{ID: pid, UserID: caller}
+	uc := NewUseCase(repo, &mockAI{}, pr, &mockLeadCreator{})
+
+	require.NoError(t, uc.ApproveMessage(context.Background(), caller, msg.ID))
+	assert.Equal(t, domain.OutboundStatusApproved, msg.Status)
+}
+
+// A message whose prospect can't be resolved (e.g. a non-existent message id,
+// or — were the FK CASCADE ever weakened — an orphaned message) is treated as
+// not-owned, never silently authorized.
+func TestApproveMessage_ProspectMissing_NotOwned(t *testing.T) {
+	pid := uuid.New()
+	msg := domain.NewOutboundMessage(pid, uuid.New(), 1, domain.StepChannelEmail, "hi", time.Now())
+	repo := &mockRepo{messages: []*domain.OutboundMessage{msg}}
+	// prospect reader is empty — the message's prospect cannot be resolved.
+	uc := NewUseCase(repo, &mockAI{}, newMockProspectReader(), &mockLeadCreator{})
+
+	err := uc.ApproveMessage(context.Background(), uuid.New(), msg.ID)
+	require.ErrorIs(t, err, domain.ErrMessageNotOwned)
+	assert.Equal(t, domain.OutboundStatusDraft, msg.Status)
+}
+
 // --- Handler level: foreign resource answers 404 (anti-enumeration) ---
 
 func TestHandler_GetSequence_Foreign_NotFound(t *testing.T) {
