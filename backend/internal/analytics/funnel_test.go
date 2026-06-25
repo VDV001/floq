@@ -116,6 +116,53 @@ func TestHandler_GetQualificationDistribution_ReturnsBuckets(t *testing.T) {
 	assert.EqualValues(t, 5, got.Buckets[0]["count"])
 }
 
+func TestHandler_Funnel_ForwardsPeriod(t *testing.T) {
+	tests := []struct {
+		name  string
+		query string
+		want  analytics.Period
+	}{
+		{"week", "?period=week", analytics.PeriodWeek},
+		{"month", "?period=month", analytics.PeriodMonth},
+		{"default is all", "", analytics.PeriodAll},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			stub := &stubFunnel{
+				dist: &analytics.QualificationFunnelDTO{},
+				conv: &analytics.SequenceConversionDTO{},
+			}
+			r := chi.NewRouter()
+			analytics.RegisterRoutes(r, analytics.NewUseCase(nil, nil, analytics.WithFunnelReader(stub)))
+
+			w := httptest.NewRecorder()
+			r.ServeHTTP(w, newAuthedRequest(t, "/api/analytics/qualification-distribution"+tt.query, uuid.New()))
+			require.Equal(t, http.StatusOK, w.Code)
+			assert.Equal(t, tt.want, stub.gotPeriod, "qualification distribution forwards period")
+
+			w = httptest.NewRecorder()
+			r.ServeHTTP(w, newAuthedRequest(t, "/api/analytics/sequence-conversion"+tt.query, uuid.New()))
+			require.Equal(t, http.StatusOK, w.Code)
+			assert.Equal(t, tt.want, stub.gotPeriod, "sequence conversion forwards period")
+		})
+	}
+}
+
+func TestHandler_Funnel_RejectsInvalidPeriod(t *testing.T) {
+	stub := &stubFunnel{dist: &analytics.QualificationFunnelDTO{}, conv: &analytics.SequenceConversionDTO{}}
+	r := chi.NewRouter()
+	analytics.RegisterRoutes(r, analytics.NewUseCase(nil, nil, analytics.WithFunnelReader(stub)))
+
+	for _, path := range []string{
+		"/api/analytics/qualification-distribution?period=decade",
+		"/api/analytics/sequence-conversion?period=decade",
+	} {
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, newAuthedRequest(t, path, uuid.New()))
+		assert.Equal(t, http.StatusBadRequest, w.Code, path)
+	}
+}
+
 func TestHandler_GetSequenceConversion_ReturnsSteps(t *testing.T) {
 	userID := uuid.New()
 	seqID := uuid.New()
