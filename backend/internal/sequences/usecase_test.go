@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/daniil/floq/internal/ai"
 	"github.com/daniil/floq/internal/sequences/domain"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
@@ -256,6 +257,34 @@ func TestLaunch_HappyPath(t *testing.T) {
 
 	// AI should have been called twice
 	assert.Equal(t, 2, ai.calls)
+}
+
+// TestLaunch_AINotConfiguredPropagates pins the cross-layer contract the
+// handler relies on: when message generation fails because the AI provider
+// isn't configured, Launch propagates ai.ErrNotConfigured (via %w) so the
+// handler can map it to a human "connect AI" response instead of a generic 500.
+func TestLaunch_AINotConfiguredPropagates(t *testing.T) {
+	seqID := uuid.New()
+	pid := uuid.New()
+
+	repo := &mockRepo{
+		steps: []domain.SequenceStep{
+			{ID: uuid.New(), SequenceID: seqID, StepOrder: 1, DelayDays: 0, Channel: domain.StepChannelEmail, PromptHint: "intro"},
+		},
+	}
+	pr := newMockProspectReader()
+	pr.prospects[pid] = &domain.ProspectView{
+		ID: pid, UserID: uuid.New(), Name: "Alice", Company: "Acme", Title: "CEO",
+		Email: "alice@acme.com", Status: "new", VerifyStatus: "valid", IsEligibleForSequence: true,
+	}
+
+	uc := NewUseCase(repo, &mockAI{err: ai.ErrNotConfigured}, pr, &mockLeadCreator{})
+
+	err := uc.Launch(context.Background(), seqID, []uuid.UUID{pid})
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, ai.ErrNotConfigured), "expected ai.ErrNotConfigured, got %v", err)
+	// No messages should be persisted when generation fails.
+	assert.Empty(t, repo.messages)
 }
 
 // TestLaunch_EmptyProspectIDs pins that launching with no prospects is a

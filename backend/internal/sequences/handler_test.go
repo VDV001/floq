@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/daniil/floq/internal/ai"
 	"github.com/daniil/floq/internal/httputil"
 	"github.com/daniil/floq/internal/sequences/domain"
 	"github.com/go-chi/chi/v5"
@@ -902,4 +903,50 @@ func TestHandler_GetSequence_NilStepsReturnsArray(t *testing.T) {
 	require.NoError(t, json.NewDecoder(rr.Body).Decode(&resp))
 	assert.NotNil(t, resp.Steps)
 	assert.Len(t, resp.Steps, 0)
+}
+
+// When the AI provider isn't configured, both launch and preview must answer
+// 400 with a machine code + human remedy (not a generic 500), so the UI can
+// tell the operator to connect AI in Settings.
+func TestHandler_LaunchSequence_AINotConfigured(t *testing.T) {
+	userID := uuid.New()
+	seqID := uuid.New()
+	pid := uuid.New()
+
+	repo := &mockRepo{
+		steps: []domain.SequenceStep{
+			{ID: uuid.New(), SequenceID: seqID, StepOrder: 1, DelayDays: 0, Channel: domain.StepChannelEmail, PromptHint: "intro"},
+		},
+	}
+	pr := newMockProspectReader()
+	pr.prospects[pid] = &domain.ProspectView{
+		ID: pid, UserID: userID, Name: "Alice", Company: "Acme", Title: "CEO",
+		Email: "alice@acme.com", Status: "new", VerifyStatus: "valid", IsEligibleForSequence: true,
+	}
+	uc := NewUseCase(repo, &mockAI{err: ai.ErrNotConfigured}, pr, &mockLeadCreator{})
+	router := setupRouter(uc, userID)
+
+	rr := doRequest(router, http.MethodPost, "/api/sequences/"+seqID.String()+"/launch",
+		map[string]any{"prospect_ids": []string{pid.String()}, "send_now": true})
+
+	assert.Equal(t, http.StatusBadRequest, rr.Code)
+	var body map[string]string
+	require.NoError(t, json.NewDecoder(rr.Body).Decode(&body))
+	assert.Equal(t, "ai_not_configured", body["code"])
+	assert.NotEmpty(t, body["remedy"])
+	assert.NotEmpty(t, body["error"])
+}
+
+func TestHandler_PreviewMessage_AINotConfigured(t *testing.T) {
+	uc := NewUseCase(&mockRepo{}, &mockAI{err: ai.ErrNotConfigured}, newMockProspectReader(), &mockLeadCreator{})
+	router := setupRouterNoAuth(uc)
+
+	rr := doRequest(router, http.MethodPost, "/api/sequences/preview",
+		map[string]any{"name": "Alice", "channel": "email", "hint": "intro"})
+
+	assert.Equal(t, http.StatusBadRequest, rr.Code)
+	var body map[string]string
+	require.NoError(t, json.NewDecoder(rr.Body).Decode(&body))
+	assert.Equal(t, "ai_not_configured", body["code"])
+	assert.NotEmpty(t, body["remedy"])
 }

@@ -79,6 +79,28 @@ func (d *DynamicProvider) AnalyzeImage(ctx context.Context, imageData []byte, mi
 	return vp.AnalyzeImage(ctx, imageData, mimeType, prompt)
 }
 
+// providerNeedsAPIKey reports whether the named provider requires an API key.
+// Ollama runs locally and needs none; unknown names are not flagged here
+// (resolve rejects them separately as "unknown AI provider").
+func providerNeedsAPIKey(provider string) bool {
+	switch provider {
+	case "claude", "openai", "groq":
+		return true
+	default:
+		return false
+	}
+}
+
+// validateProviderConfig returns ai.ErrNotConfigured when a key-requiring
+// provider is selected without a key, so the failure is detectable up front
+// instead of surfacing as an opaque auth error from the upstream call.
+func validateProviderConfig(provider, apiKey string) error {
+	if providerNeedsAPIKey(provider) && apiKey == "" {
+		return ai.ErrNotConfigured
+	}
+	return nil
+}
+
 func (d *DynamicProvider) resolve(ctx context.Context) (ai.Provider, error) {
 	// Read current settings from DB
 	providerName := d.fallbackCfg.AIProvider
@@ -121,6 +143,10 @@ func (d *DynamicProvider) resolve(ctx context.Context) (ai.Provider, error) {
 		if model == "" {
 			model = d.fallbackCfg.OllamaModel
 		}
+	}
+
+	if err := validateProviderConfig(providerName, apiKey); err != nil {
+		return nil, err
 	}
 
 	cacheKey := providerName + ":" + model + ":" + apiKey
