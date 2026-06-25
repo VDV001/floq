@@ -3,12 +3,24 @@ package sequences
 import (
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"net/http"
 
+	"github.com/daniil/floq/internal/ai"
 	"github.com/daniil/floq/internal/httputil"
 	"github.com/daniil/floq/internal/sequences/domain"
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
+)
+
+// User-facing launch failure messages live in the handler layer (not the
+// usecase). Each pairs a human cause with an actionable remedy so the UI can
+// tell the operator exactly what to fix.
+const (
+	msgAINotConfigured    = "ИИ не подключён. Письма для рассылки создаёт ИИ, поэтому без него запуск невозможен."
+	remedyAINotConfigured = "Откройте Настройки → ИИ и добавьте API-ключ выбранного провайдера."
+	codeAINotConfigured   = "ai_not_configured"
+	msgLaunchFailed       = "Не удалось запустить рассылку. Попробуйте ещё раз."
 )
 
 // RegisterPublicRoutes registers routes that don't require authentication (e.g. tracking pixel).
@@ -274,7 +286,11 @@ func launchSequence(uc *UseCase) http.HandlerFunc {
 		}
 
 		if err := uc.Launch(r.Context(), id, body.ProspectIDs, body.SendNow); err != nil {
-			httputil.WriteError(w, http.StatusInternalServerError, "failed to launch sequence")
+			if errors.Is(err, ai.ErrNotConfigured) {
+				httputil.WriteErrorDetail(w, http.StatusBadRequest, msgAINotConfigured, codeAINotConfigured, remedyAINotConfigured)
+				return
+			}
+			httputil.WriteError(w, http.StatusInternalServerError, msgLaunchFailed)
 			return
 		}
 		httputil.WriteJSON(w, http.StatusOK, map[string]string{"status": "launched"})
