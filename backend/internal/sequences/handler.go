@@ -128,12 +128,17 @@ func createSequence(uc *UseCase) http.HandlerFunc {
 
 func getSequence(uc *UseCase) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		userID, ok := httputil.UserIDFromContext(r.Context())
+		if !ok {
+			httputil.WriteError(w, http.StatusUnauthorized, "unauthorized")
+			return
+		}
 		id, err := httputil.ParseIDParam(r, "id")
 		if err != nil {
 			httputil.WriteError(w, http.StatusBadRequest, "invalid sequence id")
 			return
 		}
-		seq, err := uc.GetSequence(r.Context(), id)
+		seq, err := uc.GetSequence(r.Context(), userID, id)
 		if err != nil {
 			httputil.WriteError(w, http.StatusInternalServerError, "failed to get sequence")
 			return
@@ -161,6 +166,11 @@ func getSequence(uc *UseCase) http.HandlerFunc {
 
 func updateSequence(uc *UseCase) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		userID, ok := httputil.UserIDFromContext(r.Context())
+		if !ok {
+			httputil.WriteError(w, http.StatusUnauthorized, "unauthorized")
+			return
+		}
 		id, err := httputil.ParseIDParam(r, "id")
 		if err != nil {
 			httputil.WriteError(w, http.StatusBadRequest, "invalid sequence id")
@@ -179,7 +189,7 @@ func updateSequence(uc *UseCase) http.HandlerFunc {
 			return
 		}
 
-		if err := uc.UpdateSequence(r.Context(), id, body.Name); err != nil {
+		if err := uc.UpdateSequence(r.Context(), userID, id, body.Name); err != nil {
 			httputil.WriteError(w, http.StatusInternalServerError, "failed to update sequence")
 			return
 		}
@@ -189,12 +199,17 @@ func updateSequence(uc *UseCase) http.HandlerFunc {
 
 func deleteSequence(uc *UseCase) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		userID, ok := httputil.UserIDFromContext(r.Context())
+		if !ok {
+			httputil.WriteError(w, http.StatusUnauthorized, "unauthorized")
+			return
+		}
 		id, err := httputil.ParseIDParam(r, "id")
 		if err != nil {
 			httputil.WriteError(w, http.StatusBadRequest, "invalid sequence id")
 			return
 		}
-		if err := uc.DeleteSequence(r.Context(), id); err != nil {
+		if err := uc.DeleteSequence(r.Context(), userID, id); err != nil {
 			httputil.WriteError(w, http.StatusInternalServerError, "failed to delete sequence")
 			return
 		}
@@ -204,6 +219,11 @@ func deleteSequence(uc *UseCase) http.HandlerFunc {
 
 func addStep(uc *UseCase) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		userID, ok := httputil.UserIDFromContext(r.Context())
+		if !ok {
+			httputil.WriteError(w, http.StatusUnauthorized, "unauthorized")
+			return
+		}
 		id, err := httputil.ParseIDParam(r, "id")
 		if err != nil {
 			httputil.WriteError(w, http.StatusBadRequest, "invalid sequence id")
@@ -228,7 +248,7 @@ func addStep(uc *UseCase) http.HandlerFunc {
 		}
 
 		step := domain.NewSequenceStep(id, body.StepOrder, body.DelayDays, channel, body.PromptHint, body.Body)
-		if err := uc.CreateStep(r.Context(), step); err != nil {
+		if err := uc.CreateStep(r.Context(), userID, step); err != nil {
 			httputil.WriteError(w, http.StatusInternalServerError, "failed to create step")
 			return
 		}
@@ -238,12 +258,17 @@ func addStep(uc *UseCase) http.HandlerFunc {
 
 func deleteStep(uc *UseCase) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		userID, ok := httputil.UserIDFromContext(r.Context())
+		if !ok {
+			httputil.WriteError(w, http.StatusUnauthorized, "unauthorized")
+			return
+		}
 		stepID, err := uuid.Parse(chi.URLParam(r, "stepId"))
 		if err != nil {
 			httputil.WriteError(w, http.StatusBadRequest, "invalid step id")
 			return
 		}
-		if err := uc.DeleteStep(r.Context(), stepID); err != nil {
+		if err := uc.DeleteStep(r.Context(), userID, stepID); err != nil {
 			httputil.WriteError(w, http.StatusInternalServerError, "failed to delete step")
 			return
 		}
@@ -327,6 +352,11 @@ func launchSequence(uc *UseCase) http.HandlerFunc {
 
 func toggleActive(uc *UseCase) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		userID, ok := httputil.UserIDFromContext(r.Context())
+		if !ok {
+			httputil.WriteError(w, http.StatusUnauthorized, "unauthorized")
+			return
+		}
 		id, err := httputil.ParseIDParam(r, "id")
 		if err != nil {
 			httputil.WriteError(w, http.StatusBadRequest, "invalid sequence id")
@@ -341,7 +371,7 @@ func toggleActive(uc *UseCase) http.HandlerFunc {
 			return
 		}
 
-		if err := uc.ToggleActive(r.Context(), id, body.IsActive); err != nil {
+		if err := uc.ToggleActive(r.Context(), userID, id, body.IsActive); err != nil {
 			httputil.WriteError(w, http.StatusInternalServerError, "failed to toggle sequence")
 			return
 		}
@@ -389,12 +419,17 @@ func getSent(uc *UseCase) http.HandlerFunc {
 
 func approveMessage(uc *UseCase) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		userID, ok := httputil.UserIDFromContext(r.Context())
+		if !ok {
+			httputil.WriteError(w, http.StatusUnauthorized, "unauthorized")
+			return
+		}
 		id, err := httputil.ParseIDParam(r, "id")
 		if err != nil {
 			httputil.WriteError(w, http.StatusBadRequest, "invalid message id")
 			return
 		}
-		if err := uc.ApproveMessage(r.Context(), id); err != nil {
+		if err := uc.ApproveMessage(r.Context(), userID, id); err != nil {
 			httputil.WriteError(w, http.StatusInternalServerError, "failed to approve message")
 			return
 		}
@@ -404,12 +439,17 @@ func approveMessage(uc *UseCase) http.HandlerFunc {
 
 func rejectMessage(uc *UseCase) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		userID, ok := httputil.UserIDFromContext(r.Context())
+		if !ok {
+			httputil.WriteError(w, http.StatusUnauthorized, "unauthorized")
+			return
+		}
 		id, err := httputil.ParseIDParam(r, "id")
 		if err != nil {
 			httputil.WriteError(w, http.StatusBadRequest, "invalid message id")
 			return
 		}
-		if err := uc.RejectMessage(r.Context(), id); err != nil {
+		if err := uc.RejectMessage(r.Context(), userID, id); err != nil {
 			httputil.WriteError(w, http.StatusInternalServerError, "failed to reject message")
 			return
 		}
@@ -419,6 +459,11 @@ func rejectMessage(uc *UseCase) http.HandlerFunc {
 
 func editMessage(uc *UseCase) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		userID, ok := httputil.UserIDFromContext(r.Context())
+		if !ok {
+			httputil.WriteError(w, http.StatusUnauthorized, "unauthorized")
+			return
+		}
 		id, err := httputil.ParseIDParam(r, "id")
 		if err != nil {
 			httputil.WriteError(w, http.StatusBadRequest, "invalid message id")
@@ -437,7 +482,7 @@ func editMessage(uc *UseCase) http.HandlerFunc {
 			return
 		}
 
-		if err := uc.EditMessage(r.Context(), id, body.Body); err != nil {
+		if err := uc.EditMessage(r.Context(), userID, id, body.Body); err != nil {
 			httputil.WriteError(w, http.StatusInternalServerError, "failed to edit message")
 			return
 		}

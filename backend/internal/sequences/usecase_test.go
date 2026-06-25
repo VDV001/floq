@@ -773,7 +773,7 @@ func TestGetSequence(t *testing.T) {
 	repo := &mockRepo{sequences: []domain.Sequence{{ID: id, Name: "Test"}}}
 	uc := NewUseCase(repo, &mockAI{}, newMockProspectReader(), &mockLeadCreator{})
 
-	result, err := uc.GetSequence(context.Background(), id)
+	result, err := uc.GetSequence(context.Background(), uuid.Nil, id)
 	require.NoError(t, err)
 	require.NotNil(t, result)
 	assert.Equal(t, "Test", result.Name)
@@ -783,7 +783,7 @@ func TestGetSequence_NotFound(t *testing.T) {
 	repo := &mockRepo{}
 	uc := NewUseCase(repo, &mockAI{}, newMockProspectReader(), &mockLeadCreator{})
 
-	result, err := uc.GetSequence(context.Background(), uuid.New())
+	result, err := uc.GetSequence(context.Background(), uuid.Nil, uuid.New())
 	require.NoError(t, err)
 	assert.Nil(t, result)
 }
@@ -814,7 +814,7 @@ func TestDeleteSequence(t *testing.T) {
 	repo := &mockRepo{}
 	uc := NewUseCase(repo, &mockAI{}, newMockProspectReader(), &mockLeadCreator{})
 
-	err := uc.DeleteSequence(context.Background(), uuid.New())
+	err := uc.DeleteSequence(context.Background(), uuid.Nil, uuid.New())
 	require.NoError(t, err)
 }
 
@@ -822,7 +822,7 @@ func TestDeleteSequence_Error(t *testing.T) {
 	repo := &mockRepo{deleteSeqErr: errors.New("delete failed")}
 	uc := NewUseCase(repo, &mockAI{}, newMockProspectReader(), &mockLeadCreator{})
 
-	err := uc.DeleteSequence(context.Background(), uuid.New())
+	err := uc.DeleteSequence(context.Background(), uuid.Nil, uuid.New())
 	require.Error(t, err)
 }
 
@@ -833,7 +833,7 @@ func TestCreateStep(t *testing.T) {
 	uc := NewUseCase(repo, &mockAI{}, newMockProspectReader(), &mockLeadCreator{})
 
 	step := domain.NewSequenceStep(uuid.New(), 1, 0, domain.StepChannelEmail, "intro", "")
-	err := uc.CreateStep(context.Background(), step)
+	err := uc.CreateStep(context.Background(), uuid.Nil, step)
 	require.NoError(t, err)
 }
 
@@ -841,7 +841,7 @@ func TestDeleteStep(t *testing.T) {
 	repo := &mockRepo{}
 	uc := NewUseCase(repo, &mockAI{}, newMockProspectReader(), &mockLeadCreator{})
 
-	err := uc.DeleteStep(context.Background(), uuid.New())
+	err := uc.DeleteStep(context.Background(), uuid.Nil, uuid.New())
 	require.NoError(t, err)
 }
 
@@ -849,7 +849,7 @@ func TestDeleteStep_Error(t *testing.T) {
 	repo := &mockRepo{deleteStepErr: errors.New("step not found")}
 	uc := NewUseCase(repo, &mockAI{}, newMockProspectReader(), &mockLeadCreator{})
 
-	err := uc.DeleteStep(context.Background(), uuid.New())
+	err := uc.DeleteStep(context.Background(), uuid.Nil, uuid.New())
 	require.Error(t, err)
 }
 
@@ -870,7 +870,7 @@ func TestApproveMessage_DraftTransitionsToApproved(t *testing.T) {
 	msg := seedDraftMessage(repo)
 	uc := NewUseCase(repo, &mockAI{}, newMockProspectReader(), &mockLeadCreator{})
 
-	err := uc.ApproveMessage(context.Background(), msg.ID)
+	err := uc.ApproveMessage(context.Background(), uuid.Nil, msg.ID)
 	require.NoError(t, err)
 	assert.Equal(t, domain.OutboundStatusApproved, msg.Status)
 }
@@ -878,7 +878,7 @@ func TestApproveMessage_DraftTransitionsToApproved(t *testing.T) {
 func TestApproveMessage_NotFound(t *testing.T) {
 	repo := &mockRepo{}
 	uc := NewUseCase(repo, &mockAI{}, newMockProspectReader(), &mockLeadCreator{})
-	err := uc.ApproveMessage(context.Background(), uuid.New())
+	err := uc.ApproveMessage(context.Background(), uuid.Nil, uuid.New())
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "not found")
 }
@@ -889,7 +889,7 @@ func TestApproveMessage_IllegalTransition_FromSent(t *testing.T) {
 	msg.Status = domain.OutboundStatusSent // simulate prior send
 	uc := NewUseCase(repo, &mockAI{}, newMockProspectReader(), &mockLeadCreator{})
 
-	err := uc.ApproveMessage(context.Background(), msg.ID)
+	err := uc.ApproveMessage(context.Background(), uuid.Nil, msg.ID)
 	require.Error(t, err)
 	// Status must not be silently rewritten.
 	assert.Equal(t, domain.OutboundStatusSent, msg.Status)
@@ -900,7 +900,7 @@ func TestApproveMessage_PersistError(t *testing.T) {
 	msg := seedDraftMessage(repo)
 	uc := NewUseCase(repo, &mockAI{}, newMockProspectReader(), &mockLeadCreator{})
 
-	err := uc.ApproveMessage(context.Background(), msg.ID)
+	err := uc.ApproveMessage(context.Background(), uuid.Nil, msg.ID)
 	require.Error(t, err)
 }
 
@@ -909,7 +909,7 @@ func TestRejectMessage_DraftTransitionsToRejected(t *testing.T) {
 	msg := seedDraftMessage(repo)
 	uc := NewUseCase(repo, &mockAI{}, newMockProspectReader(), &mockLeadCreator{})
 
-	err := uc.RejectMessage(context.Background(), msg.ID)
+	err := uc.RejectMessage(context.Background(), uuid.Nil, msg.ID)
 	require.NoError(t, err)
 	assert.Equal(t, domain.OutboundStatusRejected, msg.Status)
 }
@@ -920,7 +920,7 @@ func TestRejectMessage_IllegalTransition_FromBounced(t *testing.T) {
 	msg.Status = domain.OutboundStatusBounced // terminal
 	uc := NewUseCase(repo, &mockAI{}, newMockProspectReader(), &mockLeadCreator{})
 
-	err := uc.RejectMessage(context.Background(), msg.ID)
+	err := uc.RejectMessage(context.Background(), uuid.Nil, msg.ID)
 	require.Error(t, err)
 	assert.Equal(t, domain.OutboundStatusBounced, msg.Status)
 }
@@ -930,7 +930,7 @@ func TestRejectMessage_PersistError(t *testing.T) {
 	msg := seedDraftMessage(repo)
 	uc := NewUseCase(repo, &mockAI{}, newMockProspectReader(), &mockLeadCreator{})
 
-	err := uc.RejectMessage(context.Background(), msg.ID)
+	err := uc.RejectMessage(context.Background(), uuid.Nil, msg.ID)
 	require.Error(t, err)
 }
 
@@ -950,7 +950,7 @@ func TestEditMessage_HappyPath(t *testing.T) {
 	pr.prospects[pid] = &domain.ProspectView{ID: pid, UserID: userID, Context: "CEO at Acme"}
 
 	uc := NewUseCase(repo, &mockAI{}, pr, &mockLeadCreator{})
-	err := uc.EditMessage(context.Background(), msgID, "edited body")
+	err := uc.EditMessage(context.Background(), uuid.Nil, msgID, "edited body")
 	require.NoError(t, err)
 
 	// Should have saved feedback
@@ -963,7 +963,7 @@ func TestEditMessage_NotFound(t *testing.T) {
 	repo := &mockRepo{}
 	uc := NewUseCase(repo, &mockAI{}, newMockProspectReader(), &mockLeadCreator{})
 
-	err := uc.EditMessage(context.Background(), uuid.New(), "new body")
+	err := uc.EditMessage(context.Background(), uuid.Nil, uuid.New(), "new body")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "message not found")
 }
@@ -979,7 +979,7 @@ func TestEditMessage_SameBody_NoFeedback(t *testing.T) {
 	}
 	uc := NewUseCase(repo, &mockAI{}, newMockProspectReader(), &mockLeadCreator{})
 
-	err := uc.EditMessage(context.Background(), msgID, body)
+	err := uc.EditMessage(context.Background(), uuid.Nil, msgID, body)
 	require.NoError(t, err)
 	assert.Empty(t, repo.feedbackSaved)
 }
@@ -1041,12 +1041,12 @@ func TestToggleActive_LoadsAndPersistsViaDomain(t *testing.T) {
 	uc := NewUseCase(repo, &mockAI{}, newMockProspectReader(), &mockLeadCreator{})
 
 	// Activate — should load, call entity.Activate, persist via UpdateSequence.
-	require.NoError(t, uc.ToggleActive(context.Background(), id, true))
+	require.NoError(t, uc.ToggleActive(context.Background(), uuid.Nil, id, true))
 	got := repo.sequences[0]
 	assert.True(t, got.IsActive, "Activate should set IsActive=true")
 
 	// Deactivate.
-	require.NoError(t, uc.ToggleActive(context.Background(), id, false))
+	require.NoError(t, uc.ToggleActive(context.Background(), uuid.Nil, id, false))
 	got = repo.sequences[0]
 	assert.False(t, got.IsActive, "Deactivate should set IsActive=false")
 }
@@ -1054,7 +1054,7 @@ func TestToggleActive_LoadsAndPersistsViaDomain(t *testing.T) {
 func TestToggleActive_NotFound(t *testing.T) {
 	repo := &mockRepo{}
 	uc := NewUseCase(repo, &mockAI{}, newMockProspectReader(), &mockLeadCreator{})
-	err := uc.ToggleActive(context.Background(), uuid.New(), true)
+	err := uc.ToggleActive(context.Background(), uuid.Nil, uuid.New(), true)
 	require.Error(t, err)
 }
 
@@ -1063,7 +1063,7 @@ func TestUpdateSequence(t *testing.T) {
 	repo := &mockRepo{sequences: []domain.Sequence{{ID: id, Name: "Old"}}}
 	uc := NewUseCase(repo, &mockAI{}, newMockProspectReader(), &mockLeadCreator{})
 
-	err := uc.UpdateSequence(context.Background(), id, "Updated")
+	err := uc.UpdateSequence(context.Background(), uuid.Nil, id, "Updated")
 	require.NoError(t, err)
 }
 
@@ -1071,7 +1071,7 @@ func TestUpdateSequence_NotFound(t *testing.T) {
 	repo := &mockRepo{}
 	uc := NewUseCase(repo, &mockAI{}, newMockProspectReader(), &mockLeadCreator{})
 
-	err := uc.UpdateSequence(context.Background(), uuid.New(), "Updated")
+	err := uc.UpdateSequence(context.Background(), uuid.Nil, uuid.New(), "Updated")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "not found")
 }
@@ -1081,7 +1081,7 @@ func TestUpdateSequence_Error(t *testing.T) {
 	repo := &mockRepo{sequences: []domain.Sequence{{ID: id, Name: "Old"}}, updateSeqErr: errors.New("update failed")}
 	uc := NewUseCase(repo, &mockAI{}, newMockProspectReader(), &mockLeadCreator{})
 
-	err := uc.UpdateSequence(context.Background(), id, "Updated")
+	err := uc.UpdateSequence(context.Background(), uuid.Nil, id, "Updated")
 	require.Error(t, err)
 }
 
@@ -1254,7 +1254,7 @@ func TestEditMessage_BodyUpdateError(t *testing.T) {
 	}
 	uc := NewUseCase(repo, &mockAI{}, newMockProspectReader(), &mockLeadCreator{})
 
-	err := uc.EditMessage(context.Background(), msgID, "new")
+	err := uc.EditMessage(context.Background(), uuid.Nil, msgID, "new")
 	require.Error(t, err)
 }
 
@@ -1263,7 +1263,7 @@ func TestEditMessage_GetOriginalError(t *testing.T) {
 	repo := &mockRepo{}
 	uc := NewUseCase(repo, &mockAI{}, newMockProspectReader(), &mockLeadCreator{})
 
-	err := uc.EditMessage(context.Background(), uuid.New(), "new")
+	err := uc.EditMessage(context.Background(), uuid.Nil, uuid.New(), "new")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "message not found")
 }
@@ -1372,7 +1372,7 @@ func TestEditMessage_ChannelEmpty_DefaultsToEmail(t *testing.T) {
 	pr.prospects[pid] = &domain.ProspectView{ID: pid, UserID: userID}
 
 	uc := NewUseCase(repo, &mockAI{}, pr, &mockLeadCreator{})
-	err := uc.EditMessage(context.Background(), msgID, "edited")
+	err := uc.EditMessage(context.Background(), uuid.Nil, msgID, "edited")
 	require.NoError(t, err)
 
 	require.Len(t, repo.feedbackSaved, 1)
@@ -1392,7 +1392,7 @@ func TestEditMessage_ProspectNotFound_StillSavesFeedback(t *testing.T) {
 	pr := newMockProspectReader()
 
 	uc := NewUseCase(repo, &mockAI{}, pr, &mockLeadCreator{})
-	err := uc.EditMessage(context.Background(), msgID, "edited")
+	err := uc.EditMessage(context.Background(), uuid.Nil, msgID, "edited")
 	require.NoError(t, err)
 
 	// Feedback saved with Nil userID since prospect not found

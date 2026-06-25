@@ -53,7 +53,10 @@ func (uc *UseCase) ListSequences(ctx context.Context, userID uuid.UUID) ([]domai
 	return uc.repo.ListSequences(ctx, userID)
 }
 
-func (uc *UseCase) GetSequence(ctx context.Context, id uuid.UUID) (*domain.Sequence, error) {
+// GetSequence loads a sequence by id. userID is the authenticated caller; the
+// ownership boundary is enforced in a later change (this commit only threads
+// the parameter through, behaviour unchanged).
+func (uc *UseCase) GetSequence(ctx context.Context, userID, id uuid.UUID) (*domain.Sequence, error) {
 	return uc.repo.GetSequence(ctx, id)
 }
 
@@ -61,7 +64,7 @@ func (uc *UseCase) CreateSequence(ctx context.Context, s *domain.Sequence) error
 	return uc.repo.CreateSequence(ctx, s)
 }
 
-func (uc *UseCase) UpdateSequence(ctx context.Context, id uuid.UUID, name string) error {
+func (uc *UseCase) UpdateSequence(ctx context.Context, userID, id uuid.UUID, name string) error {
 	s, err := uc.repo.GetSequence(ctx, id)
 	if err != nil {
 		return err
@@ -77,7 +80,7 @@ func (uc *UseCase) UpdateSequence(ctx context.Context, id uuid.UUID, name string
 	return uc.repo.UpdateSequence(ctx, s)
 }
 
-func (uc *UseCase) DeleteSequence(ctx context.Context, id uuid.UUID) error {
+func (uc *UseCase) DeleteSequence(ctx context.Context, userID, id uuid.UUID) error {
 	return uc.repo.DeleteSequence(ctx, id)
 }
 
@@ -85,7 +88,7 @@ func (uc *UseCase) DeleteSequence(ctx context.Context, id uuid.UUID) error {
 // (Activate/Deactivate), and persists. This ensures future rules on
 // activation (e.g. "can't activate a sequence with no steps") live on the
 // entity, not scattered across handlers/usecases.
-func (uc *UseCase) ToggleActive(ctx context.Context, id uuid.UUID, active bool) error {
+func (uc *UseCase) ToggleActive(ctx context.Context, userID, id uuid.UUID, active bool) error {
 	s, err := uc.repo.GetSequence(ctx, id)
 	if err != nil {
 		return err
@@ -105,7 +108,7 @@ func (uc *UseCase) ListSteps(ctx context.Context, sequenceID uuid.UUID) ([]domai
 	return uc.repo.ListSteps(ctx, sequenceID)
 }
 
-func (uc *UseCase) CreateStep(ctx context.Context, step *domain.SequenceStep) error {
+func (uc *UseCase) CreateStep(ctx context.Context, userID uuid.UUID, step *domain.SequenceStep) error {
 	return uc.repo.CreateStep(ctx, step)
 }
 
@@ -305,7 +308,7 @@ func (uc *UseCase) launchInner(ctx context.Context, userID uuid.UUID, sequenceID
 // Approved (fails if the current status forbids it), then persists the result.
 // The state machine (see domain.OutboundMessage.TransitionTo) is the single
 // source of truth for legal transitions — the repo is dumb persistence.
-func (uc *UseCase) ApproveMessage(ctx context.Context, id uuid.UUID) error {
+func (uc *UseCase) ApproveMessage(ctx context.Context, userID, id uuid.UUID) error {
 	msg, err := uc.repo.GetOutboundMessage(ctx, id)
 	if err != nil {
 		return fmt.Errorf("approve message: load: %w", err)
@@ -322,7 +325,7 @@ func (uc *UseCase) ApproveMessage(ctx context.Context, id uuid.UUID) error {
 // RejectMessage follows the same load → domain.TransitionTo → persist pattern
 // as ApproveMessage. Draft and Approved are legal predecessors; anything else
 // (Sent, Bounced, already Rejected) returns an error from the domain.
-func (uc *UseCase) RejectMessage(ctx context.Context, id uuid.UUID) error {
+func (uc *UseCase) RejectMessage(ctx context.Context, userID, id uuid.UUID) error {
 	msg, err := uc.repo.GetOutboundMessage(ctx, id)
 	if err != nil {
 		return fmt.Errorf("reject message: load: %w", err)
@@ -336,7 +339,7 @@ func (uc *UseCase) RejectMessage(ctx context.Context, id uuid.UUID) error {
 	return uc.repo.UpdateOutboundStatus(ctx, id, msg.Status)
 }
 
-func (uc *UseCase) EditMessage(ctx context.Context, id uuid.UUID, body string) error {
+func (uc *UseCase) EditMessage(ctx context.Context, userID, id uuid.UUID, body string) error {
 	// Read original message before updating.
 	msg, err := uc.repo.GetOutboundMessage(ctx, id)
 	if err != nil {
@@ -382,7 +385,7 @@ func (uc *UseCase) MarkOpened(ctx context.Context, id uuid.UUID) error {
 	return uc.repo.MarkOpened(ctx, id)
 }
 
-func (uc *UseCase) DeleteStep(ctx context.Context, stepID uuid.UUID) error {
+func (uc *UseCase) DeleteStep(ctx context.Context, userID, stepID uuid.UUID) error {
 	return uc.repo.DeleteStep(ctx, stepID)
 }
 
