@@ -1,6 +1,6 @@
 "use client";
 
-import { Search, Upload, Download, FileDown, ShieldCheck, Sparkles, ArrowRight, CheckCircle2, AlertTriangle, XCircle } from "lucide-react";
+import { Search, Upload, Download, FileDown, ShieldCheck, Sparkles, CheckCircle2, AlertTriangle, XCircle } from "lucide-react";
 import { api } from "@/lib/api";
 import { ProspectTable } from "@/components/prospects/ProspectTable";
 import { AddProspectForm } from "@/components/prospects/AddProspectForm";
@@ -101,7 +101,6 @@ export default function ProspectsPage() {
                   ? "Добавьте первого проспекта через форму или импорт CSV чтобы начать работу с базой."
                   : `${prospects.filter(p => p.verifyStatus === "not_checked").length} проспектов не проверены. Нажмите «Проверить базу» для верификации email.`}
               </p>
-              <button className="mt-4 flex items-center gap-1 text-xs font-bold text-[#3e3fcc] hover:underline">Посмотреть список <ArrowRight className="size-3.5" /></button>
             </div>
 
             <SourceAnalytics stats={sourceStats} />

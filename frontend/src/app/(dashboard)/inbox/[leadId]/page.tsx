@@ -3,7 +3,7 @@
 import { useState, useEffect } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
-import { ArrowLeft, Clock, Archive, ArrowRightLeft, Send } from "lucide-react";
+import { ArrowLeft, Clock, Archive, Send } from "lucide-react";
 import { ProspectSuggestionBanner } from "@/components/leads/ProspectSuggestionBanner";
 import { PendingReplySection } from "@/components/leads/PendingReplySection";
 import { IdentityBadge } from "@/components/leads/IdentityBadge";
@@ -109,7 +109,6 @@ export default function LeadDetailPage() {
           </div>
           <div className="flex gap-3">
             <button className="rounded-lg border border-[#c3c6d7]/30 bg-white px-4 py-2 text-sm font-semibold text-[#0d1c2e] transition-colors hover:bg-[#eff4ff]"><Archive className="mr-1.5 inline size-4" />Архив</button>
-            <button className="rounded-lg border border-[#c3c6d7]/30 bg-white px-4 py-2 text-sm font-semibold text-[#0d1c2e] transition-colors hover:bg-[#eff4ff]"><ArrowRightLeft className="mr-1.5 inline size-4" />Передать</button>
           </div>
         </section>
 
