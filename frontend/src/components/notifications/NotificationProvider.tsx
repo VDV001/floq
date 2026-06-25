@@ -1,6 +1,7 @@
 "use client";
 
-import { createContext, useCallback, useContext, useRef, useState } from "react";
+import { createContext, useCallback, useContext, useEffect, useRef, useState } from "react";
+import Link from "next/link";
 import { CheckCircle2, AlertTriangle, Info, X } from "lucide-react";
 import { ApiError } from "@/lib/api";
 
@@ -52,8 +53,14 @@ const CODE_ACTIONS: Record<string, NotificationAction> = {
 export function NotificationProvider({ children }: { children: React.ReactNode }) {
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const nextId = useRef(1);
+  const timers = useRef(new Map<number, ReturnType<typeof setTimeout>>());
 
   const dismiss = useCallback((id: number) => {
+    const timer = timers.current.get(id);
+    if (timer) {
+      clearTimeout(timer);
+      timers.current.delete(id);
+    }
     setNotifications((list) => list.filter((n) => n.id !== id));
   }, []);
 
@@ -63,11 +70,20 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
       setNotifications((list) => [...list, { ...input, id }]);
       const ttl = AUTO_DISMISS_MS[input.type];
       if (ttl !== null) {
-        setTimeout(() => dismiss(id), ttl);
+        timers.current.set(id, setTimeout(() => dismiss(id), ttl));
       }
     },
     [dismiss],
   );
+
+  // Clear any pending auto-dismiss timers when the provider unmounts.
+  useEffect(() => {
+    const pending = timers.current;
+    return () => {
+      pending.forEach((t) => clearTimeout(t));
+      pending.clear();
+    };
+  }, []);
 
   const notifyError = useCallback(
     (err: unknown, fallbackTitle = "Не удалось выполнить") => {
@@ -142,12 +158,13 @@ function NotificationViewport({
                 </p>
               )}
               {n.action && (
-                <a
+                <Link
                   href={n.action.href}
+                  onClick={() => onDismiss(n.id)}
                   className="mt-2 inline-block text-xs font-bold text-[#004ac6] hover:underline"
                 >
                   {n.action.label} →
-                </a>
+                </Link>
               )}
             </div>
             <button

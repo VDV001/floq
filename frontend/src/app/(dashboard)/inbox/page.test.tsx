@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import { render, screen, waitFor } from "@testing-library/react";
+import { NotificationProvider } from "@/components/notifications/NotificationProvider";
 import userEvent from "@testing-library/user-event";
 import { vi, describe, it, expect, beforeEach } from "vitest";
 
@@ -24,15 +25,19 @@ const mockExportLeadsCSV = vi.fn();
 const mockImportLeadsCSV = vi.fn();
 const mockGetSuggestionCounts = vi.fn();
 
-vi.mock("@/lib/api", () => ({
-  api: {
-    getLeads: (...args: unknown[]) => mockGetLeads(...args),
-    getQualification: (...args: unknown[]) => mockGetQualification(...args),
-    exportLeadsCSV: (...args: unknown[]) => mockExportLeadsCSV(...args),
-    importLeadsCSV: (...args: unknown[]) => mockImportLeadsCSV(...args),
-    getSuggestionCounts: (...args: unknown[]) => mockGetSuggestionCounts(...args),
-  },
-}));
+vi.mock("@/lib/api", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/api")>();
+  return {
+    ApiError: actual.ApiError,
+    api: {
+      getLeads: (...args: unknown[]) => mockGetLeads(...args),
+      getQualification: (...args: unknown[]) => mockGetQualification(...args),
+      exportLeadsCSV: (...args: unknown[]) => mockExportLeadsCSV(...args),
+      importLeadsCSV: (...args: unknown[]) => mockImportLeadsCSV(...args),
+      getSuggestionCounts: (...args: unknown[]) => mockGetSuggestionCounts(...args),
+    },
+  };
+});
 
 vi.mock("@/lib/utils", () => ({
   cn: (...args: unknown[]) => args.filter(Boolean).join(" "),
@@ -78,7 +83,7 @@ describe("InboxPage", () => {
   it("renders empty state when no leads", async () => {
     mockGetLeads.mockResolvedValue([]);
 
-    render(<InboxPage />);
+    render(<InboxPage />, { wrapper: NotificationProvider });
 
     await waitFor(() => {
       expect(screen.getByText(/нет входящих лидов/i)).toBeInTheDocument();
@@ -94,7 +99,7 @@ describe("InboxPage", () => {
       makeLead({ id: "l2", contact_name: "Борис Иванов", company: "Другая Компания", status: "qualified" }),
     ]);
 
-    render(<InboxPage />);
+    render(<InboxPage />, { wrapper: NotificationProvider });
 
     await waitFor(() => {
       expect(screen.getByText("Тест Компания")).toBeInTheDocument();
@@ -112,7 +117,7 @@ describe("InboxPage", () => {
     ]);
 
     const user = userEvent.setup();
-    render(<InboxPage />);
+    render(<InboxPage />, { wrapper: NotificationProvider });
 
     await waitFor(() => {
       expect(screen.getByText("Новая Компания")).toBeInTheDocument();
@@ -134,7 +139,7 @@ describe("InboxPage", () => {
     ]);
 
     const user = userEvent.setup();
-    render(<InboxPage />);
+    render(<InboxPage />, { wrapper: NotificationProvider });
 
     await waitFor(() => {
       expect(screen.getByText("Компания A")).toBeInTheDocument();
@@ -158,7 +163,7 @@ describe("InboxPage", () => {
       makeLead({ id: "l3", status: "qualified" }),
     ]);
 
-    render(<InboxPage />);
+    render(<InboxPage />, { wrapper: NotificationProvider });
 
     await waitFor(() => {
       // "Новые лиды" stage should show count 2
@@ -173,7 +178,7 @@ describe("InboxPage", () => {
       makeLead({ id: "l1", status: "new" }),
     ]);
 
-    render(<InboxPage />);
+    render(<InboxPage />, { wrapper: NotificationProvider });
 
     await waitFor(() => {
       expect(screen.getByText(/1 лид в системе/)).toBeInTheDocument();
@@ -186,7 +191,7 @@ describe("InboxPage", () => {
     ]);
     mockGetQualification.mockResolvedValue({ identified_need: "Нужна автоматизация" });
 
-    render(<InboxPage />);
+    render(<InboxPage />, { wrapper: NotificationProvider });
 
     await waitFor(() => {
       expect(mockGetQualification).toHaveBeenCalledWith("l1");
@@ -202,7 +207,7 @@ describe("InboxPage", () => {
       makeLead({ id: "lead-42", status: "new" }),
     ]);
 
-    render(<InboxPage />);
+    render(<InboxPage />, { wrapper: NotificationProvider });
 
     // PendingQueueTabs adds two nav links (/inbox, /inbox/pending) at
     // the top of the page; the lead card adds a third. Find the one

@@ -7,7 +7,6 @@ interface ProspectSelectorProps {
   selectedProspects: Set<string>;
   selectedSeqId: string | null;
   launching: boolean;
-  launchResult: string | null;
   newProspectsCount: number;
   onToggle: (id: string) => void;
   onSelectAll: () => void;
@@ -28,7 +27,6 @@ export function ProspectSelector({
   selectedProspects,
   selectedSeqId,
   launching,
-  launchResult,
   newProspectsCount,
   onToggle,
   onSelectAll,
@@ -151,11 +149,6 @@ export function ProspectSelector({
         </div>
       )}
 
-      {launchResult && (
-        <p className={`mt-2 text-center text-xs font-medium ${launchResult.includes("Ошибка") ? "text-red-500" : "text-green-600"}`}>
-          {launchResult}
-        </p>
-      )}
     </div>
   );
 }

@@ -7,7 +7,6 @@ export function useProspects() {
   const [prospects, setProspects] = useState<Prospect[]>([]);
   const [selectedProspects, setSelectedProspects] = useState<Set<string>>(new Set());
   const [launching, setLaunching] = useState(false);
-  const [launchResult, setLaunchResult] = useState<string | null>(null);
 
   useEffect(() => {
     api.getProspects().then(setProspects).catch(() => {});
@@ -33,10 +32,8 @@ export function useProspects() {
   const launchSequence = useCallback(
     async (seqId: string, prospectIds: string[], sendNow: boolean) => {
       setLaunching(true);
-      setLaunchResult(null);
       try {
         await api.launchSequence(seqId, prospectIds, sendNow);
-        setLaunchResult(`Запущено для ${prospectIds.length} проспектов`);
         setSelectedProspects(new Set());
         notify({
           type: "success",
@@ -47,11 +44,9 @@ export function useProspects() {
         });
         api.getProspects().then(setProspects).catch(() => {});
       } catch (err) {
-        setLaunchResult("Ошибка запуска");
         notifyError(err, "Не удалось запустить отправку");
       } finally {
         setLaunching(false);
-        setTimeout(() => setLaunchResult(null), 4000);
       }
     },
     [notify, notifyError]
@@ -63,7 +58,6 @@ export function useProspects() {
     prospects,
     selectedProspects,
     launching,
-    launchResult,
     newProspectsCount,
     toggleProspect,
     selectAllProspects,

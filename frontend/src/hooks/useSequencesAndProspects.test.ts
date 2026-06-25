@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { renderHook, act, waitFor } from "@testing-library/react";
+import { renderHook, act, waitFor, screen } from "@testing-library/react";
 
 vi.mock("@/lib/api", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/lib/api")>();
@@ -231,11 +231,12 @@ describe("useProspects", () => {
 
       expect(mockedApi.launchSequence).toHaveBeenCalledWith("seq-1", ["p-1", "p-2"], true);
       expect(result.current.selectedProspects.size).toBe(0);
-      expect(result.current.launchResult).toBe("Запущено для 2 проспектов");
       expect(result.current.launching).toBe(false);
+      // Success is surfaced through the global notification, not inline state.
+      expect(screen.getByText("Письма подготовлены")).toBeInTheDocument();
     });
 
-    it("sets error message on failure", async () => {
+    it("notifies the real failure cause and stops the spinner on error", async () => {
       mockedApi.getProspects.mockResolvedValue([]);
       mockedApi.launchSequence.mockRejectedValue(new Error("fail"));
 
@@ -247,31 +248,8 @@ describe("useProspects", () => {
         await result.current.launchSequence("seq-1", ["p-1"], false);
       });
 
-      expect(result.current.launchResult).toBe("Ошибка запуска");
       expect(result.current.launching).toBe(false);
-    });
-
-    it("clears launchResult after 4 seconds", async () => {
-      vi.useFakeTimers({ shouldAdvanceTime: true });
-      mockedApi.getProspects.mockResolvedValue([]);
-      mockedApi.launchSequence.mockResolvedValue(undefined);
-
-      const { result } = renderHook(() => useProspects(), { wrapper: NotificationProvider });
-
-      await waitFor(() => expect(mockedApi.getProspects).toHaveBeenCalled());
-
-      await act(async () => {
-        await result.current.launchSequence("seq-1", ["p-1"], true);
-      });
-
-      expect(result.current.launchResult).toBe("Запущено для 1 проспектов");
-
-      await act(async () => {
-        vi.advanceTimersByTime(4000);
-      });
-
-      expect(result.current.launchResult).toBeNull();
-      vi.useRealTimers();
+      expect(screen.getByText("Не удалось запустить отправку")).toBeInTheDocument();
     });
 
     it("reloads prospects after successful launch", async () => {

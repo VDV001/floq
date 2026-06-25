@@ -8,6 +8,7 @@ import { PipelineSidebar } from "@/components/inbox/PipelineSidebar";
 import { LeadCard } from "@/components/leads/LeadCard";
 import { PendingQueueTabs } from "@/components/pending-queue/PendingQueueTabs";
 import { useInboxPage } from "@/hooks/useInboxPage";
+import { useNotify } from "@/components/notifications/NotificationProvider";
 
 export default function InboxPage() {
   const {
@@ -15,6 +16,7 @@ export default function InboxPage() {
     loading, leads, statusCounts, sourceFilter, setSourceFilter,
     suggestionCounts, filteredLeads,
   } = useInboxPage();
+  const { notify, notifyError } = useNotify();
 
   return (
     <div className="flex h-full">
@@ -37,7 +39,7 @@ export default function InboxPage() {
               </p>
             </div>
             <div className="flex items-center gap-2 mr-4">
-              <button onClick={() => api.exportLeadsCSV().catch(() => alert("Ошибка экспорта"))}
+              <button onClick={() => api.exportLeadsCSV().catch((err) => notifyError(err, "Не удалось выгрузить лиды"))}
                 className="flex items-center gap-1.5 rounded-lg border border-[#c3c6d7]/30 bg-[#c3c6d7]/10 px-4 py-2 text-xs font-semibold text-[#0d1c2e] transition-all hover:bg-[#c3c6d7]/20">
                 <Download className="size-4" /> Экспорт
               </button>
@@ -47,8 +49,14 @@ export default function InboxPage() {
                 <Upload className="size-4" /> Импорт лидов
                 <input type="file" accept=".csv" className="hidden" onChange={async (e) => {
                   const file = e.target.files?.[0]; if (!file) return;
-                  try { const res = await api.importLeadsCSV(file); alert(`Импортировано ${res.imported} лидов`); window.location.reload(); }
-                  catch { alert("Ошибка импорта"); } e.target.value = "";
+                  try {
+                    const res = await api.importLeadsCSV(file);
+                    notify({ type: "success", title: "Импорт завершён", message: `Загружено лидов: ${res.imported}.` });
+                    window.location.reload();
+                  } catch (err) {
+                    notifyError(err, "Не удалось импортировать лиды");
+                  }
+                  e.target.value = "";
                 }} />
               </label>
             </div>

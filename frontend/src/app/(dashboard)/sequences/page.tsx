@@ -135,7 +135,6 @@ export default function SequencesPage() {
             selectedProspects={prosp.selectedProspects}
             selectedSeqId={seq.selectedSeqId}
             launching={prosp.launching}
-            launchResult={prosp.launchResult}
             newProspectsCount={prosp.newProspectsCount}
             onToggle={prosp.toggleProspect}
             onSelectAll={prosp.selectAllProspects}
