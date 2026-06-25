@@ -105,6 +105,32 @@ func TestLaunch_Autopilot_AppliesSendDelay(t *testing.T) {
 	assert.False(t, got.After(after.Add(5*time.Minute)), "scheduled at most the delay into the future")
 }
 
+// Autopilot auto-approves every message in a multi-prospect, multi-step launch
+// (same owner) — not just the first — so the whole batch is dispatched without
+// manual approval.
+func TestLaunch_Autopilot_ApprovesWholeBatch(t *testing.T) {
+	seqID := uuid.New()
+	owner := uuid.New()
+	pid1 := uuid.New()
+	pid2 := uuid.New()
+	repo := &mockRepo{steps: []domain.SequenceStep{
+		{ID: uuid.New(), SequenceID: seqID, StepOrder: 1, Channel: domain.StepChannelTelegram, PromptHint: "a"},
+		{ID: uuid.New(), SequenceID: seqID, StepOrder: 2, Channel: domain.StepChannelTelegram, PromptHint: "b"},
+	}}
+	pr := newMockProspectReader()
+	pr.prospects[pid1] = &domain.ProspectView{ID: pid1, UserID: owner, Name: "A", Status: "new", VerifyStatus: "valid", IsEligibleForSequence: true}
+	pr.prospects[pid2] = &domain.ProspectView{ID: pid2, UserID: owner, Name: "B", Status: "new", VerifyStatus: "valid", IsEligibleForSequence: true}
+	uc := NewUseCase(repo, &mockAI{telegramBody: "hi"}, pr, &mockLeadCreator{},
+		WithAutopilotChecker(&mockAutopilotChecker{enabled: true}))
+
+	require.NoError(t, uc.Launch(context.Background(), seqID, []uuid.UUID{pid1, pid2}, true))
+
+	require.Len(t, repo.messages, 4) // 2 prospects × 2 steps
+	for _, m := range repo.messages {
+		assert.Equal(t, domain.OutboundStatusApproved, m.Status)
+	}
+}
+
 // A launch batch must belong to a single owner. Autopilot (and the email
 // preflight) resolve their decision once from the first prospect's owner, so a
 // mixed-owner batch would otherwise apply one owner's settings to another
