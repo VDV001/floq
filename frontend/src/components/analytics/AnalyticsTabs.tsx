@@ -9,6 +9,7 @@ const TABS = [
   { href: "/analytics/cost", label: "Затраты" },
   { href: "/analytics/inbox", label: "Входящие" },
   { href: "/analytics/hot-leads", label: "Горячие лиды" },
+  { href: "/analytics/funnel", label: "Воронка" },
 ];
 
 // AnalyticsTabs renders the sub-navigation for /analytics/* pages.

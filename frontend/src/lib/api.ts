@@ -411,6 +411,10 @@ export const api = {
   },
   getInboxAnalytics: (period: AnalyticsPeriod = "month") =>
     apiFetch<InboxFlowResponse>(`/api/analytics/inbox?period=${period}`),
+  getQualificationDistribution: () =>
+    apiFetch<QualificationDistributionResponse>("/api/analytics/qualification-distribution"),
+  getSequenceConversion: () =>
+    apiFetch<SequenceConversionResponse>("/api/analytics/sequence-conversion"),
 
   // 1C integration settings
   getOnecConfig: () => apiFetch<OnecConfig>("/api/onec/config"),
@@ -747,6 +751,34 @@ export interface HotLeadsParams {
   status?: LeadStatusFilter;
   channel?: ChannelFilter;
   limit?: number;
+}
+
+export interface QualBucket {
+  lo: number;
+  hi: number;
+  label: string;
+  count: number;
+}
+
+export interface QualificationDistributionResponse {
+  step: number;
+  total: number;
+  buckets: QualBucket[];
+}
+
+export interface SequenceStepConversion {
+  sequence_id: string;
+  sequence_name: string;
+  step_order: number;
+  entered: number;
+  replied: number;
+  advanced: number;
+  reply_rate: number;
+  advance_rate: number;
+}
+
+export interface SequenceConversionResponse {
+  steps: SequenceStepConversion[];
 }
 
 export interface ScoreBucket {
