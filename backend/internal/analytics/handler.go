@@ -27,6 +27,8 @@ func RegisterRoutes(r chi.Router, uc *UseCase) {
 	r.Get("/api/analytics/cost-ratios", h.getCostRatios)
 	r.Get("/api/analytics/hot-leads", h.getHotLeads)
 	r.Get("/api/analytics/inbox", h.getInboxFlow)
+	r.Get("/api/analytics/qualification-distribution", h.getQualificationDistribution)
+	r.Get("/api/analytics/sequence-conversion", h.getSequenceConversion)
 }
 
 type handler struct {
@@ -294,6 +296,98 @@ func (h *handler) getInboxFlow(w http.ResponseWriter, r *http.Request) {
 			P95TimeToDecideSeconds: pr.P95TimeToDecideSeconds,
 		},
 	})
+}
+
+// qualBucketWire / qualificationDistributionResponse mirror the
+// QualificationFunnelDTO onto the JSON surface.
+type qualBucketWire struct {
+	Lo    int    `json:"lo"`
+	Hi    int    `json:"hi"`
+	Label string `json:"label"`
+	Count int    `json:"count"`
+}
+
+type qualificationDistributionResponse struct {
+	Step    int              `json:"step"`
+	Total   int              `json:"total"`
+	Buckets []qualBucketWire `json:"buckets"`
+}
+
+func (h *handler) getQualificationDistribution(w http.ResponseWriter, r *http.Request) {
+	userID, ok := httputil.UserIDFromContext(r.Context())
+	if !ok {
+		httputil.WriteError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+
+	dto, err := h.uc.GetQualificationDistribution(r.Context(), userID)
+	if err != nil {
+		slog.ErrorContext(r.Context(), "analytics: get qualification distribution failed",
+			slog.String("user_id", userID.String()),
+			slog.Any("err", err))
+		httputil.WriteError(w, http.StatusInternalServerError, "failed to load qualification distribution")
+		return
+	}
+
+	buckets := make([]qualBucketWire, 0, len(dto.Buckets))
+	for _, b := range dto.Buckets {
+		buckets = append(buckets, qualBucketWire{Lo: b.Lo, Hi: b.Hi, Label: b.Label, Count: b.Count})
+	}
+	httputil.WriteJSON(w, http.StatusOK, qualificationDistributionResponse{
+		Step:    dto.Step,
+		Total:   dto.Total,
+		Buckets: buckets,
+	})
+}
+
+// sequenceStepConversionWire / sequenceConversionResponse mirror the
+// SequenceConversionDTO onto the JSON surface. Rates come pre-derived in
+// the DTO (computed in the repo over integer counts).
+type sequenceStepConversionWire struct {
+	SequenceID   string  `json:"sequence_id"`
+	SequenceName string  `json:"sequence_name"`
+	StepOrder    int     `json:"step_order"`
+	Entered      int     `json:"entered"`
+	Replied      int     `json:"replied"`
+	Advanced     int     `json:"advanced"`
+	ReplyRate    float64 `json:"reply_rate"`
+	AdvanceRate  float64 `json:"advance_rate"`
+}
+
+type sequenceConversionResponse struct {
+	Steps []sequenceStepConversionWire `json:"steps"`
+}
+
+func (h *handler) getSequenceConversion(w http.ResponseWriter, r *http.Request) {
+	userID, ok := httputil.UserIDFromContext(r.Context())
+	if !ok {
+		httputil.WriteError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+
+	dto, err := h.uc.GetSequenceConversion(r.Context(), userID)
+	if err != nil {
+		slog.ErrorContext(r.Context(), "analytics: get sequence conversion failed",
+			slog.String("user_id", userID.String()),
+			slog.Any("err", err))
+		httputil.WriteError(w, http.StatusInternalServerError, "failed to load sequence conversion")
+		return
+	}
+
+	steps := make([]sequenceStepConversionWire, 0, len(dto.Steps))
+	for _, s := range dto.Steps {
+		steps = append(steps, sequenceStepConversionWire{
+			SequenceID:   s.SequenceID.String(),
+			SequenceName: s.SequenceName,
+			StepOrder:    s.StepOrder,
+			Entered:      s.Entered,
+			Replied:      s.Replied,
+			Advanced:     s.Advanced,
+			ReplyRate:    s.ReplyRate,
+			AdvanceRate:  s.AdvanceRate,
+		})
+	}
+	httputil.WriteJSON(w, http.StatusOK, sequenceConversionResponse{Steps: steps})
 }
 
 // safeRatio divides numerator by denominator, returning 0 when the

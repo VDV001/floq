@@ -10,8 +10,22 @@ import (
 type Config struct {
 	AppPort     string
 	DatabaseURL string
-	RedisURL    string
-	JWTSecret   string
+	// AnalyticsDatabaseURL is the DSN for the read-only analytics pool. It
+	// defaults to DatabaseURL so the MVP runs against the same instance with
+	// a separate pool/config; point it at a read replica in production to
+	// move heavy analytics aggregations off the OLTP primary without code
+	// changes.
+	AnalyticsDatabaseURL string
+	// AnalyticsRefreshInterval is how often the background cron rebuilds the
+	// analytics materialized views (REFRESH ... CONCURRENTLY). Default 5m —
+	// the funnel dashboard tolerates minutes-stale aggregates.
+	AnalyticsRefreshInterval time.Duration
+	// AnalyticsScoreBucketStep is the qualification-score histogram bucket
+	// width for the funnel distribution, normalised to a multiple of 10 in
+	// [10, 100]. Default 10.
+	AnalyticsScoreBucketStep int
+	RedisURL                 string
+	JWTSecret                string
 	// SecretsKEK is the base64-encoded 32-byte key-encryption-key used to
 	// encrypt client credentials at rest. Validated at startup by
 	// secrets.NewCipher — the server fails fast if it is missing or not 32
@@ -92,6 +106,9 @@ func Load() *Config {
 	return &Config{
 		AppPort:                     getEnv("APP_PORT", "8080"),
 		DatabaseURL:                 os.Getenv("DATABASE_URL"),
+		AnalyticsDatabaseURL:        getEnv("ANALYTICS_DATABASE_URL", os.Getenv("DATABASE_URL")),
+		AnalyticsRefreshInterval:    getEnvDuration("ANALYTICS_REFRESH_INTERVAL", 5*time.Minute),
+		AnalyticsScoreBucketStep:    getEnvInt("ANALYTICS_SCORE_BUCKET_STEP", 10),
 		RedisURL:                    os.Getenv("REDIS_URL"),
 		JWTSecret:                   os.Getenv("JWT_SECRET"),
 		SecretsKEK:                  os.Getenv("FLOQ_SECRETS_KEK"),

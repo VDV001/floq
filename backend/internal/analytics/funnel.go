@@ -99,7 +99,12 @@ func (r *Repository) GetQualificationDistribution(ctx context.Context, userID uu
 
 	dto := &QualificationFunnelDTO{Step: step, Total: total}
 	for lo := 0; lo < 100; lo += step {
-		hi := min(lo+step-1, 100)
+		hi := lo + step - 1
+		if lo+step >= 100 {
+			// Top band is inclusive of the maximum score (100); the matview
+			// folds score 100 into its highest width-10 bin.
+			hi = 100
+		}
 		dto.Buckets = append(dto.Buckets, QualBucketDTO{
 			Lo:    lo,
 			Hi:    hi,
@@ -142,6 +147,25 @@ func (r *Repository) GetSequenceConversion(ctx context.Context, userID uuid.UUID
 		return nil, fmt.Errorf("analytics sequence conversion iter: %w", err)
 	}
 	return dto, nil
+}
+
+// funnelMatviews are the materialized views the refresh cron rebuilds.
+var funnelMatviews = []string{
+	"mv_analytics_qualification_distribution",
+	"mv_analytics_sequence_step_conversion",
+}
+
+// RefreshMatviews rebuilds the funnel materialized views CONCURRENTLY so
+// readers keep serving the previous snapshot during the refresh. Requires
+// the UNIQUE index each view carries (migration 042) and that the view was
+// already populated once (created WITH DATA). Returns the first error.
+func (r *Repository) RefreshMatviews(ctx context.Context) error {
+	for _, mv := range funnelMatviews {
+		if _, err := r.pool.Exec(ctx, "REFRESH MATERIALIZED VIEW CONCURRENTLY "+mv); err != nil {
+			return fmt.Errorf("refresh %s: %w", mv, err)
+		}
+	}
+	return nil
 }
 
 // safeRate divides num by denom, returning 0 for a non-positive denominator

@@ -103,6 +103,18 @@ func main() {
 	}
 	defer pool.Close()
 
+	// 1a. Read-only analytics pool. A separate pool/config from its own DSN
+	// so heavy analytics aggregations are isolated from the OLTP path; all
+	// analytics reads go through it. In the MVP its DSN defaults to the
+	// primary's (same instance, separate pool) — point ANALYTICS_DATABASE_URL
+	// at a read replica in production to offload the primary without code
+	// changes.
+	analyticsPool, err := pgxpool.New(context.Background(), cfg.AnalyticsDatabaseURL)
+	if err != nil {
+		log.Fatalf("connect to analytics db: %v", err)
+	}
+	defer analyticsPool.Close()
+
 	// 1b. Run migrations
 	migrationsPath := os.Getenv("MIGRATIONS_PATH")
 	if migrationsPath == "" {
@@ -351,10 +363,13 @@ func main() {
 		audit.RegisterRoutes(r, audit.NewHandler(audit.NewUseCase(auditRepo)))
 		onec.RegisterConfigRoutes(r, onec.NewConfigHandler(
 			onec.NewConfigUseCase(onecRepo, onecRepo, onecClient, buildOnecSecretGenerator())))
-		analyticsRepo := analytics.NewRepository(pool)
+		// All analytics reads go through the isolated analytics pool.
+		analyticsRepo := analytics.NewRepository(analyticsPool)
 		analytics.RegisterRoutes(r, analytics.NewUseCase(analyticsRepo, analyticsRepo,
 			analytics.WithHotLeadsReader(analyticsRepo),
-			analytics.WithInboxFlowReader(analyticsRepo)))
+			analytics.WithInboxFlowReader(analyticsRepo),
+			analytics.WithFunnelReader(analyticsRepo),
+			analytics.WithScoreBucketStep(cfg.AnalyticsScoreBucketStep)))
 		tgOpts := []tgclient.Option{}
 		if proxyDialer != nil {
 			tgOpts = append(tgOpts, tgclient.WithDialer(proxyDialer))
@@ -403,6 +418,12 @@ func main() {
 	// unbounded growth of the cost ledger. Stops on ctx.
 	auditRetentionUC := audit.NewRetentionUseCase(auditRepo, cfg.AuditRetentionDays)
 	go audit.NewRetentionCron(auditRetentionUC, cfg.AuditRetentionInterval, slog.Default()).Start(ctx)
+
+	// Analytics matview refresh cron — rebuilds the funnel materialized views
+	// CONCURRENTLY off the OLTP path so the dashboard serves fresh aggregates
+	// without running the heavy GROUP BYs inline. Reads through the analytics
+	// pool; stops on ctx.
+	go analytics.NewRefreshCron(analytics.NewRepository(analyticsPool), cfg.AnalyticsRefreshInterval, slog.Default()).Start(ctx)
 
 	// Queue-depth metric (#94) — periodically publishes the pending-reply
 	// backlog (aggregate by kind) into Prometheus. Stops on ctx.
