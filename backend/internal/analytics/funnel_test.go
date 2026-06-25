@@ -43,16 +43,19 @@ type stubFunnel struct {
 	conv      *analytics.SequenceConversionDTO
 	gotUserID uuid.UUID
 	gotStep   int
+	gotPeriod analytics.Period
 }
 
-func (s *stubFunnel) GetQualificationDistribution(_ context.Context, userID uuid.UUID, step int) (*analytics.QualificationFunnelDTO, error) {
+func (s *stubFunnel) GetQualificationDistribution(_ context.Context, userID uuid.UUID, step int, period analytics.Period) (*analytics.QualificationFunnelDTO, error) {
 	s.gotUserID = userID
 	s.gotStep = step
+	s.gotPeriod = period
 	return s.dist, nil
 }
 
-func (s *stubFunnel) GetSequenceConversion(_ context.Context, userID uuid.UUID) (*analytics.SequenceConversionDTO, error) {
+func (s *stubFunnel) GetSequenceConversion(_ context.Context, userID uuid.UUID, period analytics.Period) (*analytics.SequenceConversionDTO, error) {
 	s.gotUserID = userID
+	s.gotPeriod = period
 	return s.conv, nil
 }
 
@@ -63,7 +66,7 @@ func TestUseCase_GetQualificationDistribution_PassesConfiguredStep(t *testing.T)
 		analytics.WithScoreBucketStep(20))
 
 	userID := uuid.New()
-	_, err := uc.GetQualificationDistribution(context.Background(), userID)
+	_, err := uc.GetQualificationDistribution(context.Background(), userID, analytics.PeriodAll)
 	require.NoError(t, err)
 	assert.Equal(t, userID, stub.gotUserID)
 	assert.Equal(t, 20, stub.gotStep, "usecase forwards the configured bucket step")
@@ -73,7 +76,7 @@ func TestUseCase_GetQualificationDistribution_DefaultStepIsTen(t *testing.T) {
 	stub := &stubFunnel{dist: &analytics.QualificationFunnelDTO{}}
 	uc := analytics.NewUseCase(nil, nil, analytics.WithFunnelReader(stub))
 
-	_, err := uc.GetQualificationDistribution(context.Background(), uuid.New())
+	_, err := uc.GetQualificationDistribution(context.Background(), uuid.New(), analytics.PeriodAll)
 	require.NoError(t, err)
 	assert.Equal(t, 10, stub.gotStep, "default bucket step is 10")
 }
@@ -111,6 +114,53 @@ func TestHandler_GetQualificationDistribution_ReturnsBuckets(t *testing.T) {
 	require.Len(t, got.Buckets, 2)
 	assert.Equal(t, "0–49", got.Buckets[0]["label"])
 	assert.EqualValues(t, 5, got.Buckets[0]["count"])
+}
+
+func TestHandler_Funnel_ForwardsPeriod(t *testing.T) {
+	tests := []struct {
+		name  string
+		query string
+		want  analytics.Period
+	}{
+		{"week", "?period=week", analytics.PeriodWeek},
+		{"month", "?period=month", analytics.PeriodMonth},
+		{"default is all", "", analytics.PeriodAll},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			stub := &stubFunnel{
+				dist: &analytics.QualificationFunnelDTO{},
+				conv: &analytics.SequenceConversionDTO{},
+			}
+			r := chi.NewRouter()
+			analytics.RegisterRoutes(r, analytics.NewUseCase(nil, nil, analytics.WithFunnelReader(stub)))
+
+			w := httptest.NewRecorder()
+			r.ServeHTTP(w, newAuthedRequest(t, "/api/analytics/qualification-distribution"+tt.query, uuid.New()))
+			require.Equal(t, http.StatusOK, w.Code)
+			assert.Equal(t, tt.want, stub.gotPeriod, "qualification distribution forwards period")
+
+			w = httptest.NewRecorder()
+			r.ServeHTTP(w, newAuthedRequest(t, "/api/analytics/sequence-conversion"+tt.query, uuid.New()))
+			require.Equal(t, http.StatusOK, w.Code)
+			assert.Equal(t, tt.want, stub.gotPeriod, "sequence conversion forwards period")
+		})
+	}
+}
+
+func TestHandler_Funnel_RejectsInvalidPeriod(t *testing.T) {
+	stub := &stubFunnel{dist: &analytics.QualificationFunnelDTO{}, conv: &analytics.SequenceConversionDTO{}}
+	r := chi.NewRouter()
+	analytics.RegisterRoutes(r, analytics.NewUseCase(nil, nil, analytics.WithFunnelReader(stub)))
+
+	for _, path := range []string{
+		"/api/analytics/qualification-distribution?period=decade",
+		"/api/analytics/sequence-conversion?period=decade",
+	} {
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, newAuthedRequest(t, path, uuid.New()))
+		assert.Equal(t, http.StatusBadRequest, w.Code, path)
+	}
 }
 
 func TestHandler_GetSequenceConversion_ReturnsSteps(t *testing.T) {

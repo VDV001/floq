@@ -308,6 +308,7 @@ type qualBucketWire struct {
 }
 
 type qualificationDistributionResponse struct {
+	Period  string           `json:"period"`
 	Step    int              `json:"step"`
 	Total   int              `json:"total"`
 	Buckets []qualBucketWire `json:"buckets"`
@@ -320,7 +321,13 @@ func (h *handler) getQualificationDistribution(w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	dto, err := h.uc.GetQualificationDistribution(r.Context(), userID)
+	period, err := ParsePeriod(r.URL.Query().Get("period"))
+	if err != nil {
+		httputil.WriteError(w, http.StatusBadRequest, "period must be one of: week, month, all")
+		return
+	}
+
+	dto, err := h.uc.GetQualificationDistribution(r.Context(), userID, period)
 	if err != nil {
 		slog.ErrorContext(r.Context(), "analytics: get qualification distribution failed",
 			slog.String("user_id", userID.String()),
@@ -334,6 +341,7 @@ func (h *handler) getQualificationDistribution(w http.ResponseWriter, r *http.Re
 		buckets = append(buckets, qualBucketWire{Lo: b.Lo, Hi: b.Hi, Label: b.Label, Count: b.Count})
 	}
 	httputil.WriteJSON(w, http.StatusOK, qualificationDistributionResponse{
+		Period:  string(period),
 		Step:    dto.Step,
 		Total:   dto.Total,
 		Buckets: buckets,
@@ -355,7 +363,8 @@ type sequenceStepConversionWire struct {
 }
 
 type sequenceConversionResponse struct {
-	Steps []sequenceStepConversionWire `json:"steps"`
+	Period string                       `json:"period"`
+	Steps  []sequenceStepConversionWire `json:"steps"`
 }
 
 func (h *handler) getSequenceConversion(w http.ResponseWriter, r *http.Request) {
@@ -365,7 +374,13 @@ func (h *handler) getSequenceConversion(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	dto, err := h.uc.GetSequenceConversion(r.Context(), userID)
+	period, err := ParsePeriod(r.URL.Query().Get("period"))
+	if err != nil {
+		httputil.WriteError(w, http.StatusBadRequest, "period must be one of: week, month, all")
+		return
+	}
+
+	dto, err := h.uc.GetSequenceConversion(r.Context(), userID, period)
 	if err != nil {
 		slog.ErrorContext(r.Context(), "analytics: get sequence conversion failed",
 			slog.String("user_id", userID.String()),
@@ -387,7 +402,7 @@ func (h *handler) getSequenceConversion(w http.ResponseWriter, r *http.Request) 
 			AdvanceRate:  s.AdvanceRate,
 		})
 	}
-	httputil.WriteJSON(w, http.StatusOK, sequenceConversionResponse{Steps: steps})
+	httputil.WriteJSON(w, http.StatusOK, sequenceConversionResponse{Period: string(period), Steps: steps})
 }
 
 // safeRatio divides numerator by denominator, returning 0 when the

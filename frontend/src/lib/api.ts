@@ -411,10 +411,10 @@ export const api = {
   },
   getInboxAnalytics: (period: AnalyticsPeriod = "month") =>
     apiFetch<InboxFlowResponse>(`/api/analytics/inbox?period=${period}`),
-  getQualificationDistribution: () =>
-    apiFetch<QualificationDistributionResponse>("/api/analytics/qualification-distribution"),
-  getSequenceConversion: () =>
-    apiFetch<SequenceConversionResponse>("/api/analytics/sequence-conversion"),
+  getQualificationDistribution: (period: AnalyticsPeriod = "all") =>
+    apiFetch<QualificationDistributionResponse>(`/api/analytics/qualification-distribution?period=${period}`),
+  getSequenceConversion: (period: AnalyticsPeriod = "all") =>
+    apiFetch<SequenceConversionResponse>(`/api/analytics/sequence-conversion?period=${period}`),
 
   // 1C integration settings
   getOnecConfig: () => apiFetch<OnecConfig>("/api/onec/config"),

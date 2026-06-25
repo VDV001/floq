@@ -1,12 +1,16 @@
 "use client";
 
+import { useState } from "react";
+import type { AnalyticsPeriod } from "@/lib/api";
 import { useFunnelAnalytics } from "@/hooks/useFunnelAnalytics";
 import { AnalyticsTabs } from "@/components/analytics/AnalyticsTabs";
+import { PeriodSelector } from "@/components/analytics/PeriodSelector";
 import { QualDistributionCard } from "@/components/analytics/QualDistributionCard";
 import { SequenceConversionTable } from "@/components/analytics/SequenceConversionTable";
 
 export default function FunnelAnalyticsPage() {
-  const { distribution, conversion, loading, error, lastUpdated, refresh } = useFunnelAnalytics();
+  const [period, setPeriod] = useState<AnalyticsPeriod>("all");
+  const { distribution, conversion, loading, error, lastUpdated, refresh } = useFunnelAnalytics(period);
 
   return (
     <section className="flex-1 overflow-y-auto px-4 sm:px-8 lg:px-12 py-8">
@@ -16,16 +20,19 @@ export default function FunnelAnalyticsPage() {
           <div>
             <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight text-[#0d1c2e]">Конверсия</h1>
             <p className="text-sm text-slate-500 mt-1">
-              Распределение скоров квалификации и конверсия по шагам секвенций (за всё время).
+              Распределение скоров квалификации и конверсия по шагам секвенций за выбранный период.
             </p>
           </div>
-          <button
-            type="button"
-            onClick={() => void refresh()}
-            className="rounded-md border border-slate-200 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50"
-          >
-            Обновить
-          </button>
+          <div className="flex items-center gap-3">
+            <PeriodSelector value={period} onChange={setPeriod} />
+            <button
+              type="button"
+              onClick={() => void refresh()}
+              className="rounded-md border border-slate-200 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50"
+            >
+              Обновить
+            </button>
+          </div>
         </header>
 
         {error && (

@@ -3,6 +3,7 @@ package analytics
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/google/uuid"
 )
@@ -47,8 +48,8 @@ type SequenceConversionDTO struct {
 // funnel read-models. The pg implementation reads the materialized views
 // refreshed by the background cron; tests stub it directly.
 type FunnelReader interface {
-	GetQualificationDistribution(ctx context.Context, userID uuid.UUID, step int) (*QualificationFunnelDTO, error)
-	GetSequenceConversion(ctx context.Context, userID uuid.UUID) (*SequenceConversionDTO, error)
+	GetQualificationDistribution(ctx context.Context, userID uuid.UUID, step int, period Period) (*QualificationFunnelDTO, error)
+	GetSequenceConversion(ctx context.Context, userID uuid.UUID, period Period) (*SequenceConversionDTO, error)
 }
 
 // Repository satisfies FunnelReader. Asserted here so a signature drift in
@@ -69,14 +70,20 @@ func NormalizeBucketStep(step int) int {
 // the matview and folds them up to step, emitting a complete histogram
 // (zero-count buckets included) so the dashboard axis stays continuous. step
 // is expected normalised (see NormalizeBucketStep) by the usecase.
-func (r *Repository) GetQualificationDistribution(ctx context.Context, userID uuid.UUID, step int) (*QualificationFunnelDTO, error) {
+func (r *Repository) GetQualificationDistribution(ctx context.Context, userID uuid.UUID, step int, period Period) (*QualificationFunnelDTO, error) {
 	step = NormalizeBucketStep(step)
 
+	// Day-bucketed matview: sum the per-day counts (additive) into width-10
+	// bins, then fold up to step below. A NULL cutoff means all-time; a
+	// window keeps only days on/after the cutoff (NOW() lives in this read
+	// query, never in the view/index).
+	cutoff := nullableCutoff(periodCutoff(period, time.Now().UTC()))
 	rows, err := r.pool.Query(ctx,
-		`SELECT bucket_lo, cnt
+		`SELECT bucket_lo, SUM(cnt)::bigint
 		 FROM mv_analytics_qualification_distribution
-		 WHERE user_id = $1`,
-		userID,
+		 WHERE user_id = $1 AND ($2::date IS NULL OR day >= $2::date)
+		 GROUP BY bucket_lo`,
+		userID, cutoff,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("analytics qualification distribution: %w", err)
@@ -118,14 +125,22 @@ func (r *Repository) GetQualificationDistribution(ctx context.Context, userID uu
 // GetSequenceConversion reads the per-(sequence, step) funnel from the
 // matview, joining sequences for the current name (small, kept fresh rather
 // than baked into the view) and deriving the reply/advance rates.
-func (r *Repository) GetSequenceConversion(ctx context.Context, userID uuid.UUID) (*SequenceConversionDTO, error) {
+func (r *Repository) GetSequenceConversion(ctx context.Context, userID uuid.UUID, period Period) (*SequenceConversionDTO, error) {
+	// The matview is deduped to one row per (sequence, step, prospect) entered,
+	// so a windowed COUNT/COUNT FILTER is exact (no distinct-additivity hazard).
+	// A NULL cutoff means all-time; a window keeps only entries on/after it.
+	cutoff := nullableCutoff(periodCutoff(period, time.Now().UTC()))
 	rows, err := r.pool.Query(ctx, `
-		SELECT c.sequence_id, s.name, c.step_order, c.entered, c.replied, c.advanced
+		SELECT c.sequence_id, s.name, c.step_order,
+		       COUNT(*)::bigint                              AS entered,
+		       (COUNT(*) FILTER (WHERE c.replied))::bigint   AS replied,
+		       (COUNT(*) FILTER (WHERE c.advanced))::bigint  AS advanced
 		FROM mv_analytics_sequence_step_conversion c
 		JOIN sequences s ON s.id = c.sequence_id
-		WHERE c.user_id = $1
+		WHERE c.user_id = $1 AND ($2::timestamptz IS NULL OR c.entered_at >= $2)
+		GROUP BY c.sequence_id, s.name, c.step_order
 		ORDER BY s.name, c.step_order`,
-		userID,
+		userID, cutoff,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("analytics sequence conversion: %w", err)
