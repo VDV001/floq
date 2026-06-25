@@ -17,6 +17,14 @@ export function DraftSidebar({ leadId, draft, draftLoading, onDraftChanged, onMe
   const [regenerating, setRegenerating] = useState(false);
   const [sending, setSending] = useState(false);
 
+  // Reset the editor when navigating to another lead so a half-written reply
+  // never leaks across leads (textarea is always editable now).
+  const [prevLeadId, setPrevLeadId] = useState(leadId);
+  if (leadId !== prevLeadId) {
+    setPrevLeadId(leadId);
+    setDraftText(draft?.body || "");
+  }
+
   // Sync when draft changes externally
   if (draft && draftText === "" && draft.body) setDraftText(draft.body);
 
