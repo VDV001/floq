@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/daniil/floq/internal/audit/domain"
 	"github.com/daniil/floq/internal/metrics"
@@ -124,4 +125,16 @@ func TestOnAuditEntry_NeverLabelsByUserID(t *testing.T) {
 	// /metrics is public (no auth) — a per-user label would leak tenant
 	// activity to anyone who can reach the scrape endpoint.
 	assert.NotContains(t, body, userID.String(), "user_id must never appear as a label")
+}
+
+func TestObserveMatviewRefresh_RecordsDuration(t *testing.T) {
+	m := metrics.New()
+	m.ObserveMatviewRefresh(2 * time.Second)
+	m.ObserveMatviewRefresh(5 * time.Second)
+
+	body := scrape(t, m)
+	// The histogram must expose a count of the observed analytics matview
+	// refreshes so ops can alert when refresh latency approaches the interval
+	// (the scale-path trigger).
+	assert.Contains(t, body, "analytics_matview_refresh_duration_seconds_count 2")
 }
