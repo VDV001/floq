@@ -19,6 +19,19 @@ var ErrEmailNotConfigured = errors.New("email not configured")
 // and answer 404 (not leaking whether the prospect exists for another tenant).
 var ErrProspectNotOwned = errors.New("prospect not owned by caller")
 
+// ErrSequenceNotOwned is returned when a requested sequence — or a step or
+// launch targeting it — does not belong to the authenticated caller, or does
+// not exist. A missing and a foreign sequence return the SAME sentinel so the
+// caller can't tell them apart (anti-enumeration); the handler errors.Is it
+// and answers 404.
+var ErrSequenceNotOwned = errors.New("sequence not owned by caller")
+
+// ErrMessageNotOwned is returned when an outbound message operation (approve,
+// reject, edit) targets a message whose prospect does not belong to the
+// authenticated caller, or that does not exist. Missing and foreign collapse to
+// the same sentinel (anti-enumeration) → 404 at the handler.
+var ErrMessageNotOwned = errors.New("outbound message not owned by caller")
+
 // SequenceRepo manages sequence CRUD.
 // Note: ToggleActive was removed — the usecase now loads the entity, calls
 // Activate/Deactivate, and persists via UpdateSequence. This keeps the port
@@ -34,6 +47,10 @@ type SequenceRepo interface {
 // StepRepo manages sequence step CRUD.
 type StepRepo interface {
 	ListSteps(ctx context.Context, sequenceID uuid.UUID) ([]SequenceStep, error)
+	// GetStep loads a single step by id (returns nil if absent). Used to
+	// resolve the owning sequence when authorizing a step-scoped operation
+	// addressed only by step id (e.g. DeleteStep).
+	GetStep(ctx context.Context, stepID uuid.UUID) (*SequenceStep, error)
 	CreateStep(ctx context.Context, step *SequenceStep) error
 	DeleteStep(ctx context.Context, stepID uuid.UUID) error
 }

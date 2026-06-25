@@ -123,6 +123,21 @@ func (r *Repository) ListSteps(ctx context.Context, sequenceID uuid.UUID) ([]dom
 	return steps, rows.Err()
 }
 
+func (r *Repository) GetStep(ctx context.Context, stepID uuid.UUID) (*domain.SequenceStep, error) {
+	var st domain.SequenceStep
+	err := r.conn(ctx).QueryRow(ctx,
+		`SELECT id, sequence_id, step_order, delay_days, prompt_hint, body, channel, created_at
+		 FROM sequence_steps WHERE id = $1`, stepID).
+		Scan(&st.ID, &st.SequenceID, &st.StepOrder, &st.DelayDays, &st.PromptHint, &st.Body, &st.Channel, &st.CreatedAt)
+	if err == pgx.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("get step: %w", err)
+	}
+	return &st, nil
+}
+
 func (r *Repository) CreateStep(ctx context.Context, step *domain.SequenceStep) error {
 	_, err := r.conn(ctx).Exec(ctx,
 		`INSERT INTO sequence_steps (id, sequence_id, step_order, delay_days, prompt_hint, body, channel, created_at)

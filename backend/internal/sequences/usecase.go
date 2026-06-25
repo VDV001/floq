@@ -53,16 +53,85 @@ func (uc *UseCase) ListSequences(ctx context.Context, userID uuid.UUID) ([]domai
 	return uc.repo.ListSequences(ctx, userID)
 }
 
-func (uc *UseCase) GetSequence(ctx context.Context, id uuid.UUID) (*domain.Sequence, error) {
-	return uc.repo.GetSequence(ctx, id)
+// GetSequence loads a sequence by id. userID is the authenticated caller; the
+// ownership boundary is enforced in a later change (this commit only threads
+// the parameter through, behaviour unchanged).
+// authorizeSequence loads a sequence and verifies the authenticated caller
+// owns it. A missing and a foreign sequence BOTH return ErrSequenceNotOwned so
+// the two are indistinguishable to the caller (anti-enumeration). userID ==
+// uuid.Nil skips the ownership check — a unit-test affordance only: the handler
+// always supplies a real caller and a persisted sequence always has a non-nil
+// owner (NewSequence enforces it), so a nil caller cannot occur in production.
+func (uc *UseCase) authorizeSequence(ctx context.Context, userID, id uuid.UUID) (*domain.Sequence, error) {
+	s, err := uc.repo.GetSequence(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if userID == uuid.Nil {
+		return s, nil
+	}
+	if s == nil || s.UserID != userID {
+		return nil, domain.ErrSequenceNotOwned
+	}
+	return s, nil
+}
+
+// authorizeStep verifies the caller owns the sequence a step belongs to. A
+// step is addressed only by its own id, so the owning sequence is resolved via
+// GetStep. A missing step and a step under a foreign sequence both return
+// ErrSequenceNotOwned (anti-enumeration). userID == uuid.Nil skips the check
+// (unit-test affordance; see authorizeSequence).
+func (uc *UseCase) authorizeStep(ctx context.Context, userID, stepID uuid.UUID) error {
+	if userID == uuid.Nil {
+		return nil
+	}
+	step, err := uc.repo.GetStep(ctx, stepID)
+	if err != nil {
+		return err
+	}
+	if step == nil {
+		return domain.ErrSequenceNotOwned
+	}
+	_, err = uc.authorizeSequence(ctx, userID, step.SequenceID)
+	return err
+}
+
+// authorizeMessage loads an outbound message and verifies it belongs to the
+// caller, resolving ownership through the message's prospect — the same owner
+// definition the queue/sent/stats reads use. Missing and foreign both return
+// ErrMessageNotOwned (anti-enumeration). userID == uuid.Nil skips the check
+// (unit-test affordance; see authorizeSequence).
+func (uc *UseCase) authorizeMessage(ctx context.Context, userID, id uuid.UUID) (*domain.OutboundMessage, error) {
+	msg, err := uc.repo.GetOutboundMessage(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if userID == uuid.Nil {
+		return msg, nil
+	}
+	if msg == nil {
+		return nil, domain.ErrMessageNotOwned
+	}
+	p, err := uc.prospects.GetProspect(ctx, msg.ProspectID)
+	if err != nil {
+		return nil, err
+	}
+	if p == nil || p.UserID != userID {
+		return nil, domain.ErrMessageNotOwned
+	}
+	return msg, nil
+}
+
+func (uc *UseCase) GetSequence(ctx context.Context, userID, id uuid.UUID) (*domain.Sequence, error) {
+	return uc.authorizeSequence(ctx, userID, id)
 }
 
 func (uc *UseCase) CreateSequence(ctx context.Context, s *domain.Sequence) error {
 	return uc.repo.CreateSequence(ctx, s)
 }
 
-func (uc *UseCase) UpdateSequence(ctx context.Context, id uuid.UUID, name string) error {
-	s, err := uc.repo.GetSequence(ctx, id)
+func (uc *UseCase) UpdateSequence(ctx context.Context, userID, id uuid.UUID, name string) error {
+	s, err := uc.authorizeSequence(ctx, userID, id)
 	if err != nil {
 		return err
 	}
@@ -77,7 +146,10 @@ func (uc *UseCase) UpdateSequence(ctx context.Context, id uuid.UUID, name string
 	return uc.repo.UpdateSequence(ctx, s)
 }
 
-func (uc *UseCase) DeleteSequence(ctx context.Context, id uuid.UUID) error {
+func (uc *UseCase) DeleteSequence(ctx context.Context, userID, id uuid.UUID) error {
+	if _, err := uc.authorizeSequence(ctx, userID, id); err != nil {
+		return err
+	}
 	return uc.repo.DeleteSequence(ctx, id)
 }
 
@@ -85,8 +157,8 @@ func (uc *UseCase) DeleteSequence(ctx context.Context, id uuid.UUID) error {
 // (Activate/Deactivate), and persists. This ensures future rules on
 // activation (e.g. "can't activate a sequence with no steps") live on the
 // entity, not scattered across handlers/usecases.
-func (uc *UseCase) ToggleActive(ctx context.Context, id uuid.UUID, active bool) error {
-	s, err := uc.repo.GetSequence(ctx, id)
+func (uc *UseCase) ToggleActive(ctx context.Context, userID, id uuid.UUID, active bool) error {
+	s, err := uc.authorizeSequence(ctx, userID, id)
 	if err != nil {
 		return err
 	}
@@ -105,7 +177,10 @@ func (uc *UseCase) ListSteps(ctx context.Context, sequenceID uuid.UUID) ([]domai
 	return uc.repo.ListSteps(ctx, sequenceID)
 }
 
-func (uc *UseCase) CreateStep(ctx context.Context, step *domain.SequenceStep) error {
+func (uc *UseCase) CreateStep(ctx context.Context, userID uuid.UUID, step *domain.SequenceStep) error {
+	if _, err := uc.authorizeSequence(ctx, userID, step.SequenceID); err != nil {
+		return err
+	}
 	return uc.repo.CreateStep(ctx, step)
 }
 
@@ -134,6 +209,15 @@ func hasEmailStep(steps []domain.SequenceStep) bool {
 }
 
 func (uc *UseCase) launchInner(ctx context.Context, userID uuid.UUID, sequenceID uuid.UUID, prospectIDs []uuid.UUID, sendNow ...bool) error {
+	// The caller may only launch a sequence they own — launching a foreign
+	// sequence would generate messages from (and thereby leak) its steps.
+	// Checked before reading steps so a foreign sequence's content is never
+	// touched. authorizeSequence collapses missing+foreign to ErrSequenceNotOwned
+	// and is a no-op when userID is nil (unit tests).
+	if _, err := uc.authorizeSequence(ctx, userID, sequenceID); err != nil {
+		return fmt.Errorf("launch: %w", err)
+	}
+
 	steps, err := uc.repo.ListSteps(ctx, sequenceID)
 	if err != nil {
 		return fmt.Errorf("launch: list steps: %w", err)
@@ -305,10 +389,10 @@ func (uc *UseCase) launchInner(ctx context.Context, userID uuid.UUID, sequenceID
 // Approved (fails if the current status forbids it), then persists the result.
 // The state machine (see domain.OutboundMessage.TransitionTo) is the single
 // source of truth for legal transitions — the repo is dumb persistence.
-func (uc *UseCase) ApproveMessage(ctx context.Context, id uuid.UUID) error {
-	msg, err := uc.repo.GetOutboundMessage(ctx, id)
+func (uc *UseCase) ApproveMessage(ctx context.Context, userID, id uuid.UUID) error {
+	msg, err := uc.authorizeMessage(ctx, userID, id)
 	if err != nil {
-		return fmt.Errorf("approve message: load: %w", err)
+		return fmt.Errorf("approve message: %w", err)
 	}
 	if msg == nil {
 		return fmt.Errorf("approve message: not found")
@@ -322,10 +406,10 @@ func (uc *UseCase) ApproveMessage(ctx context.Context, id uuid.UUID) error {
 // RejectMessage follows the same load → domain.TransitionTo → persist pattern
 // as ApproveMessage. Draft and Approved are legal predecessors; anything else
 // (Sent, Bounced, already Rejected) returns an error from the domain.
-func (uc *UseCase) RejectMessage(ctx context.Context, id uuid.UUID) error {
-	msg, err := uc.repo.GetOutboundMessage(ctx, id)
+func (uc *UseCase) RejectMessage(ctx context.Context, userID, id uuid.UUID) error {
+	msg, err := uc.authorizeMessage(ctx, userID, id)
 	if err != nil {
-		return fmt.Errorf("reject message: load: %w", err)
+		return fmt.Errorf("reject message: %w", err)
 	}
 	if msg == nil {
 		return fmt.Errorf("reject message: not found")
@@ -336,11 +420,11 @@ func (uc *UseCase) RejectMessage(ctx context.Context, id uuid.UUID) error {
 	return uc.repo.UpdateOutboundStatus(ctx, id, msg.Status)
 }
 
-func (uc *UseCase) EditMessage(ctx context.Context, id uuid.UUID, body string) error {
-	// Read original message before updating.
-	msg, err := uc.repo.GetOutboundMessage(ctx, id)
+func (uc *UseCase) EditMessage(ctx context.Context, userID, id uuid.UUID, body string) error {
+	// Read original message before updating (also authorizes ownership).
+	msg, err := uc.authorizeMessage(ctx, userID, id)
 	if err != nil {
-		return fmt.Errorf("edit message: get original: %w", err)
+		return fmt.Errorf("edit message: %w", err)
 	}
 	if msg == nil {
 		return fmt.Errorf("edit message: message not found")
@@ -382,7 +466,10 @@ func (uc *UseCase) MarkOpened(ctx context.Context, id uuid.UUID) error {
 	return uc.repo.MarkOpened(ctx, id)
 }
 
-func (uc *UseCase) DeleteStep(ctx context.Context, stepID uuid.UUID) error {
+func (uc *UseCase) DeleteStep(ctx context.Context, userID, stepID uuid.UUID) error {
+	if err := uc.authorizeStep(ctx, userID, stepID); err != nil {
+		return err
+	}
 	return uc.repo.DeleteStep(ctx, stepID)
 }
 

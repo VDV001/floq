@@ -137,12 +137,13 @@ func TestHandler_CreateSequence_InvalidBody(t *testing.T) {
 
 func TestHandler_GetSequence(t *testing.T) {
 	seqID := uuid.New()
+	caller := uuid.New()
 	repo := &mockRepo{
-		sequences: []domain.Sequence{{ID: seqID, Name: "Test"}},
+		sequences: []domain.Sequence{{ID: seqID, UserID: caller, Name: "Test"}},
 		steps:     []domain.SequenceStep{{ID: uuid.New(), SequenceID: seqID, StepOrder: 1, Channel: domain.StepChannelEmail}},
 	}
 	uc := NewUseCase(repo, &mockAI{}, newMockProspectReader(), &mockLeadCreator{})
-	router := setupRouter(uc, uuid.New())
+	router := setupRouter(uc, caller)
 
 	rr := doRequest(router, http.MethodGet, "/api/sequences/"+seqID.String(), nil)
 	assert.Equal(t, http.StatusOK, rr.Code)
@@ -174,9 +175,10 @@ func TestHandler_GetSequence_InvalidID(t *testing.T) {
 
 func TestHandler_UpdateSequence(t *testing.T) {
 	seqID := uuid.New()
-	repo := &mockRepo{sequences: []domain.Sequence{{ID: seqID, Name: "Old"}}}
+	caller := uuid.New()
+	repo := &mockRepo{sequences: []domain.Sequence{{ID: seqID, UserID: caller, Name: "Old"}}}
 	uc := NewUseCase(repo, &mockAI{}, newMockProspectReader(), &mockLeadCreator{})
-	router := setupRouter(uc, uuid.New())
+	router := setupRouter(uc, caller)
 
 	rr := doRequest(router, http.MethodPut, "/api/sequences/"+seqID.String(), map[string]string{"name": "Updated"})
 	assert.Equal(t, http.StatusOK, rr.Code)
@@ -203,8 +205,10 @@ func TestHandler_UpdateSequence_InvalidID(t *testing.T) {
 
 func TestHandler_DeleteSequence(t *testing.T) {
 	seqID := uuid.New()
-	uc := NewUseCase(&mockRepo{}, &mockAI{}, newMockProspectReader(), &mockLeadCreator{})
-	router := setupRouter(uc, uuid.New())
+	caller := uuid.New()
+	repo := &mockRepo{sequences: []domain.Sequence{{ID: seqID, UserID: caller, Name: "x"}}}
+	uc := NewUseCase(repo, &mockAI{}, newMockProspectReader(), &mockLeadCreator{})
+	router := setupRouter(uc, caller)
 
 	rr := doRequest(router, http.MethodDelete, "/api/sequences/"+seqID.String(), nil)
 	assert.Equal(t, http.StatusOK, rr.Code)
@@ -222,8 +226,10 @@ func TestHandler_DeleteSequence_InvalidID(t *testing.T) {
 
 func TestHandler_AddStep(t *testing.T) {
 	seqID := uuid.New()
-	uc := NewUseCase(&mockRepo{}, &mockAI{}, newMockProspectReader(), &mockLeadCreator{})
-	router := setupRouter(uc, uuid.New())
+	caller := uuid.New()
+	repo := &mockRepo{sequences: []domain.Sequence{{ID: seqID, UserID: caller, Name: "x"}}}
+	uc := NewUseCase(repo, &mockAI{}, newMockProspectReader(), &mockLeadCreator{})
+	router := setupRouter(uc, caller)
 
 	body := map[string]interface{}{
 		"step_order":  1,
@@ -237,8 +243,10 @@ func TestHandler_AddStep(t *testing.T) {
 
 func TestHandler_AddStep_DefaultChannel(t *testing.T) {
 	seqID := uuid.New()
-	uc := NewUseCase(&mockRepo{}, &mockAI{}, newMockProspectReader(), &mockLeadCreator{})
-	router := setupRouter(uc, uuid.New())
+	caller := uuid.New()
+	repo := &mockRepo{sequences: []domain.Sequence{{ID: seqID, UserID: caller, Name: "x"}}}
+	uc := NewUseCase(repo, &mockAI{}, newMockProspectReader(), &mockLeadCreator{})
+	router := setupRouter(uc, caller)
 
 	body := map[string]interface{}{
 		"step_order":  1,
@@ -266,8 +274,13 @@ func TestHandler_AddStep_InvalidID(t *testing.T) {
 func TestHandler_DeleteStep(t *testing.T) {
 	seqID := uuid.New()
 	stepID := uuid.New()
-	uc := NewUseCase(&mockRepo{}, &mockAI{}, newMockProspectReader(), &mockLeadCreator{})
-	router := setupRouter(uc, uuid.New())
+	caller := uuid.New()
+	repo := &mockRepo{
+		sequences: []domain.Sequence{{ID: seqID, UserID: caller, Name: "x"}},
+		steps:     []domain.SequenceStep{{ID: stepID, SequenceID: seqID, StepOrder: 1, Channel: domain.StepChannelEmail}},
+	}
+	uc := NewUseCase(repo, &mockAI{}, newMockProspectReader(), &mockLeadCreator{})
+	router := setupRouter(uc, caller)
 
 	rr := doRequest(router, http.MethodDelete, "/api/sequences/"+seqID.String()+"/steps/"+stepID.String(), nil)
 	assert.Equal(t, http.StatusOK, rr.Code)
@@ -290,6 +303,7 @@ func TestHandler_LaunchSequence(t *testing.T) {
 	owner := uuid.New()
 
 	repo := &mockRepo{
+		sequences: []domain.Sequence{{ID: seqID, UserID: owner, Name: "x"}},
 		steps: []domain.SequenceStep{
 			{ID: uuid.New(), SequenceID: seqID, StepOrder: 1, DelayDays: 0, Channel: domain.StepChannelEmail},
 		},
@@ -316,16 +330,23 @@ func TestHandler_LaunchSequence(t *testing.T) {
 func TestHandler_LaunchSequence_ForeignProspect_NotFound(t *testing.T) {
 	seqID := uuid.New()
 	pid := uuid.New()
+	caller := uuid.New()
 
-	repo := &mockRepo{steps: []domain.SequenceStep{
-		{ID: uuid.New(), SequenceID: seqID, StepOrder: 1, Channel: domain.StepChannelEmail},
-	}}
+	// The sequence belongs to the caller, so launch passes the sequence-owner
+	// gate and reaches the per-prospect ownership check — which is what this
+	// test exercises: a prospect owned by a stranger.
+	repo := &mockRepo{
+		sequences: []domain.Sequence{{ID: seqID, UserID: caller, Name: "x"}},
+		steps: []domain.SequenceStep{
+			{ID: uuid.New(), SequenceID: seqID, StepOrder: 1, Channel: domain.StepChannelEmail},
+		},
+	}
 	pr := newMockProspectReader()
 	pr.prospects[pid] = &domain.ProspectView{
 		ID: pid, UserID: uuid.New(), Name: "Victim", Status: "new", VerifyStatus: "valid", IsEligibleForSequence: true,
 	}
 	uc := NewUseCase(repo, &mockAI{coldBody: "hi"}, pr, &mockLeadCreator{})
-	router := setupRouter(uc, uuid.New()) // caller is NOT the prospect's owner
+	router := setupRouter(uc, caller) // caller owns the sequence but NOT the prospect
 
 	body := map[string]interface{}{"prospect_ids": []string{pid.String()}, "send_now": false}
 	rr := doRequest(router, http.MethodPost, "/api/sequences/"+seqID.String()+"/launch", body)
@@ -357,9 +378,10 @@ func TestHandler_LaunchSequence_InvalidID(t *testing.T) {
 
 func TestHandler_ToggleActive(t *testing.T) {
 	seqID := uuid.New()
-	repo := &mockRepo{sequences: []domain.Sequence{{ID: seqID, UserID: uuid.New(), Name: "x"}}}
+	caller := uuid.New()
+	repo := &mockRepo{sequences: []domain.Sequence{{ID: seqID, UserID: caller, Name: "x"}}}
 	uc := NewUseCase(repo, &mockAI{}, newMockProspectReader(), &mockLeadCreator{})
-	router := setupRouter(uc, uuid.New())
+	router := setupRouter(uc, caller)
 
 	rr := doRequest(router, http.MethodPatch, "/api/sequences/"+seqID.String()+"/toggle", map[string]bool{"is_active": true})
 	assert.Equal(t, http.StatusOK, rr.Code)
@@ -426,10 +448,13 @@ func TestHandler_GetSent_Unauthorized(t *testing.T) {
 // --- ApproveMessage Handler ---
 
 func TestHandler_ApproveMessage(t *testing.T) {
+	caller := uuid.New()
 	repo := &mockRepo{}
 	msg := seedDraftMessage(repo)
-	uc := NewUseCase(repo, &mockAI{}, newMockProspectReader(), &mockLeadCreator{})
-	router := setupRouter(uc, uuid.New())
+	pr := newMockProspectReader()
+	pr.prospects[msg.ProspectID] = &domain.ProspectView{ID: msg.ProspectID, UserID: caller}
+	uc := NewUseCase(repo, &mockAI{}, pr, &mockLeadCreator{})
+	router := setupRouter(uc, caller)
 
 	rr := doRequest(router, http.MethodPost, "/api/outbound/"+msg.ID.String()+"/approve", nil)
 	assert.Equal(t, http.StatusOK, rr.Code)
@@ -446,10 +471,13 @@ func TestHandler_ApproveMessage_InvalidID(t *testing.T) {
 // --- RejectMessage Handler ---
 
 func TestHandler_RejectMessage(t *testing.T) {
+	caller := uuid.New()
 	repo := &mockRepo{}
 	msg := seedDraftMessage(repo)
-	uc := NewUseCase(repo, &mockAI{}, newMockProspectReader(), &mockLeadCreator{})
-	router := setupRouter(uc, uuid.New())
+	pr := newMockProspectReader()
+	pr.prospects[msg.ProspectID] = &domain.ProspectView{ID: msg.ProspectID, UserID: caller}
+	uc := NewUseCase(repo, &mockAI{}, pr, &mockLeadCreator{})
+	router := setupRouter(uc, caller)
 
 	rr := doRequest(router, http.MethodPost, "/api/outbound/"+msg.ID.String()+"/reject", nil)
 	assert.Equal(t, http.StatusOK, rr.Code)
@@ -467,13 +495,17 @@ func TestHandler_RejectMessage_InvalidID(t *testing.T) {
 
 func TestHandler_EditMessage(t *testing.T) {
 	msgID := uuid.New()
+	pid := uuid.New()
+	caller := uuid.New()
 	repo := &mockRepo{
 		messages: []*domain.OutboundMessage{
-			{ID: msgID, Body: "original", Channel: domain.StepChannelEmail},
+			{ID: msgID, ProspectID: pid, Body: "original", Channel: domain.StepChannelEmail},
 		},
 	}
-	uc := NewUseCase(repo, &mockAI{}, newMockProspectReader(), &mockLeadCreator{})
-	router := setupRouter(uc, uuid.New())
+	pr := newMockProspectReader()
+	pr.prospects[pid] = &domain.ProspectView{ID: pid, UserID: caller}
+	uc := NewUseCase(repo, &mockAI{}, pr, &mockLeadCreator{})
+	router := setupRouter(uc, caller)
 
 	rr := doRequest(router, http.MethodPost, "/api/outbound/"+msgID.String()+"/edit", map[string]string{"body": "new body"})
 	assert.Equal(t, http.StatusOK, rr.Code)
@@ -662,12 +694,13 @@ func TestHandler_CreateSequence_RepoError(t *testing.T) {
 
 func TestHandler_GetSequence_StepsError(t *testing.T) {
 	seqID := uuid.New()
+	caller := uuid.New()
 	repo := &mockRepo{
-		sequences: []domain.Sequence{{ID: seqID, Name: "Test"}},
+		sequences: []domain.Sequence{{ID: seqID, UserID: caller, Name: "Test"}},
 		stepErr:   errors.New("db error"),
 	}
 	uc := NewUseCase(repo, &mockAI{}, newMockProspectReader(), &mockLeadCreator{})
-	router := setupRouter(uc, uuid.New())
+	router := setupRouter(uc, caller)
 
 	rr := doRequest(router, http.MethodGet, "/api/sequences/"+seqID.String(), nil)
 	assert.Equal(t, http.StatusInternalServerError, rr.Code)
@@ -684,9 +717,10 @@ func TestHandler_GetSequence_RepoError(t *testing.T) {
 
 func TestHandler_UpdateSequence_RepoError(t *testing.T) {
 	seqID := uuid.New()
-	repo := &mockRepo{sequences: []domain.Sequence{{ID: seqID, Name: "Old"}}, updateSeqErr: errors.New("db error")}
+	caller := uuid.New()
+	repo := &mockRepo{sequences: []domain.Sequence{{ID: seqID, UserID: caller, Name: "Old"}}, updateSeqErr: errors.New("db error")}
 	uc := NewUseCase(repo, &mockAI{}, newMockProspectReader(), &mockLeadCreator{})
-	router := setupRouter(uc, uuid.New())
+	router := setupRouter(uc, caller)
 
 	rr := doRequest(router, http.MethodPut, "/api/sequences/"+seqID.String(), map[string]string{"name": "Updated"})
 	assert.Equal(t, http.StatusInternalServerError, rr.Code)
@@ -707,9 +741,10 @@ func TestHandler_UpdateSequence_InvalidBody(t *testing.T) {
 
 func TestHandler_DeleteSequence_RepoError(t *testing.T) {
 	seqID := uuid.New()
-	repo := &mockRepo{deleteSeqErr: errors.New("db error")}
+	caller := uuid.New()
+	repo := &mockRepo{sequences: []domain.Sequence{{ID: seqID, UserID: caller, Name: "x"}}, deleteSeqErr: errors.New("db error")}
 	uc := NewUseCase(repo, &mockAI{}, newMockProspectReader(), &mockLeadCreator{})
-	router := setupRouter(uc, uuid.New())
+	router := setupRouter(uc, caller)
 
 	rr := doRequest(router, http.MethodDelete, "/api/sequences/"+seqID.String(), nil)
 	assert.Equal(t, http.StatusInternalServerError, rr.Code)
@@ -717,9 +752,10 @@ func TestHandler_DeleteSequence_RepoError(t *testing.T) {
 
 func TestHandler_AddStep_RepoError(t *testing.T) {
 	seqID := uuid.New()
-	repo := &mockRepo{createStepErr: errors.New("db error")}
+	caller := uuid.New()
+	repo := &mockRepo{sequences: []domain.Sequence{{ID: seqID, UserID: caller, Name: "x"}}, createStepErr: errors.New("db error")}
 	uc := NewUseCase(repo, &mockAI{}, newMockProspectReader(), &mockLeadCreator{})
-	router := setupRouter(uc, uuid.New())
+	router := setupRouter(uc, caller)
 
 	body := map[string]interface{}{"step_order": 1, "delay_days": 0, "channel": "email"}
 	rr := doRequest(router, http.MethodPost, "/api/sequences/"+seqID.String()+"/steps", body)
@@ -742,9 +778,14 @@ func TestHandler_AddStep_InvalidBody(t *testing.T) {
 func TestHandler_DeleteStep_RepoError(t *testing.T) {
 	seqID := uuid.New()
 	stepID := uuid.New()
-	repo := &mockRepo{deleteStepErr: errors.New("db error")}
+	caller := uuid.New()
+	repo := &mockRepo{
+		sequences:     []domain.Sequence{{ID: seqID, UserID: caller, Name: "x"}},
+		steps:         []domain.SequenceStep{{ID: stepID, SequenceID: seqID, StepOrder: 1, Channel: domain.StepChannelEmail}},
+		deleteStepErr: errors.New("db error"),
+	}
 	uc := NewUseCase(repo, &mockAI{}, newMockProspectReader(), &mockLeadCreator{})
-	router := setupRouter(uc, uuid.New())
+	router := setupRouter(uc, caller)
 
 	rr := doRequest(router, http.MethodDelete, "/api/sequences/"+seqID.String()+"/steps/"+stepID.String(), nil)
 	assert.Equal(t, http.StatusInternalServerError, rr.Code)
@@ -752,9 +793,13 @@ func TestHandler_DeleteStep_RepoError(t *testing.T) {
 
 func TestHandler_LaunchSequence_RepoError(t *testing.T) {
 	seqID := uuid.New()
-	repo := &mockRepo{stepErr: errors.New("db error")}
+	caller := uuid.New()
+	repo := &mockRepo{
+		sequences: []domain.Sequence{{ID: seqID, UserID: caller, Name: "x"}},
+		stepErr:   errors.New("db error"),
+	}
 	uc := NewUseCase(repo, &mockAI{}, newMockProspectReader(), &mockLeadCreator{})
-	router := setupRouter(uc, uuid.New())
+	router := setupRouter(uc, caller)
 
 	body := map[string]interface{}{"prospect_ids": []string{uuid.New().String()}}
 	rr := doRequest(router, http.MethodPost, "/api/sequences/"+seqID.String()+"/launch", body)
@@ -776,13 +821,14 @@ func TestHandler_LaunchSequence_InvalidBody(t *testing.T) {
 
 func TestHandler_ToggleActive_RepoError(t *testing.T) {
 	seqID := uuid.New()
+	caller := uuid.New()
 	// updateSeqErr triggers on UpdateSequence (the persist path after entity toggle).
 	repo := &mockRepo{
-		sequences:    []domain.Sequence{{ID: seqID, UserID: uuid.New(), Name: "x"}},
+		sequences:    []domain.Sequence{{ID: seqID, UserID: caller, Name: "x"}},
 		updateSeqErr: errors.New("db error"),
 	}
 	uc := NewUseCase(repo, &mockAI{}, newMockProspectReader(), &mockLeadCreator{})
-	router := setupRouter(uc, uuid.New())
+	router := setupRouter(uc, caller)
 
 	rr := doRequest(router, http.MethodPatch, "/api/sequences/"+seqID.String()+"/toggle", map[string]bool{"is_active": true})
 	assert.Equal(t, http.StatusInternalServerError, rr.Code)
@@ -822,31 +868,44 @@ func TestHandler_GetSent_RepoError(t *testing.T) {
 }
 
 func TestHandler_ApproveMessage_RepoError(t *testing.T) {
-	msgID := uuid.New()
+	caller := uuid.New()
 	repo := &mockRepo{statusUpdateErr: errors.New("db error")}
-	uc := NewUseCase(repo, &mockAI{}, newMockProspectReader(), &mockLeadCreator{})
-	router := setupRouter(uc, uuid.New())
+	msg := seedDraftMessage(repo)
+	pr := newMockProspectReader()
+	pr.prospects[msg.ProspectID] = &domain.ProspectView{ID: msg.ProspectID, UserID: caller}
+	uc := NewUseCase(repo, &mockAI{}, pr, &mockLeadCreator{})
+	router := setupRouter(uc, caller)
 
-	rr := doRequest(router, http.MethodPost, "/api/outbound/"+msgID.String()+"/approve", nil)
+	rr := doRequest(router, http.MethodPost, "/api/outbound/"+msg.ID.String()+"/approve", nil)
 	assert.Equal(t, http.StatusInternalServerError, rr.Code)
 }
 
 func TestHandler_RejectMessage_RepoError(t *testing.T) {
-	msgID := uuid.New()
+	caller := uuid.New()
 	repo := &mockRepo{statusUpdateErr: errors.New("db error")}
-	uc := NewUseCase(repo, &mockAI{}, newMockProspectReader(), &mockLeadCreator{})
-	router := setupRouter(uc, uuid.New())
+	msg := seedDraftMessage(repo)
+	pr := newMockProspectReader()
+	pr.prospects[msg.ProspectID] = &domain.ProspectView{ID: msg.ProspectID, UserID: caller}
+	uc := NewUseCase(repo, &mockAI{}, pr, &mockLeadCreator{})
+	router := setupRouter(uc, caller)
 
-	rr := doRequest(router, http.MethodPost, "/api/outbound/"+msgID.String()+"/reject", nil)
+	rr := doRequest(router, http.MethodPost, "/api/outbound/"+msg.ID.String()+"/reject", nil)
 	assert.Equal(t, http.StatusInternalServerError, rr.Code)
 }
 
 func TestHandler_EditMessage_RepoError(t *testing.T) {
 	msgID := uuid.New()
-	// Message not found = error
-	repo := &mockRepo{}
-	uc := NewUseCase(repo, &mockAI{}, newMockProspectReader(), &mockLeadCreator{})
-	router := setupRouter(uc, uuid.New())
+	pid := uuid.New()
+	caller := uuid.New()
+	// Owned message, but the body-update persist fails → 500.
+	repo := &mockRepo{
+		messages:      []*domain.OutboundMessage{{ID: msgID, ProspectID: pid, Body: "original", Channel: domain.StepChannelEmail}},
+		bodyUpdateErr: errors.New("db error"),
+	}
+	pr := newMockProspectReader()
+	pr.prospects[pid] = &domain.ProspectView{ID: pid, UserID: caller}
+	uc := NewUseCase(repo, &mockAI{}, pr, &mockLeadCreator{})
+	router := setupRouter(uc, caller)
 
 	rr := doRequest(router, http.MethodPost, "/api/outbound/"+msgID.String()+"/edit", map[string]string{"body": "new"})
 	assert.Equal(t, http.StatusInternalServerError, rr.Code)
@@ -913,12 +972,13 @@ func TestHandler_GetSent_NilReturnsArray(t *testing.T) {
 
 func TestHandler_GetSequence_NilStepsReturnsArray(t *testing.T) {
 	seqID := uuid.New()
+	caller := uuid.New()
 	repo := &mockRepo{
-		sequences: []domain.Sequence{{ID: seqID, Name: "Test"}},
+		sequences: []domain.Sequence{{ID: seqID, UserID: caller, Name: "Test"}},
 		// steps is nil
 	}
 	uc := NewUseCase(repo, &mockAI{}, newMockProspectReader(), &mockLeadCreator{})
-	router := setupRouter(uc, uuid.New())
+	router := setupRouter(uc, caller)
 
 	rr := doRequest(router, http.MethodGet, "/api/sequences/"+seqID.String(), nil)
 	assert.Equal(t, http.StatusOK, rr.Code)
@@ -938,6 +998,7 @@ func TestHandler_LaunchSequence_AINotConfigured(t *testing.T) {
 	pid := uuid.New()
 
 	repo := &mockRepo{
+		sequences: []domain.Sequence{{ID: seqID, UserID: userID, Name: "x"}},
 		steps: []domain.SequenceStep{
 			{ID: uuid.New(), SequenceID: seqID, StepOrder: 1, DelayDays: 0, Channel: domain.StepChannelEmail, PromptHint: "intro"},
 		},
