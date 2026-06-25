@@ -3,6 +3,7 @@ package analytics_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -41,21 +42,31 @@ func TestNormalizeBucketStep(t *testing.T) {
 type stubFunnel struct {
 	dist      *analytics.QualificationFunnelDTO
 	conv      *analytics.SequenceConversionDTO
+	err       error
 	gotUserID uuid.UUID
 	gotStep   int
 	gotPeriod analytics.Period
+	callCount int
 }
 
 func (s *stubFunnel) GetQualificationDistribution(_ context.Context, userID uuid.UUID, step int, period analytics.Period) (*analytics.QualificationFunnelDTO, error) {
+	s.callCount++
 	s.gotUserID = userID
 	s.gotStep = step
 	s.gotPeriod = period
+	if s.err != nil {
+		return nil, s.err
+	}
 	return s.dist, nil
 }
 
 func (s *stubFunnel) GetSequenceConversion(_ context.Context, userID uuid.UUID, period analytics.Period) (*analytics.SequenceConversionDTO, error) {
+	s.callCount++
 	s.gotUserID = userID
 	s.gotPeriod = period
+	if s.err != nil {
+		return nil, s.err
+	}
 	return s.conv, nil
 }
 
@@ -160,6 +171,44 @@ func TestHandler_Funnel_RejectsInvalidPeriod(t *testing.T) {
 		w := httptest.NewRecorder()
 		r.ServeHTTP(w, newAuthedRequest(t, path, uuid.New()))
 		assert.Equal(t, http.StatusBadRequest, w.Code, path)
+	}
+}
+
+// A request without an authenticated user_id is rejected with 401 before the
+// reader is touched — for both funnel endpoints.
+func TestHandler_Funnel_Unauthorized(t *testing.T) {
+	for _, path := range []string{
+		"/api/analytics/qualification-distribution",
+		"/api/analytics/sequence-conversion",
+	} {
+		stub := &stubFunnel{dist: &analytics.QualificationFunnelDTO{}, conv: &analytics.SequenceConversionDTO{}}
+		r := chi.NewRouter()
+		analytics.RegisterRoutes(r, analytics.NewUseCase(nil, nil, analytics.WithFunnelReader(stub)))
+
+		w := httptest.NewRecorder()
+		// Plain request — no user_id in context.
+		r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, path, nil))
+
+		assert.Equal(t, http.StatusUnauthorized, w.Code, path)
+		assert.Zero(t, stub.callCount, "missing user_id must NOT reach the reader: "+path)
+	}
+}
+
+// A reader failure surfaces as 500 (not a partial/!ok body) — for both funnel
+// endpoints.
+func TestHandler_Funnel_ReaderError(t *testing.T) {
+	for _, path := range []string{
+		"/api/analytics/qualification-distribution",
+		"/api/analytics/sequence-conversion",
+	} {
+		stub := &stubFunnel{err: errors.New("matview unavailable")}
+		r := chi.NewRouter()
+		analytics.RegisterRoutes(r, analytics.NewUseCase(nil, nil, analytics.WithFunnelReader(stub)))
+
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, newAuthedRequest(t, path, uuid.New()))
+
+		assert.Equal(t, http.StatusInternalServerError, w.Code, path)
 	}
 }
 
