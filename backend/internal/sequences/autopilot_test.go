@@ -62,7 +62,7 @@ func TestLaunch_Autopilot(t *testing.T) {
 			uc := NewUseCase(repo, &mockAI{telegramBody: "hi"}, pr, &mockLeadCreator{},
 				WithAutopilotChecker(checker))
 
-			err := uc.Launch(context.Background(), seqID, []uuid.UUID{pid}, true)
+			err := uc.Launch(context.Background(), uuid.Nil, seqID, []uuid.UUID{pid}, true)
 
 			if tt.wantErr {
 				require.Error(t, err)
@@ -96,7 +96,7 @@ func TestLaunch_Autopilot_AppliesSendDelay(t *testing.T) {
 		WithAutopilotChecker(&mockAutopilotChecker{enabled: true, delay: 5 * time.Minute}))
 
 	before := time.Now().UTC()
-	require.NoError(t, uc.Launch(context.Background(), seqID, []uuid.UUID{pid}, true))
+	require.NoError(t, uc.Launch(context.Background(), uuid.Nil, seqID, []uuid.UUID{pid}, true))
 	after := time.Now().UTC()
 
 	require.Len(t, repo.messages, 1)
@@ -123,7 +123,7 @@ func TestLaunch_Autopilot_ApprovesWholeBatch(t *testing.T) {
 	uc := NewUseCase(repo, &mockAI{telegramBody: "hi"}, pr, &mockLeadCreator{},
 		WithAutopilotChecker(&mockAutopilotChecker{enabled: true}))
 
-	require.NoError(t, uc.Launch(context.Background(), seqID, []uuid.UUID{pid1, pid2}, true))
+	require.NoError(t, uc.Launch(context.Background(), uuid.Nil, seqID, []uuid.UUID{pid1, pid2}, true))
 
 	require.Len(t, repo.messages, 4) // 2 prospects × 2 steps
 	for _, m := range repo.messages {
@@ -131,36 +131,33 @@ func TestLaunch_Autopilot_ApprovesWholeBatch(t *testing.T) {
 	}
 }
 
-// A launch batch must belong to a single owner. Autopilot (and the email
-// preflight) resolve their decision once from the first prospect's owner, so a
-// mixed-owner batch would otherwise apply one owner's settings to another
-// owner's messages — e.g. auto-approving owner B's message because owner A has
-// autopilot on. Such a batch is rejected before any wrong-owner message is
-// created.
-func TestLaunch_MixedOwners_Rejected(t *testing.T) {
+// A batch that mixes the caller's own prospect with a stranger's is rejected
+// whole — no partial send. The ownership guard (every prospect must equal the
+// authenticated caller) subsumes the old single-owner rule.
+func TestLaunch_BatchWithForeignProspect_RejectedWhole(t *testing.T) {
 	seqID := uuid.New()
-	pidA := uuid.New()
-	pidB := uuid.New()
+	caller := uuid.New()
+	stranger := uuid.New()
+	pidMine := uuid.New()
+	pidForeign := uuid.New()
 	repo := &mockRepo{steps: []domain.SequenceStep{
 		{ID: uuid.New(), SequenceID: seqID, StepOrder: 1, Channel: domain.StepChannelTelegram, PromptHint: "intro"},
 	}}
 	pr := newMockProspectReader()
-	pr.prospects[pidA] = &domain.ProspectView{
-		ID: pidA, UserID: uuid.New(), Name: "A", Status: "new", VerifyStatus: "valid", IsEligibleForSequence: true,
+	pr.prospects[pidMine] = &domain.ProspectView{
+		ID: pidMine, UserID: caller, Name: "Mine", Status: "new", VerifyStatus: "valid", IsEligibleForSequence: true,
 	}
-	pr.prospects[pidB] = &domain.ProspectView{
-		ID: pidB, UserID: uuid.New(), Name: "B", Status: "new", VerifyStatus: "valid", IsEligibleForSequence: true,
+	pr.prospects[pidForeign] = &domain.ProspectView{
+		ID: pidForeign, UserID: stranger, Name: "Foreign", Status: "new", VerifyStatus: "valid", IsEligibleForSequence: true,
 	}
-	// Owner A has autopilot on; without the single-owner guard, owner B's
-	// message would be auto-approved using A's setting.
 	uc := NewUseCase(repo, &mockAI{telegramBody: "hi"}, pr, &mockLeadCreator{},
 		WithAutopilotChecker(&mockAutopilotChecker{enabled: true}))
 
-	err := uc.Launch(context.Background(), seqID, []uuid.UUID{pidA, pidB}, true)
-	require.Error(t, err)
-	// Owner B never gets an auto-approved message from owner A's setting.
+	err := uc.Launch(context.Background(), caller, seqID, []uuid.UUID{pidMine, pidForeign}, true)
+	require.ErrorIs(t, err, domain.ErrProspectNotOwned)
+	// No message is queued for the foreign prospect.
 	for _, m := range repo.messages {
-		assert.Equal(t, pidA, m.ProspectID, "only the first owner's message may exist")
+		assert.Equal(t, pidMine, m.ProspectID, "only the caller's own prospect may be queued")
 	}
 }
 
@@ -179,7 +176,7 @@ func TestLaunch_NoAutopilotChecker_StaysDraft(t *testing.T) {
 	}
 	uc := NewUseCase(repo, &mockAI{telegramBody: "hi"}, pr, &mockLeadCreator{})
 
-	require.NoError(t, uc.Launch(context.Background(), seqID, []uuid.UUID{pid}, true))
+	require.NoError(t, uc.Launch(context.Background(), uuid.Nil, seqID, []uuid.UUID{pid}, true))
 	require.Len(t, repo.messages, 1)
 	assert.Equal(t, domain.OutboundStatusDraft, repo.messages[0].Status)
 }

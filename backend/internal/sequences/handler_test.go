@@ -287,6 +287,7 @@ func TestHandler_DeleteStep_InvalidStepID(t *testing.T) {
 func TestHandler_LaunchSequence(t *testing.T) {
 	seqID := uuid.New()
 	pid := uuid.New()
+	owner := uuid.New()
 
 	repo := &mockRepo{
 		steps: []domain.SequenceStep{
@@ -295,11 +296,12 @@ func TestHandler_LaunchSequence(t *testing.T) {
 	}
 	pr := newMockProspectReader()
 	pr.prospects[pid] = &domain.ProspectView{
-		ID: pid, UserID: uuid.New(), Name: "Alice", Status: "new", VerifyStatus: "valid",
+		ID: pid, UserID: owner, Name: "Alice", Status: "new", VerifyStatus: "valid",
 	}
 
+	// The authenticated caller owns the prospect — launch is authorized.
 	uc := NewUseCase(repo, &mockAI{coldBody: "hi"}, pr, &mockLeadCreator{})
-	router := setupRouter(uc, uuid.New())
+	router := setupRouter(uc, owner)
 
 	body := map[string]interface{}{
 		"prospect_ids": []string{pid.String()},
@@ -307,6 +309,28 @@ func TestHandler_LaunchSequence(t *testing.T) {
 	}
 	rr := doRequest(router, http.MethodPost, "/api/sequences/"+seqID.String()+"/launch", body)
 	assert.Equal(t, http.StatusOK, rr.Code)
+}
+
+// Launching against another tenant's prospect answers 404 (not 403) — the
+// IDOR is rejected without revealing the prospect exists. (#154)
+func TestHandler_LaunchSequence_ForeignProspect_NotFound(t *testing.T) {
+	seqID := uuid.New()
+	pid := uuid.New()
+
+	repo := &mockRepo{steps: []domain.SequenceStep{
+		{ID: uuid.New(), SequenceID: seqID, StepOrder: 1, Channel: domain.StepChannelEmail},
+	}}
+	pr := newMockProspectReader()
+	pr.prospects[pid] = &domain.ProspectView{
+		ID: pid, UserID: uuid.New(), Name: "Victim", Status: "new", VerifyStatus: "valid", IsEligibleForSequence: true,
+	}
+	uc := NewUseCase(repo, &mockAI{coldBody: "hi"}, pr, &mockLeadCreator{})
+	router := setupRouter(uc, uuid.New()) // caller is NOT the prospect's owner
+
+	body := map[string]interface{}{"prospect_ids": []string{pid.String()}, "send_now": false}
+	rr := doRequest(router, http.MethodPost, "/api/sequences/"+seqID.String()+"/launch", body)
+	assert.Equal(t, http.StatusNotFound, rr.Code)
+	assert.Empty(t, repo.messages, "no message queued for a foreign prospect")
 }
 
 func TestHandler_LaunchSequence_EmptyProspects(t *testing.T) {

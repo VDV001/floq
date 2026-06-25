@@ -41,6 +41,11 @@ func writeGenerationError(w http.ResponseWriter, err error, genericMsg string) {
 		httputil.WriteErrorDetail(w, http.StatusBadRequest, msgEmailNotConfigured, codeEmailNotConfigured, remedyEmailNotConfigured)
 		return
 	}
+	if errors.Is(err, domain.ErrProspectNotOwned) {
+		// 404, not 403 — don't reveal that the prospect exists for another tenant.
+		httputil.WriteError(w, http.StatusNotFound, "prospect not found")
+		return
+	}
 	httputil.WriteError(w, http.StatusInternalServerError, genericMsg)
 }
 
@@ -288,6 +293,11 @@ func previewMessage(uc *UseCase) http.HandlerFunc {
 
 func launchSequence(uc *UseCase) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		userID, ok := httputil.UserIDFromContext(r.Context())
+		if !ok {
+			httputil.WriteError(w, http.StatusUnauthorized, "unauthorized")
+			return
+		}
 		id, err := httputil.ParseIDParam(r, "id")
 		if err != nil {
 			httputil.WriteError(w, http.StatusBadRequest, "invalid sequence id")
@@ -307,7 +317,7 @@ func launchSequence(uc *UseCase) http.HandlerFunc {
 			return
 		}
 
-		if err := uc.Launch(r.Context(), id, body.ProspectIDs, body.SendNow); err != nil {
+		if err := uc.Launch(r.Context(), userID, id, body.ProspectIDs, body.SendNow); err != nil {
 			writeGenerationError(w, err, msgLaunchFailed)
 			return
 		}

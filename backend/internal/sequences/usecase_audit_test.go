@@ -62,7 +62,7 @@ func TestLaunch_AttachesCallMetaPerChannel(t *testing.T) {
 
 	uc := NewUseCase(repo, ai, pr, &mockLeadCreator{})
 
-	require.NoError(t, uc.Launch(context.Background(), seqID, []uuid.UUID{pid}))
+	require.NoError(t, uc.Launch(context.Background(), uuid.Nil, seqID, []uuid.UUID{pid}))
 
 	cases := []struct {
 		channel string

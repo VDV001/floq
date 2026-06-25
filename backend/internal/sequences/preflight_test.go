@@ -62,7 +62,7 @@ func TestLaunch_EmailConfigPreflight(t *testing.T) {
 			uc := NewUseCase(repo, &mockAI{coldBody: "hi", telegramBody: "hi"}, pr, &mockLeadCreator{},
 				WithEmailConfigChecker(checker))
 
-			err := uc.Launch(context.Background(), seqID, []uuid.UUID{pid}, true)
+			err := uc.Launch(context.Background(), uuid.Nil, seqID, []uuid.UUID{pid}, true)
 
 			if tt.wantErr != nil {
 				require.ErrorIs(t, err, tt.wantErr)
@@ -93,7 +93,7 @@ func TestLaunch_NoEmailChecker_SkipsPreflight(t *testing.T) {
 	}
 	uc := NewUseCase(repo, &mockAI{coldBody: "hi"}, pr, &mockLeadCreator{})
 
-	require.NoError(t, uc.Launch(context.Background(), seqID, []uuid.UUID{pid}, true))
+	require.NoError(t, uc.Launch(context.Background(), uuid.Nil, seqID, []uuid.UUID{pid}, true))
 	assert.Len(t, repo.messages, 1)
 }
 

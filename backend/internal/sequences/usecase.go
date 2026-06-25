@@ -109,13 +109,17 @@ func (uc *UseCase) CreateStep(ctx context.Context, step *domain.SequenceStep) er
 	return uc.repo.CreateStep(ctx, step)
 }
 
-func (uc *UseCase) Launch(ctx context.Context, sequenceID uuid.UUID, prospectIDs []uuid.UUID, sendNow ...bool) error {
+// Launch queues a sequence's messages for the given prospects. userID is the
+// authenticated caller — the authoritative owner. Every prospect must belong
+// to them (enforced in launchInner); this is the authorization boundary, so it
+// lives here in the usecase, never in the handler.
+func (uc *UseCase) Launch(ctx context.Context, userID uuid.UUID, sequenceID uuid.UUID, prospectIDs []uuid.UUID, sendNow ...bool) error {
 	if uc.tx != nil {
 		return uc.tx.WithTx(ctx, func(txCtx context.Context) error {
-			return uc.launchInner(txCtx, sequenceID, prospectIDs, sendNow...)
+			return uc.launchInner(txCtx, userID, sequenceID, prospectIDs, sendNow...)
 		})
 	}
-	return uc.launchInner(ctx, sequenceID, prospectIDs, sendNow...)
+	return uc.launchInner(ctx, userID, sequenceID, prospectIDs, sendNow...)
 }
 
 // hasEmailStep reports whether any step in the sequence is delivered over
@@ -129,7 +133,7 @@ func hasEmailStep(steps []domain.SequenceStep) bool {
 	return false
 }
 
-func (uc *UseCase) launchInner(ctx context.Context, sequenceID uuid.UUID, prospectIDs []uuid.UUID, sendNow ...bool) error {
+func (uc *UseCase) launchInner(ctx context.Context, userID uuid.UUID, sequenceID uuid.UUID, prospectIDs []uuid.UUID, sendNow ...bool) error {
 	steps, err := uc.repo.ListSteps(ctx, sequenceID)
 	if err != nil {
 		return fmt.Errorf("launch: list steps: %w", err)
@@ -141,15 +145,21 @@ func (uc *UseCase) launchInner(ctx context.Context, sequenceID uuid.UUID, prospe
 	now := time.Now().UTC()
 	immediate := len(sendNow) > 0 && sendNow[0]
 
-	// Build feedback examples string once for the entire launch (use first prospect's userID).
-	var feedbackExamples string
-	var ownerID uuid.UUID
-	if len(prospectIDs) > 0 {
-		firstProspect, _ := uc.prospects.GetProspect(ctx, prospectIDs[0])
-		if firstProspect != nil {
-			ownerID = firstProspect.UserID
-			feedbackExamples = uc.buildFeedbackExamples(ctx, firstProspect.UserID)
+	// The authenticated caller is the authoritative owner for all per-launch
+	// side-effects (feedback examples, email preflight, autopilot resolution),
+	// so they never read a stranger's settings even if a foreign prospect id
+	// slips into the batch. Fall back to the first prospect's owner only when
+	// userID is nil — a unit-test affordance; the handler always supplies a
+	// real userID (the route is auth-scoped).
+	ownerID := userID
+	if ownerID == uuid.Nil && len(prospectIDs) > 0 {
+		if fp, _ := uc.prospects.GetProspect(ctx, prospectIDs[0]); fp != nil {
+			ownerID = fp.UserID
 		}
+	}
+	var feedbackExamples string
+	if ownerID != uuid.Nil {
+		feedbackExamples = uc.buildFeedbackExamples(ctx, ownerID)
 	}
 
 	// Preflight: a sequence with email steps can't be launched unless email
@@ -181,18 +191,21 @@ func (uc *UseCase) launchInner(ctx context.Context, sequenceID uuid.UUID, prospe
 		if err != nil {
 			return fmt.Errorf("launch: get prospect %s: %w", pid, err)
 		}
+		// A missing prospect and a foreign prospect return the SAME error (→ 404,
+		// "not found") so a caller can't distinguish "doesn't exist" from "exists
+		// but isn't yours" — no cross-tenant enumeration.
 		if prospect == nil {
-			return fmt.Errorf("launch: prospect %s not found", pid)
+			return fmt.Errorf("launch: prospect %s: %w", pid, domain.ErrProspectNotOwned)
 		}
 
-		// All prospects in a launch must belong to a single owner: the email
-		// preflight and autopilot mode are resolved once from ownerID (the first
-		// prospect's owner), so a mixed-owner batch would apply one owner's
-		// settings — including auto-send — to another owner's messages. Reject
-		// before creating any wrong-owner message. (Skipped when ownerID is nil,
-		// e.g. unit tests without a real owner.)
-		if ownerID != uuid.Nil && prospect.UserID != ownerID {
-			return fmt.Errorf("launch: all prospects must belong to a single owner")
+		// Authorization: every prospect must belong to the authenticated caller.
+		// Rejected before any message is queued — closes the IDOR where a caller
+		// could launch (and, under autopilot, really send) against another user's
+		// prospects. This also subsumes the old single-owner guard: all prospects
+		// equal to userID means one owner. userID is nil only in unit tests that
+		// don't exercise authz; the handler always supplies a real one.
+		if userID != uuid.Nil && prospect.UserID != userID {
+			return fmt.Errorf("launch: prospect %s: %w", pid, domain.ErrProspectNotOwned)
 		}
 
 		if !prospect.IsEligibleForSequence {
