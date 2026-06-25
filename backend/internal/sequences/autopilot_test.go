@@ -76,6 +76,39 @@ func TestLaunch_Autopilot(t *testing.T) {
 	}
 }
 
+// A launch batch must belong to a single owner. Autopilot (and the email
+// preflight) resolve their decision once from the first prospect's owner, so a
+// mixed-owner batch would otherwise apply one owner's settings to another
+// owner's messages — e.g. auto-approving owner B's message because owner A has
+// autopilot on. Such a batch is rejected before any wrong-owner message is
+// created.
+func TestLaunch_MixedOwners_Rejected(t *testing.T) {
+	seqID := uuid.New()
+	pidA := uuid.New()
+	pidB := uuid.New()
+	repo := &mockRepo{steps: []domain.SequenceStep{
+		{ID: uuid.New(), SequenceID: seqID, StepOrder: 1, Channel: domain.StepChannelTelegram, PromptHint: "intro"},
+	}}
+	pr := newMockProspectReader()
+	pr.prospects[pidA] = &domain.ProspectView{
+		ID: pidA, UserID: uuid.New(), Name: "A", Status: "new", VerifyStatus: "valid", IsEligibleForSequence: true,
+	}
+	pr.prospects[pidB] = &domain.ProspectView{
+		ID: pidB, UserID: uuid.New(), Name: "B", Status: "new", VerifyStatus: "valid", IsEligibleForSequence: true,
+	}
+	// Owner A has autopilot on; without the single-owner guard, owner B's
+	// message would be auto-approved using A's setting.
+	uc := NewUseCase(repo, &mockAI{telegramBody: "hi"}, pr, &mockLeadCreator{},
+		WithAutopilotChecker(&mockAutopilotChecker{enabled: true}))
+
+	err := uc.Launch(context.Background(), seqID, []uuid.UUID{pidA, pidB}, true)
+	require.Error(t, err)
+	// Owner B never gets an auto-approved message from owner A's setting.
+	for _, m := range repo.messages {
+		assert.Equal(t, pidA, m.ProspectID, "only the first owner's message may exist")
+	}
+}
+
 // A nil checker (the default wiring before this feature) leaves launch
 // behaviour unchanged: messages are created as drafts and wait for manual
 // approval — autopilot is off.
