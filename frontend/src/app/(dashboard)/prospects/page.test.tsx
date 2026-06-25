@@ -102,7 +102,7 @@ describe("ProspectsPage", () => {
     render(<ProspectsPage />);
 
     await waitFor(() => {
-      expect(screen.getByText("Нет проспектов")).toBeInTheDocument();
+      expect(screen.getByText(/нет проспектов/i)).toBeInTheDocument();
     });
   });
 
@@ -176,7 +176,7 @@ describe("ProspectsPage", () => {
     render(<ProspectsPage />);
 
     await waitFor(() => {
-      expect(screen.getByText("Нет проспектов")).toBeInTheDocument();
+      expect(screen.getByText(/нет проспектов/i)).toBeInTheDocument();
     });
 
     const nameInput = screen.getByPlaceholderText("Введите имя");

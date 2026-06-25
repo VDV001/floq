@@ -48,6 +48,10 @@ export default function ProspectsPage() {
           <div>
             <h2 className="mb-2 text-2xl sm:text-3xl font-extrabold tracking-tight text-[#0d1c2e]">Проспекты</h2>
             <p className="font-medium text-[#434655]">{prospects.length} контактов{searchQuery ? `, найдено ${filteredProspects.length}` : ""}</p>
+            <p className="mt-1 max-w-xl text-xs leading-relaxed text-[#737686]">
+              <span className="font-semibold text-[#434655]">Проспекты</span> — ваша исходящая база: кому вы пишете первыми в холодной рассылке.
+              Те, кто написал вам сам, — это <span className="font-semibold text-[#434655]">Лиды</span>, раздел «Лента лидов».
+            </p>
           </div>
           <div className="flex items-center gap-3">
             <button onClick={handleVerifyBatch} disabled={verifying}
@@ -65,7 +69,7 @@ export default function ProspectsPage() {
               <FileDown className="size-5" /> Шаблон
             </button>
             <label className="flex cursor-pointer items-center gap-2 rounded-lg border border-[#c3c6d7]/30 bg-[#c3c6d7]/10 px-5 py-2.5 font-semibold text-[#0d1c2e] transition-all hover:bg-[#c3c6d7]/20"
-              title="Поддерживаются колонки: name/имя, company/компания, email/почта, telegram/tg-контакты, phone/телефон и др.">
+              title="Импорт в исходящую базу (Проспекты). Колонки: name/имя, company/компания, email/почта, telegram/tg-контакты, phone/телефон и др.">
               <Upload className="size-5" /> Импорт CSV
               <input type="file" accept=".csv" className="hidden" onChange={async (e) => {
                 const file = e.target.files?.[0];

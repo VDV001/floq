@@ -81,10 +81,10 @@ describe("InboxPage", () => {
     render(<InboxPage />);
 
     await waitFor(() => {
-      expect(screen.getByText("Нет лидов")).toBeInTheDocument();
+      expect(screen.getByText(/нет входящих лидов/i)).toBeInTheDocument();
     });
     expect(
-      screen.getByText("Напишите вашему Telegram боту чтобы создать первый лид"),
+      screen.getByText(/Напишите вашему Telegram-боту/i),
     ).toBeInTheDocument();
   });
 

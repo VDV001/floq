@@ -31,14 +31,20 @@ export default function InboxPage() {
                 {loading && <div className="size-5 animate-spin rounded-full border-2 border-[#3b6ef6] border-t-transparent" />}
               </div>
               <p className="mt-1 text-sm text-[#434655]">Показано {leads.length} активных лидов для <span className="font-bold">Новые лиды</span></p>
+              <p className="mt-1 max-w-xl text-xs leading-relaxed text-[#737686]">
+                <span className="font-semibold text-[#434655]">Лиды</span> — это входящие: те, кто написал вам сам (Telegram, Email).
+                Если вы загружаете базу для холодной рассылки — это <span className="font-semibold text-[#434655]">Проспекты</span>, раздел «Проспекты».
+              </p>
             </div>
             <div className="flex items-center gap-2 mr-4">
               <button onClick={() => api.exportLeadsCSV().catch(() => alert("Ошибка экспорта"))}
                 className="flex items-center gap-1.5 rounded-lg border border-[#c3c6d7]/30 bg-[#c3c6d7]/10 px-4 py-2 text-xs font-semibold text-[#0d1c2e] transition-all hover:bg-[#c3c6d7]/20">
                 <Download className="size-4" /> Экспорт
               </button>
-              <label className="flex cursor-pointer items-center gap-1.5 rounded-lg border border-[#c3c6d7]/30 bg-[#c3c6d7]/10 px-4 py-2 text-xs font-semibold text-[#0d1c2e] transition-all hover:bg-[#c3c6d7]/20">
-                <Upload className="size-4" /> Импорт
+              <label
+                title="Импорт входящих лидов (кто написал вам). Для холодной базы используйте «Импорт CSV» в разделе Проспекты."
+                className="flex cursor-pointer items-center gap-1.5 rounded-lg border border-[#c3c6d7]/30 bg-[#c3c6d7]/10 px-4 py-2 text-xs font-semibold text-[#0d1c2e] transition-all hover:bg-[#c3c6d7]/20">
+                <Upload className="size-4" /> Импорт лидов
                 <input type="file" accept=".csv" className="hidden" onChange={async (e) => {
                   const file = e.target.files?.[0]; if (!file) return;
                   try { const res = await api.importLeadsCSV(file); alert(`Импортировано ${res.imported} лидов`); window.location.reload(); }
@@ -60,8 +66,9 @@ export default function InboxPage() {
           <div className="space-y-3">
             {!loading && filteredLeads.length === 0 && (
               <div className="rounded-xl bg-white p-12 text-center">
-                <p className="text-lg font-bold text-[#0d1c2e]">Нет лидов</p>
-                <p className="mt-2 text-sm text-[#434655]">Напишите вашему Telegram боту чтобы создать первый лид</p>
+                <p className="text-lg font-bold text-[#0d1c2e]">Пока нет входящих лидов</p>
+                <p className="mt-2 text-sm text-[#434655]">Лиды появляются, когда вам пишут в Telegram или на Email. Напишите вашему Telegram-боту, чтобы создать первый лид.</p>
+                <p className="mt-1 text-xs text-[#737686]">Загрузили базу для рассылки? Она в разделе <span className="font-semibold">«Проспекты»</span>, а не здесь.</p>
               </div>
             )}
             {filteredLeads.map((lead) => (
