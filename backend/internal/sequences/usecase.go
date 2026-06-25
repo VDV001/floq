@@ -185,6 +185,16 @@ func (uc *UseCase) launchInner(ctx context.Context, sequenceID uuid.UUID, prospe
 			return fmt.Errorf("launch: prospect %s not found", pid)
 		}
 
+		// All prospects in a launch must belong to a single owner: the email
+		// preflight and autopilot mode are resolved once from ownerID (the first
+		// prospect's owner), so a mixed-owner batch would apply one owner's
+		// settings — including auto-send — to another owner's messages. Reject
+		// before creating any wrong-owner message. (Skipped when ownerID is nil,
+		// e.g. unit tests without a real owner.)
+		if ownerID != uuid.Nil && prospect.UserID != ownerID {
+			return fmt.Errorf("launch: all prospects must belong to a single owner")
+		}
+
 		if !prospect.IsEligibleForSequence {
 			continue
 		}
