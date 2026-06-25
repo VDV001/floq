@@ -18,6 +18,7 @@ type UseCase struct {
 	leadCreator  domain.LeadCreator
 	tx           domain.TxManager
 	emailChecker domain.EmailConfigChecker
+	autopilot    domain.AutopilotChecker
 }
 
 func NewUseCase(repo domain.Repository, aiGenerator domain.AIMessageGenerator, prospects domain.ProspectReader, leadCreator domain.LeadCreator, opts ...UseCaseOption) *UseCase {
@@ -40,6 +41,12 @@ func WithTxManager(tx domain.TxManager) UseCaseOption {
 // launch skips the check (preserving pre-feature behaviour).
 func WithEmailConfigChecker(c domain.EmailConfigChecker) UseCaseOption {
 	return func(uc *UseCase) { uc.emailChecker = c }
+}
+
+// WithAutopilotChecker wires the autopilot send-mode resolver. When unset,
+// launch keeps the default human-in-the-loop behaviour (messages stay drafts).
+func WithAutopilotChecker(c domain.AutopilotChecker) UseCaseOption {
+	return func(uc *UseCase) { uc.autopilot = c }
 }
 
 func (uc *UseCase) ListSequences(ctx context.Context, userID uuid.UUID) ([]domain.Sequence, error) {
@@ -155,6 +162,20 @@ func (uc *UseCase) launchInner(ctx context.Context, sequenceID uuid.UUID, prospe
 		}
 	}
 
+	// Resolve the send mode once for the whole launch. Autopilot ON promotes
+	// every queued message straight to Approved (the async sender then
+	// dispatches it without a manual approval step); OFF — the default — leaves
+	// messages as drafts awaiting human approval. A read error fails the launch
+	// rather than guessing, so an unreadable setting can never auto-send.
+	autopilotOn := false
+	if uc.autopilot != nil && ownerID != uuid.Nil {
+		on, err := uc.autopilot.IsAutopilotEnabled(ctx, ownerID)
+		if err != nil {
+			return fmt.Errorf("launch: resolve autopilot mode: %w", err)
+		}
+		autopilotOn = on
+	}
+
 	for _, pid := range prospectIDs {
 		prospect, err := uc.prospects.GetProspect(ctx, pid)
 		if err != nil {
@@ -228,6 +249,14 @@ func (uc *UseCase) launchInner(ctx context.Context, sequenceID uuid.UUID, prospe
 				scheduledAt = now
 			}
 			msg := domain.NewOutboundMessage(pid, sequenceID, step.StepOrder, step.Channel, body, scheduledAt)
+			if autopilotOn {
+				// Skip the draft → human-approval step. draft → approved is a
+				// legal transition (see outboundTransitions); the entity guards
+				// the state machine so this can't silently corrupt status.
+				if err := msg.TransitionTo(domain.OutboundStatusApproved); err != nil {
+					return fmt.Errorf("launch: auto-approve message for prospect %s step %d: %w", pid, step.StepOrder, err)
+				}
+			}
 			if err := uc.repo.CreateOutboundMessage(ctx, msg); err != nil {
 				return fmt.Errorf("launch: create outbound message: %w", err)
 			}
