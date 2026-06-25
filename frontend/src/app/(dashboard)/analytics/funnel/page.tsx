@@ -14,7 +14,7 @@ export default function FunnelAnalyticsPage() {
         <AnalyticsTabs />
         <header className="flex items-end justify-between gap-4 flex-wrap">
           <div>
-            <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight text-[#0d1c2e]">Воронка</h1>
+            <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight text-[#0d1c2e]">Конверсия</h1>
             <p className="text-sm text-slate-500 mt-1">
               Распределение скоров квалификации и конверсия по шагам секвенций (за всё время).
             </p>
