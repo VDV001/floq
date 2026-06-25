@@ -78,6 +78,33 @@ func TestLaunch_Autopilot(t *testing.T) {
 	}
 }
 
+// When autopilot is on with a send-delay, an auto-approved message is
+// scheduled that far in the future — a grace window before the async sender
+// (which only picks up approved messages whose scheduled_at <= now) may
+// dispatch it, leaving the operator time to intervene.
+func TestLaunch_Autopilot_AppliesSendDelay(t *testing.T) {
+	seqID := uuid.New()
+	pid := uuid.New()
+	repo := &mockRepo{steps: []domain.SequenceStep{
+		{ID: uuid.New(), SequenceID: seqID, StepOrder: 1, Channel: domain.StepChannelTelegram, PromptHint: "intro"},
+	}}
+	pr := newMockProspectReader()
+	pr.prospects[pid] = &domain.ProspectView{
+		ID: pid, UserID: uuid.New(), Name: "Alice", Status: "new", VerifyStatus: "valid", IsEligibleForSequence: true,
+	}
+	uc := NewUseCase(repo, &mockAI{telegramBody: "hi"}, pr, &mockLeadCreator{},
+		WithAutopilotChecker(&mockAutopilotChecker{enabled: true, delay: 5 * time.Minute}))
+
+	before := time.Now().UTC()
+	require.NoError(t, uc.Launch(context.Background(), seqID, []uuid.UUID{pid}, true))
+	after := time.Now().UTC()
+
+	require.Len(t, repo.messages, 1)
+	got := repo.messages[0].ScheduledAt
+	assert.False(t, got.Before(before.Add(5*time.Minute)), "scheduled at least the delay into the future")
+	assert.False(t, got.After(after.Add(5*time.Minute)), "scheduled at most the delay into the future")
+}
+
 // A launch batch must belong to a single owner. Autopilot (and the email
 // preflight) resolve their decision once from the first prospect's owner, so a
 // mixed-owner batch would otherwise apply one owner's settings to another
