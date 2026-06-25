@@ -88,4 +88,28 @@ describe("AddStepForm", () => {
       expect.objectContaining({ prompt_hint: "первое касание" })
     );
   });
+
+  it("switches to manual mode and sends the hand-written body verbatim", async () => {
+    const onAdd = vi.fn().mockResolvedValue(undefined);
+    render(<AddStepForm onAdd={onAdd} onCancel={vi.fn()} />);
+
+    await userEvent.click(screen.getByText("Напишу сам"));
+    const textarea = screen.getByPlaceholderText(/Напишите письмо целиком/);
+    await userEvent.type(textarea, "Здравствуйте, ручной текст.");
+    await userEvent.click(screen.getByText("Добавить"));
+
+    expect(onAdd).toHaveBeenCalledWith(
+      expect.objectContaining({ body: "Здравствуйте, ручной текст." })
+    );
+  });
+
+  it("does not submit a manual step with an empty body", async () => {
+    const onAdd = vi.fn();
+    render(<AddStepForm onAdd={onAdd} onCancel={vi.fn()} />);
+
+    await userEvent.click(screen.getByText("Напишу сам"));
+    await userEvent.click(screen.getByText("Добавить"));
+
+    expect(onAdd).not.toHaveBeenCalled();
+  });
 });
