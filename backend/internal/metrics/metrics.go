@@ -8,6 +8,7 @@ package metrics
 import (
 	"net/http"
 	"sync"
+	"time"
 
 	"github.com/daniil/floq/internal/audit/domain"
 	"github.com/prometheus/client_golang/prometheus"
@@ -27,6 +28,7 @@ type Metrics struct {
 	aiCost       *prometheus.CounterVec
 	aiDuration   *prometheus.HistogramVec
 	queueDepth   *prometheus.GaugeVec
+	matviewRefresh prometheus.Histogram
 
 	mu        sync.Mutex          // guards prevKinds
 	prevKinds map[string]struct{} // queue-depth kinds published last scan
@@ -68,6 +70,14 @@ func New() *Metrics {
 			Name: "pending_replies_queue_depth",
 			Help: "Number of pending HITL replies awaiting an operator decision, by kind.",
 		}, []string{"kind"}),
+		matviewRefresh: prometheus.NewHistogram(prometheus.HistogramOpts{
+			Name: "analytics_matview_refresh_duration_seconds",
+			Help: "Duration of a full analytics materialized-view refresh pass (the background cron). Alert when it approaches ANALYTICS_REFRESH_INTERVAL — the scale-path trigger.",
+			// Refreshes range from milliseconds to many seconds as volume
+			// grows; default buckets cap at 10s, so extend toward the 5m
+			// default interval to keep the slow tail visible.
+			Buckets: []float64{0.1, 0.5, 1, 2.5, 5, 10, 30, 60, 120, 300},
+		}),
 	}
 	reg.MustRegister(
 		m.httpRequests,
@@ -76,6 +86,7 @@ func New() *Metrics {
 		m.aiCost,
 		m.aiDuration,
 		m.queueDepth,
+		m.matviewRefresh,
 		collectors.NewGoCollector(),
 		collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}),
 	)
@@ -113,6 +124,14 @@ func (m *Metrics) OnAuditEntry(e *domain.Entry) {
 	m.aiCalls.With(labels).Inc()
 	m.aiCost.With(labels).Add(float64(e.CostUSDMicro))
 	m.aiDuration.With(labels).Observe(float64(e.LatencyMS) / 1000.0)
+}
+
+// ObserveMatviewRefresh records the wall-clock duration of one analytics
+// matview refresh pass. Wired as the analytics RefreshCron observer so the
+// /metrics histogram reflects refresh latency without the analytics context
+// importing this package.
+func (m *Metrics) ObserveMatviewRefresh(d time.Duration) {
+	m.matviewRefresh.Observe(d.Seconds())
 }
 
 // Handler serves the registry in the Prometheus text exposition format.
