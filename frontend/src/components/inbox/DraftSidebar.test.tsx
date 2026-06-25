@@ -119,6 +119,33 @@ describe("DraftSidebar", () => {
     expect(screen.getByRole("textbox")).toHaveValue("");
   });
 
+  it("ignores a stale draft that belongs to the previous lead", async () => {
+    // Parent re-fetches the draft async, so right after navigation the draft
+    // prop still holds lead A's draft while leadId is already lead B.
+    const staleDraft = draft({ lead_id: "lead-A", body: "черновик лида A" });
+    const { rerender } = render(
+      <DraftSidebar
+        leadId="lead-A"
+        draft={staleDraft}
+        draftLoading={false}
+        onDraftChanged={vi.fn()}
+        onMessagesSent={vi.fn()}
+      />
+    );
+
+    rerender(
+      <DraftSidebar
+        leadId="lead-B"
+        draft={staleDraft}
+        draftLoading={false}
+        onDraftChanged={vi.fn()}
+        onMessagesSent={vi.fn()}
+      />
+    );
+
+    expect(screen.getByRole("textbox")).toHaveValue("");
+  });
+
   it("still shows and edits an AI draft when one exists", async () => {
     vi.mocked(api.sendMessage).mockResolvedValue({} as never);
     vi.mocked(api.getMessages).mockResolvedValue([]);
