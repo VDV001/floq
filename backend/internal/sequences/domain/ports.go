@@ -14,6 +14,11 @@ import (
 // async sender dropping the message silently).
 var ErrEmailNotConfigured = errors.New("email not configured")
 
+// ErrProspectNotOwned is returned by Launch when a requested prospect does not
+// belong to the authenticated caller. Sentinel so the handler can errors.Is it
+// and answer 404 (not leaking whether the prospect exists for another tenant).
+var ErrProspectNotOwned = errors.New("prospect not owned by caller")
+
 // SequenceRepo manages sequence CRUD.
 // Note: ToggleActive was removed — the usecase now loads the entity, calls
 // Activate/Deactivate, and persists via UpdateSequence. This keeps the port

@@ -41,6 +41,11 @@ func writeGenerationError(w http.ResponseWriter, err error, genericMsg string) {
 		httputil.WriteErrorDetail(w, http.StatusBadRequest, msgEmailNotConfigured, codeEmailNotConfigured, remedyEmailNotConfigured)
 		return
 	}
+	if errors.Is(err, domain.ErrProspectNotOwned) {
+		// 404, not 403 — don't reveal that the prospect exists for another tenant.
+		httputil.WriteError(w, http.StatusNotFound, "prospect not found")
+		return
+	}
 	httputil.WriteError(w, http.StatusInternalServerError, genericMsg)
 }
 
