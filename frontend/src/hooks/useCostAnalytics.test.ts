@@ -122,4 +122,19 @@ describe("useCostAnalytics", () => {
     // Last-good ratios preserved through the failed refresh.
     expect(result.current.ratios?.total_cost_usd).toBe(6.0);
   });
+
+  it("wraps a non-Error rejection into an Error", async () => {
+    vi.mocked(api.getCostRatios).mockResolvedValueOnce(ratios());
+    vi.mocked(api.getCostSummary).mockResolvedValueOnce(summary());
+    const { result } = renderHook(() => useCostAnalytics());
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    vi.mocked(api.getCostSummary).mockResolvedValueOnce(summary());
+    vi.mocked(api.getCostRatios).mockRejectedValueOnce("string failure");
+    await act(async () => {
+      await result.current.refresh();
+    });
+    expect(result.current.error).toBeInstanceOf(Error);
+    expect(result.current.error?.message).toBe("string failure");
+  });
 });

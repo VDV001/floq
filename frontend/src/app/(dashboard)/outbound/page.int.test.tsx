@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { render, screen, fireEvent } from "@testing-library/react";
+import { render, screen, fireEvent, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { http, HttpResponse } from "msw";
 
@@ -121,5 +121,184 @@ describe("outbound page (integration)", () => {
 
     expect(await screen.findByText("Проспект beta00")).toBeInTheDocument();
     expect(screen.queryByText("Проспект alpha0")).not.toBeInTheDocument();
+  });
+
+  it("edits a draft body and persists it through the edit endpoint", async () => {
+    const user = userEvent.setup({ delay: null });
+    let editBody: { body?: string } | null = null;
+    mountWith(
+      [outbound({ id: "e1", prospect_id: "alpha000000", body: "Старый текст" })],
+      [],
+      emptyStats,
+      [
+        http.post(url("/api/outbound/e1/edit"), async ({ request }) => {
+          editBody = (await request.json()) as { body: string };
+          return new HttpResponse(null, { status: 204 });
+        }),
+      ],
+    );
+
+    render(<OutboundPage />);
+    await screen.findByText(/Старый текст/);
+
+    // The pencil is the sibling button right after the card's approve button.
+    const approve = screen.getByRole("button", { name: /Подтвердить$/ });
+    const cardActions = approve.parentElement as HTMLElement;
+    const [, pencil] = within(cardActions).getAllByRole("button");
+    await user.click(pencil);
+
+    const textarea = screen.getByDisplayValue("Старый текст");
+    fireEvent.change(textarea, { target: { value: "Новый текст" } });
+    await user.click(screen.getByRole("button", { name: "Сохранить" }));
+
+    // The PATCH-equivalent POST carried the new body and the card reflects it.
+    await waitFor(() => expect(editBody).toEqual({ body: "Новый текст" }));
+    expect(await screen.findByText(/Новый текст/)).toBeInTheDocument();
+    expect(screen.queryByText(/Старый текст/)).not.toBeInTheDocument();
+  });
+
+  it("rejects a queued message and removes it from the list", async () => {
+    const user = userEvent.setup({ delay: null });
+    let rejectedId: string | null = null;
+    mountWith(
+      [
+        outbound({ id: "a", prospect_id: "alpha000000" }),
+        outbound({ id: "b", prospect_id: "beta0000000" }),
+      ],
+      [],
+      { ...emptyStats, draft: 2 },
+      [
+        http.post(url("/api/outbound/a/reject"), () => {
+          rejectedId = "a";
+          return new HttpResponse(null, { status: 204 });
+        }),
+      ],
+    );
+
+    render(<OutboundPage />);
+    await screen.findByText("Проспект alpha0");
+
+    // The reject (X) button is the last action button on the card.
+    const approve = screen.getAllByRole("button", { name: /Подтвердить$/ })[0];
+    const actions = within(approve.parentElement as HTMLElement).getAllByRole("button");
+    await user.click(actions[actions.length - 1]);
+
+    expect(await screen.findByText("Проспект beta00")).toBeInTheDocument();
+    expect(screen.queryByText("Проспект alpha0")).not.toBeInTheDocument();
+    expect(rejectedId).toBe("a");
+  });
+
+  it("approves the whole queue at once and empties the list", async () => {
+    const user = userEvent.setup({ delay: null });
+    const approved: string[] = [];
+    mountWith(
+      [
+        outbound({ id: "a", prospect_id: "alpha000000" }),
+        outbound({ id: "b", prospect_id: "beta0000000" }),
+      ],
+      [],
+      { ...emptyStats, draft: 2 },
+      [
+        http.post(url("/api/outbound/:id/approve"), ({ params }) => {
+          approved.push(params.id as string);
+          return new HttpResponse(null, { status: 204 });
+        }),
+      ],
+    );
+
+    render(<OutboundPage />);
+    await screen.findByText("Проспект alpha0");
+
+    await user.click(screen.getByRole("button", { name: /Подтвердить все/ }));
+
+    // Both messages were approved sequentially and the empty-state shows.
+    expect(await screen.findByText("Нет сообщений в очереди")).toBeInTheDocument();
+    await waitFor(() => expect(approved.sort()).toEqual(["a", "b"]));
+  });
+
+  it("shows sent messages on the sent tab and filters them by status", async () => {
+    mountWith(
+      [],
+      [
+        outbound({ id: "s1", prospect_id: "sentaa0000", status: "sent" }),
+        outbound({ id: "r1", prospect_id: "rejbb00000", status: "rejected" }),
+      ],
+    );
+
+    render(<OutboundPage />);
+    // Queue starts empty.
+    await screen.findByText("Нет сообщений в очереди");
+
+    fireEvent.click(screen.getByRole("button", { name: /Отправленные/ }));
+
+    // Both sent-tab rows render initially.
+    expect(await screen.findByText("Проспект sentaa")).toBeInTheDocument();
+    expect(screen.getByText("Проспект rejbb0")).toBeInTheDocument();
+
+    // Status filter "Отправлено" keeps only the sent message.
+    fireEvent.click(screen.getByRole("button", { name: "Отправлено" }));
+
+    expect(screen.getByText("Проспект sentaa")).toBeInTheDocument();
+    expect(screen.queryByText("Проспект rejbb0")).not.toBeInTheDocument();
+  });
+
+  it("filters the queue by the search box", async () => {
+    mountWith([
+      outbound({ id: "a", prospect_id: "alpha000000", body: "первое" }),
+      outbound({ id: "b", prospect_id: "beta0000000", body: "второе" }),
+    ]);
+
+    render(<OutboundPage />);
+    await screen.findByText("Проспект alpha0");
+
+    fireEvent.change(screen.getByPlaceholderText("Поиск по очереди..."), {
+      target: { value: "beta" },
+    });
+
+    expect(await screen.findByText("Проспект beta00")).toBeInTheDocument();
+    expect(screen.queryByText("Проспект alpha0")).not.toBeInTheDocument();
+  });
+
+  it("reflects the autopilot status read from the settings API", async () => {
+    // The autopilot banner is hydrated from GET /api/settings.auto_send.
+    server.use(
+      http.get(url("/api/outbound/queue"), () => HttpResponse.json([])),
+      http.get(url("/api/outbound/sent"), () => HttpResponse.json([])),
+      http.get(url("/api/outbound/stats"), () => HttpResponse.json(emptyStats)),
+      http.get(url("/api/settings"), () => HttpResponse.json({ auto_send: true })),
+    );
+
+    render(<OutboundPage />);
+
+    expect(
+      await screen.findByText(
+        "Включён: сообщения отправляются автоматически, без ручного одобрения",
+      ),
+    ).toBeInTheDocument();
+    expect(screen.getByText("Вкл")).toBeInTheDocument();
+  });
+
+  it("keeps the card in the queue when approve fails", async () => {
+    const user = userEvent.setup({ delay: null });
+    mountWith(
+      [outbound({ id: "a", prospect_id: "alpha000000" })],
+      [],
+      { ...emptyStats, draft: 1 },
+      [
+        http.post(url("/api/outbound/a/approve"), () =>
+          HttpResponse.json({ error: "boom" }, { status: 500 }),
+        ),
+      ],
+    );
+
+    render(<OutboundPage />);
+    await screen.findByText("Проспект alpha0");
+
+    await user.click(screen.getByRole("button", { name: /Подтвердить$/ }));
+
+    // The failed approve is swallowed; the row stays visible.
+    await waitFor(() =>
+      expect(screen.getByText("Проспект alpha0")).toBeInTheDocument(),
+    );
   });
 });

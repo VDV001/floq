@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { render, screen, fireEvent } from "@testing-library/react";
+import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { http, HttpResponse } from "msw";
 
@@ -150,5 +150,162 @@ describe("sequences page (integration)", () => {
     // POST body reached the API and the created sequence renders in the list.
     expect(await screen.findByText("Весенняя рассылка")).toBeInTheDocument();
     expect(posted).toEqual({ name: "Весенняя рассылка" });
+  });
+
+  it("cancels the new-sequence form on Escape", async () => {
+    const user = userEvent.setup({ delay: null });
+    mountWith({ sequences: [] });
+    renderPage();
+    await screen.findByText("Нет секвенций");
+
+    await user.click(screen.getByRole("button", { name: "Новая секвенция" }));
+    const input = screen.getByPlaceholderText("Название секвенции...");
+    fireEvent.change(input, { target: { value: "Черновик" } });
+    fireEvent.keyDown(input, { key: "Escape" });
+
+    expect(screen.queryByPlaceholderText("Название секвенции...")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Новая секвенция" })).toBeInTheDocument();
+  });
+
+  it("creates a sequence by pressing Enter in the name field", async () => {
+    const user = userEvent.setup({ delay: null });
+    mountWith({
+      sequences: [],
+      extra: [
+        http.post(url("/api/sequences"), async ({ request }) => {
+          const body = (await request.json()) as { name: string };
+          return HttpResponse.json(sequence({ id: "s-new", name: body.name }));
+        }),
+      ],
+    });
+    renderPage();
+    await screen.findByText("Нет секвенций");
+
+    await user.click(screen.getByRole("button", { name: "Новая секвенция" }));
+    const input = screen.getByPlaceholderText("Название секвенции...");
+    fireEvent.change(input, { target: { value: "Enter-цепочка" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+
+    expect(await screen.findByText("Enter-цепочка")).toBeInTheDocument();
+  });
+
+  it("toggles a sequence active state through the API", async () => {
+    const user = userEvent.setup({ delay: null });
+    let toggled: { is_active?: boolean } = {};
+    mountWith({
+      sequences: [sequence({ id: "s-1", name: "Холодная цепочка", is_active: true })],
+      extra: [
+        http.patch(url("/api/sequences/s-1/toggle"), async ({ request }) => {
+          toggled = (await request.json()) as { is_active: boolean };
+          return HttpResponse.json({});
+        }),
+      ],
+    });
+    renderPage();
+    await screen.findByText("Холодная цепочка");
+
+    await user.click(screen.getByRole("switch"));
+    await waitFor(() => expect(toggled).toEqual({ is_active: false }));
+  });
+
+  it("renames a sequence through the edit dialog", async () => {
+    const user = userEvent.setup({ delay: null });
+    let put: { name?: string } = {};
+    mountWith({
+      sequences: [sequence({ id: "s-1", name: "Старое имя" })],
+      extra: [
+        http.put(url("/api/sequences/s-1"), async ({ request }) => {
+          put = (await request.json()) as { name: string };
+          return HttpResponse.json(sequence({ id: "s-1", name: put.name! }));
+        }),
+      ],
+    });
+    renderPage();
+    await screen.findByText("Старое имя");
+
+    await user.click(screen.getByRole("button", { name: "Редактировать" }));
+    const input = screen.getByDisplayValue("Старое имя");
+    fireEvent.change(input, { target: { value: "Новое имя" } });
+    await user.click(screen.getByRole("button", { name: "Сохранить" }));
+
+    await waitFor(() => expect(put).toEqual({ name: "Новое имя" }));
+    expect(await screen.findByText("Новое имя")).toBeInTheDocument();
+  });
+
+  it("deletes a sequence after confirming in the dialog", async () => {
+    const user = userEvent.setup({ delay: null });
+    let deleted = false;
+    mountWith({
+      sequences: [sequence({ id: "s-1", name: "На удаление" })],
+      extra: [
+        http.delete(url("/api/sequences/s-1"), () => {
+          deleted = true;
+          return new HttpResponse(null, { status: 204 });
+        }),
+      ],
+    });
+    renderPage();
+    await screen.findByText("На удаление");
+
+    await user.click(screen.getByRole("button", { name: "Удалить" }));
+    // ConfirmDialog opens (heading "Удалить секвенцию"); now two "Удалить"
+    // buttons exist — the dialog's confirm is the last one.
+    expect(await screen.findByText("Удалить секвенцию")).toBeInTheDocument();
+    const deleteButtons = screen.getAllByRole("button", { name: "Удалить" });
+    await user.click(deleteButtons[deleteButtons.length - 1]);
+
+    await waitFor(() => expect(deleted).toBe(true));
+    expect(screen.queryByText("На удаление")).not.toBeInTheDocument();
+  });
+
+  it("adds a step through the add-step form and refetches the timeline", async () => {
+    const user = userEvent.setup({ delay: null });
+    let posted: unknown = null;
+    const steps: SequenceStep[] = [];
+    server.use(
+      http.get(url("/api/sequences"), () => HttpResponse.json([sequence({ id: "s-1", name: "Цепочка" })])),
+      http.get(url("/api/prospects"), () => HttpResponse.json([])),
+      http.get(url("/api/sequences/:id"), () =>
+        HttpResponse.json({ sequence: sequence({ id: "s-1" }), steps: [...steps] }),
+      ),
+      http.post(url("/api/sequences/s-1/steps"), async ({ request }) => {
+        posted = await request.json();
+        steps.push(step({ id: "st-new", prompt_hint: "новый шаг" }));
+        return HttpResponse.json(steps[steps.length - 1]);
+      }),
+    );
+    renderPage();
+    await screen.findByText("Цепочка");
+
+    await user.click(await screen.findByRole("button", { name: /Добавить шаг/ }));
+    await user.click(screen.getByRole("button", { name: "Добавить" }));
+
+    await waitFor(() => expect(posted).toMatchObject({ channel: "email", step_order: 1 }));
+    expect(await screen.findByText("новый шаг")).toBeInTheDocument();
+  });
+
+  it("launches the sequence for the selected prospects", async () => {
+    const user = userEvent.setup({ delay: null });
+    let launched: { prospect_ids?: string[]; send_now?: boolean } = {};
+    mountWith({
+      sequences: [sequence({ id: "s-1", name: "Цепочка" })],
+      prospects: [prospect({ id: "p-1", name: "Иван Петров", status: "new" })],
+      extra: [
+        http.post(url("/api/sequences/s-1/launch"), async ({ request }) => {
+          launched = (await request.json()) as { prospect_ids: string[]; send_now: boolean };
+          return HttpResponse.json({});
+        }),
+      ],
+    });
+    renderPage();
+    await screen.findByText("Иван Петров");
+
+    await user.click(screen.getByRole("button", { name: "Выбрать все" }));
+    // First click reveals launch options, second click fires the launch.
+    const launchBtn = screen.getByRole("button", { name: /Запустить \(1\)/ });
+    await user.click(launchBtn);
+    await user.click(screen.getByRole("button", { name: /Запустить \(1\)/ }));
+
+    await waitFor(() => expect(launched.prospect_ids).toEqual(["p-1"]));
   });
 });

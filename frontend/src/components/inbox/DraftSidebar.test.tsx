@@ -162,4 +162,89 @@ describe("DraftSidebar", () => {
 
     expect(screen.getByDisplayValue("ИИ-сгенерированный ответ")).toBeInTheDocument();
   });
+
+  it("regenerates the AI draft and fills the editor with the result", async () => {
+    vi.mocked(api.regenerateDraft).mockResolvedValue(
+      draft({ body: "Свежий ИИ-черновик" })
+    );
+    const onDraftChanged = vi.fn();
+
+    render(
+      <DraftSidebar
+        leadId="lead-1"
+        draft={null}
+        draftLoading={false}
+        onDraftChanged={onDraftChanged}
+        onMessagesSent={vi.fn()}
+      />
+    );
+
+    await userEvent.click(screen.getByText("Сгенерировать черновик ИИ"));
+
+    await waitFor(() => {
+      expect(api.regenerateDraft).toHaveBeenCalledWith("lead-1");
+    });
+    expect(onDraftChanged).toHaveBeenCalled();
+    expect(screen.getByRole("textbox")).toHaveValue("Свежий ИИ-черновик");
+  });
+
+  it("alerts when draft regeneration fails", async () => {
+    vi.mocked(api.regenerateDraft).mockRejectedValue(new Error("boom"));
+    const alertSpy = vi.spyOn(window, "alert").mockImplementation(() => {});
+
+    render(
+      <DraftSidebar
+        leadId="lead-1"
+        draft={null}
+        draftLoading={false}
+        onDraftChanged={vi.fn()}
+        onMessagesSent={vi.fn()}
+      />
+    );
+
+    await userEvent.click(screen.getByText("Сгенерировать черновик ИИ"));
+
+    await waitFor(() => {
+      expect(alertSpy).toHaveBeenCalledWith("Ошибка генерации черновика");
+    });
+    alertSpy.mockRestore();
+  });
+
+  it("alerts and keeps the text when sending fails", async () => {
+    vi.mocked(api.sendMessage).mockRejectedValue(new Error("network"));
+    const alertSpy = vi.spyOn(window, "alert").mockImplementation(() => {});
+
+    render(
+      <DraftSidebar
+        leadId="lead-1"
+        draft={null}
+        draftLoading={false}
+        onDraftChanged={vi.fn()}
+        onMessagesSent={vi.fn()}
+      />
+    );
+
+    await userEvent.type(screen.getByRole("textbox"), "Текст ответа");
+    await userEvent.click(screen.getByText("Отправить ответ"));
+
+    await waitFor(() => {
+      expect(alertSpy).toHaveBeenCalledWith("Ошибка отправки");
+    });
+    // The unsent text remains so the operator does not lose it.
+    expect(screen.getByRole("textbox")).toHaveValue("Текст ответа");
+    alertSpy.mockRestore();
+  });
+
+  it("shows a loading spinner placeholder and no textarea while the draft loads", () => {
+    render(
+      <DraftSidebar
+        leadId="lead-1"
+        draft={null}
+        draftLoading={true}
+        onDraftChanged={vi.fn()}
+        onMessagesSent={vi.fn()}
+      />
+    );
+    expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
+  });
 });

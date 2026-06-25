@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, fireEvent } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { http, HttpResponse } from "msw";
 
@@ -119,5 +119,92 @@ describe("automations page (integration)", () => {
         ),
       ).toBeInTheDocument(),
     );
+  });
+
+  it("enables every automation at once via the QuickActions button", async () => {
+    const user = userEvent.setup({ delay: null });
+    let putBody: Partial<UserSettings> | null = null;
+    mountWith({}, [
+      http.put(url("/api/settings"), async ({ request }) => {
+        putBody = (await request.json()) as Partial<UserSettings>;
+        return HttpResponse.json(settings);
+      }),
+    ]);
+
+    render(<AutomationsPage />);
+    await screen.findByText("Авто-квалификация");
+
+    // Fixture has 4/6 on -> button reads "Включить все".
+    await user.click(screen.getByRole("button", { name: "Включить все" }));
+
+    // All six switches flip on and the banner reports the max state.
+    await waitFor(() =>
+      expect(
+        screen.getByText("Все автоматизации включены. Система работает на максимум."),
+      ).toBeInTheDocument(),
+    );
+    expect(screen.getByRole("button", { name: "Выключить все" })).toBeInTheDocument();
+
+    // The debounced PUT carries every toggle as enabled.
+    await waitFor(() => expect(putBody).not.toBeNull());
+    expect(putBody).toMatchObject({
+      auto_qualify: true,
+      auto_draft: true,
+      auto_send: true,
+      auto_followup: true,
+      auto_prospect_to_lead: true,
+      auto_verify_import: true,
+    });
+  });
+
+  it("persists a delay input change through the settings API", async () => {
+    let putBody: Partial<UserSettings> | null = null;
+    mountWith({}, [
+      http.put(url("/api/settings"), async ({ request }) => {
+        putBody = (await request.json()) as Partial<UserSettings>;
+        return HttpResponse.json(settings);
+      }),
+    ]);
+
+    render(<AutomationsPage />);
+    await screen.findByText("Авто-квалификация");
+
+    // Two numeric inputs: [auto-send delay (5), auto-followup days (2)].
+    const [delayInput] = screen.getAllByRole("spinbutton");
+    fireEvent.change(delayInput, { target: { value: "15" } });
+
+    await waitFor(() => expect(putBody).not.toBeNull());
+    expect(putBody).toMatchObject({
+      auto_send_delay_min: 15,
+      auto_followup_days: 2,
+    });
+  });
+
+  it("keeps the optimistic toggle state when the save request fails", async () => {
+    const user = userEvent.setup({ delay: null });
+    let putFired = false;
+    mountWith({}, [
+      http.put(url("/api/settings"), () => {
+        putFired = true;
+        return HttpResponse.json({ error: "boom" }, { status: 500 });
+      }),
+    ]);
+
+    render(<AutomationsPage />);
+    await screen.findByText("Авто-квалификация");
+
+    // auto-send (3rd switch) starts off; flip it on -> 4 -> 5 enabled.
+    const autoSend = screen.getAllByRole("switch")[2];
+    await user.click(autoSend);
+
+    // The failed PUT is swallowed; the optimistic banner still updates.
+    await waitFor(() =>
+      expect(
+        screen.getByText(
+          "Включено 5 из 6 автоматизаций. Включите все для максимальной эффективности.",
+        ),
+      ).toBeInTheDocument(),
+    );
+    await waitFor(() => expect(putFired).toBe(true));
   });
 });
