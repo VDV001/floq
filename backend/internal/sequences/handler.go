@@ -21,7 +21,20 @@ const (
 	remedyAINotConfigured = "Откройте Настройки → ИИ и добавьте API-ключ выбранного провайдера."
 	codeAINotConfigured   = "ai_not_configured"
 	msgLaunchFailed       = "Не удалось запустить рассылку. Попробуйте ещё раз."
+	msgPreviewFailed      = "Не удалось сгенерировать пример письма. Попробуйте ещё раз."
 )
+
+// writeGenerationError maps an AI message-generation failure to a user-facing
+// response. A provider-not-configured failure becomes a 400 carrying the code
+// and remedy so the UI can point the operator at Settings; any other failure
+// is a generic 500 with the caller's fallback message.
+func writeGenerationError(w http.ResponseWriter, err error, genericMsg string) {
+	if errors.Is(err, ai.ErrNotConfigured) {
+		httputil.WriteErrorDetail(w, http.StatusBadRequest, msgAINotConfigured, codeAINotConfigured, remedyAINotConfigured)
+		return
+	}
+	httputil.WriteError(w, http.StatusInternalServerError, genericMsg)
+}
 
 // RegisterPublicRoutes registers routes that don't require authentication (e.g. tracking pixel).
 func RegisterPublicRoutes(router chi.Router, uc *UseCase) {
@@ -257,7 +270,7 @@ func previewMessage(uc *UseCase) http.HandlerFunc {
 			text, err = uc.aiGenerator.GenerateColdMessage(r.Context(), body.Name, "", body.Company, body.Context, body.Hint, "", "", "")
 		}
 		if err != nil {
-			httputil.WriteError(w, http.StatusInternalServerError, "generation failed: "+err.Error())
+			writeGenerationError(w, err, msgPreviewFailed)
 			return
 		}
 		httputil.WriteJSON(w, http.StatusOK, map[string]string{"text": text})
@@ -286,11 +299,7 @@ func launchSequence(uc *UseCase) http.HandlerFunc {
 		}
 
 		if err := uc.Launch(r.Context(), id, body.ProspectIDs, body.SendNow); err != nil {
-			if errors.Is(err, ai.ErrNotConfigured) {
-				httputil.WriteErrorDetail(w, http.StatusBadRequest, msgAINotConfigured, codeAINotConfigured, remedyAINotConfigured)
-				return
-			}
-			httputil.WriteError(w, http.StatusInternalServerError, msgLaunchFailed)
+			writeGenerationError(w, err, msgLaunchFailed)
 			return
 		}
 		httputil.WriteJSON(w, http.StatusOK, map[string]string{"status": "launched"})

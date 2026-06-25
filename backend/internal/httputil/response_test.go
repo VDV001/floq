@@ -85,3 +85,22 @@ func TestWriteErrorDetail(t *testing.T) {
 		t.Errorf("remedy = %q", body["remedy"])
 	}
 }
+
+func TestWriteErrorDetail_OmitsEmptyFields(t *testing.T) {
+	w := httptest.NewRecorder()
+	WriteErrorDetail(w, http.StatusInternalServerError, "boom", "", "")
+
+	var body map[string]string
+	if err := json.NewDecoder(w.Body).Decode(&body); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if body["error"] != "boom" {
+		t.Errorf("error = %q, want boom", body["error"])
+	}
+	if _, ok := body["code"]; ok {
+		t.Errorf("code should be omitted when empty, got %q", body["code"])
+	}
+	if _, ok := body["remedy"]; ok {
+		t.Errorf("remedy should be omitted when empty, got %q", body["remedy"])
+	}
+}
