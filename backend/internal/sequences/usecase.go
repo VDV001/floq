@@ -258,6 +258,12 @@ func (uc *UseCase) launchInner(ctx context.Context, sequenceID uuid.UUID, prospe
 			if immediate {
 				scheduledAt = now
 			}
+			if autopilot.Enabled {
+				// Push the send out by the configured grace window so an
+				// auto-approved message isn't dispatched on the very next sender
+				// tick — leaving the operator time to intervene before a real send.
+				scheduledAt = scheduledAt.Add(autopilot.SendDelay)
+			}
 			msg := domain.NewOutboundMessage(pid, sequenceID, step.StepOrder, step.Channel, body, scheduledAt)
 			if autopilot.Enabled {
 				// Skip the draft → human-approval step. draft → approved is a
