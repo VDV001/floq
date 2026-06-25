@@ -41,14 +41,21 @@ export async function mockApi(page: Page, overrides: RouteMap = {}) {
     const path = new URL(route.request().url()).pathname;
     const key = keys.find((k) => path === k || path.startsWith(k + "/"));
     if (key === undefined) {
-      // Surface uncovered mount fetches instead of silently shaping them — an
-      // unmocked object endpoint getting `[]` would otherwise hide as flake.
-      console.warn(`[e2e mock] unmatched ${route.request().method()} ${path} -> []`);
+      // Fail loud, not silent: an unmocked endpoint returns 404 (never a
+      // shaped `200 []` that an object endpoint could quietly read as empty).
+      // Each journey must mock exactly what it hits.
+      console.warn(`[e2e mock] unmatched ${route.request().method()} ${path} -> 404`);
+      await route.fulfill({
+        status: 404,
+        contentType: "application/json",
+        body: JSON.stringify({ error: "not mocked", code: "e2e_unmatched" }),
+      });
+      return;
     }
     await route.fulfill({
       status: 200,
       contentType: "application/json",
-      body: JSON.stringify(key !== undefined ? map[key] : []),
+      body: JSON.stringify(map[key]),
     });
   });
 }

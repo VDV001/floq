@@ -18,7 +18,11 @@ test.describe("outbound queue", () => {
     };
 
     await seedAuth(page);
-    await mockApi(page, { "/api/outbound/queue": [queued] });
+    await mockApi(page, {
+      "/api/outbound/queue": [queued],
+      // The approve mutation endpoint — mocked explicitly (unmatched paths 404).
+      "/api/outbound/msg-e2e-1/approve": { ok: true },
+    });
 
     await page.goto("/outbound");
 
