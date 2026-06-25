@@ -67,6 +67,25 @@ func TestStepChannel_String(t *testing.T) {
 	assert.Equal(t, "phone_call", StepChannelPhoneCall.String())
 }
 
+func TestSequenceStep_IsEmail(t *testing.T) {
+	tests := []struct {
+		name    string
+		channel StepChannel
+		want    bool
+	}{
+		{"explicit email", StepChannelEmail, true},
+		{"empty defaults to email", StepChannel(""), true},
+		{"telegram is not email", StepChannelTelegram, false},
+		{"phone_call is not email", StepChannelPhoneCall, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s := SequenceStep{Channel: tt.channel}
+			assert.Equal(t, tt.want, s.IsEmail())
+		})
+	}
+}
+
 func TestNewSequence_RejectsInvalidInput(t *testing.T) {
 	_, err := NewSequence(uuid.Nil, "Fine Name")
 	require.Error(t, err, "zero userID must be rejected")
