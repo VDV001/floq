@@ -2,10 +2,17 @@ package domain
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"github.com/google/uuid"
 )
+
+// ErrEmailNotConfigured is returned by an EmailConfigChecker when neither
+// Resend nor SMTP is configured for the user. Sentinel so the handler can
+// errors.Is it and surface a 400 with a human cause + remedy (instead of the
+// async sender dropping the message silently).
+var ErrEmailNotConfigured = errors.New("email not configured")
 
 // SequenceRepo manages sequence CRUD.
 // Note: ToggleActive was removed — the usecase now loads the entity, calls
@@ -121,4 +128,13 @@ type LeadCreator interface {
 // TxManager provides transactional execution.
 type TxManager interface {
 	WithTx(ctx context.Context, fn func(ctx context.Context) error) error
+}
+
+// EmailConfigChecker reports whether outbound email (Resend or SMTP) is
+// configured for a user. Implemented by an adapter in the composition root
+// over the settings store + env fallback; lets launch preflight email steps
+// before queuing messages the async sender would otherwise drop silently.
+// Returns nil when configured, ErrEmailNotConfigured otherwise.
+type EmailConfigChecker interface {
+	IsEmailConfigured(ctx context.Context, userID uuid.UUID) error
 }

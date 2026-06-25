@@ -48,6 +48,7 @@ const CODE_ACTIONS: Record<string, NotificationAction> = {
   ai_not_configured: { label: "Открыть настройки ИИ", href: "/settings" },
   smtp_not_configured: { label: "Открыть настройки почты", href: "/settings" },
   resend_not_configured: { label: "Открыть настройки почты", href: "/settings" },
+  email_not_configured: { label: "Открыть настройки почты", href: "/settings" },
 };
 
 export function NotificationProvider({ children }: { children: React.ReactNode }) {

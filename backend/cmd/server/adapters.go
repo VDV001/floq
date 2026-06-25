@@ -19,6 +19,7 @@ import (
 	"github.com/daniil/floq/internal/outbound"
 	"github.com/daniil/floq/internal/prospects"
 	prospectsdomain "github.com/daniil/floq/internal/prospects/domain"
+	sequencesdomain "github.com/daniil/floq/internal/sequences/domain"
 	settingsdomain "github.com/daniil/floq/internal/settings/domain"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -866,4 +867,36 @@ type queueDepthAdapter struct {
 
 func (a queueDepthAdapter) QueueDepths(ctx context.Context) (map[string]int, error) {
 	return a.repo.CountPendingByKind(ctx)
+}
+
+// emailConfigCheckerAdapter satisfies sequencesdomain.EmailConfigChecker. It
+// resolves the user's mailer credentials with DB-then-env precedence (the same
+// ResolveConfig fallback the outbound sender uses) and delegates the
+// "is email set up" decision to settingsdomain.IsEmailConfigured, so that rule
+// lives in the settings context, not here. Cross-context wiring
+// (settings -> sequences) is the only thing this root adapter owns.
+type emailConfigCheckerAdapter struct {
+	store interface {
+		GetConfig(ctx context.Context, userID uuid.UUID) (*settingsdomain.UserConfig, error)
+	}
+	envResendKey    string
+	envSMTPHost     string
+	envSMTPUser     string
+	envSMTPPassword string
+}
+
+func (a emailConfigCheckerAdapter) IsEmailConfigured(ctx context.Context, userID uuid.UUID) error {
+	cfg, err := a.store.GetConfig(ctx, userID)
+	if err != nil {
+		return fmt.Errorf("email config check: %w", err)
+	}
+	if settingsdomain.IsEmailConfigured(
+		settingsdomain.ResolveConfig(cfg.ResendAPIKey, a.envResendKey),
+		settingsdomain.ResolveConfig(cfg.SMTPHost, a.envSMTPHost),
+		settingsdomain.ResolveConfig(cfg.SMTPUser, a.envSMTPUser),
+		settingsdomain.ResolveConfig(cfg.SMTPPassword, a.envSMTPPassword),
+	) {
+		return nil
+	}
+	return sequencesdomain.ErrEmailNotConfigured
 }
