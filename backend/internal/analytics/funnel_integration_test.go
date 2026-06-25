@@ -79,6 +79,12 @@ func TestRepository_GetQualificationDistribution_FoldsToConfiguredStep(t *testin
 			for lo, want := range tt.want {
 				assert.Equalf(t, want, got[lo], "bucket starting at %d", lo)
 			}
+
+			// The top band must be inclusive of the maximum score (100), not
+			// the dead "step-1" upper bound.
+			top := dto.Buckets[len(dto.Buckets)-1]
+			assert.Equal(t, 100, top.Hi, "top bucket upper bound is 100")
+			assert.Contains(t, top.Label, "–100", "top bucket label closes at 100")
 		})
 	}
 }
@@ -99,6 +105,25 @@ func TestRepository_GetQualificationDistribution_TenantScoped(t *testing.T) {
 	dto, err := repo.GetQualificationDistribution(context.Background(), userID, 10)
 	require.NoError(t, err)
 	assert.Equal(t, 1, dto.Total, "only this tenant's qualification is counted")
+}
+
+func TestRepository_RefreshMatviews_Concurrently(t *testing.T) {
+	pool := testutil.TestDB(t)
+	userID := testutil.SeedUser(t, pool)
+	repo := analytics.NewRepository(pool)
+	now := time.Now().UTC()
+
+	leadID := seedLead(t, pool, userID, "qualified", now)
+	seedQualification(t, pool, leadID, 73)
+
+	// REFRESH ... CONCURRENTLY needs the UNIQUE index on each view and a
+	// view already populated once (created WITH DATA). This is exactly the
+	// path the background cron drives, so a green run proves it works.
+	require.NoError(t, repo.RefreshMatviews(context.Background()))
+
+	dto, err := repo.GetQualificationDistribution(context.Background(), userID, 10)
+	require.NoError(t, err)
+	assert.Equal(t, 1, dto.Total, "concurrent refresh picked up the seeded qualification")
 }
 
 func TestRepository_GetSequenceConversion(t *testing.T) {
