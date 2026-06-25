@@ -288,6 +288,11 @@ func previewMessage(uc *UseCase) http.HandlerFunc {
 
 func launchSequence(uc *UseCase) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		userID, ok := httputil.UserIDFromContext(r.Context())
+		if !ok {
+			httputil.WriteError(w, http.StatusUnauthorized, "unauthorized")
+			return
+		}
 		id, err := httputil.ParseIDParam(r, "id")
 		if err != nil {
 			httputil.WriteError(w, http.StatusBadRequest, "invalid sequence id")
@@ -307,7 +312,7 @@ func launchSequence(uc *UseCase) http.HandlerFunc {
 			return
 		}
 
-		if err := uc.Launch(r.Context(), id, body.ProspectIDs, body.SendNow); err != nil {
+		if err := uc.Launch(r.Context(), userID, id, body.ProspectIDs, body.SendNow); err != nil {
 			writeGenerationError(w, err, msgLaunchFailed)
 			return
 		}

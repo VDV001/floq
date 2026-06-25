@@ -62,7 +62,7 @@ func TestLaunch_Autopilot(t *testing.T) {
 			uc := NewUseCase(repo, &mockAI{telegramBody: "hi"}, pr, &mockLeadCreator{},
 				WithAutopilotChecker(checker))
 
-			err := uc.Launch(context.Background(), seqID, []uuid.UUID{pid}, true)
+			err := uc.Launch(context.Background(), uuid.Nil, seqID, []uuid.UUID{pid}, true)
 
 			if tt.wantErr {
 				require.Error(t, err)
@@ -96,7 +96,7 @@ func TestLaunch_Autopilot_AppliesSendDelay(t *testing.T) {
 		WithAutopilotChecker(&mockAutopilotChecker{enabled: true, delay: 5 * time.Minute}))
 
 	before := time.Now().UTC()
-	require.NoError(t, uc.Launch(context.Background(), seqID, []uuid.UUID{pid}, true))
+	require.NoError(t, uc.Launch(context.Background(), uuid.Nil, seqID, []uuid.UUID{pid}, true))
 	after := time.Now().UTC()
 
 	require.Len(t, repo.messages, 1)
@@ -123,7 +123,7 @@ func TestLaunch_Autopilot_ApprovesWholeBatch(t *testing.T) {
 	uc := NewUseCase(repo, &mockAI{telegramBody: "hi"}, pr, &mockLeadCreator{},
 		WithAutopilotChecker(&mockAutopilotChecker{enabled: true}))
 
-	require.NoError(t, uc.Launch(context.Background(), seqID, []uuid.UUID{pid1, pid2}, true))
+	require.NoError(t, uc.Launch(context.Background(), uuid.Nil, seqID, []uuid.UUID{pid1, pid2}, true))
 
 	require.Len(t, repo.messages, 4) // 2 prospects × 2 steps
 	for _, m := range repo.messages {
@@ -156,7 +156,7 @@ func TestLaunch_MixedOwners_Rejected(t *testing.T) {
 	uc := NewUseCase(repo, &mockAI{telegramBody: "hi"}, pr, &mockLeadCreator{},
 		WithAutopilotChecker(&mockAutopilotChecker{enabled: true}))
 
-	err := uc.Launch(context.Background(), seqID, []uuid.UUID{pidA, pidB}, true)
+	err := uc.Launch(context.Background(), uuid.Nil, seqID, []uuid.UUID{pidA, pidB}, true)
 	require.Error(t, err)
 	// Owner B never gets an auto-approved message from owner A's setting.
 	for _, m := range repo.messages {
@@ -179,7 +179,7 @@ func TestLaunch_NoAutopilotChecker_StaysDraft(t *testing.T) {
 	}
 	uc := NewUseCase(repo, &mockAI{telegramBody: "hi"}, pr, &mockLeadCreator{})
 
-	require.NoError(t, uc.Launch(context.Background(), seqID, []uuid.UUID{pid}, true))
+	require.NoError(t, uc.Launch(context.Background(), uuid.Nil, seqID, []uuid.UUID{pid}, true))
 	require.Len(t, repo.messages, 1)
 	assert.Equal(t, domain.OutboundStatusDraft, repo.messages[0].Status)
 }

@@ -109,13 +109,17 @@ func (uc *UseCase) CreateStep(ctx context.Context, step *domain.SequenceStep) er
 	return uc.repo.CreateStep(ctx, step)
 }
 
-func (uc *UseCase) Launch(ctx context.Context, sequenceID uuid.UUID, prospectIDs []uuid.UUID, sendNow ...bool) error {
+// Launch queues a sequence's messages for the given prospects. userID is the
+// authenticated caller — the authoritative owner. Every prospect must belong
+// to them (enforced in launchInner); this is the authorization boundary, so it
+// lives here in the usecase, never in the handler.
+func (uc *UseCase) Launch(ctx context.Context, userID uuid.UUID, sequenceID uuid.UUID, prospectIDs []uuid.UUID, sendNow ...bool) error {
 	if uc.tx != nil {
 		return uc.tx.WithTx(ctx, func(txCtx context.Context) error {
-			return uc.launchInner(txCtx, sequenceID, prospectIDs, sendNow...)
+			return uc.launchInner(txCtx, userID, sequenceID, prospectIDs, sendNow...)
 		})
 	}
-	return uc.launchInner(ctx, sequenceID, prospectIDs, sendNow...)
+	return uc.launchInner(ctx, userID, sequenceID, prospectIDs, sendNow...)
 }
 
 // hasEmailStep reports whether any step in the sequence is delivered over
@@ -129,7 +133,7 @@ func hasEmailStep(steps []domain.SequenceStep) bool {
 	return false
 }
 
-func (uc *UseCase) launchInner(ctx context.Context, sequenceID uuid.UUID, prospectIDs []uuid.UUID, sendNow ...bool) error {
+func (uc *UseCase) launchInner(ctx context.Context, userID uuid.UUID, sequenceID uuid.UUID, prospectIDs []uuid.UUID, sendNow ...bool) error {
 	steps, err := uc.repo.ListSteps(ctx, sequenceID)
 	if err != nil {
 		return fmt.Errorf("launch: list steps: %w", err)
