@@ -1,5 +1,21 @@
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8080";
 
+// ApiError carries the backend's human-readable message plus an optional
+// machine `code` and `remedy` ("what to do") so the UI can show the real cause
+// of a failure instead of a generic "API error: 500".
+export class ApiError extends Error {
+  readonly status: number;
+  readonly code?: string;
+  readonly remedy?: string;
+  constructor(message: string, status: number, code?: string, remedy?: string) {
+    super(message);
+    this.name = "ApiError";
+    this.status = status;
+    this.code = code;
+    this.remedy = remedy;
+  }
+}
+
 async function apiFetch<T>(path: string, options?: RequestInit): Promise<T> {
   const token =
     typeof window !== "undefined" ? localStorage.getItem("token") : null;
@@ -51,7 +67,17 @@ async function apiFetch<T>(path: string, options?: RequestInit): Promise<T> {
   }
 
   if (!res.ok) {
-    throw new Error(`API error: ${res.status} ${res.statusText}`);
+    // Read the backend error envelope ({error, code, remedy}) so the real
+    // cause and the suggested fix reach the user. Fall back to the status
+    // line when the body is empty or not JSON.
+    let body: { error?: string; code?: string; remedy?: string } | null = null;
+    try {
+      body = await res.json();
+    } catch {
+      // non-JSON or empty body — keep the status-line fallback
+    }
+    const message = body?.error || `${res.status} ${res.statusText}`;
+    throw new ApiError(message, res.status, body?.code, body?.remedy);
   }
 
   // 204 No Content has an empty body — calling .json() throws

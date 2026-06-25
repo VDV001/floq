@@ -88,7 +88,7 @@ describe("api module", () => {
         mockResponse({ error: "bad" }, { status: 400, statusText: "Bad Request" })
       );
 
-      await expect(api.getLeads()).rejects.toThrow("API error: 400 Bad Request");
+      await expect(api.getLeads()).rejects.toThrow("bad");
     });
 
     it("throws on server error (500)", async () => {
@@ -96,7 +96,41 @@ describe("api module", () => {
         mockResponse(null, { status: 500, statusText: "Internal Server Error" })
       );
 
-      await expect(api.getLeads()).rejects.toThrow("API error: 500 Internal Server Error");
+      await expect(api.getLeads()).rejects.toThrow("500 Internal Server Error");
+    });
+
+    it("surfaces the backend error message instead of a generic status string", async () => {
+      fetchMock.mockResolvedValueOnce(
+        mockResponse({ error: "ИИ не подключён" }, { status: 503, statusText: "Service Unavailable" })
+      );
+
+      await expect(api.getLeads()).rejects.toThrow("ИИ не подключён");
+    });
+
+    it("attaches status, code and remedy from the error body to the thrown ApiError", async () => {
+      const { ApiError } = await import("./api");
+      fetchMock.mockResolvedValueOnce(
+        mockResponse(
+          { error: "ИИ не подключён", code: "ai_not_configured", remedy: "Откройте Настройки → ИИ и добавьте API-ключ" },
+          { status: 503 },
+        ),
+      );
+
+      const err = await api.getLeads().catch((e) => e);
+      expect(err).toBeInstanceOf(ApiError);
+      expect(err).toMatchObject({
+        status: 503,
+        code: "ai_not_configured",
+        remedy: "Откройте Настройки → ИИ и добавьте API-ключ",
+      });
+    });
+
+    it("falls back to the status text when the body carries no error field", async () => {
+      fetchMock.mockResolvedValueOnce(
+        mockResponse({}, { status: 502, statusText: "Bad Gateway" })
+      );
+
+      await expect(api.getLeads()).rejects.toThrow("502 Bad Gateway");
     });
 
     it("returns undefined on 204 No Content without calling json()", async () => {
@@ -172,7 +206,7 @@ describe("api module", () => {
       );
 
       // After redirect, the function throws because original res is not ok
-      await expect(api.getLeads()).rejects.toThrow("API error: 401");
+      await expect(api.getLeads()).rejects.toThrow("401 Unauthorized");
       expect(locationMock.href).toBe("/login");
     });
 
@@ -185,7 +219,7 @@ describe("api module", () => {
       );
 
       // No refresh token → no refresh attempt, just throws
-      await expect(api.getLeads()).rejects.toThrow("API error: 401");
+      await expect(api.getLeads()).rejects.toThrow("401 Unauthorized");
       expect(fetchMock).toHaveBeenCalledOnce();
     });
   });
