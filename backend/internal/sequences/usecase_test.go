@@ -532,8 +532,9 @@ func TestLaunch_ProspectNotFound(t *testing.T) {
 	uc := NewUseCase(repo, &mockAI{coldBody: "hi"}, pr, &mockLeadCreator{})
 
 	err := uc.Launch(context.Background(), uuid.Nil, seqID, []uuid.UUID{missingID})
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "not found")
+	// A missing prospect maps to the same error as a foreign one (→ 404) so the
+	// launch can't be used to probe which prospect ids exist.
+	require.ErrorIs(t, err, domain.ErrProspectNotOwned)
 }
 
 func TestLaunch_AIGeneratorError(t *testing.T) {

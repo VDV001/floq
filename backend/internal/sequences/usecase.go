@@ -145,15 +145,21 @@ func (uc *UseCase) launchInner(ctx context.Context, userID uuid.UUID, sequenceID
 	now := time.Now().UTC()
 	immediate := len(sendNow) > 0 && sendNow[0]
 
-	// Build feedback examples string once for the entire launch (use first prospect's userID).
-	var feedbackExamples string
-	var ownerID uuid.UUID
-	if len(prospectIDs) > 0 {
-		firstProspect, _ := uc.prospects.GetProspect(ctx, prospectIDs[0])
-		if firstProspect != nil {
-			ownerID = firstProspect.UserID
-			feedbackExamples = uc.buildFeedbackExamples(ctx, firstProspect.UserID)
+	// The authenticated caller is the authoritative owner for all per-launch
+	// side-effects (feedback examples, email preflight, autopilot resolution),
+	// so they never read a stranger's settings even if a foreign prospect id
+	// slips into the batch. Fall back to the first prospect's owner only when
+	// userID is nil — a unit-test affordance; the handler always supplies a
+	// real userID (the route is auth-scoped).
+	ownerID := userID
+	if ownerID == uuid.Nil && len(prospectIDs) > 0 {
+		if fp, _ := uc.prospects.GetProspect(ctx, prospectIDs[0]); fp != nil {
+			ownerID = fp.UserID
 		}
+	}
+	var feedbackExamples string
+	if ownerID != uuid.Nil {
+		feedbackExamples = uc.buildFeedbackExamples(ctx, ownerID)
 	}
 
 	// Preflight: a sequence with email steps can't be launched unless email
@@ -185,8 +191,11 @@ func (uc *UseCase) launchInner(ctx context.Context, userID uuid.UUID, sequenceID
 		if err != nil {
 			return fmt.Errorf("launch: get prospect %s: %w", pid, err)
 		}
+		// A missing prospect and a foreign prospect return the SAME error (→ 404,
+		// "not found") so a caller can't distinguish "doesn't exist" from "exists
+		// but isn't yours" — no cross-tenant enumeration.
 		if prospect == nil {
-			return fmt.Errorf("launch: prospect %s not found", pid)
+			return fmt.Errorf("launch: prospect %s: %w", pid, domain.ErrProspectNotOwned)
 		}
 
 		// Authorization: every prospect must belong to the authenticated caller.
