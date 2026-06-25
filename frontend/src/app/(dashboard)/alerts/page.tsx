@@ -1,15 +1,24 @@
 "use client";
 
-import { Filter, Archive } from "lucide-react";
-import { useAlerts } from "@/hooks/useAlerts";
+import { Filter } from "lucide-react";
+import { useAlerts, type AlertSeverity } from "@/hooks/useAlerts";
 import { FeaturedCard } from "@/components/alerts/FeaturedCard";
 import { AlertSummary } from "@/components/alerts/AlertSummary";
 import { AlertListItem } from "@/components/alerts/AlertListItem";
 
+const SEVERITY_OPTIONS: { value: AlertSeverity; label: string }[] = [
+  { value: "all", label: "Все срочности" },
+  { value: "critical", label: "Критичные" },
+  { value: "warning", label: "Предупреждения" },
+];
+
 export default function AlertsPage() {
   const {
     loading,
+    severity,
+    setSeverity,
     followupLeads,
+    visibleFollowups,
     featured,
     listAlerts,
     totalLeads,
@@ -62,14 +71,24 @@ export default function AlertsPage() {
           </p>
         </div>
         <div className="flex gap-3">
-          <button className="flex items-center gap-2 rounded-xl bg-white px-5 py-3 text-sm font-bold text-[#434655] shadow-sm transition-all hover:bg-[#eff4ff]">
+          <div className="flex items-center gap-2 rounded-xl bg-white px-4 py-3 text-sm font-bold text-[#434655] shadow-sm focus-within:ring-2 focus-within:ring-[#004ac6]/40">
             <Filter className="size-[18px]" />
-            Фильтр
-          </button>
-          <button className="flex items-center gap-2 rounded-xl bg-white px-5 py-3 text-sm font-bold text-[#434655] shadow-sm transition-all hover:bg-[#eff4ff]">
-            <Archive className="size-[18px]" />
-            Очистить все
-          </button>
+            <label htmlFor="alert-severity" className="sr-only">
+              Фильтр по срочности
+            </label>
+            <select
+              id="alert-severity"
+              value={severity}
+              onChange={(e) => setSeverity(e.target.value as AlertSeverity)}
+              className="cursor-pointer bg-transparent pr-1 font-bold text-[#434655] outline-none"
+            >
+              {SEVERITY_OPTIONS.map((o) => (
+                <option key={o.value} value={o.value}>
+                  {o.label}
+                </option>
+              ))}
+            </select>
+          </div>
         </div>
       </header>
 
@@ -85,9 +104,15 @@ export default function AlertsPage() {
 
         {/* List Items (full width) */}
         <div className="space-y-4 xl:col-span-3">
-          {listAlerts.map((alert) => (
-            <AlertListItem key={alert.id} alert={alert} />
-          ))}
+          {visibleFollowups.length === 0 ? (
+            <p className="rounded-xl bg-white px-5 py-6 text-center text-sm font-medium text-[#434655] shadow-sm">
+              Нет напоминаний выбранной срочности.
+            </p>
+          ) : (
+            listAlerts.map((alert) => (
+              <AlertListItem key={alert.id} alert={alert} />
+            ))
+          )}
         </div>
       </div>
 
