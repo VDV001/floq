@@ -46,6 +46,32 @@ func writeGenerationError(w http.ResponseWriter, err error, genericMsg string) {
 		httputil.WriteError(w, http.StatusNotFound, "prospect not found")
 		return
 	}
+	if errors.Is(err, domain.ErrSequenceNotOwned) {
+		// Foreign or missing sequence — 404, never revealing it exists elsewhere.
+		httputil.WriteError(w, http.StatusNotFound, "sequence not found")
+		return
+	}
+	httputil.WriteError(w, http.StatusInternalServerError, genericMsg)
+}
+
+// writeSequenceOpError answers 404 for an ownership-denied sequence or step
+// operation (a foreign or missing resource are indistinguishable —
+// anti-enumeration); any other failure is the caller's generic 500.
+func writeSequenceOpError(w http.ResponseWriter, err error, genericMsg string) {
+	if errors.Is(err, domain.ErrSequenceNotOwned) {
+		httputil.WriteError(w, http.StatusNotFound, "sequence not found")
+		return
+	}
+	httputil.WriteError(w, http.StatusInternalServerError, genericMsg)
+}
+
+// writeMessageOpError answers 404 for an ownership-denied outbound message
+// operation (anti-enumeration); any other failure is the generic 500.
+func writeMessageOpError(w http.ResponseWriter, err error, genericMsg string) {
+	if errors.Is(err, domain.ErrMessageNotOwned) {
+		httputil.WriteError(w, http.StatusNotFound, "message not found")
+		return
+	}
 	httputil.WriteError(w, http.StatusInternalServerError, genericMsg)
 }
 
@@ -140,7 +166,7 @@ func getSequence(uc *UseCase) http.HandlerFunc {
 		}
 		seq, err := uc.GetSequence(r.Context(), userID, id)
 		if err != nil {
-			httputil.WriteError(w, http.StatusInternalServerError, "failed to get sequence")
+			writeSequenceOpError(w, err, "failed to get sequence")
 			return
 		}
 		if seq == nil {
@@ -190,7 +216,7 @@ func updateSequence(uc *UseCase) http.HandlerFunc {
 		}
 
 		if err := uc.UpdateSequence(r.Context(), userID, id, body.Name); err != nil {
-			httputil.WriteError(w, http.StatusInternalServerError, "failed to update sequence")
+			writeSequenceOpError(w, err, "failed to update sequence")
 			return
 		}
 		httputil.WriteJSON(w, http.StatusOK, map[string]string{"name": body.Name})
@@ -210,7 +236,7 @@ func deleteSequence(uc *UseCase) http.HandlerFunc {
 			return
 		}
 		if err := uc.DeleteSequence(r.Context(), userID, id); err != nil {
-			httputil.WriteError(w, http.StatusInternalServerError, "failed to delete sequence")
+			writeSequenceOpError(w, err, "failed to delete sequence")
 			return
 		}
 		httputil.WriteJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
@@ -249,7 +275,7 @@ func addStep(uc *UseCase) http.HandlerFunc {
 
 		step := domain.NewSequenceStep(id, body.StepOrder, body.DelayDays, channel, body.PromptHint, body.Body)
 		if err := uc.CreateStep(r.Context(), userID, step); err != nil {
-			httputil.WriteError(w, http.StatusInternalServerError, "failed to create step")
+			writeSequenceOpError(w, err, "failed to create step")
 			return
 		}
 		httputil.WriteJSON(w, http.StatusCreated, StepToResponse(step))
@@ -269,7 +295,7 @@ func deleteStep(uc *UseCase) http.HandlerFunc {
 			return
 		}
 		if err := uc.DeleteStep(r.Context(), userID, stepID); err != nil {
-			httputil.WriteError(w, http.StatusInternalServerError, "failed to delete step")
+			writeSequenceOpError(w, err, "failed to delete step")
 			return
 		}
 		httputil.WriteJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
@@ -372,7 +398,7 @@ func toggleActive(uc *UseCase) http.HandlerFunc {
 		}
 
 		if err := uc.ToggleActive(r.Context(), userID, id, body.IsActive); err != nil {
-			httputil.WriteError(w, http.StatusInternalServerError, "failed to toggle sequence")
+			writeSequenceOpError(w, err, "failed to toggle sequence")
 			return
 		}
 		httputil.WriteJSON(w, http.StatusOK, map[string]bool{"is_active": body.IsActive})
@@ -430,7 +456,7 @@ func approveMessage(uc *UseCase) http.HandlerFunc {
 			return
 		}
 		if err := uc.ApproveMessage(r.Context(), userID, id); err != nil {
-			httputil.WriteError(w, http.StatusInternalServerError, "failed to approve message")
+			writeMessageOpError(w, err, "failed to approve message")
 			return
 		}
 		httputil.WriteJSON(w, http.StatusOK, map[string]string{"status": "approved"})
@@ -450,7 +476,7 @@ func rejectMessage(uc *UseCase) http.HandlerFunc {
 			return
 		}
 		if err := uc.RejectMessage(r.Context(), userID, id); err != nil {
-			httputil.WriteError(w, http.StatusInternalServerError, "failed to reject message")
+			writeMessageOpError(w, err, "failed to reject message")
 			return
 		}
 		httputil.WriteJSON(w, http.StatusOK, map[string]string{"status": "rejected"})
@@ -483,7 +509,7 @@ func editMessage(uc *UseCase) http.HandlerFunc {
 		}
 
 		if err := uc.EditMessage(r.Context(), userID, id, body.Body); err != nil {
-			httputil.WriteError(w, http.StatusInternalServerError, "failed to edit message")
+			writeMessageOpError(w, err, "failed to edit message")
 			return
 		}
 		httputil.WriteJSON(w, http.StatusOK, map[string]string{"status": "updated"})

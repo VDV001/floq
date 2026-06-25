@@ -102,9 +102,12 @@ func TestHandler_LaunchSequence_EmailNotConfigured(t *testing.T) {
 	seqID := uuid.New()
 	pid := uuid.New()
 
-	repo := &mockRepo{steps: []domain.SequenceStep{
-		{ID: uuid.New(), SequenceID: seqID, StepOrder: 1, Channel: domain.StepChannelEmail, PromptHint: "intro"},
-	}}
+	repo := &mockRepo{
+		sequences: []domain.Sequence{{ID: seqID, UserID: userID, Name: "Mine"}},
+		steps: []domain.SequenceStep{
+			{ID: uuid.New(), SequenceID: seqID, StepOrder: 1, Channel: domain.StepChannelEmail, PromptHint: "intro"},
+		},
+	}
 	pr := newMockProspectReader()
 	pr.prospects[pid] = &domain.ProspectView{
 		ID: pid, UserID: userID, Name: "Alice", Company: "Acme", Title: "CEO",

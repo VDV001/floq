@@ -20,7 +20,7 @@ func TestLaunch_ForeignProspect_Rejected(t *testing.T) {
 	stranger := uuid.New()
 	pid := uuid.New()
 
-	repo := &mockRepo{steps: []domain.SequenceStep{
+	repo := &mockRepo{sequences: []domain.Sequence{{ID: seqID, UserID: caller, Name: "Mine"}}, steps: []domain.SequenceStep{
 		{ID: uuid.New(), SequenceID: seqID, StepOrder: 1, Channel: domain.StepChannelTelegram, PromptHint: "x"},
 	}}
 	pr := newMockProspectReader()
@@ -60,7 +60,7 @@ func TestLaunch_ForeignInBatch_RollsBackOwnWrites(t *testing.T) {
 	pidMine := uuid.New()
 	pidForeign := uuid.New()
 
-	repo := &mockRepo{steps: []domain.SequenceStep{
+	repo := &mockRepo{sequences: []domain.Sequence{{ID: seqID, UserID: caller, Name: "Mine"}}, steps: []domain.SequenceStep{
 		{ID: uuid.New(), SequenceID: seqID, StepOrder: 1, Channel: domain.StepChannelEmail},
 	}}
 	pr := newMockProspectReader()
@@ -81,7 +81,7 @@ func TestLaunch_OwnProspect_Allowed(t *testing.T) {
 	caller := uuid.New()
 	pid := uuid.New()
 
-	repo := &mockRepo{steps: []domain.SequenceStep{
+	repo := &mockRepo{sequences: []domain.Sequence{{ID: seqID, UserID: caller, Name: "Mine"}}, steps: []domain.SequenceStep{
 		{ID: uuid.New(), SequenceID: seqID, StepOrder: 1, Channel: domain.StepChannelTelegram, PromptHint: "x"},
 	}}
 	pr := newMockProspectReader()

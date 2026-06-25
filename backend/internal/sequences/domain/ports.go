@@ -47,6 +47,10 @@ type SequenceRepo interface {
 // StepRepo manages sequence step CRUD.
 type StepRepo interface {
 	ListSteps(ctx context.Context, sequenceID uuid.UUID) ([]SequenceStep, error)
+	// GetStep loads a single step by id (returns nil if absent). Used to
+	// resolve the owning sequence when authorizing a step-scoped operation
+	// addressed only by step id (e.g. DeleteStep).
+	GetStep(ctx context.Context, stepID uuid.UUID) (*SequenceStep, error)
 	CreateStep(ctx context.Context, step *SequenceStep) error
 	DeleteStep(ctx context.Context, stepID uuid.UUID) error
 }

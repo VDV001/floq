@@ -140,9 +140,12 @@ func TestLaunch_BatchWithForeignProspect_RejectedWhole(t *testing.T) {
 	stranger := uuid.New()
 	pidMine := uuid.New()
 	pidForeign := uuid.New()
-	repo := &mockRepo{steps: []domain.SequenceStep{
-		{ID: uuid.New(), SequenceID: seqID, StepOrder: 1, Channel: domain.StepChannelTelegram, PromptHint: "intro"},
-	}}
+	repo := &mockRepo{
+		sequences: []domain.Sequence{{ID: seqID, UserID: caller, Name: "Mine"}},
+		steps: []domain.SequenceStep{
+			{ID: uuid.New(), SequenceID: seqID, StepOrder: 1, Channel: domain.StepChannelTelegram, PromptHint: "intro"},
+		},
+	}
 	pr := newMockProspectReader()
 	pr.prospects[pidMine] = &domain.ProspectView{
 		ID: pidMine, UserID: caller, Name: "Mine", Status: "new", VerifyStatus: "valid", IsEligibleForSequence: true,

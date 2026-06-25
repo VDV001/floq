@@ -73,6 +73,17 @@ func (m *mockRepo) DeleteSequence(_ context.Context, _ uuid.UUID) error { return
 func (m *mockRepo) ListSteps(_ context.Context, _ uuid.UUID) ([]domain.SequenceStep, error) {
 	return m.steps, m.stepErr
 }
+func (m *mockRepo) GetStep(_ context.Context, stepID uuid.UUID) (*domain.SequenceStep, error) {
+	if m.stepErr != nil {
+		return nil, m.stepErr
+	}
+	for i := range m.steps {
+		if m.steps[i].ID == stepID {
+			return &m.steps[i], nil
+		}
+	}
+	return nil, nil
+}
 func (m *mockRepo) CreateStep(_ context.Context, _ *domain.SequenceStep) error {
 	return m.createStepErr
 }
