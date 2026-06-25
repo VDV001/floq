@@ -37,6 +37,20 @@ CREATE UNIQUE INDEX mv_analytics_qual_dist_pk
 -- COUNT(*) / COUNT(*) FILTER over this base gives exact entered/replied/
 -- advanced for any time window — the read-path no longer needs COUNT(DISTINCT)
 -- (the dedup is baked into the view's grain), so windowing stays additive-safe.
+--
+-- COHORT semantics: the read-path windows by entered_at (when the prospect
+-- entered the step). replied/advanced are "ever" booleans for that cohort — a
+-- prospect who entered inside the window but replied later still counts as
+-- replied. This is a cohort-retention funnel: intentional and internally
+-- consistent (all three metrics describe one entered-by-time cohort).
+--
+-- entered_at = MIN(sent_at): a 'sent' row always carries sent_at (the domain
+-- sets it in MarkSent), so this is non-null in practice. The invariant lives
+-- in the write-path, not the DB; a hypothetical null would drop the row from
+-- windowed counts while keeping it in all-time.
+--
+-- NOTE: dropping + recreating both views re-materialises them — the previous
+-- snapshot is unavailable until the first REFRESH after this migration.
 DROP MATERIALIZED VIEW IF EXISTS mv_analytics_sequence_step_conversion;
 CREATE MATERIALIZED VIEW mv_analytics_sequence_step_conversion AS
 SELECT
