@@ -1,7 +1,7 @@
 "use client";
 
+import Link from "next/link";
 import { Search, Send, CheckCheck, Bot } from "lucide-react";
-import { Switch } from "@/components/ui/switch";
 import { useOutbound } from "@/hooks/useOutbound";
 import { formatTime } from "@/components/outbound/constants";
 import { FilterPill } from "@/components/outbound/FilterPill";
@@ -88,19 +88,28 @@ export default function OutboundPage() {
           )}
         </div>
 
-        {/* Autopilot */}
+        {/* Autopilot status — read-only. The single control lives on the
+            Automations page; here we only show whether it's on + link there. */}
         {o.tab === "queue" && (
           <div className="mb-10 flex items-center justify-between rounded-2xl border border-transparent bg-[#eff4ff] p-6 transition-all hover:border-[#c3c6d7]/20 hover:bg-white">
             <div className="flex items-center gap-4">
               <div className="flex size-12 items-center justify-center rounded-full bg-[#e1e0ff] text-[#3e3fcc]"><Bot className="size-6" /></div>
               <div>
                 <h3 className="font-bold text-[#0d1c2e]">Автопилот</h3>
-                <p className="text-sm text-[#434655]">Сообщения будут отправляться автоматически без вашего одобрения</p>
+                <p className="text-sm text-[#434655]">
+                  {o.autopilot
+                    ? "Включён: сообщения отправляются автоматически, без ручного одобрения"
+                    : "Выключен: сообщения ждут вашего одобрения в очереди"}
+                </p>
               </div>
             </div>
             <div className="flex items-center gap-4">
-              <span className="text-xs font-bold uppercase tracking-wider text-[#737686]">{o.autopilot ? "Вкл" : "Выкл"}</span>
-              <Switch checked={o.autopilot} onCheckedChange={o.setAutopilot} />
+              <span className={`rounded-full px-3 py-1 text-xs font-bold uppercase tracking-wider ${o.autopilot ? "bg-[#e1e0ff] text-[#3e3fcc]" : "bg-slate-200 text-[#737686]"}`}>
+                {o.autopilot ? "Вкл" : "Выкл"}
+              </span>
+              <Link href="/automations" className="text-xs font-bold text-[#004ac6] hover:underline">
+                Настроить →
+              </Link>
             </div>
           </div>
         )}

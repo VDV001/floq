@@ -138,3 +138,29 @@ type TxManager interface {
 type EmailConfigChecker interface {
 	IsEmailConfigured(ctx context.Context, userID uuid.UUID) error
 }
+
+// AutopilotSettings is the resolved autopilot configuration for one launch.
+type AutopilotSettings struct {
+	// Enabled reports whether launch should auto-approve queued messages
+	// (skipping manual approval) so the async sender dispatches them.
+	Enabled bool
+	// SendDelay is the grace window an auto-approved message waits after launch
+	// before the sender may pick it up — time for the operator to still
+	// intervene. Zero means send at the next sender tick.
+	SendDelay time.Duration
+}
+
+// AutopilotChecker resolves a user's autopilot configuration — automatic
+// approval and sending of the messages a sequence launch queues. Implemented
+// by an adapter in the composition root over the settings store (the AutoSend
+// flag + send-delay). When enabled, launch promotes each queued message
+// straight to Approved so the async sender dispatches it without a manual
+// approval step; when disabled (the default), messages stay Draft and wait for
+// a human.
+//
+// A returned error fails the launch: the usecase never guesses the send mode,
+// so an unreadable setting can never silently auto-send real messages. A nil
+// checker (the default wiring) means autopilot is off.
+type AutopilotChecker interface {
+	ResolveAutopilot(ctx context.Context, userID uuid.UUID) (AutopilotSettings, error)
+}

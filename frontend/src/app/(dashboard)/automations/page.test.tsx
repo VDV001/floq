@@ -65,7 +65,7 @@ describe("AutomationsPage", () => {
     await waitFor(() => {
       expect(screen.getByText("Авто-квалификация")).toBeInTheDocument();
       expect(screen.getByText("Авто-черновик")).toBeInTheDocument();
-      expect(screen.getByText("Авто-отправка email")).toBeInTheDocument();
+      expect(screen.getByText("Автопилот")).toBeInTheDocument();
       expect(screen.getByText("Авто-фоллоуап")).toBeInTheDocument();
       expect(screen.getByText("Проспект → Лид")).toBeInTheDocument();
       expect(screen.getByText("Верификация при импорте")).toBeInTheDocument();
