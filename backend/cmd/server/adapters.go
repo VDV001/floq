@@ -900,3 +900,23 @@ func (a emailConfigCheckerAdapter) IsEmailConfigured(ctx context.Context, userID
 	}
 	return sequencesdomain.ErrEmailNotConfigured
 }
+
+// autopilotCheckerAdapter satisfies sequencesdomain.AutopilotChecker. It reads
+// the user's AutoSend flag from the settings store; when set, sequence launch
+// auto-approves queued messages so the async sender dispatches them without a
+// manual approval step. A read error propagates so the launch fails rather
+// than guessing the send mode (and silently auto-sending). Cross-context
+// wiring (settings -> sequences) is the only thing this root adapter owns.
+type autopilotCheckerAdapter struct {
+	settings interface {
+		GetSettings(ctx context.Context, userID uuid.UUID) (*settingsdomain.Settings, error)
+	}
+}
+
+func (a autopilotCheckerAdapter) IsAutopilotEnabled(ctx context.Context, userID uuid.UUID) (bool, error) {
+	s, err := a.settings.GetSettings(ctx, userID)
+	if err != nil {
+		return false, fmt.Errorf("autopilot check: %w", err)
+	}
+	return s.AutoSend, nil
+}

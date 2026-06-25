@@ -284,9 +284,11 @@ func main() {
 		envSMTPUser:     cfg.SMTPUser,
 		envSMTPPassword: cfg.SMTPPassword,
 	}
+	autopilotChecker := autopilotCheckerAdapter{settings: settingsRepo}
 	sequencesUC := sequences.NewUseCase(sequencesRepo, seqAI, prospectReader, leadCreatorAdapter,
 		sequences.WithTxManager(txManager),
-		sequences.WithEmailConfigChecker(emailConfigChecker))
+		sequences.WithEmailConfigChecker(emailConfigChecker),
+		sequences.WithAutopilotChecker(autopilotChecker))
 
 	// 5. Auth
 	authHandler := auth.NewHandler(auth.NewRepository(pool), cfg.JWTSecret)
