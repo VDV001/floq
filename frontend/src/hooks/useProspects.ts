@@ -1,7 +1,9 @@
 import { useState, useEffect, useCallback } from "react";
 import { api, type Prospect } from "@/lib/api";
+import { useNotify } from "@/components/notifications/NotificationProvider";
 
 export function useProspects() {
+  const { notify, notifyError } = useNotify();
   const [prospects, setProspects] = useState<Prospect[]>([]);
   const [selectedProspects, setSelectedProspects] = useState<Set<string>>(new Set());
   const [launching, setLaunching] = useState(false);
@@ -36,15 +38,23 @@ export function useProspects() {
         await api.launchSequence(seqId, prospectIds, sendNow);
         setLaunchResult(`Запущено для ${prospectIds.length} проспектов`);
         setSelectedProspects(new Set());
+        notify({
+          type: "success",
+          title: "Письма подготовлены",
+          message: `Создано писем для ${prospectIds.length} проспектов.`,
+          remedy: "Проверьте и одобрите их к отправке в разделе «Исходящие».",
+          action: { label: "Открыть Исходящие", href: "/outbound" },
+        });
         api.getProspects().then(setProspects).catch(() => {});
-      } catch {
+      } catch (err) {
         setLaunchResult("Ошибка запуска");
+        notifyError(err, "Не удалось запустить отправку");
       } finally {
         setLaunching(false);
         setTimeout(() => setLaunchResult(null), 4000);
       }
     },
-    []
+    [notify, notifyError]
   );
 
   const newProspectsCount = prospects.filter((p) => p.status === "new").length;
