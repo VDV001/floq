@@ -105,7 +105,7 @@ func (r *Repository) ToggleActive(ctx context.Context, id uuid.UUID, active bool
 
 func (r *Repository) ListSteps(ctx context.Context, sequenceID uuid.UUID) ([]domain.SequenceStep, error) {
 	rows, err := r.conn(ctx).Query(ctx,
-		`SELECT id, sequence_id, step_order, delay_days, prompt_hint, channel, created_at
+		`SELECT id, sequence_id, step_order, delay_days, prompt_hint, body, channel, created_at
 		 FROM sequence_steps WHERE sequence_id = $1 ORDER BY step_order`, sequenceID)
 	if err != nil {
 		return nil, fmt.Errorf("list steps: %w", err)
@@ -115,7 +115,7 @@ func (r *Repository) ListSteps(ctx context.Context, sequenceID uuid.UUID) ([]dom
 	var steps []domain.SequenceStep
 	for rows.Next() {
 		var st domain.SequenceStep
-		if err := rows.Scan(&st.ID, &st.SequenceID, &st.StepOrder, &st.DelayDays, &st.PromptHint, &st.Channel, &st.CreatedAt); err != nil {
+		if err := rows.Scan(&st.ID, &st.SequenceID, &st.StepOrder, &st.DelayDays, &st.PromptHint, &st.Body, &st.Channel, &st.CreatedAt); err != nil {
 			return nil, fmt.Errorf("scan step: %w", err)
 		}
 		steps = append(steps, st)
@@ -125,9 +125,9 @@ func (r *Repository) ListSteps(ctx context.Context, sequenceID uuid.UUID) ([]dom
 
 func (r *Repository) CreateStep(ctx context.Context, step *domain.SequenceStep) error {
 	_, err := r.conn(ctx).Exec(ctx,
-		`INSERT INTO sequence_steps (id, sequence_id, step_order, delay_days, prompt_hint, channel, created_at)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-		step.ID, step.SequenceID, step.StepOrder, step.DelayDays, step.PromptHint, step.Channel, step.CreatedAt)
+		`INSERT INTO sequence_steps (id, sequence_id, step_order, delay_days, prompt_hint, body, channel, created_at)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+		step.ID, step.SequenceID, step.StepOrder, step.DelayDays, step.PromptHint, step.Body, step.Channel, step.CreatedAt)
 	if err != nil {
 		return fmt.Errorf("create step: %w", err)
 	}

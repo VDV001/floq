@@ -162,29 +162,35 @@ func (uc *UseCase) launchInner(ctx context.Context, sequenceID uuid.UUID, prospe
 			}
 
 			var body string
-			var genErr error
 
-			prospectID := prospect.ID
-			baseMeta := auditdomain.CallMeta{
-				UserID:     prospect.UserID,
-				ProspectID: &prospectID,
-			}
-			switch step.Channel {
-			case domain.StepChannelTelegram:
-				meta := baseMeta
-				meta.RequestType = auditdomain.RequestTypeTelegramMessage
-				body, genErr = uc.aiGenerator.GenerateTelegramMessage(auditdomain.ContextWithCallMeta(ctx, meta), prospect.Name, prospect.Title, prospect.Company, prospect.Context, step.PromptHint, prevCtx, prospect.Source, feedbackExamples)
-			case domain.StepChannelPhoneCall:
-				meta := baseMeta
-				meta.RequestType = auditdomain.RequestTypeCallBrief
-				body, genErr = uc.aiGenerator.GenerateCallBrief(auditdomain.ContextWithCallMeta(ctx, meta), prospect.Name, prospect.Title, prospect.Company, prospect.Context, step.PromptHint, prevCtx)
-			default: // "email" or empty
-				meta := baseMeta
-				meta.RequestType = auditdomain.RequestTypeColdMessage
-				body, genErr = uc.aiGenerator.GenerateColdMessage(auditdomain.ContextWithCallMeta(ctx, meta), prospect.Name, prospect.Title, prospect.Company, prospect.Context, step.PromptHint, prevCtx, prospect.Source, feedbackExamples)
-			}
-			if genErr != nil {
-				return fmt.Errorf("launch: generate message for prospect %s step %d: %w", pid, step.StepOrder, genErr)
+			if step.IsManual() {
+				// A manually written step is used verbatim — no AI call. This
+				// lets operators run a sequence without an AI provider configured.
+				body = step.Body
+			} else {
+				var genErr error
+				prospectID := prospect.ID
+				baseMeta := auditdomain.CallMeta{
+					UserID:     prospect.UserID,
+					ProspectID: &prospectID,
+				}
+				switch step.Channel {
+				case domain.StepChannelTelegram:
+					meta := baseMeta
+					meta.RequestType = auditdomain.RequestTypeTelegramMessage
+					body, genErr = uc.aiGenerator.GenerateTelegramMessage(auditdomain.ContextWithCallMeta(ctx, meta), prospect.Name, prospect.Title, prospect.Company, prospect.Context, step.PromptHint, prevCtx, prospect.Source, feedbackExamples)
+				case domain.StepChannelPhoneCall:
+					meta := baseMeta
+					meta.RequestType = auditdomain.RequestTypeCallBrief
+					body, genErr = uc.aiGenerator.GenerateCallBrief(auditdomain.ContextWithCallMeta(ctx, meta), prospect.Name, prospect.Title, prospect.Company, prospect.Context, step.PromptHint, prevCtx)
+				default: // "email" or empty
+					meta := baseMeta
+					meta.RequestType = auditdomain.RequestTypeColdMessage
+					body, genErr = uc.aiGenerator.GenerateColdMessage(auditdomain.ContextWithCallMeta(ctx, meta), prospect.Name, prospect.Title, prospect.Company, prospect.Context, step.PromptHint, prevCtx, prospect.Source, feedbackExamples)
+				}
+				if genErr != nil {
+					return fmt.Errorf("launch: generate message for prospect %s step %d: %w", pid, step.StepOrder, genErr)
+				}
 			}
 
 			scheduledAt := now.AddDate(0, 0, cumulativeDelay)

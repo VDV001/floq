@@ -23,6 +23,7 @@ type SequenceStepResponse struct {
 	StepOrder  int       `json:"step_order"`
 	DelayDays  int       `json:"delay_days"`
 	PromptHint string    `json:"prompt_hint"`
+	Body       string    `json:"body"`
 	Channel    string    `json:"channel"`
 	CreatedAt  time.Time `json:"created_at"`
 }
@@ -81,6 +82,7 @@ func StepToResponse(s *domain.SequenceStep) SequenceStepResponse {
 		StepOrder:  s.StepOrder,
 		DelayDays:  s.DelayDays,
 		PromptHint: s.PromptHint,
+		Body:       s.Body,
 		Channel:    string(s.Channel),
 		CreatedAt:  s.CreatedAt,
 	}

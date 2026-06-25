@@ -76,6 +76,7 @@ function makeStep(overrides: Partial<SequenceStep> = {}): SequenceStep {
     step_order: 1,
     delay_days: 0,
     prompt_hint: "Intro email",
+    body: "",
     channel: "email",
     created_at: "2026-01-01T00:00:00Z",
     ...overrides,

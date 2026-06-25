@@ -202,6 +202,7 @@ func addStep(uc *UseCase) http.HandlerFunc {
 			DelayDays  int    `json:"delay_days"`
 			Channel    string `json:"channel"`
 			PromptHint string `json:"prompt_hint"`
+			Body       string `json:"body"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			httputil.WriteError(w, http.StatusBadRequest, "invalid request body")
@@ -213,7 +214,7 @@ func addStep(uc *UseCase) http.HandlerFunc {
 			channel = domain.StepChannelEmail
 		}
 
-		step := domain.NewSequenceStep(id, body.StepOrder, body.DelayDays, channel, body.PromptHint)
+		step := domain.NewSequenceStep(id, body.StepOrder, body.DelayDays, channel, body.PromptHint, body.Body)
 		if err := uc.CreateStep(r.Context(), step); err != nil {
 			httputil.WriteError(w, http.StatusInternalServerError, "failed to create step")
 			return
