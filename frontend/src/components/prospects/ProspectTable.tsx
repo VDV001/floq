@@ -39,7 +39,10 @@ export function ProspectTable({ prospects, loading, totalCount, page, totalPages
           </thead>
           <tbody className="divide-y divide-[#c3c6d7]/5">
             {!loading && totalCount === 0 && (
-              <tr><td colSpan={9} className="px-6 py-12 text-center text-sm text-[#434655]">Нет проспектов</td></tr>
+              <tr><td colSpan={9} className="px-6 py-12 text-center text-sm text-[#434655]">
+                <span className="block font-semibold text-[#0d1c2e]">Пока нет проспектов</span>
+                <span className="mt-1 block text-xs text-[#737686]">Добавьте контакт справа или «Импорт CSV». Искали тех, кто написал вам? Они в разделе «Лента лидов».</span>
+              </td></tr>
             )}
             {prospects.map((p, idx) => {
               const vs = VERIFY_STYLES[p.verifyStatus];

@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { Manrope } from "next/font/google";
 import "./globals.css";
+import { NotificationProvider } from "@/components/notifications/NotificationProvider";
 
 const manrope = Manrope({
   subsets: ["latin", "cyrillic"],
@@ -18,7 +19,9 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="ru" className={`${manrope.className} h-full antialiased`}>
-      <body className="min-h-full flex flex-col">{children}</body>
+      <body className="min-h-full flex flex-col">
+        <NotificationProvider>{children}</NotificationProvider>
+      </body>
     </html>
   );
 }
