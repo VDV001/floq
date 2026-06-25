@@ -432,7 +432,8 @@ func main() {
 	// CONCURRENTLY off the OLTP path so the dashboard serves fresh aggregates
 	// without running the heavy GROUP BYs inline. Reads through the analytics
 	// pool; stops on ctx.
-	go analytics.NewRefreshCron(analytics.NewRepository(analyticsPool), cfg.AnalyticsRefreshInterval, slog.Default()).Start(ctx)
+	go analytics.NewRefreshCron(analytics.NewRepository(analyticsPool), cfg.AnalyticsRefreshInterval, slog.Default(),
+		analytics.WithRefreshObserver(appMetrics.ObserveMatviewRefresh)).Start(ctx)
 
 	// Queue-depth metric (#94) — periodically publishes the pending-reply
 	// backlog (aggregate by kind) into Prometheus. Stops on ctx.
