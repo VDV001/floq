@@ -1,0 +1,2 @@
+DROP MATERIALIZED VIEW IF EXISTS mv_analytics_sequence_step_conversion;
+DROP MATERIALIZED VIEW IF EXISTS mv_analytics_qualification_distribution;
