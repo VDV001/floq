@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { renderHook, waitFor } from "@testing-library/react";
+import { renderHook, waitFor, act } from "@testing-library/react";
 import type {
   QualificationDistributionResponse,
   SequenceConversionResponse,
@@ -48,5 +48,33 @@ describe("useFunnelAnalytics", () => {
       expect(api.getQualificationDistribution).toHaveBeenCalledWith("week");
       expect(api.getSequenceConversion).toHaveBeenCalledWith("week");
     });
+  });
+
+  it("surfaces an Error and preserves the last good read-models on a failed refresh", async () => {
+    vi.mocked(api.getQualificationDistribution).mockResolvedValueOnce({ ...dist, total: 5 });
+    vi.mocked(api.getSequenceConversion).mockResolvedValueOnce(conv);
+
+    const { result } = renderHook(() => useFunnelAnalytics());
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    expect(result.current.distribution?.total).toBe(5);
+
+    vi.mocked(api.getQualificationDistribution).mockRejectedValueOnce(new Error("matview down"));
+    await act(async () => {
+      await result.current.refresh();
+    });
+    expect(result.current.error).toEqual(new Error("matview down"));
+    expect(result.current.distribution?.total).toBe(5); // last good preserved
+  });
+
+  it("wraps a non-Error rejection into an Error", async () => {
+    const { result } = renderHook(() => useFunnelAnalytics());
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    vi.mocked(api.getSequenceConversion).mockRejectedValueOnce("plain string failure");
+    await act(async () => {
+      await result.current.refresh();
+    });
+    expect(result.current.error).toBeInstanceOf(Error);
+    expect(result.current.error?.message).toBe("plain string failure");
   });
 });
