@@ -28,11 +28,12 @@ export function QualDistributionCard({ data }: QualDistributionCardProps) {
               <span className="w-16 shrink-0 text-xs font-medium text-slate-600 tabular-nums">{b.label}</span>
               <div className="h-4 flex-1 overflow-hidden rounded bg-slate-100">
                 <div
+                  data-testid={`bar-fill-${b.lo}`}
                   className="h-full bg-[#3b6ef6]"
                   style={{ width: maxCount > 0 ? `${(b.count / maxCount) * 100}%` : "0%" }}
                 />
               </div>
-              <span className="w-10 shrink-0 text-right text-xs tabular-nums text-slate-700">{b.count}</span>
+              <span data-testid={`bar-count-${b.lo}`} className="w-10 shrink-0 text-right text-xs tabular-nums text-slate-700">{b.count}</span>
             </li>
           ))}
         </ul>
