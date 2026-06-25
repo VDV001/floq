@@ -19,12 +19,13 @@ export function useSequenceSteps(selectedSeqId: string | null) {
   }, [selectedSeqId]);
 
   const addStep = useCallback(
-    async (params: { channel: "email" | "telegram"; delay_days: number; prompt_hint: string }) => {
+    async (params: { channel: "email" | "telegram"; delay_days: number; prompt_hint: string; body?: string }) => {
       if (!selectedSeqId) return;
       await api.addStep(selectedSeqId, {
         step_order: steps.length + 1,
         delay_days: params.delay_days,
         prompt_hint: params.prompt_hint,
+        body: params.body,
         channel: params.channel,
       });
       const data = await api.getSequence(selectedSeqId);

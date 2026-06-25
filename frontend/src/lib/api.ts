@@ -316,7 +316,7 @@ export const api = {
     apiFetch<Sequence>(`/api/sequences/${id}`, { method: "PUT", body: JSON.stringify({ name }) }),
   deleteSequence: (id: string) =>
     apiFetch(`/api/sequences/${id}`, { method: "DELETE" }),
-  addStep: (seqId: string, data: { step_order: number; delay_days: number; channel: string; prompt_hint: string }) =>
+  addStep: (seqId: string, data: { step_order: number; delay_days: number; channel: string; prompt_hint: string; body?: string }) =>
     apiFetch<SequenceStep>(`/api/sequences/${seqId}/steps`, { method: "POST", body: JSON.stringify(data) }),
   deleteStep: (seqId: string, stepId: string) =>
     apiFetch(`/api/sequences/${seqId}/steps/${stepId}`, { method: "DELETE" }),
@@ -661,6 +661,7 @@ export interface SequenceStep {
   step_order: number;
   delay_days: number;
   prompt_hint: string;
+  body: string;
   channel: "email" | "telegram" | "phone_call";
   created_at: string;
 }

@@ -1,18 +1,30 @@
 import { useState } from "react";
-import { Plus, Mail, MessageCircle, Phone, Clock, Sparkles } from "lucide-react";
+import { Plus, Mail, MessageCircle, Phone, Clock, Sparkles, PenLine } from "lucide-react";
 
 interface AddStepFormProps {
-  onAdd: (params: { channel: "email" | "telegram"; delay_days: number; prompt_hint: string }) => Promise<void>;
+  onAdd: (params: { channel: "email" | "telegram"; delay_days: number; prompt_hint: string; body?: string }) => Promise<void>;
   onCancel: () => void;
 }
 
 export function AddStepForm({ onAdd, onCancel }: AddStepFormProps) {
   const [channel, setChannel] = useState<"email" | "telegram">("email");
   const [delay, setDelay] = useState(0);
+  const [mode, setMode] = useState<"ai" | "manual">("ai");
   const [hint, setHint] = useState("первое касание");
+  const [body, setBody] = useState("");
+
+  const manualEmpty = mode === "manual" && body.trim() === "";
 
   const handleAdd = async () => {
-    await onAdd({ channel, delay_days: delay, prompt_hint: hint || "первое касание" });
+    if (manualEmpty) return;
+    await onAdd({
+      channel,
+      delay_days: delay,
+      // Manual steps don't use the hint; keep a sensible default so the column
+      // is never empty in the DB.
+      prompt_hint: mode === "ai" ? hint || "первое касание" : "ручной текст",
+      body: mode === "manual" ? body.trim() : undefined,
+    });
   };
 
   return (
@@ -68,24 +80,60 @@ export function AddStepForm({ onAdd, onCancel }: AddStepFormProps) {
         />
       </div>
 
-      <div className="mb-4">
-        <label className="mb-1 flex items-center gap-1.5 text-xs font-semibold text-[#434655]">
-          <Sparkles className="size-3.5" />
-          Подсказка для AI
-        </label>
-        <input
-          type="text"
-          value={hint}
-          onChange={(e) => setHint(e.target.value)}
-          placeholder="первое касание"
-          className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-[#0d1c2e] placeholder:text-[#737686] focus:border-[#004ac6] focus:outline-none focus:ring-2 focus:ring-[#004ac6]/20"
-        />
+      <div className="mb-3 grid grid-cols-2 gap-2">
+        <button
+          onClick={() => setMode("ai")}
+          className={`flex items-center justify-center gap-1.5 rounded-lg border-2 px-3 py-2 text-xs font-semibold transition ${
+            mode === "ai" ? "border-[#004ac6] bg-blue-50 text-[#004ac6]" : "border-slate-200 bg-white text-[#434655]"
+          }`}
+        >
+          <Sparkles className="size-3.5" /> ИИ напишет
+        </button>
+        <button
+          onClick={() => setMode("manual")}
+          className={`flex items-center justify-center gap-1.5 rounded-lg border-2 px-3 py-2 text-xs font-semibold transition ${
+            mode === "manual" ? "border-[#004ac6] bg-blue-50 text-[#004ac6]" : "border-slate-200 bg-white text-[#434655]"
+          }`}
+        >
+          <PenLine className="size-3.5" /> Напишу сам
+        </button>
       </div>
+
+      {mode === "ai" ? (
+        <div className="mb-4">
+          <label className="mb-1 flex items-center gap-1.5 text-xs font-semibold text-[#434655]">
+            <Sparkles className="size-3.5" />
+            Подсказка для ИИ
+          </label>
+          <input
+            type="text"
+            value={hint}
+            onChange={(e) => setHint(e.target.value)}
+            placeholder="первое касание"
+            className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-[#0d1c2e] placeholder:text-[#737686] focus:border-[#004ac6] focus:outline-none focus:ring-2 focus:ring-[#004ac6]/20"
+          />
+        </div>
+      ) : (
+        <div className="mb-4">
+          <label className="mb-1 flex items-center gap-1.5 text-xs font-semibold text-[#434655]">
+            <PenLine className="size-3.5" />
+            Текст письма
+          </label>
+          <textarea
+            value={body}
+            onChange={(e) => setBody(e.target.value)}
+            rows={5}
+            placeholder="Напишите письмо целиком. Будет отправлено как есть, без ИИ."
+            className="w-full resize-y rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-[#0d1c2e] placeholder:text-[#737686] focus:border-[#004ac6] focus:outline-none focus:ring-2 focus:ring-[#004ac6]/20"
+          />
+        </div>
+      )}
 
       <div className="flex items-center gap-2">
         <button
           onClick={handleAdd}
-          className="flex items-center gap-1.5 rounded-lg bg-[#004ac6] px-4 py-2 text-xs font-semibold text-white transition hover:bg-[#004ac6]/90"
+          disabled={manualEmpty}
+          className="flex items-center gap-1.5 rounded-lg bg-[#004ac6] px-4 py-2 text-xs font-semibold text-white transition hover:bg-[#004ac6]/90 disabled:opacity-50"
         >
           <Plus className="size-3.5" />
           Добавить
