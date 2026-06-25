@@ -34,6 +34,15 @@ function Trigger({ onReady }: { onReady?: (n: ReturnType<typeof useNotify>) => v
       >
         apierr
       </button>
+      <button
+        onClick={() =>
+          notify.notifyError(
+            new ApiError("Почта не подключена", 400, "email_not_configured", "Откройте Настройки → Почта"),
+          )
+        }
+      >
+        emailerr
+      </button>
     </div>
   );
 }
@@ -80,6 +89,17 @@ describe("NotificationProvider", () => {
 
     expect(screen.getByText("ИИ не подключён")).toBeInTheDocument();
     expect(screen.getByText("Откройте Настройки → ИИ")).toBeInTheDocument();
+  });
+
+  it("offers a Settings link for the email_not_configured code", async () => {
+    const user = userEvent.setup();
+    renderWithProvider();
+
+    await user.click(screen.getByRole("button", { name: "emailerr" }));
+
+    expect(screen.getByText("Почта не подключена")).toBeInTheDocument();
+    const link = screen.getByRole("link", { name: /Открыть настройки почты/ });
+    expect(link).toHaveAttribute("href", "/settings");
   });
 
   it("dismisses a notification when its close button is clicked", async () => {
