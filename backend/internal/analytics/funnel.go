@@ -3,6 +3,7 @@ package analytics
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/google/uuid"
 )
@@ -71,11 +72,12 @@ func NormalizeBucketStep(step int) int {
 // is expected normalised (see NormalizeBucketStep) by the usecase.
 func (r *Repository) GetQualificationDistribution(ctx context.Context, userID uuid.UUID, step int, period Period) (*QualificationFunnelDTO, error) {
 	step = NormalizeBucketStep(step)
-	_ = period // period filtering applied in a later step
 
 	// Day-bucketed matview: sum the per-day counts (additive) into width-10
-	// bins, then fold up to step below. A NULL cutoff means all-time.
-	var cutoff any
+	// bins, then fold up to step below. A NULL cutoff means all-time; a
+	// window keeps only days on/after the cutoff (NOW() lives in this read
+	// query, never in the view/index).
+	cutoff := nullableCutoff(periodCutoff(period, time.Now().UTC()))
 	rows, err := r.pool.Query(ctx,
 		`SELECT bucket_lo, SUM(cnt)::bigint
 		 FROM mv_analytics_qualification_distribution
@@ -124,12 +126,10 @@ func (r *Repository) GetQualificationDistribution(ctx context.Context, userID uu
 // matview, joining sequences for the current name (small, kept fresh rather
 // than baked into the view) and deriving the reply/advance rates.
 func (r *Repository) GetSequenceConversion(ctx context.Context, userID uuid.UUID, period Period) (*SequenceConversionDTO, error) {
-	_ = period // period filtering applied in a later step
-
 	// The matview is deduped to one row per (sequence, step, prospect) entered,
 	// so a windowed COUNT/COUNT FILTER is exact (no distinct-additivity hazard).
-	// A NULL cutoff means all-time.
-	var cutoff any
+	// A NULL cutoff means all-time; a window keeps only entries on/after it.
+	cutoff := nullableCutoff(periodCutoff(period, time.Now().UTC()))
 	rows, err := r.pool.Query(ctx, `
 		SELECT c.sequence_id, s.name, c.step_order,
 		       COUNT(*)::bigint                              AS entered,
