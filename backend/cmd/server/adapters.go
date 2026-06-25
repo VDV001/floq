@@ -869,11 +869,12 @@ func (a queueDepthAdapter) QueueDepths(ctx context.Context) (map[string]int, err
 	return a.repo.CountPendingByKind(ctx)
 }
 
-// emailConfigCheckerAdapter satisfies sequencesdomain.EmailConfigChecker by
-// resolving the user's mailer config the same way the outbound sender does:
-// the stored DB value, then the env fallback. Email counts as configured when
-// a Resend API key is present OR a full SMTP triple (host + user + password)
-// is. Cross-context wiring (settings -> sequences) lives here at the root.
+// emailConfigCheckerAdapter satisfies sequencesdomain.EmailConfigChecker. It
+// resolves the user's mailer credentials with DB-then-env precedence (the same
+// ResolveConfig fallback the outbound sender uses) and delegates the
+// "is email set up" decision to settingsdomain.IsEmailConfigured, so that rule
+// lives in the settings context, not here. Cross-context wiring
+// (settings -> sequences) is the only thing this root adapter owns.
 type emailConfigCheckerAdapter struct {
 	store interface {
 		GetConfig(ctx context.Context, userID uuid.UUID) (*settingsdomain.UserConfig, error)
@@ -889,11 +890,12 @@ func (a emailConfigCheckerAdapter) IsEmailConfigured(ctx context.Context, userID
 	if err != nil {
 		return fmt.Errorf("email config check: %w", err)
 	}
-	resend := settingsdomain.ResolveConfig(cfg.ResendAPIKey, a.envResendKey)
-	host := settingsdomain.ResolveConfig(cfg.SMTPHost, a.envSMTPHost)
-	user := settingsdomain.ResolveConfig(cfg.SMTPUser, a.envSMTPUser)
-	pass := settingsdomain.ResolveConfig(cfg.SMTPPassword, a.envSMTPPassword)
-	if resend != "" || (host != "" && user != "" && pass != "") {
+	if settingsdomain.IsEmailConfigured(
+		settingsdomain.ResolveConfig(cfg.ResendAPIKey, a.envResendKey),
+		settingsdomain.ResolveConfig(cfg.SMTPHost, a.envSMTPHost),
+		settingsdomain.ResolveConfig(cfg.SMTPUser, a.envSMTPUser),
+		settingsdomain.ResolveConfig(cfg.SMTPPassword, a.envSMTPPassword),
+	) {
 		return nil
 	}
 	return sequencesdomain.ErrEmailNotConfigured

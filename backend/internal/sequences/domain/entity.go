@@ -157,9 +157,10 @@ func (s *SequenceStep) IsManual() bool {
 }
 
 // IsEmail reports whether the step is delivered over email. An empty channel
-// defaults to email — the same rule launch uses when dispatching (the AI
-// generation switch treats "" as email), so the preflight check agrees with
-// what actually gets sent.
+// counts as email: that matches launch's generation default (the AI switch
+// treats "" as email) and the persisted channel, which the step handler
+// normalizes empty -> "email" before saving. Used to scope the launch
+// email-config preflight.
 func (s *SequenceStep) IsEmail() bool {
 	return s.Channel == StepChannelEmail || s.Channel == ""
 }
