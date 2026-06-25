@@ -112,6 +112,27 @@ describe("useOutbound", () => {
     });
   });
 
+  it("exposes autopilot status read from settings.auto_send (read-only)", async () => {
+    mockApi.getSettings.mockResolvedValue({ ...defaultSettings(), auto_send: true });
+
+    const { result } = await renderOutbound();
+
+    await waitFor(() => {
+      expect(result.current.autopilot).toBe(true);
+    });
+  });
+
+  it("autopilot status is false when auto_send is off", async () => {
+    mockApi.getSettings.mockResolvedValue({ ...defaultSettings(), auto_send: false });
+
+    const { result } = await renderOutbound();
+
+    await waitFor(() => {
+      expect(result.current.loading).toBe(false);
+    });
+    expect(result.current.autopilot).toBe(false);
+  });
+
   it("handleApprove removes message from queue and refreshes stats", async () => {
     const queue = [makeOutboundMessage({ id: "a1" }), makeOutboundMessage({ id: "a2" })];
     mockApi.getOutboundQueue.mockResolvedValue(queue);
