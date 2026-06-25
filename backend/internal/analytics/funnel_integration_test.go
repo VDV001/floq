@@ -67,7 +67,7 @@ func TestRepository_GetQualificationDistribution_FoldsToConfiguredStep(t *testin
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			dto, err := repo.GetQualificationDistribution(context.Background(), userID, tt.step)
+			dto, err := repo.GetQualificationDistribution(context.Background(), userID, tt.step, analytics.PeriodAll)
 			require.NoError(t, err)
 			require.Equal(t, tt.step, dto.Step)
 			assert.Equal(t, 5, dto.Total, "all five qualifications counted")
@@ -102,7 +102,7 @@ func TestRepository_GetQualificationDistribution_TenantScoped(t *testing.T) {
 	seedQualification(t, pool, theirs, 88)
 	refreshFunnelMatviews(t, pool)
 
-	dto, err := repo.GetQualificationDistribution(context.Background(), userID, 10)
+	dto, err := repo.GetQualificationDistribution(context.Background(), userID, 10, analytics.PeriodAll)
 	require.NoError(t, err)
 	assert.Equal(t, 1, dto.Total, "only this tenant's qualification is counted")
 }
@@ -121,7 +121,7 @@ func TestRepository_RefreshMatviews_Concurrently(t *testing.T) {
 	// path the background cron drives, so a green run proves it works.
 	require.NoError(t, repo.RefreshMatviews(context.Background()))
 
-	dto, err := repo.GetQualificationDistribution(context.Background(), userID, 10)
+	dto, err := repo.GetQualificationDistribution(context.Background(), userID, 10, analytics.PeriodAll)
 	require.NoError(t, err)
 	assert.Equal(t, 1, dto.Total, "concurrent refresh picked up the seeded qualification")
 }
@@ -144,7 +144,7 @@ func TestRepository_GetSequenceConversion(t *testing.T) {
 	seedStepOutbound(t, pool, p1, seqID, 2, nil) // p1 advanced to step 2
 	refreshFunnelMatviews(t, pool)
 
-	dto, err := repo.GetSequenceConversion(context.Background(), userID)
+	dto, err := repo.GetSequenceConversion(context.Background(), userID, analytics.PeriodAll)
 	require.NoError(t, err)
 	require.NotEmpty(t, dto.Steps)
 

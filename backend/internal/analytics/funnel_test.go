@@ -43,16 +43,19 @@ type stubFunnel struct {
 	conv      *analytics.SequenceConversionDTO
 	gotUserID uuid.UUID
 	gotStep   int
+	gotPeriod analytics.Period
 }
 
-func (s *stubFunnel) GetQualificationDistribution(_ context.Context, userID uuid.UUID, step int) (*analytics.QualificationFunnelDTO, error) {
+func (s *stubFunnel) GetQualificationDistribution(_ context.Context, userID uuid.UUID, step int, period analytics.Period) (*analytics.QualificationFunnelDTO, error) {
 	s.gotUserID = userID
 	s.gotStep = step
+	s.gotPeriod = period
 	return s.dist, nil
 }
 
-func (s *stubFunnel) GetSequenceConversion(_ context.Context, userID uuid.UUID) (*analytics.SequenceConversionDTO, error) {
+func (s *stubFunnel) GetSequenceConversion(_ context.Context, userID uuid.UUID, period analytics.Period) (*analytics.SequenceConversionDTO, error) {
 	s.gotUserID = userID
+	s.gotPeriod = period
 	return s.conv, nil
 }
 
@@ -63,7 +66,7 @@ func TestUseCase_GetQualificationDistribution_PassesConfiguredStep(t *testing.T)
 		analytics.WithScoreBucketStep(20))
 
 	userID := uuid.New()
-	_, err := uc.GetQualificationDistribution(context.Background(), userID)
+	_, err := uc.GetQualificationDistribution(context.Background(), userID, analytics.PeriodAll)
 	require.NoError(t, err)
 	assert.Equal(t, userID, stub.gotUserID)
 	assert.Equal(t, 20, stub.gotStep, "usecase forwards the configured bucket step")
@@ -73,7 +76,7 @@ func TestUseCase_GetQualificationDistribution_DefaultStepIsTen(t *testing.T) {
 	stub := &stubFunnel{dist: &analytics.QualificationFunnelDTO{}}
 	uc := analytics.NewUseCase(nil, nil, analytics.WithFunnelReader(stub))
 
-	_, err := uc.GetQualificationDistribution(context.Background(), uuid.New())
+	_, err := uc.GetQualificationDistribution(context.Background(), uuid.New(), analytics.PeriodAll)
 	require.NoError(t, err)
 	assert.Equal(t, 10, stub.gotStep, "default bucket step is 10")
 }

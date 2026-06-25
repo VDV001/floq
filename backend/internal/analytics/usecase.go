@@ -92,11 +92,11 @@ func (uc *UseCase) GetCostRatios(ctx context.Context, userID uuid.UUID, from, to
 // GetQualificationDistribution forwards to the funnel reader with the
 // configured bucket step. The step is a server-side policy (not a request
 // param), so it's injected at construction rather than parsed per request.
-func (uc *UseCase) GetQualificationDistribution(ctx context.Context, userID uuid.UUID) (*QualificationFunnelDTO, error) {
-	return uc.funnel.GetQualificationDistribution(ctx, userID, uc.bucketStep)
+func (uc *UseCase) GetQualificationDistribution(ctx context.Context, userID uuid.UUID, period Period) (*QualificationFunnelDTO, error) {
+	return uc.funnel.GetQualificationDistribution(ctx, userID, uc.bucketStep, period)
 }
 
-// GetSequenceConversion forwards to the funnel reader.
-func (uc *UseCase) GetSequenceConversion(ctx context.Context, userID uuid.UUID) (*SequenceConversionDTO, error) {
-	return uc.funnel.GetSequenceConversion(ctx, userID)
+// GetSequenceConversion forwards to the funnel reader for the given period.
+func (uc *UseCase) GetSequenceConversion(ctx context.Context, userID uuid.UUID, period Period) (*SequenceConversionDTO, error) {
+	return uc.funnel.GetSequenceConversion(ctx, userID, period)
 }
