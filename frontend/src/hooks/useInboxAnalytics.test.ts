@@ -96,4 +96,16 @@ describe("useInboxAnalytics", () => {
     // Last-good data preserved through the failed refresh (keep-last).
     expect(result.current.data?.leads.total).toBe(120);
   });
+
+  it("wraps a non-Error rejection into an Error", async () => {
+    const { result } = renderHook(() => useInboxAnalytics());
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    vi.mocked(api.getInboxAnalytics).mockRejectedValueOnce("string failure");
+    await act(async () => {
+      await result.current.refresh();
+    });
+    expect(result.current.error).toBeInstanceOf(Error);
+    expect(result.current.error?.message).toBe("string failure");
+  });
 });

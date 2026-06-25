@@ -78,4 +78,17 @@ describe("useHotLeads", () => {
     expect(result.current.error).not.toBeNull();
     expect(result.current.leads).toHaveLength(1); // last good preserved
   });
+
+  it("wraps a non-Error rejection into an Error", async () => {
+    vi.mocked(api.getHotLeads).mockResolvedValueOnce(response());
+    const { result } = renderHook(() => useHotLeads({}));
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    vi.mocked(api.getHotLeads).mockRejectedValueOnce("string failure");
+    await act(async () => {
+      await result.current.refresh();
+    });
+    expect(result.current.error).toBeInstanceOf(Error);
+    expect(result.current.error?.message).toBe("string failure");
+  });
 });

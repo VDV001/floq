@@ -100,6 +100,19 @@ describe("useSequenceAnalytics", () => {
     expect(result.current.rows).toHaveLength(1); // last good rows preserved
   });
 
+  it("wraps a non-Error rejection into an Error", async () => {
+    vi.mocked(api.getSequenceAnalytics).mockResolvedValueOnce(response());
+    const { result } = renderHook(() => useSequenceAnalytics());
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    vi.mocked(api.getSequenceAnalytics).mockRejectedValueOnce("string failure");
+    await act(async () => {
+      await result.current.refresh();
+    });
+    expect(result.current.error).toBeInstanceOf(Error);
+    expect(result.current.error?.message).toBe("string failure");
+  });
+
   it("refresh callback triggers a fetch", async () => {
     vi.mocked(api.getSequenceAnalytics).mockResolvedValue(response());
 
