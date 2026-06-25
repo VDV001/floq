@@ -87,4 +87,66 @@ describe("inbox page (integration)", () => {
     expect(await screen.findByText("Globex")).toBeInTheDocument();
     expect(screen.queryByText("Acme")).not.toBeInTheDocument();
   });
+
+  it("filters the rendered cards by the selected source", async () => {
+    mountWith([
+      lead({ id: "a", company: "Acme", source_name: "Источник A" }),
+      lead({ id: "b", company: "Globex", source_name: "Источник B" }),
+    ]);
+
+    render(
+      <NotificationProvider>
+        <InboxPage />
+      </NotificationProvider>,
+    );
+    await screen.findByText("Acme");
+    expect(screen.getByText("Globex")).toBeInTheDocument();
+
+    // The sidebar source <select> drives the sourceFilter -> only B remains.
+    fireEvent.change(screen.getByRole("combobox"), {
+      target: { value: "Источник B" },
+    });
+
+    expect(await screen.findByText("Globex")).toBeInTheDocument();
+    expect(screen.queryByText("Acme")).not.toBeInTheDocument();
+  });
+
+  it("resolves a /start lead preview from its qualification", async () => {
+    mountWith(
+      [lead({ id: "a", company: "Acme", first_message: "/start" })],
+      [
+        http.get(url("/api/leads/a/qualification"), () =>
+          HttpResponse.json({ identified_need: "Нужна CRM-интеграция" }),
+        ),
+      ],
+    );
+
+    render(
+      <NotificationProvider>
+        <InboxPage />
+      </NotificationProvider>,
+    );
+
+    // "/start" first message renders a placeholder, then the qualification
+    // fetch backfills the identified need into the card preview.
+    expect(await screen.findByText("Нужна CRM-интеграция")).toBeInTheDocument();
+  });
+
+  it("renders the empty state when the leads request fails", async () => {
+    server.use(
+      http.get(url("/api/leads"), () => new HttpResponse(null, { status: 500 })),
+      http.get(url("/api/leads/suggestion-counts"), () => HttpResponse.json({})),
+    );
+
+    render(
+      <NotificationProvider>
+        <InboxPage />
+      </NotificationProvider>,
+    );
+
+    // The failed fetch is swallowed; loading clears and the empty state shows.
+    expect(
+      await screen.findByText("Пока нет входящих лидов"),
+    ).toBeInTheDocument();
+  });
 });
