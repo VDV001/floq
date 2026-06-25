@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   api,
+  type AnalyticsPeriod,
   type QualificationDistributionResponse,
   type SequenceConversionResponse,
 } from "@/lib/api";
@@ -18,10 +19,11 @@ interface UseFunnelAnalyticsResult {
   refresh: () => Promise<void>;
 }
 
-// useFunnelAnalytics loads the matview-backed funnel read-models (all-time,
-// no period — see the analytics read-path ADR). Mirrors useCostAnalytics:
-// fetch both in parallel, poll, and expose a manual refresh.
-export function useFunnelAnalytics(): UseFunnelAnalyticsResult {
+// useFunnelAnalytics loads the matview-backed funnel read-models for the
+// requested period (the matview is day-bucketed / per-entry, so the reader
+// windows it server-side — see the analytics read-path ADR). Mirrors
+// useSequenceAnalytics: fetch both in parallel, poll, expose a manual refresh.
+export function useFunnelAnalytics(period: AnalyticsPeriod = "all"): UseFunnelAnalyticsResult {
   const [distribution, setDistribution] = useState<QualificationDistributionResponse | null>(null);
   const [conversion, setConversion] = useState<SequenceConversionResponse | null>(null);
   const [loading, setLoading] = useState(true);
@@ -32,8 +34,8 @@ export function useFunnelAnalytics(): UseFunnelAnalyticsResult {
   const fetchOnce = useCallback(async () => {
     try {
       const [dist, conv] = await Promise.all([
-        api.getQualificationDistribution(),
-        api.getSequenceConversion(),
+        api.getQualificationDistribution(period),
+        api.getSequenceConversion(period),
       ]);
       if (!mountedRef.current) return;
       setDistribution(dist);
@@ -48,7 +50,7 @@ export function useFunnelAnalytics(): UseFunnelAnalyticsResult {
         setLoading(false);
       }
     }
-  }, []);
+  }, [period]);
 
   useEffect(() => {
     mountedRef.current = true;
