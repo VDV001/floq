@@ -91,6 +91,34 @@ describe("DraftSidebar", () => {
     expect(api.sendMessage).not.toHaveBeenCalled();
   });
 
+  it("clears the typed reply when switching to another lead", async () => {
+    const { rerender } = render(
+      <DraftSidebar
+        leadId="lead-A"
+        draft={null}
+        draftLoading={false}
+        onDraftChanged={vi.fn()}
+        onMessagesSent={vi.fn()}
+      />
+    );
+
+    await userEvent.type(screen.getByRole("textbox"), "секрет лида A");
+    expect(screen.getByRole("textbox")).toHaveValue("секрет лида A");
+
+    // Navigate to a different draftless lead — its reply box must be empty.
+    rerender(
+      <DraftSidebar
+        leadId="lead-B"
+        draft={null}
+        draftLoading={false}
+        onDraftChanged={vi.fn()}
+        onMessagesSent={vi.fn()}
+      />
+    );
+
+    expect(screen.getByRole("textbox")).toHaveValue("");
+  });
+
   it("still shows and edits an AI draft when one exists", async () => {
     vi.mocked(api.sendMessage).mockResolvedValue({} as never);
     vi.mocked(api.getMessages).mockResolvedValue([]);
