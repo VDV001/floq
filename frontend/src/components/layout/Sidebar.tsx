@@ -108,7 +108,7 @@ export function Sidebar() {
       </div>
 
       {/* Navigation */}
-      <nav className="flex-1 space-y-1 px-4">
+      <nav aria-label="Основная навигация" className="flex-1 space-y-1 px-4">
         {NAV_ITEMS.map((item) => {
           const isActive = pathname.startsWith(item.href);
           return (

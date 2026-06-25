@@ -9,7 +9,7 @@ test.describe("dashboard navigation", () => {
 
   test("sidebar shows the disambiguated labels (Напоминания, not Лиды)", async ({ page }) => {
     await page.goto("/inbox");
-    const nav = page.getByRole("navigation");
+    const nav = page.getByRole("navigation", { name: "Основная навигация" });
     await expect(nav.getByRole("link", { name: "Напоминания" })).toBeVisible();
     await expect(nav.getByRole("link", { name: "Воронка" })).toBeVisible();
     // The old misleading «Лиды» entry is gone.

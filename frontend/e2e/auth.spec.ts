@@ -20,7 +20,24 @@ test.describe("authentication", () => {
     await page.getByRole("button", { name: "Войти" }).click();
 
     await expect(page).toHaveURL(/\/inbox$/);
-    // Sidebar logo confirms we're inside the authenticated dashboard shell.
-    await expect(page.getByRole("heading", { name: "Floq" })).toBeVisible();
+    // The main sidebar nav confirms we're inside the authenticated shell
+    // (the «Floq» logo also appears on /login, so it's not a reliable marker).
+    await expect(page.getByRole("navigation", { name: "Основная навигация" })).toBeVisible();
+  });
+
+  test("shows an error and stays on /login when credentials are rejected", async ({ page }) => {
+    await mockApi(page);
+    // Registered after mockApi → takes precedence for this path (LIFO).
+    await page.route("**/api/auth/login", (route) =>
+      route.fulfill({ status: 401, contentType: "application/json", body: JSON.stringify({ error: "invalid" }) }),
+    );
+    await page.goto("/login");
+
+    await page.getByPlaceholder("name@company.com").fill("user@floq.dev");
+    await page.getByPlaceholder("••••••••").fill("wrongpass");
+    await page.getByRole("button", { name: "Войти" }).click();
+
+    await expect(page.getByText("Неверный email или пароль")).toBeVisible();
+    await expect(page).toHaveURL(/\/login$/);
   });
 });

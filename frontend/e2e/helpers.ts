@@ -39,12 +39,16 @@ export async function mockApi(page: Page, overrides: RouteMap = {}) {
 
   await page.route("**/api/**", async (route) => {
     const path = new URL(route.request().url()).pathname;
-    const key = keys.find((k) => path === k || path.startsWith(k + "/") || path === k);
-    const body = key !== undefined ? map[key] : [];
+    const key = keys.find((k) => path === k || path.startsWith(k + "/"));
+    if (key === undefined) {
+      // Surface uncovered mount fetches instead of silently shaping them — an
+      // unmocked object endpoint getting `[]` would otherwise hide as flake.
+      console.warn(`[e2e mock] unmatched ${route.request().method()} ${path} -> []`);
+    }
     await route.fulfill({
       status: 200,
       contentType: "application/json",
-      body: JSON.stringify(body),
+      body: JSON.stringify(key !== undefined ? map[key] : []),
     });
   });
 }
