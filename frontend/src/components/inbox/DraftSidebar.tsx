@@ -18,15 +18,18 @@ export function DraftSidebar({ leadId, draft, draftLoading, onDraftChanged, onMe
   const [sending, setSending] = useState(false);
 
   // Reset the editor when navigating to another lead so a half-written reply
-  // never leaks across leads (textarea is always editable now).
+  // never leaks across leads (textarea is always editable now). The parent
+  // re-fetches the draft async, so the draft prop can briefly lag leadId —
+  // clear to empty here and let the lead-scoped sync below refill it.
   const [prevLeadId, setPrevLeadId] = useState(leadId);
   if (leadId !== prevLeadId) {
     setPrevLeadId(leadId);
-    setDraftText(draft?.body || "");
+    setDraftText("");
   }
 
-  // Sync when draft changes externally
-  if (draft && draftText === "" && draft.body) setDraftText(draft.body);
+  // Adopt a server draft only once it belongs to the current lead — a stale
+  // draft from the previous lead (lagging prop) must not fill this editor.
+  if (draft && draft.lead_id === leadId && draftText === "" && draft.body) setDraftText(draft.body);
 
   return (
     <aside className="flex w-96 shrink-0 flex-col border-l border-[#c3c6d7]/10 bg-white p-6">
