@@ -267,4 +267,12 @@ func TestSequenceStep_IsManual(t *testing.T) {
 	if aiDriven.IsManual() {
 		t.Error("step with only a prompt hint should not be manual")
 	}
+	// A whitespace-only body must not masquerade as a manual step.
+	blank := NewSequenceStep(uuid.New(), 1, 0, StepChannelEmail, "первое касание", "   \n\t ")
+	if blank.IsManual() {
+		t.Error("whitespace-only body should be trimmed away and not be manual")
+	}
+	if blank.Body != "" {
+		t.Errorf("whitespace-only body should trim to empty, got %q", blank.Body)
+	}
 }

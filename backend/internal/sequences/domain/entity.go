@@ -157,7 +157,9 @@ func (s *SequenceStep) IsManual() bool {
 }
 
 // NewSequenceStep creates a new SequenceStep with generated ID and timestamp.
-// A non-empty body marks the step as manual (used verbatim, no AI).
+// A non-empty body marks the step as manual (used verbatim, no AI). The body is
+// trimmed so a whitespace-only value can't masquerade as a manual step and ship
+// an almost-empty message — keeping IsManual reliable at every entry point.
 func NewSequenceStep(sequenceID uuid.UUID, stepOrder, delayDays int, channel StepChannel, hint, body string) *SequenceStep {
 	return &SequenceStep{
 		ID:         uuid.New(),
@@ -165,7 +167,7 @@ func NewSequenceStep(sequenceID uuid.UUID, stepOrder, delayDays int, channel Ste
 		StepOrder:  stepOrder,
 		DelayDays:  delayDays,
 		PromptHint: hint,
-		Body:       body,
+		Body:       strings.TrimSpace(body),
 		Channel:    channel,
 		CreatedAt:  time.Now().UTC(),
 	}
