@@ -42,6 +42,80 @@ func seedStepOutbound(t *testing.T, pool *pgxpool.Pool, prospectID, sequenceID u
 	require.NoError(t, err, "seed step outbound")
 }
 
+// seedQualificationAt inserts a qualification with an explicit generated_at so
+// a test can place it inside or outside a period window.
+func seedQualificationAt(t *testing.T, pool *pgxpool.Pool, leadID uuid.UUID, score int, generatedAt time.Time) {
+	t.Helper()
+	_, err := pool.Exec(context.Background(),
+		`INSERT INTO qualifications (id, lead_id, identified_need, estimated_budget, deadline, score, score_reason, recommended_action, provider_used, generated_at)
+		 VALUES ($1, $2, '', '', '', $3, '', '', 'test', $4)
+		 ON CONFLICT (lead_id) DO UPDATE SET score = EXCLUDED.score, generated_at = EXCLUDED.generated_at`,
+		uuid.New(), leadID, score, generatedAt)
+	require.NoError(t, err, "seed qualification at")
+}
+
+// seedStepOutboundAt inserts a sent outbound at an explicit sent_at so a test
+// can place a step entry inside or outside a period window.
+func seedStepOutboundAt(t *testing.T, pool *pgxpool.Pool, prospectID, sequenceID uuid.UUID, stepOrder int, sentAt time.Time) {
+	t.Helper()
+	_, err := pool.Exec(context.Background(),
+		`INSERT INTO outbound_messages (id, prospect_id, sequence_id, step_order, channel, body, status, scheduled_at, sent_at, created_at)
+		 VALUES ($1, $2, $3, $4, 'email', 'hi', 'sent'::outbound_status, $5, $5, $5)`,
+		uuid.New(), prospectID, sequenceID, stepOrder, sentAt)
+	require.NoError(t, err, "seed step outbound at")
+}
+
+// Period windows: a week/month window must exclude rows older than its cutoff;
+// PeriodAll counts everything. Exercises both funnel read-paths.
+func TestRepository_Funnel_PeriodWindows(t *testing.T) {
+	pool := testutil.TestDB(t)
+	userID := testutil.SeedUser(t, pool)
+	repo := analytics.NewRepository(pool)
+	now := time.Now().UTC()
+	recent := now.Add(-2 * 24 * time.Hour) // inside week + month
+	old := now.Add(-40 * 24 * time.Hour)   // outside week + month
+
+	lRecent := seedLead(t, pool, userID, "qualified", recent)
+	seedQualificationAt(t, pool, lRecent, 45, recent)
+	lOld := seedLead(t, pool, userID, "qualified", old)
+	seedQualificationAt(t, pool, lOld, 45, old)
+
+	seqID := seedSequence(t, pool, userID, "Win")
+	pRecent := seedProspect(t, pool, userID, "new")
+	pOld := seedProspect(t, pool, userID, "new")
+	seedStepOutboundAt(t, pool, pRecent, seqID, 1, recent)
+	seedStepOutboundAt(t, pool, pOld, seqID, 1, old)
+	refreshFunnelMatviews(t, pool)
+
+	tests := []struct {
+		name          string
+		period        analytics.Period
+		wantQualTotal int
+		wantEntered   int
+	}{
+		{"all", analytics.PeriodAll, 2, 2},
+		{"week", analytics.PeriodWeek, 1, 1},
+		{"month", analytics.PeriodMonth, 1, 1},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			qd, err := repo.GetQualificationDistribution(context.Background(), userID, 10, tt.period)
+			require.NoError(t, err)
+			assert.Equal(t, tt.wantQualTotal, qd.Total, "qualification total for %s window", tt.name)
+
+			conv, err := repo.GetSequenceConversion(context.Background(), userID, tt.period)
+			require.NoError(t, err)
+			entered := 0
+			for _, s := range conv.Steps {
+				if s.SequenceID == seqID && s.StepOrder == 1 {
+					entered = s.Entered
+				}
+			}
+			assert.Equal(t, tt.wantEntered, entered, "entered count for %s window", tt.name)
+		})
+	}
+}
+
 func TestRepository_GetQualificationDistribution_FoldsToConfiguredStep(t *testing.T) {
 	pool := testutil.TestDB(t)
 	userID := testutil.SeedUser(t, pool)
