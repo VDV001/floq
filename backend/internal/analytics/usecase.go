@@ -13,10 +13,16 @@ import (
 // audit_log + sequence stats joined together) don't have to rewire
 // every handler.
 type UseCase struct {
-	seq   SequenceStatsReader
-	cost  CostRatiosReader
-	hot   HotLeadsReader
-	inbox InboxFlowReader
+	seq    SequenceStatsReader
+	cost   CostRatiosReader
+	hot    HotLeadsReader
+	inbox  InboxFlowReader
+	funnel FunnelReader
+	// bucketStep is the configured score-bucket width for the
+	// qualification-distribution funnel. The funnel matview is binned at
+	// width 10; this folds it up to the operator's chosen step. Defaults
+	// to 10, normalised via NormalizeBucketStep.
+	bucketStep int
 }
 
 // Option configures optional read ports on the UseCase. Used for ports
@@ -33,12 +39,24 @@ func WithInboxFlowReader(i InboxFlowReader) Option {
 	return func(uc *UseCase) { uc.inbox = i }
 }
 
+// WithFunnelReader wires the matview-backed funnel reader (qualification
+// distribution + sequence step conversion).
+func WithFunnelReader(f FunnelReader) Option {
+	return func(uc *UseCase) { uc.funnel = f }
+}
+
+// WithScoreBucketStep sets the qualification-distribution bucket width,
+// normalised to a multiple of 10 in [10, 100].
+func WithScoreBucketStep(step int) Option {
+	return func(uc *UseCase) { uc.bucketStep = NormalizeBucketStep(step) }
+}
+
 // NewUseCase wires the read ports. seq and cost may be nil if the
 // surrounding wire-up only registers a subset of routes (tests do
 // this — production wire-up passes all). Optional readers are supplied
 // via Option.
 func NewUseCase(seq SequenceStatsReader, cost CostRatiosReader, opts ...Option) *UseCase {
-	uc := &UseCase{seq: seq, cost: cost}
+	uc := &UseCase{seq: seq, cost: cost, bucketStep: 10}
 	for _, opt := range opts {
 		opt(uc)
 	}
@@ -69,4 +87,16 @@ func (uc *UseCase) GetInboxFlow(ctx context.Context, userID uuid.UUID, from, to 
 // period query param so the usecase stays time-source agnostic.
 func (uc *UseCase) GetCostRatios(ctx context.Context, userID uuid.UUID, from, to time.Time) (*CostRatiosDTO, error) {
 	return uc.cost.GetCostRatios(ctx, userID, from, to)
+}
+
+// GetQualificationDistribution forwards to the funnel reader with the
+// configured bucket step. The step is a server-side policy (not a request
+// param), so it's injected at construction rather than parsed per request.
+func (uc *UseCase) GetQualificationDistribution(ctx context.Context, userID uuid.UUID) (*QualificationFunnelDTO, error) {
+	return uc.funnel.GetQualificationDistribution(ctx, userID, uc.bucketStep)
+}
+
+// GetSequenceConversion forwards to the funnel reader.
+func (uc *UseCase) GetSequenceConversion(ctx context.Context, userID uuid.UUID) (*SequenceConversionDTO, error) {
+	return uc.funnel.GetSequenceConversion(ctx, userID)
 }
