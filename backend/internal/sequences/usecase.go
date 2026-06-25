@@ -167,13 +167,13 @@ func (uc *UseCase) launchInner(ctx context.Context, sequenceID uuid.UUID, prospe
 	// dispatches it without a manual approval step); OFF — the default — leaves
 	// messages as drafts awaiting human approval. A read error fails the launch
 	// rather than guessing, so an unreadable setting can never auto-send.
-	autopilotOn := false
+	var autopilot domain.AutopilotSettings
 	if uc.autopilot != nil && ownerID != uuid.Nil {
-		on, err := uc.autopilot.IsAutopilotEnabled(ctx, ownerID)
+		s, err := uc.autopilot.ResolveAutopilot(ctx, ownerID)
 		if err != nil {
 			return fmt.Errorf("launch: resolve autopilot mode: %w", err)
 		}
-		autopilotOn = on
+		autopilot = s
 	}
 
 	for _, pid := range prospectIDs {
@@ -259,7 +259,7 @@ func (uc *UseCase) launchInner(ctx context.Context, sequenceID uuid.UUID, prospe
 				scheduledAt = now
 			}
 			msg := domain.NewOutboundMessage(pid, sequenceID, step.StepOrder, step.Channel, body, scheduledAt)
-			if autopilotOn {
+			if autopilot.Enabled {
 				// Skip the draft → human-approval step. draft → approved is a
 				// legal transition (see outboundTransitions); the entity guards
 				// the state machine so this can't silently corrupt status.

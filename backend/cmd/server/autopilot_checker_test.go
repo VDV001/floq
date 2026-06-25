@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	settingsdomain "github.com/daniil/floq/internal/settings/domain"
 	"github.com/google/uuid"
@@ -20,31 +21,35 @@ func (f fakeSettingsStore) GetSettings(_ context.Context, _ uuid.UUID) (*setting
 	return f.settings, f.err
 }
 
-// The adapter reports autopilot enabled iff the user's AutoSend flag is set.
+// The adapter maps AutoSend → Enabled and AutoSendDelayMin → SendDelay. A
+// negative delay is clamped to zero (never schedule a send in the past).
 func TestAutopilotCheckerAdapter(t *testing.T) {
 	tests := []struct {
-		name     string
-		settings *settingsdomain.Settings
-		want     bool
+		name        string
+		settings    *settingsdomain.Settings
+		wantEnabled bool
+		wantDelay   time.Duration
 	}{
-		{"autosend on", &settingsdomain.Settings{AutoSend: true}, true},
-		{"autosend off", &settingsdomain.Settings{AutoSend: false}, false},
+		{"autosend on, 5 min delay", &settingsdomain.Settings{AutoSend: true, AutoSendDelayMin: 5}, true, 5 * time.Minute},
+		{"autosend off", &settingsdomain.Settings{AutoSend: false}, false, 0},
+		{"negative delay clamped", &settingsdomain.Settings{AutoSend: true, AutoSendDelayMin: -3}, true, 0},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			a := autopilotCheckerAdapter{settings: fakeSettingsStore{settings: tt.settings}}
-			got, err := a.IsAutopilotEnabled(context.Background(), uuid.New())
+			got, err := a.ResolveAutopilot(context.Background(), uuid.New())
 			require.NoError(t, err)
-			assert.Equal(t, tt.want, got)
+			assert.Equal(t, tt.wantEnabled, got.Enabled)
+			assert.Equal(t, tt.wantDelay, got.SendDelay)
 		})
 	}
 }
 
-// A settings read failure must propagate as an error (not a silent false) so
+// A settings read failure must propagate as an error (not a silent disable) so
 // the launch fails loudly instead of guessing the send mode.
 func TestAutopilotCheckerAdapter_StoreErrorPropagates(t *testing.T) {
 	a := autopilotCheckerAdapter{settings: fakeSettingsStore{err: errors.New("db down")}}
-	on, err := a.IsAutopilotEnabled(context.Background(), uuid.New())
+	got, err := a.ResolveAutopilot(context.Background(), uuid.New())
 	require.Error(t, err)
-	assert.False(t, on, "must not report autopilot on when the setting is unreadable")
+	assert.False(t, got.Enabled, "must not report autopilot on when the setting is unreadable")
 }

@@ -913,10 +913,14 @@ type autopilotCheckerAdapter struct {
 	}
 }
 
-func (a autopilotCheckerAdapter) IsAutopilotEnabled(ctx context.Context, userID uuid.UUID) (bool, error) {
+func (a autopilotCheckerAdapter) ResolveAutopilot(ctx context.Context, userID uuid.UUID) (sequencesdomain.AutopilotSettings, error) {
 	s, err := a.settings.GetSettings(ctx, userID)
 	if err != nil {
-		return false, fmt.Errorf("autopilot check: %w", err)
+		return sequencesdomain.AutopilotSettings{}, fmt.Errorf("autopilot check: %w", err)
 	}
-	return s.AutoSend, nil
+	delayMin := max(s.AutoSendDelayMin, 0)
+	return sequencesdomain.AutopilotSettings{
+		Enabled:   s.AutoSend,
+		SendDelay: time.Duration(delayMin) * time.Minute,
+	}, nil
 }

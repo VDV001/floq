@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/daniil/floq/internal/sequences/domain"
 	"github.com/google/uuid"
@@ -14,13 +15,14 @@ import (
 // mockAutopilotChecker is a fake AutopilotChecker recording its call count.
 type mockAutopilotChecker struct {
 	enabled bool
+	delay   time.Duration
 	err     error
 	calls   int
 }
 
-func (m *mockAutopilotChecker) IsAutopilotEnabled(_ context.Context, _ uuid.UUID) (bool, error) {
+func (m *mockAutopilotChecker) ResolveAutopilot(_ context.Context, _ uuid.UUID) (domain.AutopilotSettings, error) {
 	m.calls++
-	return m.enabled, m.err
+	return domain.AutopilotSettings{Enabled: m.enabled, SendDelay: m.delay}, m.err
 }
 
 // When autopilot is enabled, launch promotes each queued message straight to
