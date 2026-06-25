@@ -17,9 +17,16 @@ export function useOutbound() {
   const [page, setPage] = useState(1);
   const [lastUpdated, setLastUpdated] = useState<Date>(new Date());
   const [approvingAll, setApprovingAll] = useState(false);
+  // Autopilot status is read-only here: the single source of truth for the
+  // auto_send flag is the Automations page. This page only reflects whether it
+  // is on (and links there to change it), so there is no second control.
   const [autopilot, setAutopilot] = useState(false);
 
   useEffect(() => { setPage(1); }, [tab, channelFilter, statusFilter, search]);
+
+  useEffect(() => {
+    api.getSettings().then((s) => setAutopilot(s.auto_send ?? false)).catch(() => {});
+  }, []);
 
   const fetchData = useCallback(async (isInitial: boolean) => {
     try {
@@ -74,7 +81,7 @@ export function useOutbound() {
   return {
     messages, sentMessages, tab, setTab, loading, search, setSearch,
     stats, channelFilter, setChannelFilter, statusFilter, setStatusFilter,
-    page, setPage, lastUpdated, approvingAll, autopilot, setAutopilot,
+    page, setPage, lastUpdated, approvingAll, autopilot,
     filtered, paginatedItems, totalPages, safePage,
     handleApprove, handleReject, handleEdited, handleApproveAll,
     ITEMS_PER_PAGE,

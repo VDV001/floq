@@ -63,6 +63,7 @@ describe("useOutbound", () => {
     mockApi.getOutboundStats.mockResolvedValue(makeStats());
     mockApi.approveMessage.mockResolvedValue(undefined);
     mockApi.rejectMessage.mockResolvedValue(undefined);
+    mockApi.getSettings.mockResolvedValue(defaultSettings());
   });
 
   afterEach(() => {
