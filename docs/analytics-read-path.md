@@ -64,7 +64,12 @@ exists yet.
 
 - Aggregations are minutes-stale (refresh interval); acceptable for an
   operator funnel dashboard, not for real-time figures.
-- Funnel matviews are all-time (no time window) in the MVP; period-scoped
-  variants would need time-bucketed views.
+- Funnel matviews were all-time in the MVP; **migration 043** re-grained them
+  for period windows (week/month/all) by pre-aggregating to the additive grain
+  and windowing at read time: the qualification distribution is bucketed by
+  day (COUNT is additive → sum days in window), and the conversion view is
+  deduped to one row per (sequence, step, prospect) carrying `entered_at` (a
+  windowed COUNT is exact — no COUNT(DISTINCT) additivity hazard). `NOW()`
+  lives only in the read query, never in the view/index.
 - The `FunnelReader` seam means the scale-path swap (matview → ClickHouse)
   is an implementation change, not an interface change.
