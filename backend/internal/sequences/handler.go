@@ -22,6 +22,10 @@ const (
 	codeAINotConfigured   = "ai_not_configured"
 	msgLaunchFailed       = "Не удалось запустить рассылку. Попробуйте ещё раз."
 	msgPreviewFailed      = "Не удалось сгенерировать пример письма. Попробуйте ещё раз."
+
+	msgEmailNotConfigured    = "Почта не подключена. В рассылке есть письма, но их некуда отправлять без Resend или SMTP."
+	remedyEmailNotConfigured = "Откройте Настройки → Почта и подключите Resend или SMTP."
+	codeEmailNotConfigured   = "email_not_configured"
 )
 
 // writeGenerationError maps an AI message-generation failure to a user-facing
@@ -31,6 +35,10 @@ const (
 func writeGenerationError(w http.ResponseWriter, err error, genericMsg string) {
 	if errors.Is(err, ai.ErrNotConfigured) {
 		httputil.WriteErrorDetail(w, http.StatusBadRequest, msgAINotConfigured, codeAINotConfigured, remedyAINotConfigured)
+		return
+	}
+	if errors.Is(err, domain.ErrEmailNotConfigured) {
+		httputil.WriteErrorDetail(w, http.StatusBadRequest, msgEmailNotConfigured, codeEmailNotConfigured, remedyEmailNotConfigured)
 		return
 	}
 	httputil.WriteError(w, http.StatusInternalServerError, genericMsg)

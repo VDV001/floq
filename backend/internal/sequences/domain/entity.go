@@ -156,6 +156,14 @@ func (s *SequenceStep) IsManual() bool {
 	return s.Body != ""
 }
 
+// IsEmail reports whether the step is delivered over email. An empty channel
+// defaults to email — the same rule launch uses when dispatching (the AI
+// generation switch treats "" as email), so the preflight check agrees with
+// what actually gets sent.
+func (s *SequenceStep) IsEmail() bool {
+	return s.Channel == StepChannelEmail || s.Channel == ""
+}
+
 // NewSequenceStep creates a new SequenceStep with generated ID and timestamp.
 // A non-empty body marks the step as manual (used verbatim, no AI). The body is
 // trimmed so a whitespace-only value can't masquerade as a manual step and ship

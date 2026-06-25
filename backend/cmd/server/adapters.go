@@ -19,6 +19,7 @@ import (
 	"github.com/daniil/floq/internal/outbound"
 	"github.com/daniil/floq/internal/prospects"
 	prospectsdomain "github.com/daniil/floq/internal/prospects/domain"
+	sequencesdomain "github.com/daniil/floq/internal/sequences/domain"
 	settingsdomain "github.com/daniil/floq/internal/settings/domain"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -866,4 +867,34 @@ type queueDepthAdapter struct {
 
 func (a queueDepthAdapter) QueueDepths(ctx context.Context) (map[string]int, error) {
 	return a.repo.CountPendingByKind(ctx)
+}
+
+// emailConfigCheckerAdapter satisfies sequencesdomain.EmailConfigChecker by
+// resolving the user's mailer config the same way the outbound sender does:
+// the stored DB value, then the env fallback. Email counts as configured when
+// a Resend API key is present OR a full SMTP triple (host + user + password)
+// is. Cross-context wiring (settings -> sequences) lives here at the root.
+type emailConfigCheckerAdapter struct {
+	store interface {
+		GetConfig(ctx context.Context, userID uuid.UUID) (*settingsdomain.UserConfig, error)
+	}
+	envResendKey    string
+	envSMTPHost     string
+	envSMTPUser     string
+	envSMTPPassword string
+}
+
+func (a emailConfigCheckerAdapter) IsEmailConfigured(ctx context.Context, userID uuid.UUID) error {
+	cfg, err := a.store.GetConfig(ctx, userID)
+	if err != nil {
+		return fmt.Errorf("email config check: %w", err)
+	}
+	resend := settingsdomain.ResolveConfig(cfg.ResendAPIKey, a.envResendKey)
+	host := settingsdomain.ResolveConfig(cfg.SMTPHost, a.envSMTPHost)
+	user := settingsdomain.ResolveConfig(cfg.SMTPUser, a.envSMTPUser)
+	pass := settingsdomain.ResolveConfig(cfg.SMTPPassword, a.envSMTPPassword)
+	if resend != "" || (host != "" && user != "" && pass != "") {
+		return nil
+	}
+	return sequencesdomain.ErrEmailNotConfigured
 }

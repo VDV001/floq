@@ -12,11 +12,12 @@ import (
 )
 
 type UseCase struct {
-	repo        domain.Repository
-	aiGenerator domain.AIMessageGenerator
-	prospects   domain.ProspectReader
-	leadCreator domain.LeadCreator
-	tx          domain.TxManager
+	repo         domain.Repository
+	aiGenerator  domain.AIMessageGenerator
+	prospects    domain.ProspectReader
+	leadCreator  domain.LeadCreator
+	tx           domain.TxManager
+	emailChecker domain.EmailConfigChecker
 }
 
 func NewUseCase(repo domain.Repository, aiGenerator domain.AIMessageGenerator, prospects domain.ProspectReader, leadCreator domain.LeadCreator, opts ...UseCaseOption) *UseCase {
@@ -33,6 +34,12 @@ type UseCaseOption func(*UseCase)
 // WithTxManager sets the transaction manager.
 func WithTxManager(tx domain.TxManager) UseCaseOption {
 	return func(uc *UseCase) { uc.tx = tx }
+}
+
+// WithEmailConfigChecker wires the email-configuration preflight. When unset,
+// launch skips the check (preserving pre-feature behaviour).
+func WithEmailConfigChecker(c domain.EmailConfigChecker) UseCaseOption {
+	return func(uc *UseCase) { uc.emailChecker = c }
 }
 
 func (uc *UseCase) ListSequences(ctx context.Context, userID uuid.UUID) ([]domain.Sequence, error) {
@@ -104,6 +111,17 @@ func (uc *UseCase) Launch(ctx context.Context, sequenceID uuid.UUID, prospectIDs
 	return uc.launchInner(ctx, sequenceID, prospectIDs, sendNow...)
 }
 
+// hasEmailStep reports whether any step in the sequence is delivered over
+// email — the only channel the email-config preflight gates.
+func hasEmailStep(steps []domain.SequenceStep) bool {
+	for i := range steps {
+		if steps[i].IsEmail() {
+			return true
+		}
+	}
+	return false
+}
+
 func (uc *UseCase) launchInner(ctx context.Context, sequenceID uuid.UUID, prospectIDs []uuid.UUID, sendNow ...bool) error {
 	steps, err := uc.repo.ListSteps(ctx, sequenceID)
 	if err != nil {
@@ -118,10 +136,22 @@ func (uc *UseCase) launchInner(ctx context.Context, sequenceID uuid.UUID, prospe
 
 	// Build feedback examples string once for the entire launch (use first prospect's userID).
 	var feedbackExamples string
+	var ownerID uuid.UUID
 	if len(prospectIDs) > 0 {
 		firstProspect, _ := uc.prospects.GetProspect(ctx, prospectIDs[0])
 		if firstProspect != nil {
+			ownerID = firstProspect.UserID
 			feedbackExamples = uc.buildFeedbackExamples(ctx, firstProspect.UserID)
+		}
+	}
+
+	// Preflight: a sequence with email steps can't be launched unless email
+	// (Resend or SMTP) is configured — otherwise the async sender would drop
+	// the queued message with nothing to surface to the operator. Skipped when
+	// no checker is wired or the sequence has no email steps.
+	if uc.emailChecker != nil && ownerID != uuid.Nil && hasEmailStep(steps) {
+		if err := uc.emailChecker.IsEmailConfigured(ctx, ownerID); err != nil {
+			return err
 		}
 	}
 

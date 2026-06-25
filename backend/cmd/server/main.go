@@ -277,7 +277,16 @@ func main() {
 		prospects.WithIdentityLinker(identityLinker))
 	sourcesUC := sources.NewUseCase(sourcesRepo, sources.WithStatsReader(sourcesRepo))
 	migrateOrphanProspects(pool, ownerID)
-	sequencesUC := sequences.NewUseCase(sequencesRepo, seqAI, prospectReader, leadCreatorAdapter, sequences.WithTxManager(txManager))
+	emailConfigChecker := emailConfigCheckerAdapter{
+		store:           settingsStore,
+		envResendKey:    cfg.ResendAPIKey,
+		envSMTPHost:     cfg.SMTPHost,
+		envSMTPUser:     cfg.SMTPUser,
+		envSMTPPassword: cfg.SMTPPassword,
+	}
+	sequencesUC := sequences.NewUseCase(sequencesRepo, seqAI, prospectReader, leadCreatorAdapter,
+		sequences.WithTxManager(txManager),
+		sequences.WithEmailConfigChecker(emailConfigChecker))
 
 	// 5. Auth
 	authHandler := auth.NewHandler(auth.NewRepository(pool), cfg.JWTSecret)
