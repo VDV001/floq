@@ -259,6 +259,34 @@ func TestLaunch_HappyPath(t *testing.T) {
 	assert.Equal(t, 2, ai.calls)
 }
 
+// TestLaunch_ManualBodySkipsAI pins that a step with a hand-written body is
+// used verbatim and does NOT call the AI generator — so a launch works even
+// with no AI provider configured.
+func TestLaunch_ManualBodySkipsAI(t *testing.T) {
+	seqID := uuid.New()
+	pid := uuid.New()
+
+	repo := &mockRepo{
+		steps: []domain.SequenceStep{
+			{ID: uuid.New(), SequenceID: seqID, StepOrder: 1, DelayDays: 0, Channel: domain.StepChannelEmail, Body: "Привет, написано вручную"},
+		},
+	}
+	pr := newMockProspectReader()
+	pr.prospects[pid] = &domain.ProspectView{
+		ID: pid, UserID: uuid.New(), Name: "Alice", Company: "Acme", Title: "CEO",
+		Email: "alice@acme.com", Status: "new", VerifyStatus: "valid", IsEligibleForSequence: true,
+	}
+	// AI generator that would error if called — proves it is not invoked.
+	ai := &mockAI{err: errors.New("AI must not be called for a manual step")}
+	uc := NewUseCase(repo, ai, pr, &mockLeadCreator{})
+
+	err := uc.Launch(context.Background(), seqID, []uuid.UUID{pid})
+	require.NoError(t, err)
+	require.Len(t, repo.messages, 1)
+	assert.Equal(t, "Привет, написано вручную", repo.messages[0].Body)
+	assert.Equal(t, 0, ai.calls, "AI generator must not be called for a manual step")
+}
+
 // TestLaunch_AINotConfiguredPropagates pins the cross-layer contract the
 // handler relies on: when message generation fails because the AI provider
 // isn't configured, Launch propagates ai.ErrNotConfigured (via %w) so the
@@ -803,7 +831,7 @@ func TestCreateStep(t *testing.T) {
 	repo := &mockRepo{}
 	uc := NewUseCase(repo, &mockAI{}, newMockProspectReader(), &mockLeadCreator{})
 
-	step := domain.NewSequenceStep(uuid.New(), 1, 0, domain.StepChannelEmail, "intro")
+	step := domain.NewSequenceStep(uuid.New(), 1, 0, domain.StepChannelEmail, "intro", "")
 	err := uc.CreateStep(context.Background(), step)
 	require.NoError(t, err)
 }

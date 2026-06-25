@@ -114,7 +114,7 @@ func TestNewSequenceStep(t *testing.T) {
 	channel := StepChannelEmail
 	hint := "follow up on intro"
 
-	step := NewSequenceStep(sequenceID, stepOrder, delayDays, channel, hint)
+	step := NewSequenceStep(sequenceID, stepOrder, delayDays, channel, hint, "")
 
 	assert.NotEqual(t, uuid.Nil, step.ID)
 	assert.Equal(t, sequenceID, step.SequenceID)
@@ -257,3 +257,14 @@ func TestNewOutboundMessage(t *testing.T) {
 // prospects context. ProspectView now carries a pre-computed
 // IsEligibleForSequence boolean populated by the adapter — see
 // prospects.domain.Prospect.CanLaunchSequence and its tests.
+
+func TestSequenceStep_IsManual(t *testing.T) {
+	manual := NewSequenceStep(uuid.New(), 1, 0, StepChannelEmail, "", "написано вручную")
+	if !manual.IsManual() {
+		t.Error("step with a body should be manual")
+	}
+	aiDriven := NewSequenceStep(uuid.New(), 1, 0, StepChannelEmail, "первое касание", "")
+	if aiDriven.IsManual() {
+		t.Error("step with only a prompt hint should not be manual")
+	}
+}
