@@ -13,12 +13,11 @@ import (
 
 // fakeEnricher records the query and returns a canned result.
 type fakeEnricher struct {
-	gotQuery domain.LegalDetails // unused; placeholder
-	query    enrichment.EnrichQuery
-	result   domain.LegalDetails
-	found    bool
-	err      error
-	called   bool
+	query  enrichment.EnrichQuery
+	result domain.LegalDetails
+	found  bool
+	err    error
+	called bool
 }
 
 func (f *fakeEnricher) Enrich(_ context.Context, q enrichment.EnrichQuery) (domain.LegalDetails, bool, error) {
