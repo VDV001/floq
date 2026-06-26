@@ -83,7 +83,7 @@ func TestPendingReplyRepository_PersistsInputSeverity(t *testing.T) {
 	assert.Equal(t, inbox.SeverityWarn, list[0].InputSeverity, "ListByLead must round-trip input_severity")
 }
 
-func TestPendingReplyRepository_ListPendingByUser_ExcludesArchivedLead(t *testing.T) {
+func TestPendingReplyRepository_ListPendingByUser_KeepsArchivedLeadActionable(t *testing.T) {
 	pool := testutil.TestDB(t)
 	userID := testutil.SeedUser(t, pool)
 	activeLead := seedLeadForUser(t, pool, userID)
@@ -101,17 +101,17 @@ func TestPendingReplyRepository_ListPendingByUser_ExcludesArchivedLead(t *testin
 
 	list, err := repo.ListPendingByUser(ctx, userID)
 	require.NoError(t, err)
+
+	// A pending HITL reply is an ACTIONABLE work-item: archiving the lead must
+	// not silently drop it from the approval queue (the drafted answer would
+	// otherwise be stuck forever, never approved or rejected). Both leads' pending
+	// replies remain.
+	seen := map[uuid.UUID]bool{}
 	for _, pr := range list {
-		assert.NotEqual(t, archivedLead, pr.Reply.LeadID, "archived lead's pending reply must not appear in the HITL queue")
+		seen[pr.Reply.LeadID] = true
 	}
-	// The active lead's pending reply is still present.
-	found := false
-	for _, pr := range list {
-		if pr.Reply.LeadID == activeLead {
-			found = true
-		}
-	}
-	assert.True(t, found, "active lead's pending reply must remain in the queue")
+	assert.True(t, seen[activeLead], "active lead's pending reply present")
+	assert.True(t, seen[archivedLead], "archived lead's pending reply must stay actionable in the queue")
 }
 
 func TestPendingReplyRepository_CountPendingByKind(t *testing.T) {

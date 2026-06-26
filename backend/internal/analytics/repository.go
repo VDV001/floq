@@ -149,7 +149,6 @@ func (r *Repository) loadPendingRepliesStats(ctx context.Context, userID uuid.UU
 		        ORDER BY EXTRACT(EPOCH FROM (pr.decided_at - pr.created_at))
 		    ) FILTER (WHERE pr.decided_at IS NOT NULL), 0) AS p95
 		FROM pending_replies pr
-		JOIN active_leads l ON l.id = pr.lead_id
 		WHERE pr.user_id = $1 AND pr.created_at >= $2 AND pr.created_at < $3`,
 		userID, from, to,
 	).Scan(&out.Approved, &out.Rejected, &out.CurrentlyPending, &p50, &p95)
@@ -260,7 +259,11 @@ func (r *Repository) GetCostRatios(ctx context.Context, userID uuid.UUID, from, 
 	}
 
 	if err := r.pool.QueryRow(ctx,
-		`SELECT COUNT(*) FROM active_leads
+		// Cost ratios are financial history: the numerator (TotalCostUSDMicro from
+		// audit_log) includes AI spend on leads later archived, so the denominator
+		// must too — querying base leads, NOT active_leads — or cost-per-lead would
+		// be overstated after archiving.
+		`SELECT COUNT(*) FROM leads
 		 WHERE user_id = $1 AND created_at >= $2 AND created_at < $3`,
 		userID, from, to,
 	).Scan(&dto.LeadsCount); err != nil {
@@ -269,7 +272,7 @@ func (r *Repository) GetCostRatios(ctx context.Context, userID uuid.UUID, from, 
 
 	if err := r.pool.QueryRow(ctx,
 		`SELECT COUNT(*) FROM (
-			SELECT l.id FROM active_leads l
+			SELECT l.id FROM leads l
 			JOIN qualifications q ON q.lead_id = l.id
 			WHERE l.user_id = $1 AND l.created_at >= $2 AND l.created_at < $3
 			GROUP BY l.id

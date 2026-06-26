@@ -60,7 +60,7 @@ func TestRepository_GetInboxFlow_QualDistributionExcludesArchived(t *testing.T) 
 	assert.InDelta(t, 40.0, dto.Qualifications.AvgScore, 0.001, "archived qualification must not feed the histogram")
 }
 
-func TestRepository_GetInboxFlow_PendingStatsExcludeArchived(t *testing.T) {
+func TestRepository_GetInboxFlow_PendingStatsIncludeArchived(t *testing.T) {
 	pool := testutil.TestDB(t)
 	userID := testutil.SeedUser(t, pool)
 	repo := analytics.NewRepository(pool)
@@ -74,7 +74,10 @@ func TestRepository_GetInboxFlow_PendingStatsExcludeArchived(t *testing.T) {
 	dto, err := repo.GetInboxFlow(context.Background(), userID, from, to)
 	require.NoError(t, err)
 
-	assert.Equal(t, 0, dto.PendingReplies.CurrentlyPending, "pending reply of an archived lead must not be counted")
+	// HITL stats are operational HISTORY (decision latency, throughput): archiving
+	// a lead must NOT retroactively rewrite a past period's counts, so the pending
+	// reply is still counted.
+	assert.Equal(t, 1, dto.PendingReplies.CurrentlyPending, "archiving a lead must not retroactively drop its pending-reply stats")
 }
 
 func TestRepository_GetHotLeads_ExcludesArchived(t *testing.T) {
@@ -97,7 +100,7 @@ func TestRepository_GetHotLeads_ExcludesArchived(t *testing.T) {
 	assert.Equal(t, 1, dto.TotalMatching)
 }
 
-func TestRepository_GetCostRatios_ExcludesArchived(t *testing.T) {
+func TestRepository_GetCostRatios_IncludesArchived(t *testing.T) {
 	pool := testutil.TestDB(t)
 	userID := testutil.SeedUser(t, pool)
 	repo := analytics.NewRepository(pool)
@@ -112,6 +115,9 @@ func TestRepository_GetCostRatios_ExcludesArchived(t *testing.T) {
 	got, err := repo.GetCostRatios(context.Background(), userID, now.Add(-7*24*time.Hour), now.Add(time.Hour))
 	require.NoError(t, err)
 
-	assert.Equal(t, 1, got.LeadsCount, "archived lead must not be counted")
-	assert.Equal(t, 1, got.QualifiedLeadsCount, "archived qualified lead must not be counted")
+	// Cost ratios are FINANCIAL history: the AI spend on an archived lead stays
+	// in the numerator (audit_log), so the lead must stay in the denominator too
+	// — otherwise cost-per-lead is overstated. Archive must not move the ratio.
+	assert.Equal(t, 2, got.LeadsCount, "archived lead still counts toward cost denominator")
+	assert.Equal(t, 2, got.QualifiedLeadsCount, "archived qualified lead still counts")
 }
