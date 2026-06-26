@@ -36,6 +36,10 @@ var (
 // emailJunkPrefixes are local-part prefixes that are never a real contact.
 var emailJunkPrefixes = []string{"noreply", "no-reply", "no_reply", "mailer-daemon", "postmaster", "webmaster"}
 
+// assetExtensions are file suffixes that make an "email" match a srcset/asset
+// reference (e.g. logo@2x.png) rather than a real address.
+var assetExtensions = []string{".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg", ".css", ".js", ".ico", ".bmp", ".woff", ".woff2"}
+
 // socialHosts are the hosts (after stripping a leading www.) treated as social
 // profile links worth surfacing.
 var socialHosts = map[string]struct{}{
@@ -101,12 +105,14 @@ func extractEmails(page string) []string {
 }
 
 func isJunkEmail(email string) bool {
-	local := email
-	if i := strings.IndexByte(email, '@'); i >= 0 {
-		local = email[:i]
-	}
+	local, host, _ := strings.Cut(email, "@")
 	for _, p := range emailJunkPrefixes {
 		if strings.HasPrefix(local, p) {
+			return true
+		}
+	}
+	for _, ext := range assetExtensions {
+		if strings.HasSuffix(host, ext) {
 			return true
 		}
 	}

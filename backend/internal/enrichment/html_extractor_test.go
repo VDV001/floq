@@ -60,6 +60,15 @@ func TestHTMLExtractor_DedupesAndSorts(t *testing.T) {
 	assert.Equal(t, []string{"https://t.me/acme"}, p.Socials)
 }
 
+func TestHTMLExtractor_IgnoresAssetPseudoEmails(t *testing.T) {
+	// srcset/retina markup like `image@2x.png` superficially matches the email
+	// regex (image@2x.png) — it must not be surfaced as a contact.
+	html := `<img srcset="logo@2x.png 2x, hero@3x.webp 3x"> real: info@acme.ru`
+	p, err := enrichment.NewHTMLExtractor().Extract(context.Background(), html)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"info@acme.ru"}, p.Emails)
+}
+
 func TestHTMLExtractor_EmptyPage(t *testing.T) {
 	p, err := enrichment.NewHTMLExtractor().Extract(context.Background(), "<html></html>")
 	require.NoError(t, err)
