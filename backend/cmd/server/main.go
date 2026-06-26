@@ -68,6 +68,17 @@ const (
 	authRegisterRateWindow = time.Hour
 )
 
+// verifySecretsExitCode maps the per-module "needs rotation" counts from
+// -verify-secrets-kek to a process exit code. Any secret still readable only
+// under the old KEK (bad>0 in either module) must block removal of
+// FLOQ_SECRETS_KEK_OLD, so a non-zero total yields a non-zero exit.
+func verifySecretsExitCode(settingsBad, onecBad int) int {
+	if settingsBad+onecBad > 0 {
+		return 1
+	}
+	return 0
+}
+
 func main() {
 	// Load .env file (ignore error if missing — production uses real env vars).
 	_ = godotenv.Load()
@@ -168,9 +179,9 @@ func main() {
 		}
 		log.Printf("secret KEK verification: under-primary=%d needs-rotation=%d (settings ok=%d bad=%d, 1C ok=%d bad=%d)",
 			okS+okO, badS+badO, okS, badS, okO, badO)
-		if badS+badO > 0 {
+		if code := verifySecretsExitCode(badS, badO); code != 0 {
 			log.Printf("WARNING: %d secret(s) still need rotation — do NOT remove FLOQ_SECRETS_KEK_OLD", badS+badO)
-			os.Exit(1)
+			os.Exit(code)
 		}
 		return
 	}
