@@ -26,6 +26,9 @@ func (m *mockLeadsRepo) ListLeads(_ context.Context, _ uuid.UUID) ([]leadsdomain
 func (m *mockLeadsRepo) ListAllLeads(_ context.Context, _ uuid.UUID) ([]leadsdomain.LeadWithSource, error) {
 	return nil, nil
 }
+func (m *mockLeadsRepo) ListArchivedLeads(_ context.Context, _ uuid.UUID) ([]leadsdomain.LeadWithSource, error) {
+	return nil, nil
+}
 func (m *mockLeadsRepo) GetLead(_ context.Context, _ uuid.UUID) (*leadsdomain.Lead, error) {
 	return nil, nil
 }

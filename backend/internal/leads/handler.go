@@ -52,6 +52,7 @@ func (h *Handler) authorizeLead(w http.ResponseWriter, r *http.Request) (userID,
 func RegisterRoutes(r chi.Router, uc *UseCase) {
 	h := &Handler{uc: uc}
 	r.Get("/api/leads", h.listLeads())
+	r.Get("/api/leads/archived", h.listArchivedLeads())
 	r.Get("/api/leads/export", h.exportCSV())
 	r.Post("/api/leads/import", h.importCSV())
 	r.Get("/api/leads/suggestion-counts", h.suggestionCounts())
@@ -86,6 +87,29 @@ func (h *Handler) listLeads() http.HandlerFunc {
 			leads = []LeadWithPendingCount{}
 		}
 		httputil.WriteJSON(w, http.StatusOK, LeadsWithPendingCountToResponse(leads))
+	}
+}
+
+// listArchivedLeads backs the dedicated archive view: it returns ONLY the
+// caller's archived leads (newest-archived first). Unlike the inbox feed it
+// skips pending-reply badges — archived leads are out of the working queue, so
+// there is no HITL decision to surface on them.
+func (h *Handler) listArchivedLeads() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		userID, ok := httputil.UserIDFromContext(r.Context())
+		if !ok {
+			httputil.WriteError(w, http.StatusUnauthorized, "unauthorized")
+			return
+		}
+		leads, err := h.uc.ListArchivedLeads(r.Context(), userID)
+		if err != nil {
+			httputil.WriteError(w, http.StatusInternalServerError, "failed to list archived leads")
+			return
+		}
+		if leads == nil {
+			leads = []domain.LeadWithSource{}
+		}
+		httputil.WriteJSON(w, http.StatusOK, LeadsToResponse(leads))
 	}
 }
 

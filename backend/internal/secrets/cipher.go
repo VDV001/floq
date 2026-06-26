@@ -1,7 +1,8 @@
 // Package secrets provides at-rest encryption for client credentials
 // (IMAP/SMTP passwords, API keys, the 1C auth secret). The concrete Cipher
-// implements AES-256-GCM with a per-secret random nonce, keyed by a single
-// key-encryption-key (KEK) loaded from the environment at startup.
+// implements AES-256-GCM with a per-secret random nonce, keyed by a primary
+// key-encryption-key (KEK) loaded from the environment at startup, with an
+// optional secondary KEK used only as a decrypt-fallback during rotation.
 //
 // Consumers (settings, integrations/onec) declare their own minimal
 // SecretCipher interface and accept *Cipher structurally — the impl lives
@@ -28,14 +29,21 @@ var ErrInvalidKey = errors.New("secrets: KEK must decode to exactly 32 bytes")
 var ErrDecrypt = errors.New("secrets: decrypt failed")
 
 // Cipher encrypts and decrypts short secret strings with AES-256-GCM.
+//
+// Encrypt always seals under the primary KEK. Decrypt tries primary first and,
+// if a secondary (old) KEK is configured, falls back to it — this is what keeps
+// reads working during a KEK rotation, when some ciphertext is still sealed
+// under the previous key. The ciphertext format carries no key-id, so the
+// secondary is tried structurally rather than selected.
 type Cipher struct {
-	aead cipher.AEAD
+	primary   cipher.AEAD
+	secondary cipher.AEAD // nil unless a fallback (old) KEK is configured
 }
 
-// NewCipher builds a Cipher from a base64-encoded 32-byte KEK. A malformed
-// base64 string is a distinct error; a correctly-decoded but wrong-length key
-// returns ErrInvalidKey.
-func NewCipher(kekBase64 string) (*Cipher, error) {
+// buildAEAD decodes a base64 32-byte KEK and constructs an AES-256-GCM AEAD. A
+// malformed base64 string is a distinct error; a correctly-decoded but
+// wrong-length key returns ErrInvalidKey.
+func buildAEAD(kekBase64 string) (cipher.AEAD, error) {
 	key, err := base64.StdEncoding.DecodeString(kekBase64)
 	if err != nil {
 		return nil, fmt.Errorf("secrets: KEK is not valid base64: %w", err)
@@ -51,7 +59,34 @@ func NewCipher(kekBase64 string) (*Cipher, error) {
 	if err != nil {
 		return nil, fmt.Errorf("secrets: build GCM: %w", err)
 	}
-	return &Cipher{aead: aead}, nil
+	return aead, nil
+}
+
+// NewCipher builds a single-key Cipher from a base64-encoded 32-byte KEK.
+// Equivalent to NewCipherWithFallback with an empty secondary.
+func NewCipher(kekBase64 string) (*Cipher, error) {
+	return NewCipherWithFallback(kekBase64, "")
+}
+
+// NewCipherWithFallback builds a Cipher whose Encrypt uses primaryBase64 and
+// whose Decrypt falls back to secondaryBase64 when the primary fails. An empty
+// secondaryBase64 disables the fallback (behaves exactly like NewCipher). A
+// present-but-malformed secondary is a hard error — it must never silently
+// disable the fallback, which would lose data mid-rotation.
+func NewCipherWithFallback(primaryBase64, secondaryBase64 string) (*Cipher, error) {
+	primary, err := buildAEAD(primaryBase64)
+	if err != nil {
+		return nil, err
+	}
+	c := &Cipher{primary: primary}
+	if secondaryBase64 != "" {
+		secondary, err := buildAEAD(secondaryBase64)
+		if err != nil {
+			return nil, err
+		}
+		c.secondary = secondary
+	}
+	return c, nil
 }
 
 // Encrypt seals plaintext under a fresh random nonce. Empty plaintext is a
@@ -61,11 +96,11 @@ func (c *Cipher) Encrypt(plaintext string) (ciphertext, nonce []byte, err error)
 	if plaintext == "" {
 		return nil, nil, nil
 	}
-	nonce = make([]byte, c.aead.NonceSize())
+	nonce = make([]byte, c.primary.NonceSize())
 	if _, err := io.ReadFull(rand.Reader, nonce); err != nil {
 		return nil, nil, fmt.Errorf("secrets: read nonce: %w", err)
 	}
-	ciphertext = c.aead.Seal(nil, nonce, []byte(plaintext), nil)
+	ciphertext = c.primary.Seal(nil, nonce, []byte(plaintext), nil)
 	return ciphertext, nonce, nil
 }
 
@@ -76,12 +111,18 @@ func (c *Cipher) Decrypt(ciphertext, nonce []byte) (string, error) {
 	if len(ciphertext) == 0 && len(nonce) == 0 {
 		return "", nil
 	}
-	if len(nonce) != c.aead.NonceSize() {
+	if len(nonce) != c.primary.NonceSize() {
 		return "", ErrDecrypt
 	}
-	plaintext, err := c.aead.Open(nil, nonce, ciphertext, nil)
-	if err != nil {
-		return "", ErrDecrypt
+	if plaintext, err := c.primary.Open(nil, nonce, ciphertext, nil); err == nil {
+		return string(plaintext), nil
 	}
-	return string(plaintext), nil
+	// Primary failed: fall back to the old KEK during a rotation window. Same
+	// generic ErrDecrypt on total failure — never reveal which key matched.
+	if c.secondary != nil {
+		if plaintext, err := c.secondary.Open(nil, nonce, ciphertext, nil); err == nil {
+			return string(plaintext), nil
+		}
+	}
+	return "", ErrDecrypt
 }

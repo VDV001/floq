@@ -43,6 +43,7 @@ const (
 	RequestTypeImageAnalysis   RequestType = "image_analysis"
 	RequestTypeStyleCheck      RequestType = "style_check"
 	RequestTypeChatAssist      RequestType = "chat_assist"
+	RequestTypeEnrichment      RequestType = "enrichment"
 )
 
 // Status records whether the provider returned a usable response. On
@@ -153,7 +154,7 @@ func (rt RequestType) valid() bool {
 	case RequestTypeQualification, RequestTypeDraftReply, RequestTypeColdMessage,
 		RequestTypeTelegramMessage, RequestTypeTelegramReply, RequestTypeCallBrief,
 		RequestTypeFollowup, RequestTypeImageAnalysis, RequestTypeStyleCheck,
-		RequestTypeChatAssist:
+		RequestTypeChatAssist, RequestTypeEnrichment:
 		return true
 	}
 	return false

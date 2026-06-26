@@ -387,6 +387,52 @@ func TestHandler_ToggleActive(t *testing.T) {
 	assert.Equal(t, http.StatusOK, rr.Code)
 }
 
+func TestHandler_SetApproval(t *testing.T) {
+	seqID := uuid.New()
+	caller := uuid.New()
+	repo := &mockRepo{sequences: []domain.Sequence{{ID: seqID, UserID: caller, Name: "x"}}}
+	uc := NewUseCase(repo, &mockAI{}, newMockProspectReader(), &mockLeadCreator{})
+	router := setupRouter(uc, caller)
+
+	rr := doRequest(router, http.MethodPatch, "/api/sequences/"+seqID.String()+"/approval", map[string]bool{"require_approval": true})
+	assert.Equal(t, http.StatusOK, rr.Code)
+	assert.True(t, repo.sequences[0].RequireApproval)
+}
+
+// A non-owner gets 404 (not 403) so the endpoint can't confirm a foreign
+// sequence's existence — same anti-enumeration contract as the rest of the API.
+func TestHandler_SetApproval_NotOwned_Returns404(t *testing.T) {
+	seqID := uuid.New()
+	repo := &mockRepo{sequences: []domain.Sequence{{ID: seqID, UserID: uuid.New(), Name: "x"}}}
+	uc := NewUseCase(repo, &mockAI{}, newMockProspectReader(), &mockLeadCreator{})
+	router := setupRouter(uc, uuid.New())
+
+	rr := doRequest(router, http.MethodPatch, "/api/sequences/"+seqID.String()+"/approval", map[string]bool{"require_approval": true})
+	assert.Equal(t, http.StatusNotFound, rr.Code)
+}
+
+func TestHandler_SetApproval_InvalidID(t *testing.T) {
+	uc := NewUseCase(&mockRepo{}, &mockAI{}, newMockProspectReader(), &mockLeadCreator{})
+	router := setupRouter(uc, uuid.New())
+
+	rr := doRequest(router, http.MethodPatch, "/api/sequences/bad-id/approval", map[string]bool{"require_approval": true})
+	assert.Equal(t, http.StatusBadRequest, rr.Code)
+}
+
+func TestHandler_SetApproval_RepoError(t *testing.T) {
+	seqID := uuid.New()
+	caller := uuid.New()
+	repo := &mockRepo{
+		sequences:    []domain.Sequence{{ID: seqID, UserID: caller, Name: "x"}},
+		updateSeqErr: errors.New("db error"),
+	}
+	uc := NewUseCase(repo, &mockAI{}, newMockProspectReader(), &mockLeadCreator{})
+	router := setupRouter(uc, caller)
+
+	rr := doRequest(router, http.MethodPatch, "/api/sequences/"+seqID.String()+"/approval", map[string]bool{"require_approval": true})
+	assert.Equal(t, http.StatusInternalServerError, rr.Code)
+}
+
 func TestHandler_ToggleActive_InvalidID(t *testing.T) {
 	uc := NewUseCase(&mockRepo{}, &mockAI{}, newMockProspectReader(), &mockLeadCreator{})
 	router := setupRouter(uc, uuid.New())

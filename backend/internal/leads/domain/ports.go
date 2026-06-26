@@ -33,6 +33,10 @@ type Repository interface {
 	// (with ArchivedAt populated) — used by the CSV export so a backup is
 	// complete. ListLeads, by contrast, hides archived leads (inbox feed).
 	ListAllLeads(ctx context.Context, userID uuid.UUID) ([]LeadWithSource, error)
+	// ListArchivedLeads returns ONLY archived leads (archived_at IS NOT NULL),
+	// newest-archived first — the inverse of ListLeads. Backs the archive view
+	// where leads hidden from the working feed are inspected and unarchived.
+	ListArchivedLeads(ctx context.Context, userID uuid.UUID) ([]LeadWithSource, error)
 	GetLead(ctx context.Context, id uuid.UUID) (*Lead, error)
 	// GetLeadForUser returns the lead iff it belongs to userID; returns nil
 	// otherwise (ownership mismatch indistinguishable from not-found at this

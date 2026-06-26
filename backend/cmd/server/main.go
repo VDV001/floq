@@ -26,6 +26,7 @@ import (
 	"github.com/daniil/floq/internal/chat"
 	"github.com/daniil/floq/internal/config"
 	"github.com/daniil/floq/internal/db"
+	"github.com/daniil/floq/internal/enrichment"
 	"github.com/daniil/floq/internal/httputil"
 	"github.com/daniil/floq/internal/inbox"
 	"github.com/daniil/floq/internal/inbox/attachments"
@@ -68,24 +69,122 @@ const (
 	authRegisterRateWindow = time.Hour
 )
 
+// verifySecretsExitCode maps the per-module "needs rotation" counts from
+// -verify-secrets-kek to a process exit code. Any secret still readable only
+// under the old KEK (bad>0 in either module) must block removal of
+// FLOQ_SECRETS_KEK_OLD, so a non-zero total yields a non-zero exit.
+func verifySecretsExitCode(settingsBad, onecBad int) int {
+	if settingsBad+onecBad > 0 {
+		return 1
+	}
+	return 0
+}
+
 func main() {
 	// Load .env file (ignore error if missing — production uses real env vars).
 	_ = godotenv.Load()
 
-	// -backfill-secrets runs the one-off at-rest encryption backfill (migration
-	// 037 → 038 transition) and exits without starting the server.
+	// -backfill-secrets encrypts legacy plaintext secrets into their *_enc
+	// columns and exits WITHOUT running migrations. Run it before deploying the
+	// migration 047 drop if its guard reports un-backfilled rows. Requires a
+	// schema that already has the *_enc columns (>= migration 037).
 	backfillSecrets := flag.Bool("backfill-secrets", false,
 		"encrypt legacy plaintext secrets into their *_enc columns, then exit")
+	// -rotate-secrets re-encrypts every stored secret under the primary KEK
+	// (FLOQ_SECRETS_KEK), decrypting via the fallback (FLOQ_SECRETS_KEK_OLD)
+	// when needed, then exits WITHOUT running migrations. Run it during a KEK
+	// rotation, after deploying with both keys set.
+	rotateSecrets := flag.Bool("rotate-secrets", false,
+		"re-encrypt every stored secret under the primary KEK, then exit")
+	// -verify-secrets-kek is a read-only check that every stored secret
+	// decrypts under the PRIMARY KEK alone. It exits non-zero if any secret
+	// still needs rotation, so it gates removing FLOQ_SECRETS_KEK_OLD.
+	verifySecretsKEK := flag.Bool("verify-secrets-kek", false,
+		"verify every stored secret decrypts under the primary KEK (exit non-zero if not), then exit")
 	flag.Parse()
 
 	cfg := config.Load()
 
 	// 0a. Secret cipher (at-rest encryption for client credentials). Fail
 	// fast: a missing or malformed FLOQ_SECRETS_KEK must crash the server,
-	// never fall back to storing credentials in plaintext.
-	secretCipher, err := secrets.NewCipher(cfg.SecretsKEK)
+	// never fall back to storing credentials in plaintext. The optional
+	// FLOQ_SECRETS_KEK_OLD is a decrypt-only fallback active during a rotation
+	// window; a present-but-malformed old KEK also fails fast.
+	secretCipher, err := secrets.NewCipherWithFallback(cfg.SecretsKEK, cfg.SecretsKEKOld)
 	if err != nil {
-		log.Fatalf("FLOQ_SECRETS_KEK invalid (must be base64-encoded 32 bytes): %v", err)
+		log.Fatalf("FLOQ_SECRETS_KEK/FLOQ_SECRETS_KEK_OLD invalid (must be base64-encoded 32 bytes): %v", err)
+	}
+
+	// 1. DB pool
+	pool, err := pgxpool.New(context.Background(), cfg.DatabaseURL)
+	if err != nil {
+		log.Fatalf("connect to db: %v", err)
+	}
+	defer pool.Close()
+
+	// 1a2. One-off secret backfill (run before migration 047). Encrypts any
+	// legacy plaintext secret into its *_enc/*_nonce columns, then exits WITHOUT
+	// running migrations — so it can prepare a pre-047 schema for the 047
+	// drop-guard even when this binary already contains migration 047. Requires
+	// a schema between migrations 037 and 047 (the plaintext + *_enc columns
+	// must both exist); idempotent (only touches plaintext-set, *_enc-NULL
+	// rows). Placed before the proxy/analytics wiring so the command pulls up
+	// only the one pool it needs.
+	if *backfillSecrets {
+		nSettings, err := settings.BackfillSecrets(context.Background(), pool, secretCipher)
+		if err != nil {
+			log.Fatalf("backfill settings secrets: %v", err)
+		}
+		nOnec, err := onec.BackfillSecrets(context.Background(), pool, secretCipher)
+		if err != nil {
+			log.Fatalf("backfill onec secrets: %v", err)
+		}
+		log.Printf("secret backfill complete: %d settings secrets, %d 1C secrets encrypted", nSettings, nOnec)
+		return
+	}
+
+	// 1a3. One-off KEK rotation (run during a key rotation, after deploying with
+	// both FLOQ_SECRETS_KEK=<new> and FLOQ_SECRETS_KEK_OLD=<old>). Re-encrypts
+	// every stored secret under the primary KEK, decrypting old-key ciphertext
+	// via the fallback, then exits WITHOUT migrating. Convergent and safe to
+	// repeat; aborts loudly on a secret that decrypts under neither key.
+	if *rotateSecrets {
+		nSettings, err := settings.RotateSecrets(context.Background(), pool, secretCipher)
+		if err != nil {
+			log.Fatalf("rotate settings secrets: %v", err)
+		}
+		nOnec, err := onec.RotateSecrets(context.Background(), pool, secretCipher)
+		if err != nil {
+			log.Fatalf("rotate onec secrets: %v", err)
+		}
+		log.Printf("secret rotation complete: %d settings secrets, %d 1C secrets re-encrypted under the primary KEK", nSettings, nOnec)
+		return
+	}
+
+	// 1a4. One-off rotation verification (read-only). Proves every stored secret
+	// decrypts under the PRIMARY KEK alone, using a primary-only cipher (no
+	// fallback). Exits non-zero if any secret still needs rotation, so it gates
+	// safely removing FLOQ_SECRETS_KEK_OLD after a rotation.
+	if *verifySecretsKEK {
+		primaryOnly, err := secrets.NewCipher(cfg.SecretsKEK)
+		if err != nil {
+			log.Fatalf("FLOQ_SECRETS_KEK invalid: %v", err)
+		}
+		okS, badS, err := settings.VerifySecretsKEK(context.Background(), pool, primaryOnly)
+		if err != nil {
+			log.Fatalf("verify settings secrets: %v", err)
+		}
+		okO, badO, err := onec.VerifySecretsKEK(context.Background(), pool, primaryOnly)
+		if err != nil {
+			log.Fatalf("verify onec secrets: %v", err)
+		}
+		log.Printf("secret KEK verification: under-primary=%d needs-rotation=%d (settings ok=%d bad=%d, 1C ok=%d bad=%d)",
+			okS+okO, badS+badO, okS, badS, okO, badO)
+		if code := verifySecretsExitCode(badS, badO); code != 0 {
+			log.Printf("WARNING: %d secret(s) still need rotation — do NOT remove FLOQ_SECRETS_KEK_OLD", badS+badO)
+			os.Exit(code)
+		}
+		return
 	}
 
 	// 0. Proxy provider (empty PROXY_URL = direct connection)
@@ -95,13 +194,6 @@ func main() {
 	}
 	httpClient := proxyProvider.HTTPClient()
 	proxyDialer := proxyProvider.Dialer() // non-nil for SOCKS5 only
-
-	// 1. DB pool
-	pool, err := pgxpool.New(context.Background(), cfg.DatabaseURL)
-	if err != nil {
-		log.Fatalf("connect to db: %v", err)
-	}
-	defer pool.Close()
 
 	// 1a. Read-only analytics pool. A separate pool/config from its own DSN
 	// so heavy analytics aggregations are isolated from the OLTP path; all
@@ -122,6 +214,7 @@ func main() {
 	}
 	// golang-migrate pgx/v5 driver uses "pgx5://" scheme
 	migrateDBURL := strings.Replace(cfg.DatabaseURL, "postgres://", "pgx5://", 1)
+	migrated := false
 	for attempt := 1; attempt <= 5; attempt++ {
 		m, err := migrate.New(migrationsPath, migrateDBURL)
 		if err != nil {
@@ -135,22 +228,14 @@ func main() {
 		}
 		log.Println("migrations applied")
 		m.Close()
+		migrated = true
 		break
 	}
-
-	// 1c. One-off secret backfill: encrypt legacy plaintext secrets, then exit.
-	// Idempotent, so it is safe to re-run if a previous pass was interrupted.
-	if *backfillSecrets {
-		nSettings, err := settings.BackfillSecrets(context.Background(), pool, secretCipher)
-		if err != nil {
-			log.Fatalf("backfill settings secrets: %v", err)
-		}
-		nOnec, err := onec.BackfillSecrets(context.Background(), pool, secretCipher)
-		if err != nil {
-			log.Fatalf("backfill onec secrets: %v", err)
-		}
-		log.Printf("secret backfill complete: %d settings secrets, %d 1C secrets encrypted", nSettings, nOnec)
-		return
+	// Fail fast instead of booting against an un-migrated schema: if every
+	// attempt to reach the DB failed, the server would otherwise come up
+	// half-initialised and serve against stale/missing tables.
+	if !migrated {
+		log.Fatalf("migrations: could not connect to the database after 5 attempts")
 	}
 
 	// 2. Settings store (reads user_settings from DB, used by services)
@@ -272,9 +357,48 @@ func main() {
 		leads.WithIdentityReader(identityRepo),
 		leads.WithPendingReplyCounter(newPendingReplyCounterAdapter(pendingReplyRepo)),
 		leads.WithLogger(slog.Default())) // sender set after bot init
+	// Auto-enrichment (#182): background scraping of a lead/prospect's company
+	// domain. The same usecase is the cron worker and the read API, and is
+	// injected as the best-effort enqueuer into prospects + inbox.
+	// Phase-2 (#186): when ENRICHMENT_LLM_ENABLED, wrap the deterministic HTML
+	// extractor in a ChainExtractor that overlays LLM-classified industry/size.
+	// Default off (ship dark); the LLM call goes through the audit-recording
+	// provider via a cost-capped adapter.
+	var enrichmentExtractor enrichment.Extractor = enrichment.NewHTMLExtractor()
+	if cfg.EnrichmentLLMEnabled {
+		llmExtractor := enrichment.NewLLMExtractor(
+			newEnrichmentLLMAdapter(wrappedProvider, cfg.EnrichmentLLMMaxInputRunes, cfg.EnrichmentLLMMaxTokens),
+		)
+		enrichmentExtractor = enrichment.NewChainExtractor(enrichment.NewHTMLExtractor(), llmExtractor, slog.Default())
+		slog.Default().Info("enrichment: LLM extractor enabled (#186)")
+	}
+	// Phase-3 (#188): when ENRICHMENT_REGISTRY_ENABLED and a DaData key is set,
+	// add a best-effort registry Enricher that merges legal details (ИНН/ОГРН/…)
+	// after extraction. Ship dark: an empty key keeps it disabled even if the
+	// flag is on.
+	var enrichmentOpts []enrichment.Option
+	if cfg.EnrichmentRegistryEnabled && cfg.DaDataAPIKey != "" {
+		registryEnricher := newDaDataEnricher(httpClient, cfg.DaDataAPIKey, "",
+			newLimiter(cfg.EnrichmentRegistryRateLimitPerMin, time.Minute))
+		registryEnricher.observe = appMetrics.OnRegistryEnrichment
+		enrichmentOpts = append(enrichmentOpts, enrichment.WithEnricher(registryEnricher))
+		slog.Default().Info("enrichment: registry enricher enabled (#188)")
+	}
+	enrichmentUC := enrichment.NewUseCase(
+		enrichment.NewRepository(pool),
+		enrichment.NewWebsiteFetcher(),
+		enrichmentExtractor,
+		newLimiter(cfg.EnrichmentRateLimitPerMin, time.Minute),
+		enrichment.Config{
+			TTLSeconds:  cfg.EnrichmentTTLDays * 24 * 60 * 60,
+			MaxAttempts: cfg.EnrichmentMaxAttempts,
+			BatchLimit:  cfg.EnrichmentBatchLimit,
+		},
+		slog.Default(), enrichmentOpts...)
 	prospectsUC := prospects.NewUseCase(prospectsRepo,
 		prospects.WithLeadChecker(newLeadCheckerAdapter(leadsRepo)),
-		prospects.WithIdentityLinker(identityLinker))
+		prospects.WithIdentityLinker(identityLinker),
+		prospects.WithEnricher(enrichmentUC))
 	sourcesUC := sources.NewUseCase(sourcesRepo, sources.WithStatsReader(sourcesRepo))
 	migrateOrphanProspects(pool, ownerID)
 	emailConfigChecker := emailConfigCheckerAdapter{
@@ -364,6 +488,7 @@ func main() {
 		r.Use(auth.AuthMiddleware(cfg.JWTSecret))
 		leads.RegisterRoutes(r, leadsUC)
 		prospects.RegisterRoutes(r, prospectsUC)
+		enrichment.RegisterRoutes(r, enrichmentUC)
 		sequences.RegisterRoutes(r, sequencesUC)
 		sources.RegisterRoutes(r, sourcesUC)
 		verify.RegisterRoutes(r, verify.NewUseCase(prospectsRepo, verify.NewBotTelegramVerifier(nil), proxyDialer)) // TG bot passed as nil for now
@@ -429,6 +554,9 @@ func main() {
 	// unbounded growth of the cost ledger. Stops on ctx.
 	auditRetentionUC := audit.NewRetentionUseCase(auditRepo, cfg.AuditRetentionDays)
 	go audit.NewRetentionCron(auditRetentionUC, cfg.AuditRetentionInterval, slog.Default()).Start(ctx)
+
+	// Auto-enrichment worker (#182): scrapes due company domains each tick.
+	go enrichment.NewEnrichmentCron(enrichmentUC, cfg.EnrichmentRefreshInterval, slog.Default()).Start(ctx)
 
 	// Analytics matview refresh cron — rebuilds the funnel materialized views
 	// CONCURRENTLY off the OLTP path so the dashboard serves fresh aggregates
@@ -520,6 +648,7 @@ func main() {
 	emailPoller := inbox.NewEmailPoller(inboxCfg, ownerID, cfg.IMAPHost, cfg.IMAPPort, cfg.IMAPUser, cfg.IMAPPassword, inboxLeadAdapter, prospectAdapter, sequencesRepo, inboxAI, proxyDialer,
 		inbox.WithAttachmentAnalyzer(attachmentAnalyzer),
 		inbox.WithIdentityLinker(identityLinker),
+		inbox.WithEmailEnricher(enrichmentUC),
 		inbox.WithEmailBookingLink(cfg.BookingLink))
 	// Cycle-break the same way the telegram bot does: poller depends
 	// on a proposer that depends on a dispatcher that may depend on

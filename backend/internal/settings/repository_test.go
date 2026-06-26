@@ -91,14 +91,18 @@ func TestRepository_GetSettings_HappyPath(t *testing.T) {
 					return nil
 				}}
 			},
-			// user_settings
+			// user_settings — projection after 047 (no plaintext secret cols):
+			// telegram_bot_active(0), ai_provider(7), ai_model(8); the
+			// telegram_bot_token comes from its ciphertext at index 21/22.
 			func() pgx.Row {
 				return &fakeRow{scanFn: func(dest ...any) error {
-					// Set some fields via scan
-					if p, ok := dest[0].(*string); ok { *p = "bot-token-123" }    // telegram_bot_token
-					if p, ok := dest[1].(*bool); ok { *p = true }                  // telegram_bot_active
-					if p, ok := dest[11].(*string); ok { *p = "openai" }            // ai_provider
-					if p, ok := dest[12].(*string); ok { *p = "gpt-4o" }            // ai_model
+					if p, ok := dest[0].(*bool); ok { *p = true }            // telegram_bot_active
+					if p, ok := dest[7].(*string); ok { *p = "openai" }      // ai_provider
+					if p, ok := dest[8].(*string); ok { *p = "gpt-4o" }      // ai_model
+					if len(dest) > 22 {
+						if p, ok := dest[21].(*[]byte); ok { *p = []byte("enc:bot-token-123") }
+						if p, ok := dest[22].(*[]byte); ok { *p = []byte("nonce") }
+					}
 					return nil
 				}}
 			},
@@ -193,7 +197,9 @@ func TestRepository_GetStoredIMAPPassword(t *testing.T) {
 		queryRowFns: []func() pgx.Row{
 			func() pgx.Row {
 				return &fakeRow{scanFn: func(dest ...any) error {
-					if p, ok := dest[0].(*string); ok { *p = "secret-password" }
+					// SELECT imap_password_enc, imap_password_nonce (047 dropped plaintext).
+					if p, ok := dest[0].(*[]byte); ok { *p = []byte("enc:secret-password") }
+					if p, ok := dest[1].(*[]byte); ok { *p = []byte("nonce") }
 					return nil
 				}}
 			},
@@ -234,9 +240,13 @@ func TestStore_GetConfig_HappyPath(t *testing.T) {
 		queryRowFns: []func() pgx.Row{
 			func() pgx.Row {
 				return &fakeRow{scanFn: func(dest ...any) error {
-					if p, ok := dest[0].(*string); ok { *p = "re_key_123" }   // resend_api_key
-					if p, ok := dest[1].(*string); ok { *p = "smtp.test.com" } // smtp_host
-					if p, ok := dest[5].(*string); ok { *p = "openai" }        // ai_provider
+					// GetConfig projection after 047: smtp_host(0), ai_provider(3),
+					// then enc/nonce pairs. resend_api_key comes from its
+					// ciphertext (resend_api_key_enc at index 8).
+					if p, ok := dest[0].(*string); ok { *p = "smtp.test.com" } // smtp_host
+					if p, ok := dest[3].(*string); ok { *p = "openai" }        // ai_provider
+					if p, ok := dest[8].(*[]byte); ok { *p = []byte("enc:re_key_123") }
+					if p, ok := dest[9].(*[]byte); ok { *p = []byte("nonce") }
 					return nil
 				}}
 			},
@@ -279,11 +289,12 @@ func TestRepository_UpdateSettings_EncryptsSecretColumn(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	// Writes the encrypted byte columns AND blanks the legacy plaintext
-	// column, so an old plaintext secret cannot survive a re-save.
+	// Writes ONLY the encrypted byte columns — the legacy plaintext column was
+	// dropped in migration 047, so it must not appear in the write at all.
 	assert.Contains(t, q.lastExecSQL, "imap_password_enc")
 	assert.Contains(t, q.lastExecSQL, "imap_password_nonce")
-	assert.Contains(t, q.lastExecSQL, "imap_password = ''")
+	assert.NotContains(t, q.lastExecSQL, "imap_password = ''")
+	assert.NotContains(t, q.lastExecSQL, "imap_password,")
 
 	foundCT := false
 	for _, a := range q.lastExecArgs {
@@ -327,12 +338,11 @@ func TestRepository_GetSettings_DecryptsEncColumns(t *testing.T) {
 			},
 			func() pgx.Row {
 				return &fakeRow{scanFn: func(dest ...any) error {
-					// Stale plaintext imap_password (index 5) must be ignored.
-					if p, ok := dest[5].(*string); ok { *p = "STALE" }
-					// Fresh encrypted imap_password at indices 28/29.
-					if len(dest) > 29 {
-						if p, ok := dest[28].(*[]byte); ok { *p = []byte("enc:fresh-pw") }
-						if p, ok := dest[29].(*[]byte); ok { *p = []byte("nonce") }
+					// Encrypted imap_password at indices 23/24 (plaintext column
+					// dropped in 047, so it is no longer in the projection).
+					if len(dest) > 24 {
+						if p, ok := dest[23].(*[]byte); ok { *p = []byte("enc:fresh-pw") }
+						if p, ok := dest[24].(*[]byte); ok { *p = []byte("nonce") }
 					}
 					return nil
 				}}
@@ -345,40 +355,15 @@ func TestRepository_GetSettings_DecryptsEncColumns(t *testing.T) {
 	assert.Equal(t, "fresh-pw", s.IMAPPassword)
 }
 
-func TestRepository_GetSettings_FallbackToPlaintextWhenEncNull(t *testing.T) {
-	q := &fakeQuerier{
-		queryRowFns: []func() pgx.Row{
-			func() pgx.Row {
-				return &fakeRow{scanFn: func(dest ...any) error {
-					if p, ok := dest[0].(*string); ok { *p = "U" }
-					if p, ok := dest[1].(*string); ok { *p = "u@x" }
-					return nil
-				}}
-			},
-			func() pgx.Row {
-				return &fakeRow{scanFn: func(dest ...any) error {
-					// Plaintext present, enc columns left nil (not yet backfilled).
-					if p, ok := dest[5].(*string); ok { *p = "legacy-pw" }
-					return nil
-				}}
-			},
-		},
-	}
-	r := NewRepositoryFromQuerier(q, fakeCipher{})
-	s, err := r.GetSettings(context.Background(), uuid.New())
-	require.NoError(t, err)
-	assert.Equal(t, "legacy-pw", s.IMAPPassword)
-}
-
 func TestRepository_GetStoredIMAPPassword_DecryptsEnc(t *testing.T) {
 	q := &fakeQuerier{
 		queryRowFns: []func() pgx.Row{
 			func() pgx.Row {
 				return &fakeRow{scanFn: func(dest ...any) error {
-					if p, ok := dest[0].(*string); ok { *p = "STALE" }
-					if len(dest) > 2 {
-						if p, ok := dest[1].(*[]byte); ok { *p = []byte("enc:real-pw") }
-						if p, ok := dest[2].(*[]byte); ok { *p = []byte("nonce") }
+					// SELECT imap_password_enc, imap_password_nonce.
+					if len(dest) > 1 {
+						if p, ok := dest[0].(*[]byte); ok { *p = []byte("enc:real-pw") }
+						if p, ok := dest[1].(*[]byte); ok { *p = []byte("nonce") }
 					}
 					return nil
 				}}
@@ -412,10 +397,11 @@ func TestStore_GetConfig_DecryptsSecrets(t *testing.T) {
 		queryRowFns: []func() pgx.Row{
 			func() pgx.Row {
 				return &fakeRow{scanFn: func(dest ...any) error {
-					if p, ok := dest[11].(*string); ok { *p = "STALE" } // imap_password plaintext
-					if len(dest) > 20 {
-						if p, ok := dest[19].(*[]byte); ok { *p = []byte("enc:imap-real") }
-						if p, ok := dest[20].(*[]byte); ok { *p = []byte("nonce") }
+					// GetConfig projection (plaintext columns dropped in 047):
+					// imap_password_enc/_nonce land at indices 14/15.
+					if len(dest) > 15 {
+						if p, ok := dest[14].(*[]byte); ok { *p = []byte("enc:imap-real") }
+						if p, ok := dest[15].(*[]byte); ok { *p = []byte("nonce") }
 					}
 					return nil
 				}}

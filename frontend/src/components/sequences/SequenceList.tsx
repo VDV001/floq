@@ -8,6 +8,7 @@ interface SequenceListProps {
   selectedSeqId: string | null;
   onSelect: (id: string) => void;
   onToggle: (id: string, isActive: boolean) => void;
+  onApprovalToggle: (id: string, requireApproval: boolean) => void;
   onEdit: (seq: Sequence) => void;
   onDelete: (seq: Sequence) => void;
 }
@@ -18,6 +19,7 @@ export function SequenceList({
   selectedSeqId,
   onSelect,
   onToggle,
+  onApprovalToggle,
   onEdit,
   onDelete,
 }: SequenceListProps) {
@@ -43,6 +45,7 @@ export function SequenceList({
           isSelected={seq.id === selectedSeqId}
           onSelect={() => onSelect(seq.id)}
           onToggle={(isActive) => onToggle(seq.id, isActive)}
+          onApprovalToggle={(requireApproval) => onApprovalToggle(seq.id, requireApproval)}
           onEdit={() => onEdit(seq)}
           onDelete={() => onDelete(seq)}
         />

@@ -7,11 +7,12 @@ interface SequenceCardProps {
   isSelected: boolean;
   onSelect: () => void;
   onToggle: (isActive: boolean) => void;
+  onApprovalToggle: (requireApproval: boolean) => void;
   onEdit: () => void;
   onDelete: () => void;
 }
 
-export function SequenceCard({ sequence, isSelected, onSelect, onToggle, onEdit, onDelete }: SequenceCardProps) {
+export function SequenceCard({ sequence, isSelected, onSelect, onToggle, onApprovalToggle, onEdit, onDelete }: SequenceCardProps) {
   return (
     <div
       onClick={onSelect}
@@ -40,7 +41,11 @@ export function SequenceCard({ sequence, isSelected, onSelect, onToggle, onEdit,
 
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
-          <Switch checked={sequence.is_active} onCheckedChange={(checked) => onToggle(checked)} />
+          <Switch
+            aria-label="Активность секвенции"
+            checked={sequence.is_active}
+            onCheckedChange={(checked) => onToggle(checked)}
+          />
           <span className="text-[10px] font-bold uppercase text-[#737686]">
             {sequence.is_active ? "Активна" : "На паузе"}
           </span>
@@ -59,6 +64,19 @@ export function SequenceCard({ sequence, isSelected, onSelect, onToggle, onEdit,
             Удалить
           </button>
         </div>
+      </div>
+
+      {/* Outbound HITL gate (#180): when on, this sequence's messages wait for
+          operator approval before sending — overriding autopilot. */}
+      <div className="mt-3 flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
+        <Switch
+          aria-label="Требовать одобрение перед отправкой"
+          checked={sequence.require_approval}
+          onCheckedChange={(checked) => onApprovalToggle(checked)}
+        />
+        <span className="text-[10px] font-bold uppercase text-[#737686]">
+          Одобрять перед отправкой
+        </span>
       </div>
     </div>
   );

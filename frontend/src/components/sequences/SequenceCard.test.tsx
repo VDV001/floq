@@ -5,8 +5,10 @@ import { SequenceCard } from "./SequenceCard";
 import type { Sequence } from "@/lib/api";
 
 vi.mock("@/components/ui/switch", () => ({
-  Switch: ({ checked, onCheckedChange }: { checked: boolean; onCheckedChange: (v: boolean) => void }) => (
-    <button data-testid="switch" onClick={() => onCheckedChange(!checked)}>
+  // Forward aria-label + role so the two switches (active / approval) are
+  // distinguishable by accessible name, mirroring the real Base UI Switch.
+  Switch: ({ checked, onCheckedChange, ...props }: { checked: boolean; onCheckedChange: (v: boolean) => void; [k: string]: unknown }) => (
+    <button role="switch" aria-checked={checked} aria-label={props["aria-label"] as string} onClick={() => onCheckedChange(!checked)}>
       {checked ? "on" : "off"}
     </button>
   ),
@@ -22,15 +24,20 @@ function makeSequence(overrides: Partial<Sequence> = {}): Sequence {
     user_id: "u-1",
     name: "Cold Outreach",
     is_active: true,
+    require_approval: false,
     created_at: "2026-01-15T10:00:00Z",
     ...overrides,
   };
 }
 
+const ACTIVE_SWITCH = { name: "Активность секвенции" };
+const APPROVAL_SWITCH = { name: "Требовать одобрение перед отправкой" };
+
 const defaultProps = {
   isSelected: false,
   onSelect: vi.fn(),
   onToggle: vi.fn(),
+  onApprovalToggle: vi.fn(),
   onEdit: vi.fn(),
   onDelete: vi.fn(),
 };
@@ -58,13 +65,30 @@ describe("SequenceCard", () => {
     expect(onSelect).toHaveBeenCalledTimes(1);
   });
 
-  it("calls onToggle via switch", async () => {
+  it("calls onToggle via the active switch", async () => {
     const onToggle = vi.fn();
     render(<SequenceCard sequence={makeSequence()} {...defaultProps} onToggle={onToggle} />);
 
-    await userEvent.click(screen.getByTestId("switch"));
+    await userEvent.click(screen.getByRole("switch", ACTIVE_SWITCH));
 
     expect(onToggle).toHaveBeenCalledWith(false);
+  });
+
+  it("calls onApprovalToggle via the approval switch", async () => {
+    const onApprovalToggle = vi.fn();
+    render(
+      <SequenceCard sequence={makeSequence({ require_approval: false })} {...defaultProps} onApprovalToggle={onApprovalToggle} />
+    );
+
+    await userEvent.click(screen.getByRole("switch", APPROVAL_SWITCH));
+
+    expect(onApprovalToggle).toHaveBeenCalledWith(true);
+  });
+
+  it("reflects the approval gate state on its switch", () => {
+    render(<SequenceCard sequence={makeSequence({ require_approval: true })} {...defaultProps} />);
+
+    expect(screen.getByRole("switch", APPROVAL_SWITCH)).toHaveTextContent("on");
   });
 
   it("calls onEdit without triggering onSelect", async () => {

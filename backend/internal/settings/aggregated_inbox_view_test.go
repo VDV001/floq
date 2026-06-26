@@ -45,9 +45,9 @@ func TestRepository_GetSettings_AggregatedInboxViewDefaultsTrue(t *testing.T) {
 }
 
 // TestRepository_GetSettings_AggregatedInboxViewFromDB asserts the DB
-// value overrides the default. Scan index 25 corresponds to
-// aggregated_inbox_view per the SELECT list (added after
-// ai_style_check_enabled at index 24).
+// value overrides the default. Scan index 20 corresponds to
+// aggregated_inbox_view (right after ai_style_check_enabled at index 19)
+// once migration 047 dropped the 5 plaintext secret columns.
 func TestRepository_GetSettings_AggregatedInboxViewFromDB(t *testing.T) {
 	q := &fakeQuerier{
 		queryRowFns: []func() pgx.Row{
@@ -64,7 +64,7 @@ func TestRepository_GetSettings_AggregatedInboxViewFromDB(t *testing.T) {
 			},
 			func() pgx.Row {
 				return &fakeRow{scanFn: func(dest ...any) error {
-					if p, ok := dest[25].(*bool); ok {
+					if p, ok := dest[20].(*bool); ok {
 						*p = false
 					}
 					return nil

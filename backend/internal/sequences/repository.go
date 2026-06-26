@@ -30,7 +30,7 @@ func (r *Repository) conn(ctx context.Context) db.Querier {
 
 func (r *Repository) ListSequences(ctx context.Context, userID uuid.UUID) ([]domain.Sequence, error) {
 	rows, err := r.conn(ctx).Query(ctx,
-		`SELECT id, user_id, name, is_active, created_at
+		`SELECT id, user_id, name, is_active, require_approval, created_at
 		 FROM sequences WHERE user_id = $1 ORDER BY created_at DESC`, userID)
 	if err != nil {
 		return nil, fmt.Errorf("list sequences: %w", err)
@@ -40,7 +40,7 @@ func (r *Repository) ListSequences(ctx context.Context, userID uuid.UUID) ([]dom
 	var seqs []domain.Sequence
 	for rows.Next() {
 		var s domain.Sequence
-		if err := rows.Scan(&s.ID, &s.UserID, &s.Name, &s.IsActive, &s.CreatedAt); err != nil {
+		if err := rows.Scan(&s.ID, &s.UserID, &s.Name, &s.IsActive, &s.RequireApproval, &s.CreatedAt); err != nil {
 			return nil, fmt.Errorf("scan sequence: %w", err)
 		}
 		seqs = append(seqs, s)
@@ -51,9 +51,9 @@ func (r *Repository) ListSequences(ctx context.Context, userID uuid.UUID) ([]dom
 func (r *Repository) GetSequence(ctx context.Context, id uuid.UUID) (*domain.Sequence, error) {
 	var s domain.Sequence
 	err := r.conn(ctx).QueryRow(ctx,
-		`SELECT id, user_id, name, is_active, created_at
+		`SELECT id, user_id, name, is_active, require_approval, created_at
 		 FROM sequences WHERE id = $1`, id).
-		Scan(&s.ID, &s.UserID, &s.Name, &s.IsActive, &s.CreatedAt)
+		Scan(&s.ID, &s.UserID, &s.Name, &s.IsActive, &s.RequireApproval, &s.CreatedAt)
 	if err == pgx.ErrNoRows {
 		return nil, nil
 	}
@@ -65,9 +65,9 @@ func (r *Repository) GetSequence(ctx context.Context, id uuid.UUID) (*domain.Seq
 
 func (r *Repository) CreateSequence(ctx context.Context, s *domain.Sequence) error {
 	_, err := r.conn(ctx).Exec(ctx,
-		`INSERT INTO sequences (id, user_id, name, is_active, created_at)
-		 VALUES ($1, $2, $3, $4, $5)`,
-		s.ID, s.UserID, s.Name, s.IsActive, s.CreatedAt)
+		`INSERT INTO sequences (id, user_id, name, is_active, require_approval, created_at)
+		 VALUES ($1, $2, $3, $4, $5, $6)`,
+		s.ID, s.UserID, s.Name, s.IsActive, s.RequireApproval, s.CreatedAt)
 	if err != nil {
 		return fmt.Errorf("create sequence: %w", err)
 	}
@@ -76,8 +76,8 @@ func (r *Repository) CreateSequence(ctx context.Context, s *domain.Sequence) err
 
 func (r *Repository) UpdateSequence(ctx context.Context, s *domain.Sequence) error {
 	_, err := r.conn(ctx).Exec(ctx,
-		`UPDATE sequences SET name = $1, is_active = $2 WHERE id = $3`,
-		s.Name, s.IsActive, s.ID)
+		`UPDATE sequences SET name = $1, is_active = $2, require_approval = $3 WHERE id = $4`,
+		s.Name, s.IsActive, s.RequireApproval, s.ID)
 	if err != nil {
 		return fmt.Errorf("update sequence: %w", err)
 	}

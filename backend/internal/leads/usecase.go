@@ -81,6 +81,12 @@ func (uc *UseCase) ListLeads(ctx context.Context, userID uuid.UUID) ([]domain.Le
 	return uc.repo.ListLeads(ctx, userID)
 }
 
+// ListArchivedLeads returns the user's archived leads (newest-archived first)
+// for the dedicated archive view. Active leads live in ListLeads.
+func (uc *UseCase) ListArchivedLeads(ctx context.Context, userID uuid.UUID) ([]domain.LeadWithSource, error) {
+	return uc.repo.ListArchivedLeads(ctx, userID)
+}
+
 func (uc *UseCase) GetLead(ctx context.Context, id uuid.UUID) (*domain.Lead, error) {
 	return uc.repo.GetLead(ctx, id)
 }

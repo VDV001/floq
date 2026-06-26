@@ -1,7 +1,8 @@
 "use client";
 
+import Link from "next/link";
 import { api } from "@/lib/api";
-import { Upload, Download } from "lucide-react";
+import { Upload, Download, Archive } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { FILTER_TABS } from "@/components/inbox/constants";
 import { PipelineSidebar } from "@/components/inbox/PipelineSidebar";
@@ -39,6 +40,11 @@ export default function InboxPage() {
               </p>
             </div>
             <div className="flex items-center gap-2 mr-4">
+              <Link href="/inbox/archived"
+                title="Заархивированные лиды — скрытые из ленты"
+                className="flex items-center gap-1.5 rounded-lg border border-[#c3c6d7]/30 bg-[#c3c6d7]/10 px-4 py-2 text-xs font-semibold text-[#0d1c2e] transition-all hover:bg-[#c3c6d7]/20">
+                <Archive className="size-4" /> Архив
+              </Link>
               <button onClick={() => api.exportLeadsCSV().catch((err) => notifyError(err, "Не удалось выгрузить лиды"))}
                 className="flex items-center gap-1.5 rounded-lg border border-[#c3c6d7]/30 bg-[#c3c6d7]/10 px-4 py-2 text-xs font-semibold text-[#0d1c2e] transition-all hover:bg-[#c3c6d7]/20">
                 <Download className="size-4" /> Экспорт

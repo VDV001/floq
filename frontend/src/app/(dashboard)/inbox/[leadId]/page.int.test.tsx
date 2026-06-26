@@ -28,10 +28,12 @@ function lead(over: Partial<Lead> = {}): Lead {
     company: over.company ?? "Acme",
     first_message: over.first_message ?? "Здравствуйте, интересует демо",
     status: over.status ?? "new",
+    email_address: over.email_address,
     source_name: over.source_name ?? "Источник A",
     created_at: over.created_at ?? "2026-06-25T10:00:00Z",
     updated_at: over.updated_at ?? "2026-06-25T10:00:00Z",
     pending_replies_count: over.pending_replies_count ?? 0,
+    archived_at: over.archived_at,
   };
 }
 
@@ -148,6 +150,27 @@ describe("lead detail page (integration)", () => {
     expect(screen.getByText("Поможем — расскажите подробнее")).toBeInTheDocument();
   });
 
+  it("renders the company enrichment card for an email lead", async () => {
+    mountWith({
+      lead: lead({ channel: "email", email_address: "ivan@acme.ru" }),
+      extra: [
+        http.get(url("/api/enrichment"), () =>
+          HttpResponse.json({
+            domain: "acme.ru",
+            status: "enriched",
+            profile: { title: "Acme LLC", description: "Делаем виджеты", emails: [], phones: [], socials: [] },
+          }),
+        ),
+      ],
+    });
+
+    renderPage();
+
+    expect(await screen.findByText("О компании")).toBeInTheDocument();
+    expect(await screen.findByText("Acme LLC")).toBeInTheDocument();
+    expect(screen.getByText("Делаем виджеты")).toBeInTheDocument();
+  });
+
   it("sends a manually typed reply through the API and refetches messages", async () => {
     const user = userEvent.setup({ delay: null });
     let sentBody: string | undefined;
@@ -245,6 +268,41 @@ describe("lead detail page (integration)", () => {
     expect(await screen.findByRole("button", { name: "Архив" })).toBeInTheDocument();
     expect(archiveHit).toBe(false);
     expect(pushMock).not.toHaveBeenCalled();
+  });
+
+  it("shows Разархивировать (not Архив) when the lead is archived", async () => {
+    mountWith({
+      lead: lead({ contact_name: "Архивный", archived_at: "2026-06-25T11:00:00Z" }),
+    });
+
+    renderPage();
+
+    expect(await screen.findByRole("button", { name: /Разархивировать/ })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Архив" })).not.toBeInTheDocument();
+  });
+
+  it("unarchives an archived lead via the API and swaps back to the Архив affordance", async () => {
+    const user = userEvent.setup({ delay: null });
+    let unarchiveHit = false;
+
+    mountWith({
+      lead: lead({ contact_name: "Вернуть", archived_at: "2026-06-25T11:00:00Z" }),
+      extra: [
+        http.post(url("/api/leads/lead-1/unarchive"), () => {
+          unarchiveHit = true;
+          return HttpResponse.json({ status: "active" });
+        }),
+      ],
+    });
+
+    renderPage();
+
+    await user.click(await screen.findByRole("button", { name: /Разархивировать/ }));
+
+    await waitFor(() => expect(unarchiveHit).toBe(true));
+    // The lead is active again → the button flips back to the archive control.
+    expect(await screen.findByRole("button", { name: "Архив" })).toBeInTheDocument();
+    expect(screen.getByText("Лид возвращён")).toBeInTheDocument();
   });
 
   it("surfaces an error and stays on the page when archive fails", async () => {

@@ -161,6 +161,14 @@ type IdentityLinker interface {
 	LinkLeadToIdentity(ctx context.Context, userID, leadID uuid.UUID, email, phone, telegramUsername string) error
 }
 
+// EnrichmentEnqueuer is the narrow port inbox needs from the enrichment
+// context: enqueue a best-effort background company-data lookup for a newly
+// created lead's email. Implementations must tolerate a free/personal or empty
+// email (a no-op); errors are logged, never block the inbound flow.
+type EnrichmentEnqueuer interface {
+	Enqueue(ctx context.Context, userID uuid.UUID, email string) error
+}
+
 // ReplyTarget is the inbox-local read model carrying the channel-native
 // destination for an approved reply: the lead's Telegram chat id and/or
 // email address. Neither value is derivable from a PendingReply alone —

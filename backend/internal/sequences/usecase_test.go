@@ -1069,6 +1069,45 @@ func TestToggleActive_NotFound(t *testing.T) {
 	require.Error(t, err)
 }
 
+func TestSetRequireApproval_LoadsAndPersists(t *testing.T) {
+	id := uuid.New()
+	owner := uuid.New()
+	repo := &mockRepo{sequences: []domain.Sequence{{ID: id, UserID: owner, Name: "x"}}}
+	uc := NewUseCase(repo, &mockAI{}, newMockProspectReader(), &mockLeadCreator{})
+
+	require.NoError(t, uc.SetRequireApproval(context.Background(), owner, id, true))
+	assert.True(t, repo.sequences[0].RequireApproval, "gate on should persist")
+
+	require.NoError(t, uc.SetRequireApproval(context.Background(), owner, id, false))
+	assert.False(t, repo.sequences[0].RequireApproval, "gate off should persist")
+}
+
+// The flag must be written through UpdateSequence — not left to the in-memory
+// pointer the mock happens to share. A failing UpdateSequence must surface.
+func TestSetRequireApproval_PersistError(t *testing.T) {
+	id := uuid.New()
+	owner := uuid.New()
+	repo := &mockRepo{
+		sequences:    []domain.Sequence{{ID: id, UserID: owner, Name: "x"}},
+		updateSeqErr: errors.New("db down"),
+	}
+	uc := NewUseCase(repo, &mockAI{}, newMockProspectReader(), &mockLeadCreator{})
+
+	err := uc.SetRequireApproval(context.Background(), owner, id, true)
+	require.Error(t, err, "a persistence failure must not be swallowed")
+}
+
+// Authorization: a caller may not flip the gate on a sequence they don't own.
+// Missing and foreign collapse to ErrSequenceNotOwned (→ 404, anti-enumeration).
+func TestSetRequireApproval_NotOwned(t *testing.T) {
+	id := uuid.New()
+	repo := &mockRepo{sequences: []domain.Sequence{{ID: id, UserID: uuid.New(), Name: "x"}}}
+	uc := NewUseCase(repo, &mockAI{}, newMockProspectReader(), &mockLeadCreator{})
+
+	err := uc.SetRequireApproval(context.Background(), uuid.New(), id, true)
+	require.ErrorIs(t, err, domain.ErrSequenceNotOwned)
+}
+
 func TestUpdateSequence(t *testing.T) {
 	id := uuid.New()
 	repo := &mockRepo{sequences: []domain.Sequence{{ID: id, Name: "Old"}}}

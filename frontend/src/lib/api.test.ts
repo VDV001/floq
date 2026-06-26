@@ -418,6 +418,20 @@ describe("api module", () => {
       expect(opts.method).toBe("POST");
     });
 
+    it("unarchiveLead → POST /api/leads/:id/unarchive", async () => {
+      await api.unarchiveLead("lead-1");
+      const [url, opts] = fetchMock.mock.calls[0];
+      expect(url).toBe("http://localhost:8080/api/leads/lead-1/unarchive");
+      expect(opts.method).toBe("POST");
+    });
+
+    it("getArchivedLeads → GET /api/leads/archived", async () => {
+      await api.getArchivedLeads();
+      const [url, opts] = fetchMock.mock.calls[0];
+      expect(url).toBe("http://localhost:8080/api/leads/archived");
+      expect(opts.method ?? "GET").toBe("GET");
+    });
+
     it("deleteProspect → DELETE /api/prospects/:id", async () => {
       await api.deleteProspect("p-123");
       const [url, opts] = fetchMock.mock.calls[0];
@@ -608,6 +622,7 @@ describe("api module", () => {
       { name: "launchSequence default sendNow=true", run: () => api.launchSequence("s1", ["p1"]), url: "/api/sequences/s1/launch", method: "POST", body: { prospect_ids: ["p1"], send_now: true } },
       { name: "launchSequence sendNow=false", run: () => api.launchSequence("s1", ["p1"], false), url: "/api/sequences/s1/launch", method: "POST", body: { prospect_ids: ["p1"], send_now: false } },
       { name: "toggleSequence", run: () => api.toggleSequence("s1", true), url: "/api/sequences/s1/toggle", method: "PATCH", body: { is_active: true } },
+      { name: "setRequireApproval", run: () => api.setRequireApproval("s1", true), url: "/api/sequences/s1/approval", method: "PATCH", body: { require_approval: true } },
       // Outbound
       { name: "getOutboundQueue", run: () => api.getOutboundQueue(), url: "/api/outbound/queue" },
       { name: "approveMessage", run: () => api.approveMessage("m1"), url: "/api/outbound/m1/approve", method: "POST" },

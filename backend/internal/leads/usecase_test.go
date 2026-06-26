@@ -53,6 +53,16 @@ func (m *mockRepo) ListAllLeads(_ context.Context, _ uuid.UUID) ([]domain.LeadWi
 	return result, nil
 }
 
+func (m *mockRepo) ListArchivedLeads(_ context.Context, _ uuid.UUID) ([]domain.LeadWithSource, error) {
+	var result []domain.LeadWithSource
+	for _, l := range m.leads {
+		if l.ArchivedAt != nil {
+			result = append(result, domain.LeadWithSource{Lead: *l})
+		}
+	}
+	return result, nil
+}
+
 func (m *mockRepo) GetLeadForUser(_ context.Context, userID, leadID uuid.UUID) (*domain.Lead, error) {
 	l, ok := m.leads[leadID]
 	if !ok || l.UserID != userID {

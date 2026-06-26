@@ -52,6 +52,13 @@ func (m *mockRepoErr) ListLeads(_ context.Context, _ uuid.UUID) ([]domain.LeadWi
 	return m.mockRepo.ListLeads(context.Background(), uuid.Nil)
 }
 
+func (m *mockRepoErr) ListArchivedLeads(_ context.Context, _ uuid.UUID) ([]domain.LeadWithSource, error) {
+	if m.listLeadsErr != nil {
+		return nil, m.listLeadsErr
+	}
+	return m.mockRepo.ListArchivedLeads(context.Background(), uuid.Nil)
+}
+
 func (m *mockRepoErr) GetLead(_ context.Context, id uuid.UUID) (*domain.Lead, error) {
 	if m.getLeadErr != nil {
 		return nil, m.getLeadErr

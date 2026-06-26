@@ -38,6 +38,7 @@ const mockSequences = [
     user_id: "u1",
     name: "Холодная рассылка",
     is_active: true,
+    require_approval: false,
     created_at: "2026-01-01T00:00:00Z",
   },
   {
@@ -45,6 +46,7 @@ const mockSequences = [
     user_id: "u1",
     name: "Фоллоуап",
     is_active: false,
+    require_approval: false,
     created_at: "2026-01-02T00:00:00Z",
   },
 ];

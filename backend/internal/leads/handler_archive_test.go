@@ -1,6 +1,7 @@
 package leads
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -66,6 +67,48 @@ func TestHandler_ArchiveLead_NoAuth401(t *testing.T) {
 	r.ServeHTTP(w, httptest.NewRequest("POST", "/api/leads/"+leadID.String()+"/archive", nil))
 
 	assert.Equal(t, http.StatusUnauthorized, w.Code)
+}
+
+func TestHandler_ListArchivedLeads_ReturnsOnlyArchived(t *testing.T) {
+	repo := newMockRepo()
+	userID := uuid.New()
+
+	active := &domain.Lead{ID: uuid.New(), UserID: userID, Channel: domain.ChannelEmail, Status: domain.StatusNew}
+	archived := &domain.Lead{ID: uuid.New(), UserID: userID, Channel: domain.ChannelTelegram, Status: domain.StatusNew}
+	require.NoError(t, archived.Archive())
+	repo.leads[active.ID] = active
+	repo.leads[archived.ID] = archived
+
+	r := newTestRouter(NewUseCase(repo, &mockAI{}, nil))
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, reqWithUser("GET", "/api/leads/archived", nil, userID))
+
+	require.Equal(t, http.StatusOK, w.Code)
+	var got []LeadResponse
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &got))
+	require.Len(t, got, 1, "only archived leads are returned")
+	assert.Equal(t, archived.ID, got[0].ID)
+	require.NotNil(t, got[0].ArchivedAt, "archived_at is exposed so the UI can render the unarchive affordance")
+}
+
+func TestHandler_ListArchivedLeads_NoAuth401(t *testing.T) {
+	repo := newMockRepo()
+	r := newTestRouter(NewUseCase(repo, &mockAI{}, nil))
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest("GET", "/api/leads/archived", nil))
+
+	assert.Equal(t, http.StatusUnauthorized, w.Code)
+}
+
+func TestHandler_ListArchivedLeads_Empty(t *testing.T) {
+	repo := newMockRepo()
+	userID := uuid.New()
+	r := newTestRouter(NewUseCase(repo, &mockAI{}, nil))
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, reqWithUser("GET", "/api/leads/archived", nil, userID))
+
+	require.Equal(t, http.StatusOK, w.Code)
+	assert.JSONEq(t, "[]", w.Body.String(), "empty archive returns [] not null")
 }
 
 func TestHandler_UnarchiveLead_Success(t *testing.T) {

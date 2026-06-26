@@ -146,8 +146,13 @@ export const api = {
       body: JSON.stringify({ refresh_token: refreshToken }),
     }),
 
+  // Enrichment (#182) — company data scraped by the sender's email domain.
+  getEnrichment: (email: string) =>
+    apiFetch<Enrichment>(`/api/enrichment?email=${encodeURIComponent(email)}`),
+
   // Leads
   getLeads: () => apiFetch<Lead[]>("/api/leads"),
+  getArchivedLeads: () => apiFetch<Lead[]>("/api/leads/archived"),
   getLead: (id: string) => apiFetch<Lead>(`/api/leads/${id}`),
   updateLeadStatus: (id: string, status: string) =>
     apiFetch(`/api/leads/${id}/status`, {
@@ -156,6 +161,8 @@ export const api = {
     }),
   archiveLead: (id: string) =>
     apiFetch(`/api/leads/${id}/archive`, { method: "POST" }),
+  unarchiveLead: (id: string) =>
+    apiFetch(`/api/leads/${id}/unarchive`, { method: "POST" }),
 
   exportLeadsCSV: () => apiDownload("/api/leads/export"),
   importLeadsCSV: (file: File) =>
@@ -331,6 +338,8 @@ export const api = {
     apiFetch(`/api/sequences/${seqId}/launch`, { method: "POST", body: JSON.stringify({ prospect_ids: prospectIds, send_now: sendNow }) }),
   toggleSequence: (seqId: string, isActive: boolean) =>
     apiFetch(`/api/sequences/${seqId}/toggle`, { method: "PATCH", body: JSON.stringify({ is_active: isActive }) }),
+  setRequireApproval: (seqId: string, requireApproval: boolean) =>
+    apiFetch(`/api/sequences/${seqId}/approval`, { method: "PATCH", body: JSON.stringify({ require_approval: requireApproval }) }),
 
   // Outbound
   getOutboundQueue: () => apiFetch<OutboundMessage[]>("/api/outbound/queue"),
@@ -459,6 +468,36 @@ export interface SourceStatItem {
   converted_count: number;
 }
 
+export interface EnrichmentProfile {
+  title: string;
+  description: string;
+  emails: string[];
+  phones: string[];
+  socials: string[];
+  // Phase-2 (#186) LLM-classified fields. Optional: legacy/un-enriched
+  // profiles omit them, and the API sends "" when unclassified.
+  industry?: string;
+  companySize?: string;
+  // Phase-3 (#188) registry (ЕГРЮЛ) details. Optional/zero when not looked up.
+  legal?: LegalDetails;
+}
+
+export interface LegalDetails {
+  inn?: string;
+  ogrn?: string;
+  fullName?: string;
+  address?: string;
+  okved?: string;
+  status?: string;
+}
+
+export interface Enrichment {
+  domain: string;
+  status: "pending" | "enriched" | "failed" | "none";
+  profile: EnrichmentProfile;
+  enrichedAt?: string;
+}
+
 export interface Lead {
   id: string;
   user_id: string;
@@ -473,6 +512,10 @@ export interface Lead {
   source_name?: string;
   created_at: string;
   updated_at: string;
+  /** Set only for archived leads. Present on the archive-view feed and on the
+   *  single-lead detail; absent for active leads. Clients use presence to
+   *  toggle between the archive and unarchive affordance. */
+  archived_at?: string;
   identity?: IdentitySummary;
   /** Count of HITL drafts on this lead awaiting operator decision.
    *  Omitted by the backend when zero; clients default to 0. */
@@ -658,6 +701,9 @@ export interface Sequence {
   user_id: string;
   name: string;
   is_active: boolean;
+  /** Per-sequence outbound HITL gate: when true, launched messages wait for
+   * operator approval before sending, overriding autopilot. */
+  require_approval: boolean;
   created_at: string;
 }
 

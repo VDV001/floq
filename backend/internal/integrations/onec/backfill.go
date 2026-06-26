@@ -13,9 +13,9 @@ import (
 // idempotent — empty or already-encrypted secrets are skipped — and returns
 // the number encrypted.
 //
-// Run once after migration 037 (server -backfill-secrets) and before
-// migration 038 drops the plaintext column. The plaintext column is left
-// intact so the read path can still fall back until 038.
+// Invoked via `server -backfill-secrets` before migration 047 drops the
+// plaintext column. Requires the schema to have both auth_secret (to read) and
+// auth_secret_enc (to write), i.e. between migrations 037 and 047.
 func BackfillSecrets(ctx context.Context, q db.Querier, cipher SecretCipher) (int, error) {
 	rows, err := q.Query(ctx, `
 		SELECT user_id, auth_secret FROM onec_credentials

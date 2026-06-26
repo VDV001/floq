@@ -64,6 +64,7 @@ function makeSequence(overrides: Partial<Sequence> = {}): Sequence {
     user_id: "u-1",
     name: "Cold outreach",
     is_active: true,
+    require_approval: false,
     created_at: "2026-01-01T00:00:00Z",
     ...overrides,
   };

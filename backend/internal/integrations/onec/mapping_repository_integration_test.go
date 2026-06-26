@@ -15,7 +15,7 @@ import (
 
 func TestRepository_MappingConfig_RoundTrip(t *testing.T) {
 	pool := testutil.TestDB(t)
-	repo := onec.NewRepository(pool, testCipher(t))
+	repo := onec.NewRepository(pool, testutil.NewSecretCipher(t))
 	ctx := context.Background()
 	user := testutil.SeedUser(t, pool)
 
@@ -40,7 +40,7 @@ func TestRepository_MappingConfig_RoundTrip(t *testing.T) {
 
 func TestRepository_GetMappingConfig_NotFound(t *testing.T) {
 	pool := testutil.TestDB(t)
-	repo := onec.NewRepository(pool, testCipher(t))
+	repo := onec.NewRepository(pool, testutil.NewSecretCipher(t))
 	ctx := context.Background()
 	user := testutil.SeedUser(t, pool)
 
@@ -50,7 +50,7 @@ func TestRepository_GetMappingConfig_NotFound(t *testing.T) {
 
 func TestRepository_GetActiveMappingConfig_RespectsIsActive(t *testing.T) {
 	pool := testutil.TestDB(t)
-	repo := onec.NewRepository(pool, testCipher(t))
+	repo := onec.NewRepository(pool, testutil.NewSecretCipher(t))
 	ctx := context.Background()
 	user := testutil.SeedUser(t, pool)
 
@@ -77,7 +77,7 @@ func TestRepository_GetActiveMappingConfig_RespectsIsActive(t *testing.T) {
 
 func TestRepository_SaveMappingConfig_Upsert(t *testing.T) {
 	pool := testutil.TestDB(t)
-	repo := onec.NewRepository(pool, testCipher(t))
+	repo := onec.NewRepository(pool, testutil.NewSecretCipher(t))
 	ctx := context.Background()
 	user := testutil.SeedUser(t, pool)
 
