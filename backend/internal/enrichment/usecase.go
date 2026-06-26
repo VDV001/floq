@@ -103,6 +103,11 @@ func (uc *UseCase) processOne(ctx context.Context, e *domain.CompanyEnrichment) 
 		uc.save(ctx, e)
 		return false
 	}
+	// Attribute the extraction to the record's user so a Completer-backed
+	// extractor (the Phase-2 LLM path) can cost-attribute its provider call in
+	// the audit log. Harmless for the deterministic HTML extractor, which
+	// ignores it.
+	ctx = WithSubjectUser(ctx, e.UserID)
 	profile, err := uc.extractor.Extract(ctx, page)
 	if err != nil {
 		e.MarkFailed(fmt.Sprintf("extract: %v", err))
