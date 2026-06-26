@@ -26,6 +26,7 @@ import (
 	"github.com/daniil/floq/internal/chat"
 	"github.com/daniil/floq/internal/config"
 	"github.com/daniil/floq/internal/db"
+	"github.com/daniil/floq/internal/enrichment"
 	"github.com/daniil/floq/internal/httputil"
 	"github.com/daniil/floq/internal/inbox"
 	"github.com/daniil/floq/internal/inbox/attachments"
@@ -356,9 +357,24 @@ func main() {
 		leads.WithIdentityReader(identityRepo),
 		leads.WithPendingReplyCounter(newPendingReplyCounterAdapter(pendingReplyRepo)),
 		leads.WithLogger(slog.Default())) // sender set after bot init
+	// Auto-enrichment (#182): background scraping of a lead/prospect's company
+	// domain. The same usecase is the cron worker and the read API, and is
+	// injected as the best-effort enqueuer into prospects + inbox.
+	enrichmentUC := enrichment.NewUseCase(
+		enrichment.NewRepository(pool),
+		enrichment.NewWebsiteFetcher(httpClient),
+		enrichment.NewHTMLExtractor(),
+		newLimiter(cfg.EnrichmentRateLimitPerMin, time.Minute),
+		enrichment.Config{
+			TTLSeconds:  cfg.EnrichmentTTLDays * 24 * 60 * 60,
+			MaxAttempts: cfg.EnrichmentMaxAttempts,
+			BatchLimit:  cfg.EnrichmentBatchLimit,
+		},
+		slog.Default())
 	prospectsUC := prospects.NewUseCase(prospectsRepo,
 		prospects.WithLeadChecker(newLeadCheckerAdapter(leadsRepo)),
-		prospects.WithIdentityLinker(identityLinker))
+		prospects.WithIdentityLinker(identityLinker),
+		prospects.WithEnricher(enrichmentUC))
 	sourcesUC := sources.NewUseCase(sourcesRepo, sources.WithStatsReader(sourcesRepo))
 	migrateOrphanProspects(pool, ownerID)
 	emailConfigChecker := emailConfigCheckerAdapter{
@@ -448,6 +464,7 @@ func main() {
 		r.Use(auth.AuthMiddleware(cfg.JWTSecret))
 		leads.RegisterRoutes(r, leadsUC)
 		prospects.RegisterRoutes(r, prospectsUC)
+		enrichment.RegisterRoutes(r, enrichmentUC)
 		sequences.RegisterRoutes(r, sequencesUC)
 		sources.RegisterRoutes(r, sourcesUC)
 		verify.RegisterRoutes(r, verify.NewUseCase(prospectsRepo, verify.NewBotTelegramVerifier(nil), proxyDialer)) // TG bot passed as nil for now
@@ -513,6 +530,9 @@ func main() {
 	// unbounded growth of the cost ledger. Stops on ctx.
 	auditRetentionUC := audit.NewRetentionUseCase(auditRepo, cfg.AuditRetentionDays)
 	go audit.NewRetentionCron(auditRetentionUC, cfg.AuditRetentionInterval, slog.Default()).Start(ctx)
+
+	// Auto-enrichment worker (#182): scrapes due company domains each tick.
+	go enrichment.NewEnrichmentCron(enrichmentUC, cfg.EnrichmentRefreshInterval, slog.Default()).Start(ctx)
 
 	// Analytics matview refresh cron — rebuilds the funnel materialized views
 	// CONCURRENTLY off the OLTP path so the dashboard serves fresh aggregates
@@ -604,6 +624,7 @@ func main() {
 	emailPoller := inbox.NewEmailPoller(inboxCfg, ownerID, cfg.IMAPHost, cfg.IMAPPort, cfg.IMAPUser, cfg.IMAPPassword, inboxLeadAdapter, prospectAdapter, sequencesRepo, inboxAI, proxyDialer,
 		inbox.WithAttachmentAnalyzer(attachmentAnalyzer),
 		inbox.WithIdentityLinker(identityLinker),
+		inbox.WithEmailEnricher(enrichmentUC),
 		inbox.WithEmailBookingLink(cfg.BookingLink))
 	// Cycle-break the same way the telegram bot does: poller depends
 	// on a proposer that depends on a dispatcher that may depend on
