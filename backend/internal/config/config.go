@@ -31,6 +31,13 @@ type Config struct {
 	// secrets.NewCipher — the server fails fast if it is missing or not 32
 	// bytes, so credentials are never silently stored in plaintext.
 	SecretsKEK       string
+	// SecretsKEKOld is an OPTIONAL base64-encoded 32-byte key-encryption-key
+	// used only as a decrypt-fallback during a KEK rotation: secrets still
+	// sealed under the previous key stay readable while `server -rotate-secrets`
+	// re-encrypts them under SecretsKEK. Leave unset in steady state; set it to
+	// the previous KEK during rotation and remove it once `-verify-secrets-kek`
+	// reports zero secrets still needing rotation.
+	SecretsKEKOld    string
 	AIProvider       string
 	AnthropicAPIKey  string
 	OpenAIAPIKey     string
@@ -112,6 +119,7 @@ func Load() *Config {
 		RedisURL:                    os.Getenv("REDIS_URL"),
 		JWTSecret:                   os.Getenv("JWT_SECRET"),
 		SecretsKEK:                  os.Getenv("FLOQ_SECRETS_KEK"),
+		SecretsKEKOld:               os.Getenv("FLOQ_SECRETS_KEK_OLD"),
 		AIProvider:                  getEnv("AI_PROVIDER", "anthropic"),
 		AnthropicAPIKey:             os.Getenv("ANTHROPIC_API_KEY"),
 		OpenAIAPIKey:                os.Getenv("OPENAI_API_KEY"),

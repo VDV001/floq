@@ -68,6 +68,17 @@ const (
 	authRegisterRateWindow = time.Hour
 )
 
+// verifySecretsExitCode maps the per-module "needs rotation" counts from
+// -verify-secrets-kek to a process exit code. Any secret still readable only
+// under the old KEK (bad>0 in either module) must block removal of
+// FLOQ_SECRETS_KEK_OLD, so a non-zero total yields a non-zero exit.
+func verifySecretsExitCode(settingsBad, onecBad int) int {
+	if settingsBad+onecBad > 0 {
+		return 1
+	}
+	return 0
+}
+
 func main() {
 	// Load .env file (ignore error if missing — production uses real env vars).
 	_ = godotenv.Load()
@@ -78,16 +89,29 @@ func main() {
 	// schema that already has the *_enc columns (>= migration 037).
 	backfillSecrets := flag.Bool("backfill-secrets", false,
 		"encrypt legacy plaintext secrets into their *_enc columns, then exit")
+	// -rotate-secrets re-encrypts every stored secret under the primary KEK
+	// (FLOQ_SECRETS_KEK), decrypting via the fallback (FLOQ_SECRETS_KEK_OLD)
+	// when needed, then exits WITHOUT running migrations. Run it during a KEK
+	// rotation, after deploying with both keys set.
+	rotateSecrets := flag.Bool("rotate-secrets", false,
+		"re-encrypt every stored secret under the primary KEK, then exit")
+	// -verify-secrets-kek is a read-only check that every stored secret
+	// decrypts under the PRIMARY KEK alone. It exits non-zero if any secret
+	// still needs rotation, so it gates removing FLOQ_SECRETS_KEK_OLD.
+	verifySecretsKEK := flag.Bool("verify-secrets-kek", false,
+		"verify every stored secret decrypts under the primary KEK (exit non-zero if not), then exit")
 	flag.Parse()
 
 	cfg := config.Load()
 
 	// 0a. Secret cipher (at-rest encryption for client credentials). Fail
 	// fast: a missing or malformed FLOQ_SECRETS_KEK must crash the server,
-	// never fall back to storing credentials in plaintext.
-	secretCipher, err := secrets.NewCipher(cfg.SecretsKEK)
+	// never fall back to storing credentials in plaintext. The optional
+	// FLOQ_SECRETS_KEK_OLD is a decrypt-only fallback active during a rotation
+	// window; a present-but-malformed old KEK also fails fast.
+	secretCipher, err := secrets.NewCipherWithFallback(cfg.SecretsKEK, cfg.SecretsKEKOld)
 	if err != nil {
-		log.Fatalf("FLOQ_SECRETS_KEK invalid (must be base64-encoded 32 bytes): %v", err)
+		log.Fatalf("FLOQ_SECRETS_KEK/FLOQ_SECRETS_KEK_OLD invalid (must be base64-encoded 32 bytes): %v", err)
 	}
 
 	// 1. DB pool
@@ -115,6 +139,50 @@ func main() {
 			log.Fatalf("backfill onec secrets: %v", err)
 		}
 		log.Printf("secret backfill complete: %d settings secrets, %d 1C secrets encrypted", nSettings, nOnec)
+		return
+	}
+
+	// 1a3. One-off KEK rotation (run during a key rotation, after deploying with
+	// both FLOQ_SECRETS_KEK=<new> and FLOQ_SECRETS_KEK_OLD=<old>). Re-encrypts
+	// every stored secret under the primary KEK, decrypting old-key ciphertext
+	// via the fallback, then exits WITHOUT migrating. Convergent and safe to
+	// repeat; aborts loudly on a secret that decrypts under neither key.
+	if *rotateSecrets {
+		nSettings, err := settings.RotateSecrets(context.Background(), pool, secretCipher)
+		if err != nil {
+			log.Fatalf("rotate settings secrets: %v", err)
+		}
+		nOnec, err := onec.RotateSecrets(context.Background(), pool, secretCipher)
+		if err != nil {
+			log.Fatalf("rotate onec secrets: %v", err)
+		}
+		log.Printf("secret rotation complete: %d settings secrets, %d 1C secrets re-encrypted under the primary KEK", nSettings, nOnec)
+		return
+	}
+
+	// 1a4. One-off rotation verification (read-only). Proves every stored secret
+	// decrypts under the PRIMARY KEK alone, using a primary-only cipher (no
+	// fallback). Exits non-zero if any secret still needs rotation, so it gates
+	// safely removing FLOQ_SECRETS_KEK_OLD after a rotation.
+	if *verifySecretsKEK {
+		primaryOnly, err := secrets.NewCipher(cfg.SecretsKEK)
+		if err != nil {
+			log.Fatalf("FLOQ_SECRETS_KEK invalid: %v", err)
+		}
+		okS, badS, err := settings.VerifySecretsKEK(context.Background(), pool, primaryOnly)
+		if err != nil {
+			log.Fatalf("verify settings secrets: %v", err)
+		}
+		okO, badO, err := onec.VerifySecretsKEK(context.Background(), pool, primaryOnly)
+		if err != nil {
+			log.Fatalf("verify onec secrets: %v", err)
+		}
+		log.Printf("secret KEK verification: under-primary=%d needs-rotation=%d (settings ok=%d bad=%d, 1C ok=%d bad=%d)",
+			okS+okO, badS+badO, okS, badS, okO, badO)
+		if code := verifySecretsExitCode(badS, badO); code != 0 {
+			log.Printf("WARNING: %d secret(s) still need rotation — do NOT remove FLOQ_SECRETS_KEK_OLD", badS+badO)
+			os.Exit(code)
+		}
 		return
 	}
 
