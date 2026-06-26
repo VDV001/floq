@@ -68,6 +68,15 @@ func (r *Repository) ListAllLeads(ctx context.Context, userID uuid.UUID) ([]doma
 	if err != nil {
 		return nil, fmt.Errorf("list all leads: %w", err)
 	}
+	return scanArchivableLeads(rows)
+}
+
+// scanArchivableLeads drains rows whose column order matches the
+// archived_at-bearing SELECT shared by ListAllLeads and ListArchivedLeads
+// (the inbox feed's ListLeads omits archived_at and is intentionally not
+// routed through here). Keeping one scan site means a future leads-table
+// column change touches one place, not three near-identical loops.
+func scanArchivableLeads(rows pgx.Rows) ([]domain.LeadWithSource, error) {
 	defer rows.Close()
 
 	var leads []domain.LeadWithSource
@@ -94,17 +103,7 @@ func (r *Repository) ListArchivedLeads(ctx context.Context, userID uuid.UUID) ([
 	if err != nil {
 		return nil, fmt.Errorf("list archived leads: %w", err)
 	}
-	defer rows.Close()
-
-	var leads []domain.LeadWithSource
-	for rows.Next() {
-		var item domain.LeadWithSource
-		if err := rows.Scan(&item.ID, &item.UserID, &item.Channel, &item.ContactName, &item.Company, &item.FirstMessage, &item.Status, &item.TelegramChatID, &item.EmailAddress, &item.SourceID, &item.ArchivedAt, &item.SourceName, &item.CreatedAt, &item.UpdatedAt); err != nil {
-			return nil, fmt.Errorf("scan lead: %w", err)
-		}
-		leads = append(leads, item)
-	}
-	return leads, rows.Err()
+	return scanArchivableLeads(rows)
 }
 
 func (r *Repository) GetLead(ctx context.Context, id uuid.UUID) (*domain.Lead, error) {
