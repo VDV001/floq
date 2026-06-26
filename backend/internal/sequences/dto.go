@@ -10,11 +10,12 @@ import (
 // --- Response DTOs ---
 
 type SequenceResponse struct {
-	ID        uuid.UUID `json:"id"`
-	UserID    uuid.UUID `json:"user_id"`
-	Name      string    `json:"name"`
-	IsActive  bool      `json:"is_active"`
-	CreatedAt time.Time `json:"created_at"`
+	ID              uuid.UUID `json:"id"`
+	UserID          uuid.UUID `json:"user_id"`
+	Name            string    `json:"name"`
+	IsActive        bool      `json:"is_active"`
+	RequireApproval bool      `json:"require_approval"`
+	CreatedAt       time.Time `json:"created_at"`
 }
 
 type SequenceStepResponse struct {
@@ -59,11 +60,12 @@ type SequenceDetailResponse struct {
 
 func SequenceToResponse(s *domain.Sequence) SequenceResponse {
 	return SequenceResponse{
-		ID:        s.ID,
-		UserID:    s.UserID,
-		Name:      s.Name,
-		IsActive:  s.IsActive,
-		CreatedAt: s.CreatedAt,
+		ID:              s.ID,
+		UserID:          s.UserID,
+		Name:            s.Name,
+		IsActive:        s.IsActive,
+		RequireApproval: s.RequireApproval,
+		CreatedAt:       s.CreatedAt,
 	}
 }
 

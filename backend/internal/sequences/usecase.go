@@ -173,6 +173,23 @@ func (uc *UseCase) ToggleActive(ctx context.Context, userID, id uuid.UUID, activ
 	return uc.repo.UpdateSequence(ctx, s)
 }
 
+// SetRequireApproval flips the per-sequence outbound HITL gate. It loads the
+// owned sequence, mutates the flag, and persists via UpdateSequence — the same
+// load→authorize→mutate→persist shape as ToggleActive (the port deliberately
+// has no column-specific setter, see domain.Repository). require_approval has
+// no invariant, so the field is set directly rather than via an intent method.
+func (uc *UseCase) SetRequireApproval(ctx context.Context, userID, id uuid.UUID, require bool) error {
+	s, err := uc.authorizeSequence(ctx, userID, id)
+	if err != nil {
+		return err
+	}
+	if s == nil {
+		return fmt.Errorf("sequence not found")
+	}
+	s.RequireApproval = require
+	return uc.repo.UpdateSequence(ctx, s)
+}
+
 func (uc *UseCase) ListSteps(ctx context.Context, sequenceID uuid.UUID) ([]domain.SequenceStep, error) {
 	return uc.repo.ListSteps(ctx, sequenceID)
 }
