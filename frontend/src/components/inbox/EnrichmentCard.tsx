@@ -1,4 +1,4 @@
-import { Building2, Mail, Phone, Link2, Briefcase, Users } from "lucide-react";
+import { Building2, Mail, Phone, Link2, Briefcase, Users, FileText, MapPin } from "lucide-react";
 import type { Enrichment } from "@/lib/api";
 
 interface EnrichmentCardProps {
@@ -15,10 +15,15 @@ const COMPANY_SIZE_LABELS: Record<string, string> = {
   enterprise: "250+ сотрудников",
 };
 
+function hasLegal(p: Enrichment["profile"]): boolean {
+  const l = p.legal;
+  return !!l && !!(l.inn || l.ogrn || l.fullName || l.address || l.okved || l.status);
+}
+
 function isEmptyProfile(e: Enrichment): boolean {
   const p = e.profile;
   return !p.title && !p.description && p.emails.length === 0 && p.phones.length === 0 &&
-    p.socials.length === 0 && !p.industry && !p.companySize;
+    p.socials.length === 0 && !p.industry && !p.companySize && !hasLegal(p);
 }
 
 export function EnrichmentCard({ enrichment, loading }: EnrichmentCardProps) {
@@ -84,6 +89,29 @@ export function EnrichmentCard({ enrichment, loading }: EnrichmentCardProps) {
                 {enrichment.profile.socials.map((s) => (
                   <a key={s} href={s} target="_blank" rel="noopener noreferrer" className="rounded-full bg-white px-3 py-1 text-xs font-medium text-[#004ac6] hover:underline">{s.replace(/^https?:\/\//, "")}</a>
                 ))}
+              </div>
+            )}
+            {hasLegal(enrichment.profile) && enrichment.profile.legal && (
+              <div className="mt-2 space-y-1.5 rounded-lg bg-white/70 p-3">
+                <div className="flex items-center gap-1.5 text-xs font-semibold text-[#0d1c2e]">
+                  <FileText className="size-3.5 text-[#737686]" />
+                  Реквизиты
+                </div>
+                {enrichment.profile.legal.fullName && (
+                  <p className="text-sm text-[#0d1c2e]">{enrichment.profile.legal.fullName}</p>
+                )}
+                <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-[#434655]">
+                  {enrichment.profile.legal.inn && <span>ИНН {enrichment.profile.legal.inn}</span>}
+                  {enrichment.profile.legal.ogrn && <span>ОГРН {enrichment.profile.legal.ogrn}</span>}
+                  {enrichment.profile.legal.okved && <span>ОКВЭД {enrichment.profile.legal.okved}</span>}
+                  {enrichment.profile.legal.status && <span>{enrichment.profile.legal.status}</span>}
+                </div>
+                {enrichment.profile.legal.address && (
+                  <div className="flex items-center gap-1.5 text-xs text-[#434655]">
+                    <MapPin className="size-3.5 text-[#737686]" />
+                    {enrichment.profile.legal.address}
+                  </div>
+                )}
               </div>
             )}
             <p className="pt-1 text-[0.65rem] uppercase tracking-wider text-[#737686]">
