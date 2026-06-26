@@ -53,6 +53,72 @@ func TestListLeads_ExcludesArchived(t *testing.T) {
 	assert.False(t, ids[archived.ID], "archived lead must be excluded from ListLeads")
 }
 
+func TestListArchivedLeads_OnlyArchivedNewestFirst(t *testing.T) {
+	pool := testutil.TestDB(t)
+	userID := testutil.SeedUser(t, pool)
+	other := testutil.SeedUser(t, pool)
+	repo := leads.NewRepository(pool)
+	ctx := context.Background()
+
+	active := seedLead(t, repo, userID, domain.StatusNew)
+	older := seedLead(t, repo, userID, domain.StatusNew)
+	newer := seedLead(t, repo, userID, domain.StatusNew)
+	foreign := seedLead(t, repo, other, domain.StatusNew)
+
+	olderAt := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	newerAt := time.Date(2026, 3, 1, 0, 0, 0, 0, time.UTC)
+	_, err := pool.Exec(ctx, `UPDATE leads SET archived_at = $1 WHERE id = $2`, olderAt, older.ID)
+	require.NoError(t, err)
+	_, err = pool.Exec(ctx, `UPDATE leads SET archived_at = $1 WHERE id = $2`, newerAt, newer.ID)
+	require.NoError(t, err)
+	_, err = pool.Exec(ctx, `UPDATE leads SET archived_at = now() WHERE id = $1`, foreign.ID)
+	require.NoError(t, err)
+
+	list, err := repo.ListArchivedLeads(ctx, userID)
+	require.NoError(t, err)
+
+	require.Len(t, list, 2, "only this user's archived leads")
+	// Newest archived first.
+	assert.Equal(t, newer.ID, list[0].ID, "most recently archived lead comes first")
+	assert.Equal(t, older.ID, list[1].ID)
+	require.NotNil(t, list[0].ArchivedAt, "archived_at is populated for the view")
+	assert.Equal(t, newerAt, list[0].ArchivedAt.UTC())
+
+	ids := map[uuid.UUID]bool{}
+	for _, l := range list {
+		ids[l.ID] = true
+	}
+	assert.False(t, ids[active.ID], "active lead excluded from archive view")
+	assert.False(t, ids[foreign.ID], "another user's archived lead is not visible")
+}
+
+func TestListArchivedLeads_IncludesSourceName(t *testing.T) {
+	pool := testutil.TestDB(t)
+	userID := testutil.SeedUser(t, pool)
+	repo := leads.NewRepository(pool)
+	ctx := context.Background()
+
+	categoryID := uuid.New()
+	_, err := pool.Exec(ctx,
+		`INSERT INTO source_categories (id, user_id, name, created_at) VALUES ($1, $2, 'Inbound', now())`,
+		categoryID, userID)
+	require.NoError(t, err)
+	sourceID := uuid.New()
+	_, err = pool.Exec(ctx,
+		`INSERT INTO lead_sources (id, user_id, category_id, name, created_at) VALUES ($1, $2, $3, 'Website', now())`,
+		sourceID, userID, categoryID)
+	require.NoError(t, err)
+
+	lead := seedLead(t, repo, userID, domain.StatusNew)
+	_, err = pool.Exec(ctx, `UPDATE leads SET source_id = $1, archived_at = now() WHERE id = $2`, sourceID, lead.ID)
+	require.NoError(t, err)
+
+	list, err := repo.ListArchivedLeads(ctx, userID)
+	require.NoError(t, err)
+	require.Len(t, list, 1)
+	assert.Equal(t, "Website", list[0].SourceName, "archive view joins source name like the inbox feed")
+}
+
 func TestStaleLeadsWithoutReminder_ExcludesArchived(t *testing.T) {
 	pool := testutil.TestDB(t)
 	userID := testutil.SeedUser(t, pool)
