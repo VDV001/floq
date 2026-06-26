@@ -73,7 +73,11 @@ func TestRepository_Save_RoundTripsProfile(t *testing.T) {
 
 	stored, _, err := repo.Get(ctx, userID, "acme-save.ru")
 	require.NoError(t, err)
-	profile := domain.CompanyProfile{Title: "Acme", Description: "Widgets", Emails: []string{"info@acme-save.ru"}, Socials: []string{"https://t.me/acme"}}
+	profile := domain.CompanyProfile{
+		Title: "Acme", Description: "Widgets", Emails: []string{"info@acme-save.ru"}, Socials: []string{"https://t.me/acme"},
+		// Phase-2 (#186) fields must survive the JSONB round-trip too.
+		Industry: "fintech", CompanySize: domain.CompanySizeMedium,
+	}
 	stored.MarkEnriched(profile, 3600)
 	require.NoError(t, repo.Save(ctx, stored))
 
@@ -82,6 +86,8 @@ func TestRepository_Save_RoundTripsProfile(t *testing.T) {
 	require.True(t, found)
 	assert.Equal(t, domain.StatusEnriched, got.Status)
 	assert.Equal(t, profile, got.Profile)
+	assert.Equal(t, "fintech", got.Profile.Industry)
+	assert.Equal(t, domain.CompanySizeMedium, got.Profile.CompanySize)
 	require.NotNil(t, got.EnrichedAt)
 	require.NotNil(t, got.ExpiresAt)
 }
