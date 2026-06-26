@@ -148,6 +148,7 @@ export const api = {
 
   // Leads
   getLeads: () => apiFetch<Lead[]>("/api/leads"),
+  getArchivedLeads: () => apiFetch<Lead[]>("/api/leads/archived"),
   getLead: (id: string) => apiFetch<Lead>(`/api/leads/${id}`),
   updateLeadStatus: (id: string, status: string) =>
     apiFetch(`/api/leads/${id}/status`, {
@@ -156,6 +157,8 @@ export const api = {
     }),
   archiveLead: (id: string) =>
     apiFetch(`/api/leads/${id}/archive`, { method: "POST" }),
+  unarchiveLead: (id: string) =>
+    apiFetch(`/api/leads/${id}/unarchive`, { method: "POST" }),
 
   exportLeadsCSV: () => apiDownload("/api/leads/export"),
   importLeadsCSV: (file: File) =>
@@ -473,6 +476,10 @@ export interface Lead {
   source_name?: string;
   created_at: string;
   updated_at: string;
+  /** Set only for archived leads. Present on the archive-view feed and on the
+   *  single-lead detail; absent for active leads. Clients use presence to
+   *  toggle between the archive and unarchive affordance. */
+  archived_at?: string;
   identity?: IdentitySummary;
   /** Count of HITL drafts on this lead awaiting operator decision.
    *  Omitted by the backend when zero; clients default to 0. */

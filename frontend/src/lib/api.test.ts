@@ -418,6 +418,20 @@ describe("api module", () => {
       expect(opts.method).toBe("POST");
     });
 
+    it("unarchiveLead → POST /api/leads/:id/unarchive", async () => {
+      await api.unarchiveLead("lead-1");
+      const [url, opts] = fetchMock.mock.calls[0];
+      expect(url).toBe("http://localhost:8080/api/leads/lead-1/unarchive");
+      expect(opts.method).toBe("POST");
+    });
+
+    it("getArchivedLeads → GET /api/leads/archived", async () => {
+      await api.getArchivedLeads();
+      const [url, opts] = fetchMock.mock.calls[0];
+      expect(url).toBe("http://localhost:8080/api/leads/archived");
+      expect(opts.method ?? "GET").toBe("GET");
+    });
+
     it("deleteProspect → DELETE /api/prospects/:id", async () => {
       await api.deleteProspect("p-123");
       const [url, opts] = fetchMock.mock.calls[0];
