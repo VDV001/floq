@@ -40,6 +40,15 @@ type Extractor interface {
 
 var _ Extractor = (*HTMLExtractor)(nil)
 
+// Completer is the LLM seam for the Phase-2 LLMExtractor. Declared locally
+// (DIP) so the enrichment context never imports internal/ai or internal/audit
+// — the composition root injects an adapter over the audit-recording provider
+// that tags the request type and bounds cost. systemPrompt frames the
+// extraction; userPrompt carries the (untrusted, possibly capped) page.
+type Completer interface {
+	Complete(ctx context.Context, systemPrompt, userPrompt string) (string, error)
+}
+
 // RateLimiter throttles outbound scrapes per domain. Declared locally (DIP) so
 // the usecase does not import the ratelimit package; ratelimit.Limiter
 // satisfies it structurally and is injected from the composition root.
