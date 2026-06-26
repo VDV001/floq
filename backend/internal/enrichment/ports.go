@@ -49,6 +49,24 @@ type Completer interface {
 	Complete(ctx context.Context, systemPrompt, userPrompt string) (string, error)
 }
 
+// EnrichQuery carries the identity signals the registry Enricher matches on:
+// an INN extracted from the page (precise) and/or the scraped company name
+// (fuzzy). Both may be set; the adapter prefers the INN when present.
+type EnrichQuery struct {
+	INN         string
+	CompanyName string
+}
+
+// Enricher looks up a company's legal/registry details (ЕГРЮЛ via an official
+// source) by identity. It is orthogonal to Extractor: Extractor works on the
+// already-fetched page, Enricher itself reaches out to the registry. Declared
+// locally (DIP) so the enrichment context stays free of the DaData/http
+// adapter; the composition root injects it. found=false is a clean miss (no
+// confident match) — never a guess.
+type Enricher interface {
+	Enrich(ctx context.Context, q EnrichQuery) (domain.LegalDetails, bool, error)
+}
+
 // RateLimiter throttles outbound scrapes per domain. Declared locally (DIP) so
 // the usecase does not import the ratelimit package; ratelimit.Limiter
 // satisfies it structurally and is injected from the composition root.

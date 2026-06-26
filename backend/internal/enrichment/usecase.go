@@ -22,18 +22,33 @@ type UseCase struct {
 	store     Store
 	fetcher   PageFetcher
 	extractor Extractor
+	enricher  Enricher // optional Phase-3 registry step; nil = disabled
 	limiter   RateLimiter
 	cfg       Config
 	logger    *slog.Logger
 }
 
+// Option customizes the usecase at construction.
+type Option func(*UseCase)
+
+// WithEnricher enables the optional Phase-3 (#188) registry step: after the
+// page is extracted, the company's legal details are looked up and merged.
+// A nil enricher leaves the step disabled (ship-dark default).
+func WithEnricher(e Enricher) Option {
+	return func(uc *UseCase) { uc.enricher = e }
+}
+
 // NewUseCase builds the enrichment usecase. A nil logger falls back to the
 // default slog logger.
-func NewUseCase(store Store, fetcher PageFetcher, extractor Extractor, limiter RateLimiter, cfg Config, logger *slog.Logger) *UseCase {
+func NewUseCase(store Store, fetcher PageFetcher, extractor Extractor, limiter RateLimiter, cfg Config, logger *slog.Logger, opts ...Option) *UseCase {
 	if logger == nil {
 		logger = slog.Default()
 	}
-	return &UseCase{store: store, fetcher: fetcher, extractor: extractor, limiter: limiter, cfg: cfg, logger: logger}
+	uc := &UseCase{store: store, fetcher: fetcher, extractor: extractor, limiter: limiter, cfg: cfg, logger: logger}
+	for _, opt := range opts {
+		opt(uc)
+	}
+	return uc
 }
 
 // Enqueue derives the company domain from email and enqueues a pending
@@ -114,9 +129,30 @@ func (uc *UseCase) processOne(ctx context.Context, e *domain.CompanyEnrichment) 
 		uc.save(ctx, e)
 		return false
 	}
+	uc.enrichRegistry(ctx, page, &profile)
 	e.MarkEnriched(profile, uc.cfg.TTLSeconds)
 	uc.save(ctx, e)
 	return true
+}
+
+// enrichRegistry runs the optional Phase-3 registry lookup and merges any legal
+// details into profile. Best-effort: a nil enricher, a clean miss, or an error
+// all leave the website profile intact (graceful degrade) — registry data must
+// never cost us the cheaper scraped profile. The match strategy (precise INN
+// vs fuzzy name, skip-on-ambiguity) lives in the Enricher adapter.
+func (uc *UseCase) enrichRegistry(ctx context.Context, page string, profile *domain.CompanyProfile) {
+	if uc.enricher == nil {
+		return
+	}
+	q := EnrichQuery{INN: ExtractINN(page), CompanyName: profile.Title}
+	legal, found, err := uc.enricher.Enrich(ctx, q)
+	if err != nil {
+		uc.logger.WarnContext(ctx, "enrichment: registry lookup failed; keeping website profile", "err", err)
+		return
+	}
+	if found {
+		profile.Legal = legal
+	}
 }
 
 func (uc *UseCase) save(ctx context.Context, e *domain.CompanyEnrichment) {
