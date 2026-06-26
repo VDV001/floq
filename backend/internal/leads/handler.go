@@ -2,6 +2,7 @@ package leads
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -56,6 +57,8 @@ func RegisterRoutes(r chi.Router, uc *UseCase) {
 	r.Get("/api/leads/suggestion-counts", h.suggestionCounts())
 	r.Get("/api/leads/{id}", h.getLead())
 	r.Patch("/api/leads/{id}/status", h.updateStatus())
+	r.Post("/api/leads/{id}/archive", h.archiveLead())
+	r.Post("/api/leads/{id}/unarchive", h.unarchiveLead())
 	r.Get("/api/leads/{id}/messages", h.listMessages())
 	r.Post("/api/leads/{id}/send", h.sendMessage())
 	r.Get("/api/leads/{id}/qualification", h.getQualification())
@@ -135,6 +138,48 @@ func (h *Handler) updateStatus() http.HandlerFunc {
 			return
 		}
 		httputil.WriteJSON(w, http.StatusOK, map[string]string{"status": body.Status})
+	}
+}
+
+// archiveLead hides the lead from feeds/analytics. Ownership is gated by the
+// shared authorizeLead front-door (foreign/missing → 404). A double-archive
+// surfaces as 409 via domain.ErrAlreadyArchived; archive is orthogonal to
+// status, so the lead's pipeline state is untouched.
+func (h *Handler) archiveLead() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		_, id, ok := h.authorizeLead(w, r)
+		if !ok {
+			return
+		}
+		if err := h.uc.ArchiveLead(r.Context(), id); err != nil {
+			if errors.Is(err, domain.ErrAlreadyArchived) {
+				httputil.WriteError(w, http.StatusConflict, "lead already archived")
+				return
+			}
+			httputil.WriteError(w, http.StatusInternalServerError, "failed to archive lead")
+			return
+		}
+		httputil.WriteJSON(w, http.StatusOK, map[string]string{"status": "archived"})
+	}
+}
+
+// unarchiveLead restores an archived lead. A not-archived lead surfaces as 409
+// via domain.ErrNotArchived.
+func (h *Handler) unarchiveLead() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		_, id, ok := h.authorizeLead(w, r)
+		if !ok {
+			return
+		}
+		if err := h.uc.UnarchiveLead(r.Context(), id); err != nil {
+			if errors.Is(err, domain.ErrNotArchived) {
+				httputil.WriteError(w, http.StatusConflict, "lead is not archived")
+				return
+			}
+			httputil.WriteError(w, http.StatusInternalServerError, "failed to unarchive lead")
+			return
+		}
+		httputil.WriteJSON(w, http.StatusOK, map[string]string{"status": "active"})
 	}
 }
 
