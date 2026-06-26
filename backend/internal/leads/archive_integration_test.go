@@ -141,7 +141,40 @@ func TestExportCSV_IncludesArchived(t *testing.T) {
 
 	assert.Contains(t, csv, active.ContactName, "active lead in export")
 	assert.Contains(t, csv, archived.ContactName, "archived lead must be included in the CSV backup")
-	assert.Contains(t, csv, "archived", "export carries an archived column header")
+	assert.Contains(t, csv, "archived_at", "export carries an archived_at column header")
+}
+
+func TestExportImport_RoundTripsArchiveTimestamp(t *testing.T) {
+	pool := testutil.TestDB(t)
+	userA := testutil.SeedUser(t, pool)
+	userB := testutil.SeedUser(t, pool)
+	repo := leads.NewRepository(pool)
+	uc := leads.NewUseCase(repo, nil, nil)
+	ctx := context.Background()
+
+	lead := seedLead(t, repo, userA, domain.StatusNew)
+	archivedAt := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
+	_, err := pool.Exec(ctx, `UPDATE leads SET archived_at = $1, email_address = $2 WHERE id = $3`, archivedAt, "rt@example.com", lead.ID)
+	require.NoError(t, err)
+
+	data, err := uc.ExportCSV(ctx, userA)
+	require.NoError(t, err)
+
+	n, err := uc.ImportCSV(ctx, userB, data)
+	require.NoError(t, err)
+	require.GreaterOrEqual(t, n, 1)
+
+	all, err := repo.ListAllLeads(ctx, userB)
+	require.NoError(t, err)
+	var imported *domain.LeadWithSource
+	for i := range all {
+		if all[i].EmailAddress != nil && *all[i].EmailAddress == "rt@example.com" {
+			imported = &all[i]
+		}
+	}
+	require.NotNil(t, imported, "archived lead restored for user B")
+	require.NotNil(t, imported.ArchivedAt, "restored lead stays archived")
+	assert.Equal(t, archivedAt, imported.ArchivedAt.UTC(), "exact archive timestamp round-trips through export→import")
 }
 
 func TestSetLeadArchived_RoundTrip(t *testing.T) {

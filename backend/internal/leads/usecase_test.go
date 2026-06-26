@@ -692,7 +692,7 @@ func TestImportCSV_HonorsArchivedColumn(t *testing.T) {
 	uc := NewUseCase(repo, &mockAI{}, nil)
 	userID := uuid.New()
 
-	csvData := []byte("contact_name,channel,email_address,archived\nAlice,email,alice@x.com,true\nBob,email,bob@x.com,false\n")
+	csvData := []byte("contact_name,channel,email_address,archived_at\nAlice,email,alice@x.com,2026-01-02T03:04:05Z\nBob,email,bob@x.com,\n")
 	count, err := uc.ImportCSV(context.Background(), userID, csvData)
 	require.NoError(t, err)
 	assert.Equal(t, 2, count)
@@ -708,8 +708,10 @@ func TestImportCSV_HonorsArchivedColumn(t *testing.T) {
 	}
 	require.NotNil(t, alice)
 	require.NotNil(t, bob)
-	assert.True(t, alice.IsArchived(), "archived=true row must import as archived (backup round-trip)")
-	assert.False(t, bob.IsArchived(), "archived=false row must import as active")
+	require.True(t, alice.IsArchived(), "row with archived_at must import as archived (backup round-trip)")
+	// The EXACT archive timestamp round-trips, not just the boolean state.
+	assert.Equal(t, "2026-01-02T03:04:05Z", alice.ArchivedAt.Format(time.RFC3339), "exact archive timestamp preserved")
+	assert.False(t, bob.IsArchived(), "row with empty archived_at must import as active")
 }
 
 func TestImportCSV_BadCSV(t *testing.T) {

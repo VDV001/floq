@@ -296,7 +296,10 @@ func (uc *UseCase) ExportCSV(ctx context.Context, userID uuid.UUID) ([]byte, err
 	buf.Write([]byte{0xEF, 0xBB, 0xBF})
 
 	w := csv.NewWriter(&buf)
-	header := []string{"contact_name", "company", "channel", "email_address", "status", "first_message", "created_at", "archived"}
+	// archived_at carries the FULL archive state (the exact timestamp, empty for
+	// active) so a backup round-trips it precisely — not just a boolean, which
+	// would reset the archive date to the import day on restore.
+	header := []string{"contact_name", "company", "channel", "email_address", "status", "first_message", "created_at", "archived_at"}
 	if err := w.Write(header); err != nil {
 		return nil, fmt.Errorf("write csv header: %w", err)
 	}
@@ -306,9 +309,9 @@ func (uc *UseCase) ExportCSV(ctx context.Context, userID uuid.UUID) ([]byte, err
 		if l.EmailAddress != nil {
 			emailAddr = *l.EmailAddress
 		}
-		archived := "false"
+		archivedAt := ""
 		if l.ArchivedAt != nil {
-			archived = "true"
+			archivedAt = l.ArchivedAt.Format(time.RFC3339)
 		}
 		record := []string{
 			l.ContactName,
@@ -318,7 +321,7 @@ func (uc *UseCase) ExportCSV(ctx context.Context, userID uuid.UUID) ([]byte, err
 			string(l.Status),
 			l.FirstMessage,
 			l.CreatedAt.Format(time.RFC3339),
-			archived,
+			archivedAt,
 		}
 		if err := w.Write(record); err != nil {
 			return nil, fmt.Errorf("write csv record: %w", err)
@@ -333,6 +336,10 @@ func (uc *UseCase) ExportCSV(ctx context.Context, userID uuid.UUID) ([]byte, err
 }
 
 func (uc *UseCase) ImportCSV(ctx context.Context, userID uuid.UUID, csvData []byte) (int, error) {
+	// Strip a leading UTF-8 BOM so the first header name parses as "contact_name"
+	// rather than a BOM-prefixed variant. ExportCSV writes a BOM for Excel, so
+	// without this our own backup files fail to re-import (missing contact_name).
+	csvData = bytes.TrimPrefix(csvData, []byte{0xEF, 0xBB, 0xBF})
 	reader := csv.NewReader(bytes.NewReader(csvData))
 
 	// Read and validate header
@@ -385,9 +392,16 @@ func (uc *UseCase) ImportCSV(ctx context.Context, userID uuid.UUID, csvData []by
 		company := getCol(record, "company")
 		firstMessage := getCol(record, "first_message")
 		emailAddr := getCol(record, "email_address")
-		// The export's "archived" column lets a backup round-trip archive state.
-		// Absent (a normal user-provided list) reads as false → active.
-		importedArchived := getCol(record, "archived") == "true"
+		// The export's "archived_at" column lets a backup round-trip the exact
+		// archive timestamp. Empty (or absent, for a normal user-provided list)
+		// reads as active.
+		var importedArchivedAt *time.Time
+		if raw := getCol(record, "archived_at"); raw != "" {
+			if t, perr := time.Parse(time.RFC3339, raw); perr == nil {
+				utc := t.UTC()
+				importedArchivedAt = &utc
+			}
+		}
 
 		var emailPtr *string
 		if emailAddr != "" {
@@ -396,17 +410,13 @@ func (uc *UseCase) ImportCSV(ctx context.Context, userID uuid.UUID, csvData []by
 				return 0, fmt.Errorf("dedup lead check: %w", err)
 			}
 			if existing != nil {
-				// Re-importing an *active* contact (archived=false) resurfaces a
-				// matched archived lead — that reads as re-engagement, not lost
-				// data. A row that is itself archived leaves the existing state
-				// untouched. An active duplicate is a true dedup hit.
-				if existing.IsArchived() && !importedArchived {
-					if err := existing.Unarchive(); err != nil {
-						return 0, fmt.Errorf("resurface archived lead: %w", err)
-					}
-					// Swallow ErrNotArchived: a concurrent inbound re-engagement
-					// may have already resurfaced it — benign for a re-import.
-					if err := uc.repo.SetLeadArchived(ctx, existing.ID, existing.ArchivedAt); err != nil && !errors.Is(err, domain.ErrNotArchived) {
+				// Re-importing an *active* row resurfaces a matched archived lead —
+				// that reads as re-engagement, not lost data. A row that is itself
+				// archived leaves the existing state untouched; an active duplicate
+				// is a true dedup hit. SetLeadArchived(nil) is the guarded unarchive;
+				// swallow ErrNotArchived in case a concurrent inbound already did it.
+				if existing.IsArchived() && importedArchivedAt == nil {
+					if err := uc.repo.SetLeadArchived(ctx, existing.ID, nil); err != nil && !errors.Is(err, domain.ErrNotArchived) {
 						return 0, fmt.Errorf("persist resurface: %w", err)
 					}
 					count++
@@ -420,13 +430,10 @@ func (uc *UseCase) ImportCSV(ctx context.Context, userID uuid.UUID, csvData []by
 		if err != nil {
 			continue // skip invalid rows
 		}
-		if importedArchived {
-			// Preserve the backed-up archive state so a restore round-trips it
-			// instead of flooding archived leads back into the active feed.
-			if err := lead.Archive(); err != nil {
-				return 0, fmt.Errorf("apply archived state: %w", err)
-			}
-		}
+		// Rehydrate the exact archive timestamp from the backup so a restore
+		// preserves history instead of flooding archived leads back as active
+		// (CreateLead persists archived_at).
+		lead.ArchivedAt = importedArchivedAt
 		if err := uc.repo.CreateLead(ctx, lead); err != nil {
 			return 0, fmt.Errorf("create lead: %w", err)
 		}
