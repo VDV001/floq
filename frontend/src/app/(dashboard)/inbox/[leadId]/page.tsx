@@ -20,6 +20,7 @@ export default function LeadDetailPage() {
   const router = useRouter();
   const { notify, notifyError } = useNotify();
   const [archiving, setArchiving] = useState(false);
+  const [confirmingArchive, setConfirmingArchive] = useState(false);
 
   const [lead, setLead] = useState<Lead | null>(null);
   const [qualification, setQualification] = useState<Qualification | null>(null);
@@ -125,7 +126,15 @@ export default function LeadDetailPage() {
             </div>
           </div>
           <div className="flex gap-3">
-            <button onClick={handleArchive} disabled={archiving} className="rounded-lg border border-[#c3c6d7]/30 bg-white px-4 py-2 text-sm font-semibold text-[#0d1c2e] transition-colors hover:bg-[#eff4ff] disabled:cursor-not-allowed disabled:opacity-60"><Archive className="mr-1.5 inline size-4" />{archiving ? "Архивируем…" : "Архив"}</button>
+            {confirmingArchive ? (
+              <div className="flex items-center gap-2">
+                <span className="text-sm text-[#434655]">Архивировать лид?</span>
+                <button onClick={handleArchive} disabled={archiving} className="rounded-lg bg-[#0d1c2e] px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-[#0d1c2e]/90 disabled:cursor-not-allowed disabled:opacity-60">{archiving ? "Архивируем…" : "Да, в архив"}</button>
+                <button onClick={() => setConfirmingArchive(false)} disabled={archiving} className="rounded-lg border border-[#c3c6d7]/30 bg-white px-4 py-2 text-sm font-semibold text-[#0d1c2e] transition-colors hover:bg-[#eff4ff] disabled:opacity-60">Отмена</button>
+              </div>
+            ) : (
+              <button onClick={() => setConfirmingArchive(true)} className="rounded-lg border border-[#c3c6d7]/30 bg-white px-4 py-2 text-sm font-semibold text-[#0d1c2e] transition-colors hover:bg-[#eff4ff]"><Archive className="mr-1.5 inline size-4" />Архив</button>
+            )}
           </div>
         </section>
 

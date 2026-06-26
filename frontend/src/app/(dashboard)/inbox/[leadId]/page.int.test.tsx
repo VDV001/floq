@@ -212,12 +212,39 @@ describe("lead detail page (integration)", () => {
 
     renderPage();
 
-    const btn = await screen.findByRole("button", { name: /Архив/ });
-    await user.click(btn);
+    // Archive is a two-step confirm so it can't fire accidentally.
+    await user.click(await screen.findByRole("button", { name: "Архив" }));
+    await user.click(await screen.findByRole("button", { name: /Да, в архив/ }));
 
     await waitFor(() => expect(archiveHit).toBe(true));
     // On success the lead leaves the working feed → redirect to /inbox.
     await waitFor(() => expect(pushMock).toHaveBeenCalledWith("/inbox"));
+  });
+
+  it("cancels the archive confirm without calling the API", async () => {
+    const user = userEvent.setup({ delay: null });
+    pushMock.mockClear();
+    let archiveHit = false;
+
+    mountWith({
+      lead: lead({ contact_name: "Архив Отмена" }),
+      extra: [
+        http.post(url("/api/leads/lead-1/archive"), () => {
+          archiveHit = true;
+          return HttpResponse.json({ status: "archived" });
+        }),
+      ],
+    });
+
+    renderPage();
+
+    await user.click(await screen.findByRole("button", { name: "Архив" }));
+    await user.click(await screen.findByRole("button", { name: /Отмена/ }));
+
+    // Back to the idle Архив button; the API was never hit.
+    expect(await screen.findByRole("button", { name: "Архив" })).toBeInTheDocument();
+    expect(archiveHit).toBe(false);
+    expect(pushMock).not.toHaveBeenCalled();
   });
 
   it("surfaces an error and stays on the page when archive fails", async () => {
@@ -235,8 +262,8 @@ describe("lead detail page (integration)", () => {
 
     renderPage();
 
-    const btn = await screen.findByRole("button", { name: /Архив/ });
-    await user.click(btn);
+    await user.click(await screen.findByRole("button", { name: "Архив" }));
+    await user.click(await screen.findByRole("button", { name: /Да, в архив/ }));
 
     // Error notification shown; no redirect.
     expect(await screen.findByText("Не удалось архивировать лид")).toBeInTheDocument();
