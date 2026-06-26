@@ -46,6 +46,12 @@ type llmExtraction struct {
 // Extract sends the page to the LLM and parses/validates the result. A
 // provider error or an unparseable response is returned as an error so the
 // ChainExtractor can degrade gracefully (keep the HTML profile).
+//
+// The page is sent uncapped here: bounding its size is the Completer's
+// contract (the composition-root adapter applies the rune cap before the
+// provider call). The returned profile's two fields are always built through
+// the domain invariant helpers (NormalizeIndustry / ParseCompanySize), so a
+// CompanyProfile leaving this method is well-formed by construction.
 func (e *LLMExtractor) Extract(ctx context.Context, page string) (domain.CompanyProfile, error) {
 	raw, err := e.completer.Complete(ctx, llmExtractorSystemPrompt, page)
 	if err != nil {

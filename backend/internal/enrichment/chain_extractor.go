@@ -49,6 +49,9 @@ func (c *ChainExtractor) Extract(ctx context.Context, page string) (domain.Compa
 		c.logger.WarnContext(ctx, "enrichment: llm extractor failed; using html profile only", "err", err)
 		return profile, nil
 	}
+	// The LLM is authoritative for the Phase-2 fields: the base (HTML) extractor
+	// never sets Industry/CompanySize, so this overlay is additive, not a clobber.
+	// If a future base populated them, this would intentionally defer to the LLM.
 	profile.Industry = enriched.Industry
 	profile.CompanySize = enriched.CompanySize
 	return profile, nil
