@@ -687,6 +687,31 @@ func TestImportCSV_ResurfacesArchivedDuplicate(t *testing.T) {
 	assert.Equal(t, 1, count, "resurfaced lead counts toward the import total")
 }
 
+func TestImportCSV_HonorsArchivedColumn(t *testing.T) {
+	repo := newMockRepo()
+	uc := NewUseCase(repo, &mockAI{}, nil)
+	userID := uuid.New()
+
+	csvData := []byte("contact_name,channel,email_address,archived\nAlice,email,alice@x.com,true\nBob,email,bob@x.com,false\n")
+	count, err := uc.ImportCSV(context.Background(), userID, csvData)
+	require.NoError(t, err)
+	assert.Equal(t, 2, count)
+
+	var alice, bob *domain.Lead
+	for _, l := range repo.leads {
+		switch l.ContactName {
+		case "Alice":
+			alice = l
+		case "Bob":
+			bob = l
+		}
+	}
+	require.NotNil(t, alice)
+	require.NotNil(t, bob)
+	assert.True(t, alice.IsArchived(), "archived=true row must import as archived (backup round-trip)")
+	assert.False(t, bob.IsArchived(), "archived=false row must import as active")
+}
+
 func TestImportCSV_BadCSV(t *testing.T) {
 	repo := newMockRepo()
 	uc := NewUseCase(repo, &mockAI{}, nil)

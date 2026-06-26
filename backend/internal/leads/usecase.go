@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/csv"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -384,6 +385,9 @@ func (uc *UseCase) ImportCSV(ctx context.Context, userID uuid.UUID, csvData []by
 		company := getCol(record, "company")
 		firstMessage := getCol(record, "first_message")
 		emailAddr := getCol(record, "email_address")
+		// The export's "archived" column lets a backup round-trip archive state.
+		// Absent (a normal user-provided list) reads as false → active.
+		importedArchived := getCol(record, "archived") == "true"
 
 		var emailPtr *string
 		if emailAddr != "" {
@@ -392,14 +396,17 @@ func (uc *UseCase) ImportCSV(ctx context.Context, userID uuid.UUID, csvData []by
 				return 0, fmt.Errorf("dedup lead check: %w", err)
 			}
 			if existing != nil {
-				// Re-importing an archived contact resurfaces it rather than
-				// silently dropping the row (which reads as lost data). An
-				// active duplicate is a true dedup hit — skip it as before.
-				if existing.IsArchived() {
+				// Re-importing an *active* contact (archived=false) resurfaces a
+				// matched archived lead — that reads as re-engagement, not lost
+				// data. A row that is itself archived leaves the existing state
+				// untouched. An active duplicate is a true dedup hit.
+				if existing.IsArchived() && !importedArchived {
 					if err := existing.Unarchive(); err != nil {
 						return 0, fmt.Errorf("resurface archived lead: %w", err)
 					}
-					if err := uc.repo.SetLeadArchived(ctx, existing.ID, existing.ArchivedAt); err != nil {
+					// Swallow ErrNotArchived: a concurrent inbound re-engagement
+					// may have already resurfaced it — benign for a re-import.
+					if err := uc.repo.SetLeadArchived(ctx, existing.ID, existing.ArchivedAt); err != nil && !errors.Is(err, domain.ErrNotArchived) {
 						return 0, fmt.Errorf("persist resurface: %w", err)
 					}
 					count++
@@ -412,6 +419,13 @@ func (uc *UseCase) ImportCSV(ctx context.Context, userID uuid.UUID, csvData []by
 		lead, err := domain.NewLead(userID, channel, contactName, company, firstMessage, nil, emailPtr)
 		if err != nil {
 			continue // skip invalid rows
+		}
+		if importedArchived {
+			// Preserve the backed-up archive state so a restore round-trips it
+			// instead of flooding archived leads back into the active feed.
+			if err := lead.Archive(); err != nil {
+				return 0, fmt.Errorf("apply archived state: %w", err)
+			}
 		}
 		if err := uc.repo.CreateLead(ctx, lead); err != nil {
 			return 0, fmt.Errorf("create lead: %w", err)

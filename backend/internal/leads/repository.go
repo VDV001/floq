@@ -116,9 +116,9 @@ func (r *Repository) GetLeadForUser(ctx context.Context, userID, leadID uuid.UUI
 
 func (r *Repository) CreateLead(ctx context.Context, lead *domain.Lead) error {
 	_, err := r.q(ctx).Exec(ctx,
-		`INSERT INTO leads (id, user_id, channel, contact_name, company, first_message, status, telegram_chat_id, email_address, source_id, created_at, updated_at)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
-		lead.ID, lead.UserID, lead.Channel, lead.ContactName, lead.Company, lead.FirstMessage, lead.Status, lead.TelegramChatID, lead.EmailAddress, lead.SourceID, lead.CreatedAt, lead.UpdatedAt)
+		`INSERT INTO leads (id, user_id, channel, contact_name, company, first_message, status, telegram_chat_id, email_address, source_id, archived_at, created_at, updated_at)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`,
+		lead.ID, lead.UserID, lead.Channel, lead.ContactName, lead.Company, lead.FirstMessage, lead.Status, lead.TelegramChatID, lead.EmailAddress, lead.SourceID, lead.ArchivedAt, lead.CreatedAt, lead.UpdatedAt)
 	if err != nil {
 		return fmt.Errorf("create lead: %w", err)
 	}
@@ -159,19 +159,21 @@ func (r *Repository) SetLeadArchived(ctx context.Context, id uuid.UUID, archived
 	var (
 		tag     pgconn.CommandTag
 		err     error
-		now     = time.Now().UTC()
 		noopErr error
 	)
 	if archivedAt != nil {
 		noopErr = domain.ErrAlreadyArchived
+		// updated_at == archived_at: the domain stamps them equal for the same
+		// logical event (Lead.Archive), so persist that instant rather than a
+		// fresh now() that would skew the two columns by a few microseconds.
 		tag, err = r.q(ctx).Exec(ctx,
-			`UPDATE leads SET archived_at = $1, updated_at = $2 WHERE id = $3 AND archived_at IS NULL`,
-			archivedAt, now, id)
+			`UPDATE leads SET archived_at = $1, updated_at = $1 WHERE id = $2 AND archived_at IS NULL`,
+			archivedAt, id)
 	} else {
 		noopErr = domain.ErrNotArchived
 		tag, err = r.q(ctx).Exec(ctx,
 			`UPDATE leads SET archived_at = NULL, updated_at = $1 WHERE id = $2 AND archived_at IS NOT NULL`,
-			now, id)
+			time.Now().UTC(), id)
 	}
 	if err != nil {
 		return fmt.Errorf("set lead archived: %w", err)
