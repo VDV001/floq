@@ -57,6 +57,15 @@ func (f fakeExtractor) Extract(context.Context, string) (domain.CompanyProfile, 
 	return f.profile, f.err
 }
 
+// ctxCapturingExtractor records the context it was called with, so tests can
+// assert what attribution the usecase propagated to the extractor.
+type ctxCapturingExtractor struct{ gotCtx context.Context }
+
+func (e *ctxCapturingExtractor) Extract(ctx context.Context, _ string) (domain.CompanyProfile, error) {
+	e.gotCtx = ctx
+	return domain.CompanyProfile{Title: "Acme"}, nil
+}
+
 type fakeLimiter struct{ allow bool }
 
 func (f fakeLimiter) Allow(context.Context, string) (bool, time.Duration, error) {
@@ -126,6 +135,20 @@ func TestProcessPending_Success_MarksEnriched(t *testing.T) {
 	require.Len(t, store.saved, 1)
 	assert.Equal(t, domain.StatusEnriched, store.saved[0].Status)
 	assert.Equal(t, profile, store.saved[0].Profile)
+}
+
+func TestProcessPending_AttributesSubjectUserToExtractor(t *testing.T) {
+	rec := duePending(t, "ivan@acme.ru")
+	store := &fakeStore{due: []*domain.CompanyEnrichment{rec}}
+	ext := &ctxCapturingExtractor{}
+	uc := newUC(store, fakeFetcher{page: "<html>"}, ext, fakeLimiter{allow: true})
+
+	_, err := uc.ProcessPending(context.Background())
+	require.NoError(t, err)
+	require.NotNil(t, ext.gotCtx, "extractor must have been called")
+	uid, ok := enrichment.SubjectUserFromContext(ext.gotCtx)
+	assert.True(t, ok, "the record's user must be attributed for audit/cost")
+	assert.Equal(t, rec.UserID, uid)
 }
 
 func TestProcessPending_FetchError_MarksFailed(t *testing.T) {

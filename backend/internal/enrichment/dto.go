@@ -18,6 +18,9 @@ type ProfileResponse struct {
 	Emails      []string `json:"emails"`
 	Phones      []string `json:"phones"`
 	Socials     []string `json:"socials"`
+	// Phase-2 (#186) LLM-classified fields. Empty strings when unclassified.
+	Industry    string `json:"industry"`
+	CompanySize string `json:"companySize"`
 }
 
 // EnrichmentResponse is the read DTO returned by GET /api/enrichment.
@@ -44,6 +47,8 @@ func toResponse(e *domain.CompanyEnrichment) EnrichmentResponse {
 			Emails:      e.Profile.Emails,
 			Phones:      e.Profile.Phones,
 			Socials:     e.Profile.Socials,
+			Industry:    e.Profile.Industry,
+			CompanySize: string(e.Profile.CompanySize),
 		},
 		EnrichedAt: e.EnrichedAt,
 	}

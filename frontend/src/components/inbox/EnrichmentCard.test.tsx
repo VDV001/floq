@@ -34,6 +34,18 @@ describe("EnrichmentCard", () => {
     expect(screen.getByText(/t\.me\/acme/)).toBeInTheDocument();
   });
 
+  it("renders industry and a human-readable company size", () => {
+    render(<EnrichmentCard enrichment={enr({ profile: { title: "Acme LLC", description: "", emails: [], phones: [], socials: [], industry: "финтех", companySize: "medium" } })} loading={false} />);
+    expect(screen.getByText(/финтех/i)).toBeInTheDocument();
+    expect(screen.getByText(/11–50/)).toBeInTheDocument();
+  });
+
+  it("treats a profile with only industry as having data", () => {
+    render(<EnrichmentCard enrichment={enr({ profile: { title: "", description: "", emails: [], phones: [], socials: [], industry: "логистика" } })} loading={false} />);
+    expect(screen.getByText(/логистика/)).toBeInTheDocument();
+    expect(screen.queryByText(/Нет данных о компании/)).not.toBeInTheDocument();
+  });
+
   it("shows a pending state while the worker is scraping", () => {
     render(<EnrichmentCard enrichment={enr({ status: "pending", profile: { title: "", description: "", emails: [], phones: [], socials: [] } })} loading={false} />);
     expect(screen.getByText(/Собираем данные о компании/)).toBeInTheDocument();

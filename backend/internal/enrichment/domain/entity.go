@@ -98,19 +98,28 @@ func (s Status) IsValid() bool {
 // String returns the string representation of the Status.
 func (s Status) String() string { return string(s) }
 
-// CompanyProfile is the publicly scraped company data value object.
+// CompanyProfile is the publicly scraped company data value object. Phase 1
+// fills Title/Description/Emails/Phones/Socials by HTML regex; Phase 2 (#186)
+// adds Industry/CompanySize by LLM. The new fields are omitempty so legacy
+// rows (stored before Phase 2) deserialize with their zero values — backward
+// compatible since the whole struct is persisted as a single JSONB column.
 type CompanyProfile struct {
-	Title       string   `json:"title"`
-	Description string   `json:"description"`
-	Emails      []string `json:"emails"`
-	Phones      []string `json:"phones"`
-	Socials     []string `json:"socials"`
+	Title       string      `json:"title"`
+	Description string      `json:"description"`
+	Emails      []string    `json:"emails"`
+	Phones      []string    `json:"phones"`
+	Socials     []string    `json:"socials"`
+	Industry    string      `json:"industry,omitempty"`
+	CompanySize CompanySize `json:"company_size,omitempty"`
 }
 
-// IsEmpty reports whether nothing useful was extracted.
+// IsEmpty reports whether nothing useful was extracted. An Unknown CompanySize
+// is treated as no data (the zero value), so a profile carrying only an
+// Unknown size is still empty.
 func (p CompanyProfile) IsEmpty() bool {
 	return p.Title == "" && p.Description == "" &&
-		len(p.Emails) == 0 && len(p.Phones) == 0 && len(p.Socials) == 0
+		len(p.Emails) == 0 && len(p.Phones) == 0 && len(p.Socials) == 0 &&
+		p.Industry == "" && p.CompanySize == CompanySizeUnknown
 }
 
 // CompanyEnrichment is the per-user, per-domain enrichment record/entity.

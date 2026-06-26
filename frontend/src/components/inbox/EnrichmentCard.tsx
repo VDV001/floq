@@ -1,4 +1,4 @@
-import { Building2, Mail, Phone, Link2 } from "lucide-react";
+import { Building2, Mail, Phone, Link2, Briefcase, Users } from "lucide-react";
 import type { Enrichment } from "@/lib/api";
 
 interface EnrichmentCardProps {
@@ -6,9 +6,19 @@ interface EnrichmentCardProps {
   loading: boolean;
 }
 
+// Human-readable headcount labels for the Phase-2 (#186) company-size buckets.
+const COMPANY_SIZE_LABELS: Record<string, string> = {
+  solo: "1 сотрудник",
+  small: "2–10 сотрудников",
+  medium: "11–50 сотрудников",
+  large: "51–250 сотрудников",
+  enterprise: "250+ сотрудников",
+};
+
 function isEmptyProfile(e: Enrichment): boolean {
   const p = e.profile;
-  return !p.title && !p.description && p.emails.length === 0 && p.phones.length === 0 && p.socials.length === 0;
+  return !p.title && !p.description && p.emails.length === 0 && p.phones.length === 0 &&
+    p.socials.length === 0 && !p.industry && !p.companySize;
 }
 
 export function EnrichmentCard({ enrichment, loading }: EnrichmentCardProps) {
@@ -35,6 +45,22 @@ export function EnrichmentCard({ enrichment, loading }: EnrichmentCardProps) {
             )}
             {enrichment.profile.description && (
               <p className="text-sm leading-relaxed text-[#434655]">{enrichment.profile.description}</p>
+            )}
+            {(enrichment.profile.industry || enrichment.profile.companySize) && (
+              <div className="flex flex-wrap items-center gap-3">
+                {enrichment.profile.industry && (
+                  <span className="inline-flex items-center gap-1.5 rounded-full bg-white px-3 py-1 text-xs font-medium text-[#434655]">
+                    <Briefcase className="size-3.5 text-[#737686]" />
+                    {enrichment.profile.industry}
+                  </span>
+                )}
+                {enrichment.profile.companySize && (
+                  <span className="inline-flex items-center gap-1.5 rounded-full bg-white px-3 py-1 text-xs font-medium text-[#434655]">
+                    <Users className="size-3.5 text-[#737686]" />
+                    {COMPANY_SIZE_LABELS[enrichment.profile.companySize] ?? enrichment.profile.companySize}
+                  </span>
+                )}
+              </div>
             )}
             {enrichment.profile.emails.length > 0 && (
               <div className="flex flex-wrap items-center gap-2">

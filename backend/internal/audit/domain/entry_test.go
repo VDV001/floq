@@ -28,6 +28,19 @@ func validParams() domain.EntryParams {
 	}
 }
 
+// TestNewEntry_AcceptsEnrichmentRequestType pins the Phase-2 (#186) request
+// type added for the LLM company-enrichment extractor. The SQL CHECK list in
+// migration 049 must stay in sync with this enum or the RecordingProvider's
+// inserts would be rejected, leaving every enrichment call un-audited.
+func TestNewEntry_AcceptsEnrichmentRequestType(t *testing.T) {
+	t.Parallel()
+	p := validParams()
+	p.RequestType = domain.RequestTypeEnrichment
+	if _, err := domain.NewEntry(p); err != nil {
+		t.Fatalf("NewEntry with RequestTypeEnrichment must be valid, got %v", err)
+	}
+}
+
 func TestNewEntry_Success(t *testing.T) {
 	t.Parallel()
 	p := validParams()
