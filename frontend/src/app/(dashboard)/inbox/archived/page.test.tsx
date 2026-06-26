@@ -133,6 +133,55 @@ describe("ArchivedLeadsPage", () => {
     expect(screen.getByText("Лид возвращён")).toBeInTheDocument();
   });
 
+  it("shows a load-error state (not «Архив пуст») when the fetch fails", async () => {
+    mockGetArchivedLeads.mockRejectedValue(new Error("boom"));
+
+    render(<ArchivedLeadsPage />, { wrapper: NotificationProvider });
+
+    await waitFor(() => {
+      expect(screen.getByText("Не удалось загрузить архив")).toBeInTheDocument();
+    });
+    // Must NOT masquerade as an empty archive.
+    expect(screen.queryByText("Архив пуст")).not.toBeInTheDocument();
+  });
+
+  it("lets another row unarchive while a first unarchive is still in flight", async () => {
+    mockGetArchivedLeads.mockResolvedValue([
+      makeArchivedLead({ id: "slow", company: "Медленный" }),
+      makeArchivedLead({ id: "fast", company: "Быстрый" }),
+    ]);
+    // First request never resolves; the second resolves normally. A global
+    // guard would block the second click — a per-row guard does not.
+    let resolveFast: (v?: unknown) => void = () => {};
+    mockUnarchiveLead.mockImplementation((id: string) => {
+      if (id === "slow") return new Promise(() => {});
+      return new Promise((res) => {
+        resolveFast = res;
+      });
+    });
+
+    const user = userEvent.setup();
+    render(<ArchivedLeadsPage />, { wrapper: NotificationProvider });
+
+    await waitFor(() => {
+      expect(screen.getByText("Медленный")).toBeInTheDocument();
+    });
+
+    const buttons = screen.getAllByRole("button", { name: /Разархивировать|Возвращаем/ });
+    await user.click(buttons[0]); // slow — hangs
+    await user.click(buttons[1]); // fast — must still fire
+
+    await waitFor(() => {
+      expect(mockUnarchiveLead).toHaveBeenCalledWith("fast");
+    });
+    resolveFast();
+    await waitFor(() => {
+      expect(screen.queryByText("Быстрый")).not.toBeInTheDocument();
+    });
+    // The hung row is untouched.
+    expect(screen.getByText("Медленный")).toBeInTheDocument();
+  });
+
   it("keeps the row and surfaces an error toast when unarchive fails", async () => {
     mockGetArchivedLeads.mockResolvedValue([
       makeArchivedLead({ id: "l1", company: "Остаться Компания" }),

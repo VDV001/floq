@@ -9,6 +9,7 @@ import { ProspectSuggestionBanner } from "@/components/leads/ProspectSuggestionB
 import { PendingReplySection } from "@/components/leads/PendingReplySection";
 import { IdentityBadge } from "@/components/leads/IdentityBadge";
 import { api, Lead, Message, Qualification, Draft } from "@/lib/api";
+import { unarchiveLead } from "@/lib/leadActions";
 import { getTimeAgo, getInitials } from "@/components/inbox/helpers";
 import { QualificationCard } from "@/components/inbox/QualificationCard";
 import { ConversationThread } from "@/components/inbox/ConversationThread";
@@ -96,17 +97,11 @@ export default function LeadDetailPage() {
   async function handleUnarchive() {
     if (unarchiving) return;
     setUnarchiving(true);
-    try {
-      await api.unarchiveLead(leadId);
-      notify({ type: "success", title: "Лид возвращён", message: "Он снова в ленте входящих." });
-      // Clear the flag in place so the page flips back to the archive control
-      // without a full refetch — the lead is active again.
-      setLead((prev) => (prev ? { ...prev, archived_at: undefined } : prev));
-    } catch (err) {
-      notifyError(err, "Не удалось разархивировать лид");
-    } finally {
-      setUnarchiving(false);
-    }
+    const ok = await unarchiveLead(leadId, notify, notifyError);
+    // Clear the flag in place so the page flips back to the archive control
+    // without a full refetch — the lead is active again.
+    if (ok) setLead((prev) => (prev ? { ...prev, archived_at: undefined } : prev));
+    setUnarchiving(false);
   }
 
   if (loading) return <div className="flex h-full items-center justify-center"><div className="size-8 animate-spin rounded-full border-4 border-[#3b6ef6] border-t-transparent" /></div>;

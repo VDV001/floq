@@ -1,8 +1,9 @@
 "use client";
 
 import Link from "next/link";
-import { Mail, Send, Link2 } from "lucide-react";
+import { Link2 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { LeadAvatar } from "@/components/leads/LeadAvatar";
 import { STATUS_STYLES, type LeadStatus } from "@/components/leads/constants";
 
 export interface LeadCardProps {
@@ -40,18 +41,7 @@ export function LeadCard({
       className="group relative flex cursor-pointer rounded-xl border border-transparent bg-white p-5 transition-all hover:border-[#c3c6d7]/10 hover:bg-[#dce9ff]/40"
     >
       <div className="flex items-start gap-4 flex-1 min-w-0">
-        <div
-          className={cn(
-            "flex size-12 shrink-0 items-center justify-center rounded-xl",
-            channel === "email" ? "bg-[#dbe1ff]" : "bg-[#d5e0f8]"
-          )}
-        >
-          {channel === "email" ? (
-            <Mail className="size-5 text-[#004ac6]" />
-          ) : (
-            <Send className="size-5 text-[#229ED9]" />
-          )}
-        </div>
+        <LeadAvatar channel={channel} />
         <div className="min-w-0 flex-1">
           <h4 className="font-bold leading-none text-[#0d1c2e]">{company}</h4>
           <p className="mt-1 text-xs font-medium text-[#737686]">

@@ -1,8 +1,9 @@
 "use client";
 
 import Link from "next/link";
-import { Mail, Send, ArchiveRestore } from "lucide-react";
+import { ArchiveRestore } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { LeadAvatar } from "@/components/leads/LeadAvatar";
 import { STATUS_STYLES, type LeadStatus } from "@/components/leads/constants";
 
 export interface ArchivedLeadCardProps {
@@ -12,8 +13,9 @@ export interface ArchivedLeadCardProps {
   channel: "email" | "telegram";
   status: LeadStatus;
   sourceName?: string;
-  /** Human "X назад" label for when the lead was archived. */
-  archivedAgo: string;
+  /** Ready-to-render label for when the lead was archived (e.g. "5 мин назад"
+   *  or "Только что") — already phrased, the card does not append "назад". */
+  archivedLabel: string;
   /** True while this card's unarchive request is in flight. */
   unarchiving: boolean;
   onUnarchive: (id: string) => void;
@@ -30,25 +32,14 @@ export function ArchivedLeadCard({
   channel,
   status,
   sourceName,
-  archivedAgo,
+  archivedLabel,
   unarchiving,
   onUnarchive,
 }: ArchivedLeadCardProps) {
   return (
     <div className="group relative flex items-center gap-4 rounded-xl border border-transparent bg-white p-5 transition-all hover:border-[#c3c6d7]/10 hover:bg-[#dce9ff]/40">
       <Link href={`/inbox/${id}`} className="flex min-w-0 flex-1 items-start gap-4">
-        <div
-          className={cn(
-            "flex size-12 shrink-0 items-center justify-center rounded-xl",
-            channel === "email" ? "bg-[#dbe1ff]" : "bg-[#d5e0f8]"
-          )}
-        >
-          {channel === "email" ? (
-            <Mail className="size-5 text-[#004ac6]" />
-          ) : (
-            <Send className="size-5 text-[#229ED9]" />
-          )}
-        </div>
+        <LeadAvatar channel={channel} />
         <div className="min-w-0 flex-1">
           <h4 className="font-bold leading-none text-[#0d1c2e]">{company}</h4>
           <p className="mt-1 text-xs font-medium text-[#737686]">
@@ -61,7 +52,7 @@ export function ArchivedLeadCard({
               </span>
             )}
             <span className="rounded-full bg-[#eef0f4] px-2 py-0.5 text-[10px] font-semibold text-[#737686]">
-              В архиве · {archivedAgo} назад
+              В архиве · {archivedLabel}
             </span>
           </div>
         </div>

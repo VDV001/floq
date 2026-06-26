@@ -8,27 +8,33 @@ import { mapStatus } from "@/components/inbox/constants";
 import { getTimeAgo } from "@/lib/format";
 import { useArchivedLeads } from "@/hooks/useArchivedLeads";
 import { useNotify } from "@/components/notifications/NotificationProvider";
-import { api } from "@/lib/api";
+import { unarchiveLead } from "@/lib/leadActions";
+
+// archivedLabel phrases the "when archived" badge. getTimeAgo already reads
+// "Только что" for sub-minute gaps, which must NOT get a trailing "назад"
+// ("Только что назад" is broken Russian); every other bucket does.
+function archivedLabel(dateStr: string): string {
+  const ago = getTimeAgo(dateStr);
+  return ago === "Только что" ? ago : `${ago} назад`;
+}
 
 export default function ArchivedLeadsPage() {
-  const { loading, leads, removeLead } = useArchivedLeads();
+  const { loading, leads, error, removeLead } = useArchivedLeads();
   const { notify, notifyError } = useNotify();
-  // Tracks which lead is mid-unarchive so its button can show a spinner and
-  // block double-clicks without disabling the whole list.
-  const [pendingId, setPendingId] = useState<string | null>(null);
+  // Tracks which leads are mid-unarchive so each row shows its own spinner and
+  // blocks its own double-clicks — without freezing unarchive on the others.
+  const [pendingIds, setPendingIds] = useState<Set<string>>(new Set());
 
   async function handleUnarchive(id: string) {
-    if (pendingId) return;
-    setPendingId(id);
-    try {
-      await api.unarchiveLead(id);
-      removeLead(id);
-      notify({ type: "success", title: "Лид возвращён", message: "Он снова в ленте входящих." });
-    } catch (err) {
-      notifyError(err, "Не удалось разархивировать лид");
-    } finally {
-      setPendingId(null);
-    }
+    if (pendingIds.has(id)) return;
+    setPendingIds((prev) => new Set(prev).add(id));
+    const ok = await unarchiveLead(id, notify, notifyError);
+    if (ok) removeLead(id);
+    setPendingIds((prev) => {
+      const next = new Set(prev);
+      next.delete(id);
+      return next;
+    });
   }
 
   return (
@@ -53,7 +59,15 @@ export default function ArchivedLeadsPage() {
         </div>
 
         <div className="space-y-3">
-          {!loading && leads.length === 0 && (
+          {!loading && error && (
+            <div className="rounded-xl bg-white p-12 text-center">
+              <p className="text-lg font-bold text-[#0d1c2e]">Не удалось загрузить архив</p>
+              <p className="mt-2 text-sm text-[#434655]">
+                Проверьте соединение и обновите страницу. Архивные лиды никуда не делись.
+              </p>
+            </div>
+          )}
+          {!loading && !error && leads.length === 0 && (
             <div className="rounded-xl bg-white p-12 text-center">
               <p className="text-lg font-bold text-[#0d1c2e]">Архив пуст</p>
               <p className="mt-2 text-sm text-[#434655]">
@@ -61,7 +75,7 @@ export default function ArchivedLeadsPage() {
               </p>
             </div>
           )}
-          {leads.map((lead) => (
+          {!error && leads.map((lead) => (
             <ArchivedLeadCard
               key={lead.id}
               id={lead.id}
@@ -70,8 +84,8 @@ export default function ArchivedLeadsPage() {
               channel={lead.channel}
               status={mapStatus(lead.status)}
               sourceName={lead.source_name}
-              archivedAgo={getTimeAgo(lead.archived_at ?? lead.updated_at)}
-              unarchiving={pendingId === lead.id}
+              archivedLabel={archivedLabel(lead.archived_at ?? lead.updated_at)}
+              unarchiving={pendingIds.has(lead.id)}
               onUnarchive={handleUnarchive}
             />
           ))}

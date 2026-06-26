@@ -10,6 +10,10 @@ import { api, Lead } from "@/lib/api";
 export function useArchivedLeads() {
   const [loading, setLoading] = useState(true);
   const [leads, setLeads] = useState<Lead[]>([]);
+  // error distinguishes a genuinely empty archive from a failed load — without
+  // it a 500/offline both render as "Архив пуст", hiding leads that exist but
+  // could not be fetched. The page reads this to show a load-error state.
+  const [error, setError] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -18,7 +22,9 @@ export function useArchivedLeads() {
       .then((data) => {
         if (!cancelled) setLeads(data);
       })
-      .catch(() => {})
+      .catch(() => {
+        if (!cancelled) setError(true);
+      })
       .finally(() => {
         if (!cancelled) setLoading(false);
       });
@@ -31,5 +37,5 @@ export function useArchivedLeads() {
   const removeLead = (id: string) =>
     setLeads((prev) => prev.filter((l) => l.id !== id));
 
-  return { loading, leads, removeLead };
+  return { loading, leads, error, removeLead };
 }
