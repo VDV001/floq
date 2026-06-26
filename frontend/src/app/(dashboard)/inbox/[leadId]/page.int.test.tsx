@@ -28,6 +28,7 @@ function lead(over: Partial<Lead> = {}): Lead {
     company: over.company ?? "Acme",
     first_message: over.first_message ?? "Здравствуйте, интересует демо",
     status: over.status ?? "new",
+    email_address: over.email_address,
     source_name: over.source_name ?? "Источник A",
     created_at: over.created_at ?? "2026-06-25T10:00:00Z",
     updated_at: over.updated_at ?? "2026-06-25T10:00:00Z",
@@ -147,6 +148,27 @@ describe("lead detail page (integration)", () => {
     // Conversation thread from GET /api/leads/lead-1/messages.
     expect(screen.getByText("Нужна интеграция с 1С")).toBeInTheDocument();
     expect(screen.getByText("Поможем — расскажите подробнее")).toBeInTheDocument();
+  });
+
+  it("renders the company enrichment card for an email lead", async () => {
+    mountWith({
+      lead: lead({ channel: "email", email_address: "ivan@acme.ru" }),
+      extra: [
+        http.get(url("/api/enrichment"), () =>
+          HttpResponse.json({
+            domain: "acme.ru",
+            status: "enriched",
+            profile: { title: "Acme LLC", description: "Делаем виджеты", emails: [], phones: [], socials: [] },
+          }),
+        ),
+      ],
+    });
+
+    renderPage();
+
+    expect(await screen.findByText("О компании")).toBeInTheDocument();
+    expect(await screen.findByText("Acme LLC")).toBeInTheDocument();
+    expect(screen.getByText("Делаем виджеты")).toBeInTheDocument();
   });
 
   it("sends a manually typed reply through the API and refetches messages", async () => {
