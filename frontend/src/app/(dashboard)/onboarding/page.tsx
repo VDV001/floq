@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect } from "react";
 import { cn } from "@/lib/utils";
 import { useOnboarding } from "@/hooks/useOnboarding";
 import { STEPS } from "@/components/onboarding/constants";
@@ -9,10 +10,22 @@ import { SectionsMap } from "@/components/onboarding/SectionsMap";
 import { Glossary } from "@/components/onboarding/Glossary";
 import { TipsSection } from "@/components/onboarding/TipsSection";
 import { FooterBanner } from "@/components/onboarding/FooterBanner";
+import { ONBOARDING_BANNER_HIDDEN_KEY } from "@/components/onboarding/OnboardingBanner";
 
 export default function OnboardingPage() {
   const { settings, counts, loading, completedSteps, progress, allDone } =
     useOnboarding();
+
+  // Once setup is complete, stop nudging: the inbox banner reads the same flag.
+  useEffect(() => {
+    if (allDone && typeof window !== "undefined") {
+      try {
+        window.localStorage.setItem(ONBOARDING_BANNER_HIDDEN_KEY, "1");
+      } catch {
+        /* ignore storage failures */
+      }
+    }
+  }, [allDone]);
 
   if (loading) {
     return (

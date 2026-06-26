@@ -8,6 +8,7 @@ import { FILTER_TABS } from "@/components/inbox/constants";
 import { PipelineSidebar } from "@/components/inbox/PipelineSidebar";
 import { LeadCard } from "@/components/leads/LeadCard";
 import { PendingQueueTabs } from "@/components/pending-queue/PendingQueueTabs";
+import { OnboardingBanner } from "@/components/onboarding/OnboardingBanner";
 import { useInboxPage } from "@/hooks/useInboxPage";
 import { useNotify } from "@/components/notifications/NotificationProvider";
 
@@ -26,6 +27,7 @@ export default function InboxPage() {
 
       <section className="flex-1 overflow-y-auto px-4 sm:px-8 lg:px-12 py-8">
         <div className="mx-auto max-w-4xl space-y-8">
+          <OnboardingBanner />
           <PendingQueueTabs />
           <div className="flex items-end justify-between">
             <div>
