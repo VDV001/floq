@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/daniil/floq/internal/enrichment"
 	"github.com/stretchr/testify/assert"
@@ -149,6 +150,27 @@ func TestDaDataEnricher_HTTPError(t *testing.T) {
 
 	_, _, err := enr.Enrich(context.Background(), enrichment.EnrichQuery{INN: "7707083893"})
 	assert.Error(t, err)
+}
+
+// denyLimiter always denies — stands in for an exhausted DaData budget.
+type denyLimiter struct{ calls int }
+
+func (l *denyLimiter) Allow(_ context.Context, _ string) (bool, time.Duration, error) {
+	l.calls++
+	return false, time.Minute, nil
+}
+
+func TestDaDataEnricher_RateLimited_SkipsWithoutCalling(t *testing.T) {
+	stub := newDadataStub(t)
+	stub.suggestions = []map[string]any{partySuggestion("X", "7707083893", "1027700132195", "A", "1", "ACTIVE")}
+	lim := &denyLimiter{}
+	enr := newDaDataEnricher(stub.srv.Client(), "k", stub.srv.URL, lim)
+
+	_, found, err := enr.Enrich(context.Background(), enrichment.EnrichQuery{INN: "7707083893"})
+	require.NoError(t, err, "over-budget is a skip, not an error")
+	assert.False(t, found)
+	assert.Equal(t, 1, lim.calls, "limiter consulted")
+	assert.Empty(t, stub.lastPath, "no API call when over budget — protects the daily quota")
 }
 
 func TestDaDataEnricher_SatisfiesPort(t *testing.T) {
