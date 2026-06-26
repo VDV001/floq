@@ -35,8 +35,10 @@ func (r *Repository) UpsertPending(ctx context.Context, e *domain.CompanyEnrichm
 	return nil
 }
 
-// ClaimDue returns rows that are due for (re)processing: pending, or
-// enriched-and-expired, with attempts below maxAttempts, oldest first.
+// ClaimDue returns rows that are due for (re)processing — pending, failed
+// (for retry), or enriched-and-expired (for refresh) — with attempts below
+// maxAttempts, oldest first. The attempts cap is what bounds retries of a
+// persistently-failing domain.
 //
 // Phase 1 runs a single worker (the EnrichmentCron), so this plain SELECT needs
 // no cross-instance claim/lease; multi-instance exclusivity (a processing lease)
@@ -45,8 +47,10 @@ func (r *Repository) ClaimDue(ctx context.Context, limit, maxAttempts int) ([]*d
 	rows, err := r.pool.Query(ctx, `
 		SELECT id, user_id, domain, status, profile, error, attempts, enriched_at, expires_at, created_at, updated_at
 		FROM company_enrichment
-		WHERE (status = 'pending' OR (status = 'enriched' AND expires_at < now()))
-		  AND attempts < $2
+		WHERE attempts < $2
+		  AND (status = 'pending'
+		       OR status = 'failed'
+		       OR (status = 'enriched' AND expires_at < now()))
 		ORDER BY updated_at
 		LIMIT $1`, limit, maxAttempts)
 	if err != nil {
