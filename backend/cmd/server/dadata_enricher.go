@@ -7,10 +7,22 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/daniil/floq/internal/enrichment"
 	"github.com/daniil/floq/internal/enrichment/domain"
 )
+
+// rateLimiter bounds DaData egress to protect the shared daily quota. Matches
+// the ratelimit.Limiter shape structurally (declared locally; injected from
+// the composition root). nil = unlimited.
+type rateLimiter interface {
+	Allow(ctx context.Context, key string) (bool, time.Duration, error)
+}
+
+// dadataRateLimitKey is the single global bucket key — the quota is per API
+// key (global), not per company.
+const dadataRateLimitKey = "dadata"
 
 // daDataBaseURL is the DaData party suggestions/lookup base. A constant,
 // trusted host — the request URL is never derived from untrusted input (unlike
@@ -26,18 +38,24 @@ type daDataEnricher struct {
 	httpClient *http.Client
 	apiKey     string
 	baseURL    string
+	limiter    rateLimiter // optional global egress cap; nil = unlimited
 }
 
 var _ enrichment.Enricher = (*daDataEnricher)(nil)
 
-func newDaDataEnricher(client *http.Client, apiKey, baseURL string) *daDataEnricher {
+func newDaDataEnricher(client *http.Client, apiKey, baseURL string, limiter ...rateLimiter) *daDataEnricher {
 	if baseURL == "" {
 		baseURL = daDataBaseURL
+	}
+	var lim rateLimiter
+	if len(limiter) > 0 {
+		lim = limiter[0]
 	}
 	return &daDataEnricher{
 		httpClient: client,
 		apiKey:     apiKey,
 		baseURL:    strings.TrimRight(baseURL, "/"),
+		limiter:    lim,
 	}
 }
 
@@ -65,6 +83,17 @@ type ddSuggestion struct {
 }
 
 func (d *daDataEnricher) Enrich(ctx context.Context, q enrichment.EnrichQuery) (domain.LegalDetails, bool, error) {
+	if q.INN == "" && q.CompanyName == "" {
+		return domain.LegalDetails{}, false, nil // no signal → miss, no API call, no budget spent
+	}
+	// Global egress cap (protects the shared daily quota). Over budget → skip
+	// (a miss), never an error — registry is best-effort.
+	if d.limiter != nil {
+		allowed, _, err := d.limiter.Allow(ctx, dadataRateLimitKey)
+		if err != nil || !allowed {
+			return domain.LegalDetails{}, false, nil
+		}
+	}
 	switch {
 	case q.INN != "":
 		resp, err := d.post(ctx, "/findById/party", q.INN, 1)

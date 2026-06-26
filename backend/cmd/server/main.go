@@ -379,7 +379,8 @@ func main() {
 	var enrichmentOpts []enrichment.Option
 	if cfg.EnrichmentRegistryEnabled && cfg.DaDataAPIKey != "" {
 		enrichmentOpts = append(enrichmentOpts, enrichment.WithEnricher(
-			newDaDataEnricher(httpClient, cfg.DaDataAPIKey, ""),
+			newDaDataEnricher(httpClient, cfg.DaDataAPIKey, "",
+				newLimiter(cfg.EnrichmentRegistryRateLimitPerMin, time.Minute)),
 		))
 		slog.Default().Info("enrichment: registry enricher enabled (#188)")
 	}
