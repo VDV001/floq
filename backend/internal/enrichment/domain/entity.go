@@ -6,6 +6,7 @@ package domain
 
 import (
 	"errors"
+	"net"
 	"strings"
 	"time"
 
@@ -51,6 +52,14 @@ func NewDomain(email string) (Domain, error) {
 	}
 	host := strings.TrimPrefix(e[at+1:], "www.")
 	if host == "" || !strings.Contains(host, ".") {
+		return Domain{}, ErrInvalidDomain
+	}
+	// A company domain is a hostname, never a bare IP or host:port. Rejecting
+	// these here is the first SSRF defense layer: it stops an attacker-supplied
+	// email like x@169.254.169.254 or x@10.0.0.5:6379 from ever reaching the
+	// scraper (the egress dialer guard is the second layer). A ':' covers a port
+	// suffix and bracketed IPv6 literals; net.ParseIP covers bare IPv4/IPv6.
+	if strings.ContainsAny(host, ":[]") || net.ParseIP(host) != nil {
 		return Domain{}, ErrInvalidDomain
 	}
 	if _, free := freeEmailProviders[host]; free {
