@@ -62,15 +62,14 @@ func TestRepository_CredentialsConfig_EncryptsAuthSecretAtRest(t *testing.T) {
 	require.NoError(t, repo.UpsertCredentialsConfig(ctx, userID,
 		mustConfig(t, "https://1c.example.com", domain.AuthTypeToken, "topsecret", "", true)))
 
-	// At rest: ciphertext present in the byte columns, the legacy plaintext
-	// column left blank, and the ciphertext does not leak the secret.
-	var plaintext string
+	// At rest: ciphertext present in the byte columns (the plaintext
+	// auth_secret column was dropped in migration 047) and the ciphertext does
+	// not leak the secret.
 	var enc, nonce []byte
 	require.NoError(t, pool.QueryRow(ctx,
-		`SELECT auth_secret, auth_secret_enc, auth_secret_nonce
+		`SELECT auth_secret_enc, auth_secret_nonce
 		 FROM onec_credentials WHERE user_id = $1`, userID).
-		Scan(&plaintext, &enc, &nonce))
-	assert.Empty(t, plaintext, "plaintext auth_secret column must not be written")
+		Scan(&enc, &nonce))
 	assert.NotEmpty(t, enc, "ciphertext must be stored")
 	assert.NotEmpty(t, nonce, "nonce must be stored")
 	assert.NotContains(t, string(enc), "topsecret")

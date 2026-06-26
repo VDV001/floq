@@ -22,10 +22,10 @@ func TestRepository_GetOutboundCredentials(t *testing.T) {
 
 	t.Run("active with base url", func(t *testing.T) {
 		user := testutil.SeedUser(t, pool)
-		_, err := pool.Exec(ctx, `
-			INSERT INTO onec_credentials (user_id, base_url, auth_type, auth_secret, is_active)
-			VALUES ($1, 'https://1c.example/odata/', 'token', 'tok-123', TRUE)`, user)
-		require.NoError(t, err)
+		// Seed through the repo so the secret is encrypted at rest — the
+		// plaintext auth_secret column was dropped in migration 047.
+		require.NoError(t, repo.UpsertCredentialsConfig(ctx, user,
+			mustConfig(t, "https://1c.example/odata/", domain.AuthTypeToken, "tok-123", "", true)))
 
 		creds, err := repo.GetOutboundCredentials(ctx, user)
 		require.NoError(t, err)

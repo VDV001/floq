@@ -4,10 +4,12 @@ package settings_test
 
 import (
 	"context"
+	"encoding/base64"
 	"fmt"
 	"strings"
 	"testing"
 
+	"github.com/daniil/floq/internal/secrets"
 	"github.com/daniil/floq/internal/settings"
 	"github.com/daniil/floq/internal/settings/domain"
 	"github.com/daniil/floq/internal/testutil"
@@ -15,9 +17,20 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// atRestCipher builds a real AES-256-GCM cipher so the at-rest path is
+// exercised against actual crypto + a real database, not a stub.
+func atRestCipher(t *testing.T) *secrets.Cipher {
+	t.Helper()
+	key := base64.StdEncoding.EncodeToString([]byte("settings-integration-test-kek-32"))
+	c, err := secrets.NewCipher(key)
+	require.NoError(t, err)
+	return c
+}
+
 // TestUpdateSettings_EncryptsSecretAtRest verifies, for every secret column,
-// that re-saving through the repository clears the legacy plaintext column,
-// stores a non-leaking ciphertext, and round-trips back to plaintext.
+// that saving through the repository stores a non-leaking ciphertext in the
+// *_enc/*_nonce columns and round-trips back to plaintext. The legacy plaintext
+// columns were dropped in migration 047, so they are no longer written or read.
 func TestUpdateSettings_EncryptsSecretAtRest(t *testing.T) {
 	cases := []struct {
 		column string
@@ -36,24 +49,17 @@ func TestUpdateSettings_EncryptsSecretAtRest(t *testing.T) {
 			pool := testutil.TestDB(t)
 			userID := testutil.SeedUser(t, pool)
 			ctx := context.Background()
-			repo := settings.NewRepository(pool, backfillCipher(t))
+			repo := settings.NewRepository(pool, atRestCipher(t))
 
-			// Pre-existing plaintext secret (simulates a row written before 037).
-			_, err := pool.Exec(ctx, fmt.Sprintf(
-				`INSERT INTO user_settings (user_id, %s) VALUES ($1, 'old-plaintext')`, tc.column), userID)
-			require.NoError(t, err)
-
-			// Re-save through the repository.
+			// Save through the repository.
 			require.NoError(t, repo.UpdateSettings(ctx, userID, map[string]any{tc.column: tc.value}))
 
-			// At rest: plaintext blanked, ciphertext present and non-leaking.
-			var plaintext string
+			// At rest: ciphertext present and non-leaking (no plaintext column).
 			var enc, nonce []byte
 			require.NoError(t, pool.QueryRow(ctx, fmt.Sprintf(
-				`SELECT %s, %s_enc, %s_nonce FROM user_settings WHERE user_id = $1`,
-				tc.column, tc.column, tc.column), userID).
-				Scan(&plaintext, &enc, &nonce))
-			assert.Empty(t, plaintext, "old plaintext must be cleared on re-save")
+				`SELECT %s_enc, %s_nonce FROM user_settings WHERE user_id = $1`,
+				tc.column, tc.column), userID).
+				Scan(&enc, &nonce))
 			assert.NotEmpty(t, enc)
 			assert.NotEmpty(t, nonce)
 			assert.False(t, strings.Contains(string(enc), tc.value), "ciphertext must not leak the secret")

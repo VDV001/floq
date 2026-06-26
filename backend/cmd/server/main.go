@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"flag"
 	"log"
 	"log/slog"
 	"net/http"
@@ -72,12 +71,6 @@ func main() {
 	// Load .env file (ignore error if missing — production uses real env vars).
 	_ = godotenv.Load()
 
-	// -backfill-secrets runs the one-off at-rest encryption backfill (migration
-	// 037 → 038 transition) and exits without starting the server.
-	backfillSecrets := flag.Bool("backfill-secrets", false,
-		"encrypt legacy plaintext secrets into their *_enc columns, then exit")
-	flag.Parse()
-
 	cfg := config.Load()
 
 	// 0a. Secret cipher (at-rest encryption for client credentials). Fail
@@ -136,21 +129,6 @@ func main() {
 		log.Println("migrations applied")
 		m.Close()
 		break
-	}
-
-	// 1c. One-off secret backfill: encrypt legacy plaintext secrets, then exit.
-	// Idempotent, so it is safe to re-run if a previous pass was interrupted.
-	if *backfillSecrets {
-		nSettings, err := settings.BackfillSecrets(context.Background(), pool, secretCipher)
-		if err != nil {
-			log.Fatalf("backfill settings secrets: %v", err)
-		}
-		nOnec, err := onec.BackfillSecrets(context.Background(), pool, secretCipher)
-		if err != nil {
-			log.Fatalf("backfill onec secrets: %v", err)
-		}
-		log.Printf("secret backfill complete: %d settings secrets, %d 1C secrets encrypted", nSettings, nOnec)
-		return
 	}
 
 	// 2. Settings store (reads user_settings from DB, used by services)
