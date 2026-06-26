@@ -2,6 +2,7 @@ package enrichment
 
 import (
 	"context"
+	"time"
 
 	"github.com/daniil/floq/internal/enrichment/domain"
 	"github.com/google/uuid"
@@ -38,3 +39,10 @@ type Extractor interface {
 }
 
 var _ Extractor = (*HTMLExtractor)(nil)
+
+// RateLimiter throttles outbound scrapes per domain. Declared locally (DIP) so
+// the usecase does not import the ratelimit package; ratelimit.Limiter
+// satisfies it structurally and is injected from the composition root.
+type RateLimiter interface {
+	Allow(ctx context.Context, key string) (allowed bool, retryAfter time.Duration, err error)
+}
