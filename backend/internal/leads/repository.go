@@ -271,9 +271,9 @@ func (r *Repository) CreateDraft(ctx context.Context, d *domain.Draft) error {
 func (r *Repository) GetLeadByTelegramChatID(ctx context.Context, userID uuid.UUID, chatID int64) (*domain.Lead, error) {
 	var l domain.Lead
 	err := r.q(ctx).QueryRow(ctx,
-		`SELECT id, user_id, channel, contact_name, company, first_message, status, telegram_chat_id, email_address, source_id, created_at, updated_at
+		`SELECT id, user_id, channel, contact_name, company, first_message, status, telegram_chat_id, email_address, source_id, archived_at, created_at, updated_at
 		 FROM leads WHERE user_id = $1 AND telegram_chat_id = $2`, userID, chatID).
-		Scan(&l.ID, &l.UserID, &l.Channel, &l.ContactName, &l.Company, &l.FirstMessage, &l.Status, &l.TelegramChatID, &l.EmailAddress, &l.SourceID, &l.CreatedAt, &l.UpdatedAt)
+		Scan(&l.ID, &l.UserID, &l.Channel, &l.ContactName, &l.Company, &l.FirstMessage, &l.Status, &l.TelegramChatID, &l.EmailAddress, &l.SourceID, &l.ArchivedAt, &l.CreatedAt, &l.UpdatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
 	}
@@ -287,9 +287,9 @@ func (r *Repository) GetLeadByTelegramChatID(ctx context.Context, userID uuid.UU
 func (r *Repository) GetLeadByEmailAddress(ctx context.Context, userID uuid.UUID, email string) (*domain.Lead, error) {
 	var l domain.Lead
 	err := r.q(ctx).QueryRow(ctx,
-		`SELECT id, user_id, channel, contact_name, company, first_message, status, telegram_chat_id, email_address, source_id, created_at, updated_at
+		`SELECT id, user_id, channel, contact_name, company, first_message, status, telegram_chat_id, email_address, source_id, archived_at, created_at, updated_at
 		 FROM leads WHERE user_id = $1 AND email_address = $2`, userID, email).
-		Scan(&l.ID, &l.UserID, &l.Channel, &l.ContactName, &l.Company, &l.FirstMessage, &l.Status, &l.TelegramChatID, &l.EmailAddress, &l.SourceID, &l.CreatedAt, &l.UpdatedAt)
+		Scan(&l.ID, &l.UserID, &l.Channel, &l.ContactName, &l.Company, &l.FirstMessage, &l.Status, &l.TelegramChatID, &l.EmailAddress, &l.SourceID, &l.ArchivedAt, &l.CreatedAt, &l.UpdatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
 	}

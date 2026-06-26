@@ -48,6 +48,7 @@ type InboxLead struct {
 	TelegramChatID *int64
 	EmailAddress   *string
 	SourceID       *uuid.UUID
+	ArchivedAt     *time.Time
 	CreatedAt      time.Time
 	UpdatedAt      time.Time
 }
@@ -105,6 +106,11 @@ type LeadRepository interface {
 	CreateMessage(ctx context.Context, msg *InboxMessage) error
 	UpsertQualification(ctx context.Context, q *InboxQualification) error
 	UpdateLeadStatus(ctx context.Context, id uuid.UUID, status LeadStatus) error
+	// UnarchiveLead resurfaces an archived lead when its contact re-engages
+	// (new inbound message). Idempotent: a no-op (returns nil) when the lead
+	// is already active, so callers can invoke it on the re-engagement path
+	// without first checking state.
+	UnarchiveLead(ctx context.Context, id uuid.UUID) error
 }
 
 // ProspectMatch is a port-level read model for prospect data used by inbox.

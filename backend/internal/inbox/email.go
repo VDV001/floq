@@ -448,6 +448,16 @@ func (e *EmailPoller) processEmail(ctx context.Context, fromName, fromEmail, bod
 		}
 	} else {
 		lead = existing
+		// Re-engagement: a new inbound email on an archived lead resurfaces it
+		// so the reply reappears in the inbox feed instead of attaching to a
+		// hidden lead and being silently lost (symmetric with telegram.go).
+		if existing.ArchivedAt != nil {
+			if err := e.repo.UnarchiveLead(ctx, lead.ID); err != nil {
+				log.Printf("[email-poller] error unarchiving lead %s on re-engagement: %v", lead.ID, err)
+			} else {
+				lead.ArchivedAt = nil
+			}
+		}
 	}
 
 	message := NewInboxMessage(lead.ID, DirectionInbound, body)

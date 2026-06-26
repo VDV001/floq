@@ -661,6 +661,24 @@ func TestImportCSV_DedupByEmail(t *testing.T) {
 	assert.Equal(t, 1, count) // Alice skipped (dedup), Bob imported
 }
 
+func TestImportCSV_ResurfacesArchivedDuplicate(t *testing.T) {
+	userID := uuid.New()
+	email := "alice@example.com"
+	archived := time.Now().UTC()
+	existing := &domain.Lead{ID: uuid.New(), UserID: userID, EmailAddress: &email, ArchivedAt: &archived}
+	repo := &mockRepoDedup{mockRepo: newMockRepo(), existingEmails: map[string]*domain.Lead{email: existing}}
+	repo.leads[existing.ID] = existing
+	uc := NewUseCase(repo, &mockAI{}, nil)
+
+	csvData := []byte("contact_name,channel,email_address\nAlice,email,alice@example.com\n")
+	count, err := uc.ImportCSV(context.Background(), userID, csvData)
+	require.NoError(t, err)
+	// Re-importing an archived contact resurfaces it instead of silently
+	// dropping the row.
+	assert.Nil(t, existing.ArchivedAt, "archived duplicate must be unarchived on re-import")
+	assert.Equal(t, 1, count, "resurfaced lead counts toward the import total")
+}
+
 func TestImportCSV_BadCSV(t *testing.T) {
 	repo := newMockRepo()
 	uc := NewUseCase(repo, &mockAI{}, nil)

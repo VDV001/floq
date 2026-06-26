@@ -384,6 +384,18 @@ func (uc *UseCase) ImportCSV(ctx context.Context, userID uuid.UUID, csvData []by
 				return 0, fmt.Errorf("dedup lead check: %w", err)
 			}
 			if existing != nil {
+				// Re-importing an archived contact resurfaces it rather than
+				// silently dropping the row (which reads as lost data). An
+				// active duplicate is a true dedup hit — skip it as before.
+				if existing.IsArchived() {
+					if err := existing.Unarchive(); err != nil {
+						return 0, fmt.Errorf("resurface archived lead: %w", err)
+					}
+					if err := uc.repo.SetLeadArchived(ctx, existing.ID, existing.ArchivedAt); err != nil {
+						return 0, fmt.Errorf("persist resurface: %w", err)
+					}
+					count++
+				}
 				continue
 			}
 			emailPtr = &emailAddr

@@ -200,6 +200,16 @@ func (t *TelegramBot) handleMessage(ctx context.Context, msg *tgbotapi.Message) 
 		}
 	} else {
 		lead = existing
+		// Re-engagement: a new inbound message on an archived lead resurfaces
+		// it so the operator sees the reply in the inbox feed again. Without
+		// this the message would attach to a hidden lead and be silently lost.
+		if existing.ArchivedAt != nil {
+			if err := t.repo.UnarchiveLead(ctx, lead.ID); err != nil {
+				log.Printf("telegram inbox: error unarchiving lead %s on re-engagement: %v", lead.ID, err)
+			} else {
+				lead.ArchivedAt = nil
+			}
+		}
 		// Update first_message if current one is trivial (/start, привет, etc.)
 		if len(lead.FirstMessage) < 20 && len(text) > 20 {
 			t.repo.UpdateFirstMessage(ctx, lead.ID, text)
