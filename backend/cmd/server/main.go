@@ -360,10 +360,22 @@ func main() {
 	// Auto-enrichment (#182): background scraping of a lead/prospect's company
 	// domain. The same usecase is the cron worker and the read API, and is
 	// injected as the best-effort enqueuer into prospects + inbox.
+	// Phase-2 (#186): when ENRICHMENT_LLM_ENABLED, wrap the deterministic HTML
+	// extractor in a ChainExtractor that overlays LLM-classified industry/size.
+	// Default off (ship dark); the LLM call goes through the audit-recording
+	// provider via a cost-capped adapter.
+	var enrichmentExtractor enrichment.Extractor = enrichment.NewHTMLExtractor()
+	if cfg.EnrichmentLLMEnabled {
+		llmExtractor := enrichment.NewLLMExtractor(
+			newEnrichmentLLMAdapter(wrappedProvider, cfg.EnrichmentLLMMaxInputRunes, cfg.EnrichmentLLMMaxTokens),
+		)
+		enrichmentExtractor = enrichment.NewChainExtractor(enrichment.NewHTMLExtractor(), llmExtractor, slog.Default())
+		slog.Default().Info("enrichment: LLM extractor enabled (#186)")
+	}
 	enrichmentUC := enrichment.NewUseCase(
 		enrichment.NewRepository(pool),
 		enrichment.NewWebsiteFetcher(),
-		enrichment.NewHTMLExtractor(),
+		enrichmentExtractor,
 		newLimiter(cfg.EnrichmentRateLimitPerMin, time.Minute),
 		enrichment.Config{
 			TTLSeconds:  cfg.EnrichmentTTLDays * 24 * 60 * 60,

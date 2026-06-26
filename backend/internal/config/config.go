@@ -113,6 +113,12 @@ type Config struct {
 	EnrichmentMaxAttempts     int           // give up after this many failures; default 3
 	EnrichmentBatchLimit      int           // rows scraped per tick; default 20
 	EnrichmentRateLimitPerMin int           // per-domain scrape budget per minute; default 10
+	// Phase-2 (#186): LLM extraction of industry/company_size from the scraped
+	// page. Shipped dark — default off — until validated; cost is bounded by
+	// the input/output caps below plus the per-domain scrape rate limit above.
+	EnrichmentLLMEnabled       bool // enable the LLM extractor; default false
+	EnrichmentLLMMaxInputRunes int  // cap page sent to the LLM; default 8000
+	EnrichmentLLMMaxTokens     int  // output token cap; default 64
 }
 
 // Load reads configuration from environment variables and returns a Config.
@@ -132,6 +138,9 @@ func Load() *Config {
 		EnrichmentMaxAttempts:       getEnvInt("ENRICHMENT_MAX_ATTEMPTS", 3),
 		EnrichmentBatchLimit:        getEnvInt("ENRICHMENT_BATCH_LIMIT", 20),
 		EnrichmentRateLimitPerMin:   getEnvInt("ENRICHMENT_RATE_LIMIT_PER_MIN", 10),
+		EnrichmentLLMEnabled:        getEnvBool("ENRICHMENT_LLM_ENABLED", false),
+		EnrichmentLLMMaxInputRunes:  getEnvInt("ENRICHMENT_LLM_MAX_INPUT_RUNES", 8000),
+		EnrichmentLLMMaxTokens:      getEnvInt("ENRICHMENT_LLM_MAX_TOKENS", 64),
 		AIProvider:                  getEnv("AI_PROVIDER", "anthropic"),
 		AnthropicAPIKey:             os.Getenv("ANTHROPIC_API_KEY"),
 		OpenAIAPIKey:                os.Getenv("OPENAI_API_KEY"),
