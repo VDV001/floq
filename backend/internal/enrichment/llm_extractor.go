@@ -57,13 +57,9 @@ func (e *LLMExtractor) Extract(ctx context.Context, page string) (domain.Company
 		return domain.CompanyProfile{}, fmt.Errorf("enrichment: llm extract: parse response: %w", err)
 	}
 
-	size := domain.CompanySize(strings.ToLower(strings.TrimSpace(parsed.CompanySize)))
-	if !size.IsValid() {
-		size = domain.CompanySizeUnknown
-	}
 	return domain.CompanyProfile{
 		Industry:    domain.NormalizeIndustry(parsed.Industry),
-		CompanySize: size,
+		CompanySize: domain.ParseCompanySize(parsed.CompanySize),
 	}, nil
 }
 
