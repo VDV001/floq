@@ -162,7 +162,7 @@ func (r *PendingReplyRepo) ListPendingByUser(ctx context.Context, userID uuid.UU
 		        pr.created_at, pr.decided_at, pr.decided_by, pr.sent_at, pr.input_severity,
 		        l.contact_name, l.company, l.channel, l.telegram_chat_id, l.email_address
 		 FROM pending_replies pr
-		 JOIN leads l ON l.id = pr.lead_id AND l.user_id = pr.user_id
+		 JOIN active_leads l ON l.id = pr.lead_id AND l.user_id = pr.user_id
 		 WHERE pr.user_id = $1 AND pr.status = 'pending'
 		 ORDER BY pr.created_at DESC`,
 		userID)
@@ -224,10 +224,11 @@ func (r *PendingReplyRepo) CountPendingByUser(ctx context.Context, userID uuid.U
 // public queue-depth metric, which must not carry a per-user label.
 func (r *PendingReplyRepo) CountPendingByKind(ctx context.Context) (map[string]int, error) {
 	rows, err := r.q(ctx).Query(ctx,
-		`SELECT kind, COUNT(*)
-		 FROM pending_replies
-		 WHERE status = 'pending'
-		 GROUP BY kind`)
+		`SELECT pr.kind, COUNT(*)
+		 FROM pending_replies pr
+		 JOIN active_leads l ON l.id = pr.lead_id
+		 WHERE pr.status = 'pending'
+		 GROUP BY pr.kind`)
 	if err != nil {
 		return nil, fmt.Errorf("count pending replies by kind: %w", err)
 	}

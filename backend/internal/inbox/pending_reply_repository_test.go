@@ -83,6 +83,37 @@ func TestPendingReplyRepository_PersistsInputSeverity(t *testing.T) {
 	assert.Equal(t, inbox.SeverityWarn, list[0].InputSeverity, "ListByLead must round-trip input_severity")
 }
 
+func TestPendingReplyRepository_ListPendingByUser_ExcludesArchivedLead(t *testing.T) {
+	pool := testutil.TestDB(t)
+	userID := testutil.SeedUser(t, pool)
+	activeLead := seedLeadForUser(t, pool, userID)
+	archivedLead := seedLeadForUser(t, pool, userID)
+	repo := inbox.NewPendingReplyRepository(pool)
+	ctx := context.Background()
+
+	for _, lid := range []uuid.UUID{activeLead, archivedLead} {
+		pr, err := inbox.NewPendingReply(userID, lid, inbox.ChannelTelegram, inbox.PendingReplyKindBookingLink, "draft")
+		require.NoError(t, err)
+		require.NoError(t, repo.Save(ctx, pr))
+	}
+	_, err := pool.Exec(ctx, `UPDATE leads SET archived_at = now() WHERE id = $1`, archivedLead)
+	require.NoError(t, err)
+
+	list, err := repo.ListPendingByUser(ctx, userID)
+	require.NoError(t, err)
+	for _, pr := range list {
+		assert.NotEqual(t, archivedLead, pr.Reply.LeadID, "archived lead's pending reply must not appear in the HITL queue")
+	}
+	// The active lead's pending reply is still present.
+	found := false
+	for _, pr := range list {
+		if pr.Reply.LeadID == activeLead {
+			found = true
+		}
+	}
+	assert.True(t, found, "active lead's pending reply must remain in the queue")
+}
+
 func TestPendingReplyRepository_CountPendingByKind(t *testing.T) {
 	pool := testutil.TestDB(t)
 	userA := testutil.SeedUser(t, pool)

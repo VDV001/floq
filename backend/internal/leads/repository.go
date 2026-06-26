@@ -35,9 +35,9 @@ func (r *Repository) q(ctx context.Context) db.Querier {
 func (r *Repository) ListLeads(ctx context.Context, userID uuid.UUID) ([]domain.LeadWithSource, error) {
 	rows, err := r.q(ctx).Query(ctx,
 		`SELECT l.id, l.user_id, l.channel, l.contact_name, l.company, l.first_message, l.status, l.telegram_chat_id, l.email_address, l.source_id, COALESCE(ls.name, ''), l.created_at, l.updated_at
-		 FROM leads l
+		 FROM active_leads l
 		 LEFT JOIN lead_sources ls ON ls.id = l.source_id
-		 WHERE l.user_id = $1 AND l.archived_at IS NULL ORDER BY l.created_at DESC`, userID)
+		 WHERE l.user_id = $1 ORDER BY l.created_at DESC`, userID)
 	if err != nil {
 		return nil, fmt.Errorf("list leads: %w", err)
 	}
@@ -280,9 +280,8 @@ func (r *Repository) GetLeadByEmailAddress(ctx context.Context, userID uuid.UUID
 func (r *Repository) StaleLeadsWithoutReminder(ctx context.Context, staleDays int) ([]domain.Lead, error) {
 	rows, err := r.q(ctx).Query(ctx,
 		`SELECT l.id, l.user_id, l.channel, l.contact_name, l.company, l.first_message, l.status, l.telegram_chat_id, l.email_address, l.source_id, l.created_at, l.updated_at
-		 FROM leads l
+		 FROM active_leads l
 		 WHERE l.status NOT IN ('closed')
-		   AND l.archived_at IS NULL
 		   AND NOT EXISTS (
 		     SELECT 1 FROM reminders r WHERE r.lead_id = l.id AND r.dismissed = FALSE
 		   )
@@ -328,7 +327,7 @@ func (r *Repository) CreateReminder(ctx context.Context, leadID uuid.UUID, messa
 func (r *Repository) CountMonthLeads(ctx context.Context, userID uuid.UUID) (int, error) {
 	var count int
 	err := r.q(ctx).QueryRow(ctx,
-		`SELECT COUNT(*) FROM leads WHERE user_id = $1 AND archived_at IS NULL AND created_at >= date_trunc('month', CURRENT_DATE)`,
+		`SELECT COUNT(*) FROM active_leads WHERE user_id = $1 AND created_at >= date_trunc('month', CURRENT_DATE)`,
 		userID).Scan(&count)
 	if err != nil {
 		return 0, fmt.Errorf("count month leads: %w", err)
@@ -339,7 +338,7 @@ func (r *Repository) CountMonthLeads(ctx context.Context, userID uuid.UUID) (int
 func (r *Repository) CountTotalLeads(ctx context.Context, userID uuid.UUID) (int, error) {
 	var count int
 	err := r.q(ctx).QueryRow(ctx,
-		`SELECT COUNT(*) FROM leads WHERE user_id = $1 AND archived_at IS NULL`, userID).Scan(&count)
+		`SELECT COUNT(*) FROM active_leads WHERE user_id = $1`, userID).Scan(&count)
 	if err != nil {
 		return 0, fmt.Errorf("count total leads: %w", err)
 	}

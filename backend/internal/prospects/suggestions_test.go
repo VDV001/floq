@@ -211,4 +211,11 @@ func TestCountSuggestionsForUser(t *testing.T) {
 	require.NoError(t, err)
 	assert.NotContains(t, counts, lead2)
 	assert.Equal(t, 2, counts[lead1])
+
+	// Archiving lead1 drops it from the suggestion-count map entirely.
+	_, err = pool.Exec(ctx, `UPDATE leads SET archived_at = now() WHERE id = $1`, lead1)
+	require.NoError(t, err)
+	counts, err = repo.CountSuggestionsForUser(ctx, userID)
+	require.NoError(t, err)
+	assert.NotContains(t, counts, lead1, "archived lead must not contribute suggestion counts")
 }

@@ -185,7 +185,7 @@ func (r *Repository) SourceStats(ctx context.Context, userID uuid.UUID) ([]domai
 	rows, err := r.q.Query(ctx, `
 		SELECT ls.id, ls.name, COALESCE(sc.name, ''),
 		       COALESCE((SELECT COUNT(*) FROM prospects p WHERE p.source_id = ls.id), 0),
-		       COALESCE((SELECT COUNT(*) FROM leads l WHERE l.source_id = ls.id AND l.archived_at IS NULL), 0),
+		       COALESCE((SELECT COUNT(*) FROM active_leads l WHERE l.source_id = ls.id), 0),
 		       COALESCE((SELECT COUNT(*) FROM prospects p WHERE p.source_id = ls.id AND p.status = 'converted'), 0)
 		FROM lead_sources ls
 		LEFT JOIN source_categories sc ON sc.id = ls.category_id

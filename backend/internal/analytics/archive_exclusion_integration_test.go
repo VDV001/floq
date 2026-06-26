@@ -60,6 +60,23 @@ func TestRepository_GetInboxFlow_QualDistributionExcludesArchived(t *testing.T) 
 	assert.InDelta(t, 40.0, dto.Qualifications.AvgScore, 0.001, "archived qualification must not feed the histogram")
 }
 
+func TestRepository_GetInboxFlow_PendingStatsExcludeArchived(t *testing.T) {
+	pool := testutil.TestDB(t)
+	userID := testutil.SeedUser(t, pool)
+	repo := analytics.NewRepository(pool)
+	now := time.Now().UTC()
+
+	archived := seedHLLead(t, pool, userID, "telegram", "new", "archived", now.Add(-time.Hour), now)
+	seedPendingReply(t, pool, userID, archived, "pending", now.Add(-30*time.Minute), nil)
+	archiveLead(t, pool, archived)
+
+	from, to := allWindow()
+	dto, err := repo.GetInboxFlow(context.Background(), userID, from, to)
+	require.NoError(t, err)
+
+	assert.Equal(t, 0, dto.PendingReplies.CurrentlyPending, "pending reply of an archived lead must not be counted")
+}
+
 func TestRepository_GetHotLeads_ExcludesArchived(t *testing.T) {
 	pool := testutil.TestDB(t)
 	userID := testutil.SeedUser(t, pool)
