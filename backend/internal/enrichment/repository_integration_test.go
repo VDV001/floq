@@ -111,6 +111,29 @@ func TestRepository_ClaimDue_ReturnsPendingNotFresh(t *testing.T) {
 	assert.False(t, domains["fresh-enriched.ru"], "freshly-enriched row is NOT claimed")
 }
 
+func TestRepository_ClaimDue_ReclaimsFailedUnderMaxAttempts(t *testing.T) {
+	ctx := context.Background()
+	pool := testutil.TestDB(t)
+	userID := testutil.SeedUser(t, pool)
+	repo := enrichment.NewRepository(pool)
+
+	// A transiently-failed row (1 attempt, below the cap) MUST be retried —
+	// otherwise the durable-queue/retry promise is hollow.
+	e := mustPending(t, userID, "ivan@retry-me.ru")
+	require.NoError(t, repo.UpsertPending(ctx, e))
+	stored, _, _ := repo.Get(ctx, userID, "retry-me.ru")
+	stored.MarkFailed("transient timeout") // attempts = 1
+	require.NoError(t, repo.Save(ctx, stored))
+
+	due, err := repo.ClaimDue(ctx, 100, 3)
+	require.NoError(t, err)
+	domains := map[string]bool{}
+	for _, d := range due {
+		domains[d.Domain.String()] = true
+	}
+	assert.True(t, domains["retry-me.ru"], "a failed row below the attempt cap is re-claimed")
+}
+
 func TestRepository_ClaimDue_RespectsMaxAttempts(t *testing.T) {
 	ctx := context.Background()
 	pool := testutil.TestDB(t)
