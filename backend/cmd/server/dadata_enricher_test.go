@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -248,6 +249,30 @@ func TestDaDataEnricher_ObservesRateLimitedOutcome(t *testing.T) {
 	require.NoError(t, err)
 	assert.False(t, found)
 	assert.Equal(t, []string{"rate_limited"}, got, "a throttled skip is distinct from a miss — it signals quota pressure")
+}
+
+// errLimiter fails to answer — stands in for a limiter backend (e.g. Redis)
+// that is down, as opposed to a quota that is exhausted.
+type errLimiter struct{}
+
+func (errLimiter) Allow(_ context.Context, _ string) (bool, time.Duration, error) {
+	return false, 0, errors.New("limiter backend unavailable")
+}
+
+func TestDaDataEnricher_LimiterError_ObservedAsErrorNotRateLimited(t *testing.T) {
+	stub := newDadataStub(t)
+	stub.suggestions = []map[string]any{partySuggestion("X", "7707083893", "1027700132195", "A", "1", "ACTIVE")}
+	enr := newDaDataEnricher(stub.srv.Client(), "k", stub.srv.URL, errLimiter{})
+	var got []string
+	enr.observe = func(result string) { got = append(got, result) }
+
+	_, found, err := enr.Enrich(context.Background(), enrichment.EnrichQuery{INN: "7707083893"})
+	require.NoError(t, err, "a limiter backend failure is still a best-effort skip, not a port error")
+	assert.False(t, found)
+	// A broken limiter is an infrastructure error, NOT quota pressure — folding
+	// it into rate_limited would silently inflate the quota-exhaustion signal.
+	assert.Equal(t, []string{"error"}, got)
+	assert.Empty(t, stub.lastPath, "no API call when the limiter could not be consulted")
 }
 
 func TestDaDataEnricher_NoSignal_NotObserved(t *testing.T) {

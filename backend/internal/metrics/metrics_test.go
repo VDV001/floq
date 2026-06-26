@@ -132,14 +132,17 @@ func TestOnRegistryEnrichment_RecordsByResult(t *testing.T) {
 	m.OnRegistryEnrichment("hit")
 	m.OnRegistryEnrichment("hit")
 	m.OnRegistryEnrichment("miss")
+	m.OnRegistryEnrichment("error")
 	m.OnRegistryEnrichment("rate_limited")
 
 	body := scrape(t, m)
-	// "calls" = sum across results; "hits" = result="hit". Each result is its
-	// own series so ops can read hit-rate and quota pressure separately.
-	assert.Contains(t, body, `enrichment_registry_requests_total{result="hit"} 2`)
-	assert.Contains(t, body, `enrichment_registry_requests_total{result="miss"} 1`)
-	assert.Contains(t, body, `enrichment_registry_requests_total{result="rate_limited"} 1`)
+	// Each result is its own series so ops read hit-rate and quota pressure
+	// separately. Actual DaData API calls = hit+miss+error; rate_limited is a
+	// pre-request skip — hence "attempts", not "requests".
+	assert.Contains(t, body, `enrichment_registry_attempts_total{result="hit"} 2`)
+	assert.Contains(t, body, `enrichment_registry_attempts_total{result="miss"} 1`)
+	assert.Contains(t, body, `enrichment_registry_attempts_total{result="error"} 1`)
+	assert.Contains(t, body, `enrichment_registry_attempts_total{result="rate_limited"} 1`)
 }
 
 func TestObserveMatviewRefresh_RecordsDuration(t *testing.T) {
