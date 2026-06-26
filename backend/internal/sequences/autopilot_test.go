@@ -131,6 +131,48 @@ func TestLaunch_Autopilot_ApprovesWholeBatch(t *testing.T) {
 	}
 }
 
+// The per-sequence approval gate overrides autopilot: a sequence marked
+// RequireApproval keeps its launched messages in Draft (awaiting operator
+// approval) even when autopilot is on — closing the gap where autopilot
+// auto-sends outbound with no human review. Without the gate, autopilot alone
+// decides (its prior behaviour).
+func TestLaunch_RequireApproval_OverridesAutopilot(t *testing.T) {
+	tests := []struct {
+		name            string
+		autopilot       bool
+		requireApproval bool
+		want            domain.OutboundStatus
+	}{
+		{"autopilot on + gate → draft (gate wins)", true, true, domain.OutboundStatusDraft},
+		{"autopilot on + no gate → approved", true, false, domain.OutboundStatusApproved},
+		{"autopilot off + gate → draft", false, true, domain.OutboundStatusDraft},
+		{"autopilot off + no gate → draft", false, false, domain.OutboundStatusDraft},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			seqID := uuid.New()
+			owner := uuid.New()
+			pid := uuid.New()
+			repo := &mockRepo{
+				sequences: []domain.Sequence{{ID: seqID, UserID: owner, Name: "S", RequireApproval: tt.requireApproval}},
+				steps: []domain.SequenceStep{
+					{ID: uuid.New(), SequenceID: seqID, StepOrder: 1, Channel: domain.StepChannelTelegram, PromptHint: "intro"},
+				},
+			}
+			pr := newMockProspectReader()
+			pr.prospects[pid] = &domain.ProspectView{
+				ID: pid, UserID: owner, Name: "Alice", Status: "new", VerifyStatus: "valid", IsEligibleForSequence: true,
+			}
+			uc := NewUseCase(repo, &mockAI{telegramBody: "hi"}, pr, &mockLeadCreator{},
+				WithAutopilotChecker(&mockAutopilotChecker{enabled: tt.autopilot}))
+
+			require.NoError(t, uc.Launch(context.Background(), owner, seqID, []uuid.UUID{pid}, true))
+			require.Len(t, repo.messages, 1)
+			assert.Equal(t, tt.want, repo.messages[0].Status)
+		})
+	}
+}
+
 // A batch that mixes the caller's own prospect with a stranger's is rejected
 // whole — no partial send. The ownership guard (every prospect must equal the
 // authenticated caller) subsumes the old single-owner rule.
