@@ -19,6 +19,7 @@ func TestExtractINN(t *testing.T) {
 		{"lowercase label", "инн 7707083893", "7707083893"},
 		{"bad checksum ignored", "ИНН 7707083890", ""},
 		{"no label no match", "просто текст 7707083893 без метки", ""},
+		{"label embedded in word ignored", "магазинн 7707083893", ""},
 		{"no inn at all", "<html>Acme</html>", ""},
 		{"label but garbage digits", "ИНН 12345", ""},
 	}
