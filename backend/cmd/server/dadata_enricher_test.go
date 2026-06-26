@@ -104,18 +104,20 @@ func TestDaDataEnricher_FindByName_AmbiguousIsMiss(t *testing.T) {
 	assert.False(t, found, "multiple fuzzy hits with no exact name match → skip, don't guess")
 }
 
-func TestDaDataEnricher_FindByName_ExactMatchWins(t *testing.T) {
+func TestDaDataEnricher_FindByName_ExactNameAmongAmbiguousIsMiss(t *testing.T) {
+	// Many distinct legal entities share an identical name (dozens of «ООО
+	// Ромашка»). An exact name match within an ambiguous result set does NOT
+	// identify the right company, so the honest answer is a miss — never guess.
 	stub := newDadataStub(t)
 	stub.suggestions = []map[string]any{
 		partySuggestion("Акме", "7707083893", "1027700132195", "Москва", "62.01", "ACTIVE"),
-		partySuggestion("Акме Сервис", "7708503727", "1037739877295", "Москва", "62.02", "ACTIVE"),
+		partySuggestion("Акме", "7708503727", "1037739877295", "Москва", "62.02", "ACTIVE"),
 	}
 	enr := newDaDataEnricher(stub.srv.Client(), "k", stub.srv.URL)
 
-	legal, found, err := enr.Enrich(context.Background(), enrichment.EnrichQuery{CompanyName: "  акме "})
+	_, found, err := enr.Enrich(context.Background(), enrichment.EnrichQuery{CompanyName: "  акме "})
 	require.NoError(t, err)
-	require.True(t, found, "an exact (normalized) name match disambiguates")
-	assert.Equal(t, "7707083893", legal.INN)
+	assert.False(t, found, "ambiguous name → miss even if a result name matches exactly")
 }
 
 func TestDaDataEnricher_NoResults_Miss(t *testing.T) {
