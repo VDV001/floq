@@ -81,7 +81,7 @@ func New() *Metrics {
 		}),
 		registryEnrichments: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "enrichment_registry_attempts_total",
-			Help: "Total company-registry (DaData) enrichment attempts by result: hit (confident match), miss (no/ambiguous match), error (API/transport or limiter-backend failure), rate_limited (skipped before any request to protect the daily quota). Actual DaData API calls = hit+miss+error (rate_limited sends no request); hit-rate = hit / (hit+miss).",
+			Help: "Total company-registry (DaData) enrichment attempts by result: hit (confident match), miss (no/ambiguous match), error (DaData API/transport failure), rate_limited (skipped: daily quota exhausted), limiter_error (skipped: rate-limiter backend unavailable). Only hit/miss/error reach the API, so actual DaData calls = hit+miss+error; rate_limited and limiter_error send no request. hit-rate = hit / (hit+miss).",
 		}, []string{"result"}),
 	}
 	reg.MustRegister(

@@ -46,16 +46,19 @@ var _ enrichment.Enricher = (*daDataEnricher)(nil)
 
 // registryOutcome classifies one registry enrichment attempt for the metrics
 // observer; its values are the `result` label of
-// enrichment_registry_requests_total. outcomeNoSignal is the sentinel for
+// enrichment_registry_attempts_total. outcomeNoSignal is the sentinel for
 // "nothing to look up" — it is never observed, because no attempt was made.
+// Only hit/miss/error reach the DaData API; rateLimited and limiterError skip
+// before any request, so they stay out of the "calls" sum.
 type registryOutcome string
 
 const (
-	outcomeNoSignal    registryOutcome = ""
-	outcomeRateLimited registryOutcome = "rate_limited"
-	outcomeHit         registryOutcome = "hit"
-	outcomeMiss        registryOutcome = "miss"
-	outcomeError       registryOutcome = "error"
+	outcomeNoSignal     registryOutcome = ""
+	outcomeRateLimited  registryOutcome = "rate_limited"
+	outcomeLimiterError registryOutcome = "limiter_error"
+	outcomeHit          registryOutcome = "hit"
+	outcomeMiss         registryOutcome = "miss"
+	outcomeError        registryOutcome = "error"
 )
 
 func newDaDataEnricher(client *http.Client, apiKey, baseURL string, limiter ...rateLimiter) *daDataEnricher {
@@ -118,14 +121,15 @@ func (d *daDataEnricher) lookup(ctx context.Context, q enrichment.EnrichQuery) (
 		return domain.LegalDetails{}, outcomeNoSignal, nil // no signal → no API call, no budget spent
 	}
 	// Global egress cap (protects the shared daily quota). Both branches skip
-	// the API (registry is best-effort, never a port error), but they are
-	// distinct signals: a denied bucket is quota pressure (rate_limited), a
-	// limiter-backend failure is infrastructure breakage (error) — conflating
-	// them would inflate the quota-exhaustion signal when the backend is down.
+	// the API (registry is best-effort, never a port error) and neither sends a
+	// request, but they are distinct signals: a denied bucket is quota pressure
+	// (rate_limited), a limiter-backend failure is infrastructure breakage
+	// (limiter_error). Keeping them separate — and both out of hit/miss/error —
+	// keeps the quota-pressure series and the "calls" sum honest.
 	if d.limiter != nil {
 		allowed, _, err := d.limiter.Allow(ctx, dadataRateLimitKey)
 		if err != nil {
-			return domain.LegalDetails{}, outcomeError, nil
+			return domain.LegalDetails{}, outcomeLimiterError, nil
 		}
 		if !allowed {
 			return domain.LegalDetails{}, outcomeRateLimited, nil
