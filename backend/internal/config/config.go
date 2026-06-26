@@ -119,6 +119,10 @@ type Config struct {
 	EnrichmentLLMEnabled       bool // enable the LLM extractor; default false
 	EnrichmentLLMMaxInputRunes int  // cap page sent to the LLM; default 8000
 	EnrichmentLLMMaxTokens     int  // output token cap; default 64
+	// Phase-3 (#188): registry lookup of legal details via DaData. Ship dark —
+	// disabled unless explicitly enabled AND an API key is set.
+	EnrichmentRegistryEnabled bool   // enable the registry Enricher; default false
+	DaDataAPIKey              string // DaData API token; empty disables registry
 }
 
 // Load reads configuration from environment variables and returns a Config.
@@ -141,6 +145,8 @@ func Load() *Config {
 		EnrichmentLLMEnabled:        getEnvBool("ENRICHMENT_LLM_ENABLED", false),
 		EnrichmentLLMMaxInputRunes:  getEnvInt("ENRICHMENT_LLM_MAX_INPUT_RUNES", 8000),
 		EnrichmentLLMMaxTokens:      getEnvInt("ENRICHMENT_LLM_MAX_TOKENS", 64),
+		EnrichmentRegistryEnabled:   getEnvBool("ENRICHMENT_REGISTRY_ENABLED", false),
+		DaDataAPIKey:                os.Getenv("DADATA_API_KEY"),
 		AIProvider:                  getEnv("AI_PROVIDER", "anthropic"),
 		AnthropicAPIKey:             os.Getenv("ANTHROPIC_API_KEY"),
 		OpenAIAPIKey:                os.Getenv("OPENAI_API_KEY"),
