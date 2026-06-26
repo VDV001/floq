@@ -21,6 +21,18 @@ type ProfileResponse struct {
 	// Phase-2 (#186) LLM-classified fields. Empty strings when unclassified.
 	Industry    string `json:"industry"`
 	CompanySize string `json:"companySize"`
+	// Phase-3 (#188) registry details. Zero value when not looked up.
+	Legal LegalResponse `json:"legal"`
+}
+
+// LegalResponse is the public shape of a company's registry details.
+type LegalResponse struct {
+	INN      string `json:"inn"`
+	OGRN     string `json:"ogrn"`
+	FullName string `json:"fullName"`
+	Address  string `json:"address"`
+	OKVED    string `json:"okved"`
+	Status   string `json:"status"`
 }
 
 // EnrichmentResponse is the read DTO returned by GET /api/enrichment.
@@ -49,6 +61,14 @@ func toResponse(e *domain.CompanyEnrichment) EnrichmentResponse {
 			Socials:     e.Profile.Socials,
 			Industry:    e.Profile.Industry,
 			CompanySize: string(e.Profile.CompanySize),
+			Legal: LegalResponse{
+				INN:      e.Profile.Legal.INN,
+				OGRN:     e.Profile.Legal.OGRN,
+				FullName: e.Profile.Legal.FullName,
+				Address:  e.Profile.Legal.Address,
+				OKVED:    e.Profile.Legal.OKVED,
+				Status:   e.Profile.Legal.Status,
+			},
 		},
 		EnrichedAt: e.EnrichedAt,
 	}

@@ -13,6 +13,10 @@ AGENTS.md
 .aider*
 .github/copilot-instructions.md
 
+# Editor / IDE config (personal, not shared)
+.vscode/
+.idea/
+
 # MCP servers
 .mcp.json
 .mcp/

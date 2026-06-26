@@ -82,6 +82,38 @@ func TestHandler_Get_ExposesPhase2Fields(t *testing.T) {
 	assert.Equal(t, "medium", body.Profile.CompanySize)
 }
 
+func TestHandler_Get_ExposesLegalDetails(t *testing.T) {
+	userID := uuid.New()
+	d, _ := domain.NewDomain("ivan@acme.ru")
+	e, _ := domain.NewPendingEnrichment(userID, d)
+	e.MarkEnriched(domain.CompanyProfile{
+		Title: "Acme",
+		Legal: domain.LegalDetails{INN: "7707083893", OGRN: "1027700132195", Address: "Москва", OKVED: "62.01", Status: "ACTIVE", FullName: "ООО Акме"},
+	}, 3600)
+	uc := newUC(&fakeStore{getResult: e}, fakeFetcher{}, fakeExtractor{}, fakeLimiter{allow: true})
+
+	rec := getReq(t, mountEnrichment(uc), "/api/enrichment?email=ivan@acme.ru", &userID)
+	require.Equal(t, http.StatusOK, rec.Code)
+
+	var body struct {
+		Profile struct {
+			Legal struct {
+				INN     string `json:"inn"`
+				OGRN    string `json:"ogrn"`
+				Address string `json:"address"`
+				OKVED   string `json:"okved"`
+				Status  string `json:"status"`
+			} `json:"legal"`
+		} `json:"profile"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+	assert.Equal(t, "7707083893", body.Profile.Legal.INN)
+	assert.Equal(t, "1027700132195", body.Profile.Legal.OGRN)
+	assert.Equal(t, "Москва", body.Profile.Legal.Address)
+	assert.Equal(t, "62.01", body.Profile.Legal.OKVED)
+	assert.Equal(t, "ACTIVE", body.Profile.Legal.Status)
+}
+
 func TestHandler_Get_NotFoundReturnsNone(t *testing.T) {
 	userID := uuid.New()
 	uc := newUC(&fakeStore{getResult: nil}, fakeFetcher{}, fakeExtractor{}, fakeLimiter{allow: true})

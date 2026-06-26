@@ -111,6 +111,8 @@ type CompanyProfile struct {
 	Socials     []string    `json:"socials"`
 	Industry    string      `json:"industry,omitempty"`
 	CompanySize CompanySize `json:"company_size,omitempty"`
+	// Phase-3 (#188) registry details, looked up by an Enricher.
+	Legal LegalDetails `json:"legal,omitempty"`
 }
 
 // IsEmpty reports whether nothing useful was extracted. An Unknown CompanySize
@@ -119,7 +121,7 @@ type CompanyProfile struct {
 func (p CompanyProfile) IsEmpty() bool {
 	return p.Title == "" && p.Description == "" &&
 		len(p.Emails) == 0 && len(p.Phones) == 0 && len(p.Socials) == 0 &&
-		p.Industry == "" && p.CompanySize == CompanySizeUnknown
+		p.Industry == "" && p.CompanySize == CompanySizeUnknown && p.Legal.IsEmpty()
 }
 
 // CompanyEnrichment is the per-user, per-domain enrichment record/entity.

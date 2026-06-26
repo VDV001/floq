@@ -372,6 +372,18 @@ func main() {
 		enrichmentExtractor = enrichment.NewChainExtractor(enrichment.NewHTMLExtractor(), llmExtractor, slog.Default())
 		slog.Default().Info("enrichment: LLM extractor enabled (#186)")
 	}
+	// Phase-3 (#188): when ENRICHMENT_REGISTRY_ENABLED and a DaData key is set,
+	// add a best-effort registry Enricher that merges legal details (ИНН/ОГРН/…)
+	// after extraction. Ship dark: an empty key keeps it disabled even if the
+	// flag is on.
+	var enrichmentOpts []enrichment.Option
+	if cfg.EnrichmentRegistryEnabled && cfg.DaDataAPIKey != "" {
+		enrichmentOpts = append(enrichmentOpts, enrichment.WithEnricher(
+			newDaDataEnricher(httpClient, cfg.DaDataAPIKey, "",
+				newLimiter(cfg.EnrichmentRegistryRateLimitPerMin, time.Minute)),
+		))
+		slog.Default().Info("enrichment: registry enricher enabled (#188)")
+	}
 	enrichmentUC := enrichment.NewUseCase(
 		enrichment.NewRepository(pool),
 		enrichment.NewWebsiteFetcher(),
@@ -382,7 +394,7 @@ func main() {
 			MaxAttempts: cfg.EnrichmentMaxAttempts,
 			BatchLimit:  cfg.EnrichmentBatchLimit,
 		},
-		slog.Default())
+		slog.Default(), enrichmentOpts...)
 	prospectsUC := prospects.NewUseCase(prospectsRepo,
 		prospects.WithLeadChecker(newLeadCheckerAdapter(leadsRepo)),
 		prospects.WithIdentityLinker(identityLinker),
