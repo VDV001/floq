@@ -146,6 +146,10 @@ export const api = {
       body: JSON.stringify({ refresh_token: refreshToken }),
     }),
 
+  // Enrichment (#182) — company data scraped by the sender's email domain.
+  getEnrichment: (email: string) =>
+    apiFetch<Enrichment>(`/api/enrichment?email=${encodeURIComponent(email)}`),
+
   // Leads
   getLeads: () => apiFetch<Lead[]>("/api/leads"),
   getArchivedLeads: () => apiFetch<Lead[]>("/api/leads/archived"),
@@ -460,6 +464,21 @@ export interface SourceStatItem {
   prospect_count: number;
   lead_count: number;
   converted_count: number;
+}
+
+export interface EnrichmentProfile {
+  title: string;
+  description: string;
+  emails: string[];
+  phones: string[];
+  socials: string[];
+}
+
+export interface Enrichment {
+  domain: string;
+  status: "pending" | "enriched" | "failed" | "none";
+  profile: EnrichmentProfile;
+  enrichedAt?: string;
 }
 
 export interface Lead {
