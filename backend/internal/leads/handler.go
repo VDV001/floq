@@ -152,11 +152,15 @@ func (h *Handler) archiveLead() http.HandlerFunc {
 			return
 		}
 		if err := h.uc.ArchiveLead(r.Context(), id); err != nil {
-			if errors.Is(err, domain.ErrAlreadyArchived) {
+			switch {
+			case errors.Is(err, domain.ErrAlreadyArchived):
 				httputil.WriteError(w, http.StatusConflict, "lead already archived")
-				return
+			case errors.Is(err, domain.ErrLeadNotFound):
+				// Deleted/ownership-changed between authorizeLead and GetLead.
+				httputil.WriteError(w, http.StatusNotFound, "lead not found")
+			default:
+				httputil.WriteError(w, http.StatusInternalServerError, "failed to archive lead")
 			}
-			httputil.WriteError(w, http.StatusInternalServerError, "failed to archive lead")
 			return
 		}
 		httputil.WriteJSON(w, http.StatusOK, map[string]string{"status": "archived"})
@@ -172,11 +176,14 @@ func (h *Handler) unarchiveLead() http.HandlerFunc {
 			return
 		}
 		if err := h.uc.UnarchiveLead(r.Context(), id); err != nil {
-			if errors.Is(err, domain.ErrNotArchived) {
+			switch {
+			case errors.Is(err, domain.ErrNotArchived):
 				httputil.WriteError(w, http.StatusConflict, "lead is not archived")
-				return
+			case errors.Is(err, domain.ErrLeadNotFound):
+				httputil.WriteError(w, http.StatusNotFound, "lead not found")
+			default:
+				httputil.WriteError(w, http.StatusInternalServerError, "failed to unarchive lead")
 			}
-			httputil.WriteError(w, http.StatusInternalServerError, "failed to unarchive lead")
 			return
 		}
 		httputil.WriteJSON(w, http.StatusOK, map[string]string{"status": "active"})
