@@ -3,6 +3,7 @@ package domain
 import (
 	"context"
 	"errors"
+	"time"
 
 	"github.com/google/uuid"
 )
@@ -36,6 +37,9 @@ type Repository interface {
 	CreateLead(ctx context.Context, lead *Lead) error
 	UpdateFirstMessage(ctx context.Context, id uuid.UUID, message string) error
 	UpdateLeadStatus(ctx context.Context, id uuid.UUID, status LeadStatus) error
+	// SetLeadArchived writes the archive flag: non-nil archives, nil unarchives.
+	// The archive invariant lives on Lead.Archive/Unarchive; this just persists.
+	SetLeadArchived(ctx context.Context, id uuid.UUID, archivedAt *time.Time) error
 	UpdateSourceID(ctx context.Context, id uuid.UUID, sourceID *uuid.UUID) error
 	GetLeadByTelegramChatID(ctx context.Context, userID uuid.UUID, chatID int64) (*Lead, error)
 	GetLeadByEmailAddress(ctx context.Context, userID uuid.UUID, email string) (*Lead, error)

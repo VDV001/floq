@@ -325,6 +325,9 @@ func (m *mockUCRepo) UpdateFirstMessage(context.Context, uuid.UUID, string) erro
 func (m *mockUCRepo) UpdateLeadStatus(context.Context, uuid.UUID, domain.LeadStatus) error {
 	panic("not used")
 }
+func (m *mockUCRepo) SetLeadArchived(context.Context, uuid.UUID, *time.Time) error {
+	panic("not used")
+}
 func (m *mockUCRepo) UpdateSourceID(context.Context, uuid.UUID, *uuid.UUID) error {
 	panic("not used")
 }

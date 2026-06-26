@@ -74,3 +74,27 @@ func TestStaleLeadsWithoutReminder_ExcludesArchived(t *testing.T) {
 		assert.NotEqual(t, archived.ID, l.ID, "archived lead must not be flagged stale")
 	}
 }
+
+func TestSetLeadArchived_RoundTrip(t *testing.T) {
+	pool := testutil.TestDB(t)
+	userID := testutil.SeedUser(t, pool)
+	repo := leads.NewRepository(pool)
+	ctx := context.Background()
+
+	lead := seedLead(t, repo, userID, domain.StatusQualified)
+
+	now := time.Now().UTC().Truncate(time.Microsecond)
+	require.NoError(t, repo.SetLeadArchived(ctx, lead.ID, &now))
+
+	got, err := repo.GetLead(ctx, lead.ID)
+	require.NoError(t, err)
+	require.NotNil(t, got.ArchivedAt, "ArchivedAt must be persisted and scanned")
+	assert.WithinDuration(t, now, *got.ArchivedAt, time.Second)
+	assert.Equal(t, domain.StatusQualified, got.Status, "archive must not change status")
+
+	// Unarchive path: nil clears it.
+	require.NoError(t, repo.SetLeadArchived(ctx, lead.ID, nil))
+	got, err = repo.GetLead(ctx, lead.ID)
+	require.NoError(t, err)
+	assert.Nil(t, got.ArchivedAt, "ArchivedAt must be cleared on unarchive")
+}

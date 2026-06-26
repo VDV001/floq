@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"testing"
+	"time"
 
 	"github.com/daniil/floq/internal/leads/domain"
 	"github.com/google/uuid"
@@ -71,6 +72,13 @@ func (m *mockRepo) UpdateFirstMessage(_ context.Context, _ uuid.UUID, _ string) 
 
 func (m *mockRepo) UpdateLeadStatus(_ context.Context, id uuid.UUID, status domain.LeadStatus) error {
 	m.updatedStatuses[id] = status
+	return nil
+}
+
+func (m *mockRepo) SetLeadArchived(_ context.Context, id uuid.UUID, archivedAt *time.Time) error {
+	if l, ok := m.leads[id]; ok {
+		l.ArchivedAt = archivedAt
+	}
 	return nil
 }
 
