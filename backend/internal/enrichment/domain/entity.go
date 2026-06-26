@@ -62,6 +62,11 @@ func NewDomain(email string) (Domain, error) {
 // String returns the normalized domain.
 func (d Domain) String() string { return d.value }
 
+// DomainFromStorage rehydrates a Domain from a trusted, already-normalized
+// value read from persistence. Unlike NewDomain it performs no validation —
+// the value was validated when it was first created.
+func DomainFromStorage(value string) Domain { return Domain{value: value} }
+
 // Status is the processing state of a CompanyEnrichment.
 type Status string
 
