@@ -117,11 +117,17 @@ func (d *daDataEnricher) lookup(ctx context.Context, q enrichment.EnrichQuery) (
 	if q.INN == "" && q.CompanyName == "" {
 		return domain.LegalDetails{}, outcomeNoSignal, nil // no signal → no API call, no budget spent
 	}
-	// Global egress cap (protects the shared daily quota). Over budget → skip
-	// (a miss), never an error — registry is best-effort.
+	// Global egress cap (protects the shared daily quota). Both branches skip
+	// the API (registry is best-effort, never a port error), but they are
+	// distinct signals: a denied bucket is quota pressure (rate_limited), a
+	// limiter-backend failure is infrastructure breakage (error) — conflating
+	// them would inflate the quota-exhaustion signal when the backend is down.
 	if d.limiter != nil {
 		allowed, _, err := d.limiter.Allow(ctx, dadataRateLimitKey)
-		if err != nil || !allowed {
+		if err != nil {
+			return domain.LegalDetails{}, outcomeError, nil
+		}
+		if !allowed {
 			return domain.LegalDetails{}, outcomeRateLimited, nil
 		}
 	}
