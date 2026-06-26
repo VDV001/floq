@@ -259,7 +259,7 @@ func (errLimiter) Allow(_ context.Context, _ string) (bool, time.Duration, error
 	return false, 0, errors.New("limiter backend unavailable")
 }
 
-func TestDaDataEnricher_LimiterError_ObservedAsErrorNotRateLimited(t *testing.T) {
+func TestDaDataEnricher_LimiterError_ObservedAsLimiterError(t *testing.T) {
 	stub := newDadataStub(t)
 	stub.suggestions = []map[string]any{partySuggestion("X", "7707083893", "1027700132195", "A", "1", "ACTIVE")}
 	enr := newDaDataEnricher(stub.srv.Client(), "k", stub.srv.URL, errLimiter{})
@@ -269,9 +269,10 @@ func TestDaDataEnricher_LimiterError_ObservedAsErrorNotRateLimited(t *testing.T)
 	_, found, err := enr.Enrich(context.Background(), enrichment.EnrichQuery{INN: "7707083893"})
 	require.NoError(t, err, "a limiter backend failure is still a best-effort skip, not a port error")
 	assert.False(t, found)
-	// A broken limiter is an infrastructure error, NOT quota pressure — folding
-	// it into rate_limited would silently inflate the quota-exhaustion signal.
-	assert.Equal(t, []string{"error"}, got)
+	// A broken limiter is its own signal: not quota pressure (rate_limited) and
+	// not a DaData API failure (error) — like rate_limited it sends NO request,
+	// so it must stay out of the "calls = hit+miss+error" sum.
+	assert.Equal(t, []string{"limiter_error"}, got)
 	assert.Empty(t, stub.lastPath, "no API call when the limiter could not be consulted")
 }
 
