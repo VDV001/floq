@@ -81,6 +81,32 @@ func (r *Repository) ListAllLeads(ctx context.Context, userID uuid.UUID) ([]doma
 	return leads, rows.Err()
 }
 
+// ListArchivedLeads returns ONLY the user's archived leads, newest-archived
+// first, with archived_at and source_name populated. This is the inverse of
+// ListLeads (active_leads view) and backs the dedicated archive view — the one
+// place an operator inspects and unarchives leads hidden from the working feed.
+func (r *Repository) ListArchivedLeads(ctx context.Context, userID uuid.UUID) ([]domain.LeadWithSource, error) {
+	rows, err := r.q(ctx).Query(ctx,
+		`SELECT l.id, l.user_id, l.channel, l.contact_name, l.company, l.first_message, l.status, l.telegram_chat_id, l.email_address, l.source_id, l.archived_at, COALESCE(ls.name, ''), l.created_at, l.updated_at
+		 FROM leads l
+		 LEFT JOIN lead_sources ls ON ls.id = l.source_id
+		 WHERE l.user_id = $1 AND l.archived_at IS NOT NULL ORDER BY l.archived_at DESC`, userID)
+	if err != nil {
+		return nil, fmt.Errorf("list archived leads: %w", err)
+	}
+	defer rows.Close()
+
+	var leads []domain.LeadWithSource
+	for rows.Next() {
+		var item domain.LeadWithSource
+		if err := rows.Scan(&item.ID, &item.UserID, &item.Channel, &item.ContactName, &item.Company, &item.FirstMessage, &item.Status, &item.TelegramChatID, &item.EmailAddress, &item.SourceID, &item.ArchivedAt, &item.SourceName, &item.CreatedAt, &item.UpdatedAt); err != nil {
+			return nil, fmt.Errorf("scan lead: %w", err)
+		}
+		leads = append(leads, item)
+	}
+	return leads, rows.Err()
+}
+
 func (r *Repository) GetLead(ctx context.Context, id uuid.UUID) (*domain.Lead, error) {
 	var l domain.Lead
 	err := r.q(ctx).QueryRow(ctx,
