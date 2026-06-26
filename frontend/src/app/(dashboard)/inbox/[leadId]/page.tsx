@@ -3,7 +3,7 @@
 import { useState, useEffect } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
-import { ArrowLeft, Clock, Archive, Send } from "lucide-react";
+import { ArrowLeft, Clock, Archive, ArchiveRestore, Send } from "lucide-react";
 import { useNotify } from "@/components/notifications/NotificationProvider";
 import { ProspectSuggestionBanner } from "@/components/leads/ProspectSuggestionBanner";
 import { PendingReplySection } from "@/components/leads/PendingReplySection";
@@ -21,6 +21,7 @@ export default function LeadDetailPage() {
   const { notify, notifyError } = useNotify();
   const [archiving, setArchiving] = useState(false);
   const [confirmingArchive, setConfirmingArchive] = useState(false);
+  const [unarchiving, setUnarchiving] = useState(false);
 
   const [lead, setLead] = useState<Lead | null>(null);
   const [qualification, setQualification] = useState<Qualification | null>(null);
@@ -92,6 +93,22 @@ export default function LeadDetailPage() {
     }
   }
 
+  async function handleUnarchive() {
+    if (unarchiving) return;
+    setUnarchiving(true);
+    try {
+      await api.unarchiveLead(leadId);
+      notify({ type: "success", title: "Лид возвращён", message: "Он снова в ленте входящих." });
+      // Clear the flag in place so the page flips back to the archive control
+      // without a full refetch — the lead is active again.
+      setLead((prev) => (prev ? { ...prev, archived_at: undefined } : prev));
+    } catch (err) {
+      notifyError(err, "Не удалось разархивировать лид");
+    } finally {
+      setUnarchiving(false);
+    }
+  }
+
   if (loading) return <div className="flex h-full items-center justify-center"><div className="size-8 animate-spin rounded-full border-4 border-[#3b6ef6] border-t-transparent" /></div>;
   if (error || !lead) return (
     <div className="flex h-full items-center justify-center"><div className="text-center">
@@ -126,7 +143,9 @@ export default function LeadDetailPage() {
             </div>
           </div>
           <div className="flex gap-3">
-            {confirmingArchive ? (
+            {lead.archived_at ? (
+              <button onClick={handleUnarchive} disabled={unarchiving} className="rounded-lg border border-[#c3c6d7]/30 bg-white px-4 py-2 text-sm font-semibold text-[#0d1c2e] transition-colors hover:bg-[#eff4ff] disabled:cursor-not-allowed disabled:opacity-60"><ArchiveRestore className="mr-1.5 inline size-4" />{unarchiving ? "Возвращаем…" : "Разархивировать"}</button>
+            ) : confirmingArchive ? (
               <div className="flex items-center gap-2">
                 <span className="text-sm text-[#434655]">Архивировать лид?</span>
                 <button onClick={handleArchive} disabled={archiving} className="rounded-lg bg-[#0d1c2e] px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-[#0d1c2e]/90 disabled:cursor-not-allowed disabled:opacity-60">{archiving ? "Архивируем…" : "Да, в архив"}</button>

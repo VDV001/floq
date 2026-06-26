@@ -32,6 +32,7 @@ function lead(over: Partial<Lead> = {}): Lead {
     created_at: over.created_at ?? "2026-06-25T10:00:00Z",
     updated_at: over.updated_at ?? "2026-06-25T10:00:00Z",
     pending_replies_count: over.pending_replies_count ?? 0,
+    archived_at: over.archived_at,
   };
 }
 
