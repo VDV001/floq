@@ -17,6 +17,11 @@ import (
 var (
 	ErrInvalidLeadStatus = errors.New("leads: invalid lead status")
 	ErrInvalidTransition = errors.New("leads: invalid lead status transition")
+
+	// Archive errors. Sentinels so the HTTP boundary can errors.Is the
+	// idempotency outcome (already-archived → 409) without string matching.
+	ErrAlreadyArchived = errors.New("leads: lead already archived")
+	ErrNotArchived     = errors.New("leads: lead is not archived")
 )
 
 // --- LeadStatus value object ---
@@ -100,6 +105,7 @@ type Lead struct {
 	TelegramChatID *int64
 	EmailAddress   *string
 	SourceID       *uuid.UUID
+	ArchivedAt     *time.Time
 	CreatedAt      time.Time
 	UpdatedAt      time.Time
 }
@@ -196,6 +202,38 @@ func (l *Lead) TransitionTo(target LeadStatus) error {
 	l.Status = target
 	l.UpdatedAt = time.Now().UTC()
 	return nil
+}
+
+// Archive marks the lead as archived — orthogonal to its pipeline status, so
+// the status is left untouched (the whole reason archive is a separate flag and
+// not status='closed'). Idempotent-by-rejection: archiving an already-archived
+// lead returns ErrAlreadyArchived rather than silently re-stamping the time, so
+// the HTTP boundary can surface a 409.
+func (l *Lead) Archive() error {
+	if l.ArchivedAt != nil {
+		return ErrAlreadyArchived
+	}
+	now := time.Now().UTC()
+	l.ArchivedAt = &now
+	l.UpdatedAt = now
+	return nil
+}
+
+// Unarchive clears the archive flag, restoring the lead to working feeds and
+// analytics. Returns ErrNotArchived when the lead was not archived, mirroring
+// Archive's reject-on-noop contract.
+func (l *Lead) Unarchive() error {
+	if l.ArchivedAt == nil {
+		return ErrNotArchived
+	}
+	l.ArchivedAt = nil
+	l.UpdatedAt = time.Now().UTC()
+	return nil
+}
+
+// IsArchived reports whether the lead is currently archived.
+func (l *Lead) IsArchived() bool {
+	return l.ArchivedAt != nil
 }
 
 type Message struct {
