@@ -16,10 +16,11 @@ import (
 // --- fakes ---
 
 type fakeStore struct {
-	upserted []*domain.CompanyEnrichment
-	due      []*domain.CompanyEnrichment
-	saved    []*domain.CompanyEnrichment
+	upserted  []*domain.CompanyEnrichment
+	due       []*domain.CompanyEnrichment
+	saved     []*domain.CompanyEnrichment
 	upsertErr error
+	getResult *domain.CompanyEnrichment // returned by Get (found = non-nil)
 }
 
 func (f *fakeStore) UpsertPending(_ context.Context, e *domain.CompanyEnrichment) error {
@@ -37,7 +38,7 @@ func (f *fakeStore) Save(_ context.Context, e *domain.CompanyEnrichment) error {
 	return nil
 }
 func (f *fakeStore) Get(context.Context, uuid.UUID, string) (*domain.CompanyEnrichment, bool, error) {
-	return nil, false, nil
+	return f.getResult, f.getResult != nil, nil
 }
 
 type fakeFetcher struct {
