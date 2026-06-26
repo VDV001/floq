@@ -29,6 +29,7 @@ type Metrics struct {
 	aiDuration   *prometheus.HistogramVec
 	queueDepth   *prometheus.GaugeVec
 	matviewRefresh prometheus.Histogram
+	registryEnrichments *prometheus.CounterVec
 
 	mu        sync.Mutex          // guards prevKinds
 	prevKinds map[string]struct{} // queue-depth kinds published last scan
@@ -78,6 +79,10 @@ func New() *Metrics {
 			// default interval to keep the slow tail visible.
 			Buckets: []float64{0.1, 0.5, 1, 2.5, 5, 10, 30, 60, 120, 300},
 		}),
+		registryEnrichments: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "enrichment_registry_requests_total",
+			Help: "Total company-registry (DaData) enrichment attempts by result: hit (confident match), miss (no/ambiguous match), error (API/transport failure), rate_limited (skipped to protect the daily quota). Calls = sum across results; hit-rate = hit / (hit+miss).",
+		}, []string{"result"}),
 	}
 	reg.MustRegister(
 		m.httpRequests,
@@ -87,6 +92,7 @@ func New() *Metrics {
 		m.aiDuration,
 		m.queueDepth,
 		m.matviewRefresh,
+		m.registryEnrichments,
 		collectors.NewGoCollector(),
 		collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}),
 	)
@@ -132,6 +138,17 @@ func (m *Metrics) OnAuditEntry(e *domain.Entry) {
 // importing this package.
 func (m *Metrics) ObserveMatviewRefresh(d time.Duration) {
 	m.matviewRefresh.Observe(d.Seconds())
+}
+
+// OnRegistryEnrichment records the outcome of one company-registry
+// (DaData) enrichment attempt. Wired as the daDataEnricher observer so the
+// counter reflects every attempt that had a signal to look up. The `result`
+// label is a small bounded enum (hit / miss / error / rate_limited) — no
+// tenant or company dimension, so /metrics stays public-safe and low
+// cardinality. No-signal early returns are deliberately never observed: no
+// lookup was attempted, so they are not registry requests.
+func (m *Metrics) OnRegistryEnrichment(result string) {
+	m.registryEnrichments.WithLabelValues(result).Inc()
 }
 
 // Handler serves the registry in the Prometheus text exposition format.

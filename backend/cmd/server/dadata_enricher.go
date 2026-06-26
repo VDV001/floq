@@ -38,10 +38,25 @@ type daDataEnricher struct {
 	httpClient *http.Client
 	apiKey     string
 	baseURL    string
-	limiter    rateLimiter // optional global egress cap; nil = unlimited
+	limiter    rateLimiter         // optional global egress cap; nil = unlimited
+	observe    func(result string) // metrics hook; no-op unless wired from the composition root
 }
 
 var _ enrichment.Enricher = (*daDataEnricher)(nil)
+
+// registryOutcome classifies one registry enrichment attempt for the metrics
+// observer; its values are the `result` label of
+// enrichment_registry_requests_total. outcomeNoSignal is the sentinel for
+// "nothing to look up" — it is never observed, because no attempt was made.
+type registryOutcome string
+
+const (
+	outcomeNoSignal    registryOutcome = ""
+	outcomeRateLimited registryOutcome = "rate_limited"
+	outcomeHit         registryOutcome = "hit"
+	outcomeMiss        registryOutcome = "miss"
+	outcomeError       registryOutcome = "error"
+)
 
 func newDaDataEnricher(client *http.Client, apiKey, baseURL string, limiter ...rateLimiter) *daDataEnricher {
 	if baseURL == "" {
@@ -56,6 +71,7 @@ func newDaDataEnricher(client *http.Client, apiKey, baseURL string, limiter ...r
 		apiKey:     apiKey,
 		baseURL:    strings.TrimRight(baseURL, "/"),
 		limiter:    lim,
+		observe:    func(string) {}, // no-op default; composition root wires metrics
 	}
 }
 
@@ -83,43 +99,58 @@ type ddSuggestion struct {
 }
 
 func (d *daDataEnricher) Enrich(ctx context.Context, q enrichment.EnrichQuery) (domain.LegalDetails, bool, error) {
+	legal, outcome, err := d.lookup(ctx, q)
+	// A no-signal early return is not a registry attempt — nothing was looked
+	// up — so it is deliberately not counted. Every other path (a real lookup,
+	// an error, or a throttled skip) is exactly one observed outcome.
+	if outcome != outcomeNoSignal {
+		d.observe(string(outcome))
+	}
+	return legal, outcome == outcomeHit, err
+}
+
+// lookup runs the registry query and classifies the result into a single
+// registryOutcome, so Enrich has one place to map to the port's bool and one
+// place to observe metrics (no scattered Inc() calls to forget on a new
+// return).
+func (d *daDataEnricher) lookup(ctx context.Context, q enrichment.EnrichQuery) (domain.LegalDetails, registryOutcome, error) {
 	if q.INN == "" && q.CompanyName == "" {
-		return domain.LegalDetails{}, false, nil // no signal → miss, no API call, no budget spent
+		return domain.LegalDetails{}, outcomeNoSignal, nil // no signal → no API call, no budget spent
 	}
 	// Global egress cap (protects the shared daily quota). Over budget → skip
 	// (a miss), never an error — registry is best-effort.
 	if d.limiter != nil {
 		allowed, _, err := d.limiter.Allow(ctx, dadataRateLimitKey)
 		if err != nil || !allowed {
-			return domain.LegalDetails{}, false, nil
+			return domain.LegalDetails{}, outcomeRateLimited, nil
 		}
 	}
 	switch {
 	case q.INN != "":
 		resp, err := d.post(ctx, "/findById/party", q.INN, 1)
 		if err != nil {
-			return domain.LegalDetails{}, false, err
+			return domain.LegalDetails{}, outcomeError, err
 		}
 		if len(resp.Suggestions) == 0 {
-			return domain.LegalDetails{}, false, nil
+			return domain.LegalDetails{}, outcomeMiss, nil
 		}
-		return mapSuggestion(resp.Suggestions[0]), true, nil
+		return mapSuggestion(resp.Suggestions[0]), outcomeHit, nil
 
 	case q.CompanyName != "":
 		// Ask for 2 so we can detect ambiguity: anything but a single unique
 		// hit is treated as "not confidently identified".
 		resp, err := d.post(ctx, "/suggest/party", q.CompanyName, 2)
 		if err != nil {
-			return domain.LegalDetails{}, false, err
+			return domain.LegalDetails{}, outcomeError, err
 		}
 		s, ok := pickConfident(resp.Suggestions)
 		if !ok {
-			return domain.LegalDetails{}, false, nil
+			return domain.LegalDetails{}, outcomeMiss, nil
 		}
-		return mapSuggestion(s), true, nil
+		return mapSuggestion(s), outcomeHit, nil
 
 	default:
-		return domain.LegalDetails{}, false, nil // no signal → miss, no API call
+		return domain.LegalDetails{}, outcomeNoSignal, nil // no signal → no API call
 	}
 }
 
