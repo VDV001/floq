@@ -70,6 +70,7 @@ func (r *Repository) loadLeadsBreakdown(ctx context.Context, userID uuid.UUID, f
 		SELECT channel::text, status::text, COUNT(*)
 		FROM leads
 		WHERE user_id = $1 AND created_at >= $2 AND created_at < $3
+		  AND archived_at IS NULL
 		GROUP BY channel, status`,
 		userID, from, to,
 	)
@@ -110,7 +111,8 @@ func (r *Repository) loadQualificationDistribution(ctx context.Context, userID u
 	sb.WriteString(`
 		FROM qualifications q
 		JOIN leads l ON l.id = q.lead_id
-		WHERE l.user_id = $1 AND l.created_at >= $2 AND l.created_at < $3`)
+		WHERE l.user_id = $1 AND l.created_at >= $2 AND l.created_at < $3
+		  AND l.archived_at IS NULL`)
 
 	counts := make([]int, len(scoreBuckets))
 	dests := make([]any, 0, len(scoreBuckets)+1)
@@ -260,7 +262,8 @@ func (r *Repository) GetCostRatios(ctx context.Context, userID uuid.UUID, from, 
 
 	if err := r.pool.QueryRow(ctx,
 		`SELECT COUNT(*) FROM leads
-		 WHERE user_id = $1 AND created_at >= $2 AND created_at < $3`,
+		 WHERE user_id = $1 AND created_at >= $2 AND created_at < $3
+		   AND archived_at IS NULL`,
 		userID, from, to,
 	).Scan(&dto.LeadsCount); err != nil {
 		return nil, fmt.Errorf("analytics cost-ratios leads: %w", err)
@@ -271,6 +274,7 @@ func (r *Repository) GetCostRatios(ctx context.Context, userID uuid.UUID, from, 
 			SELECT l.id FROM leads l
 			JOIN qualifications q ON q.lead_id = l.id
 			WHERE l.user_id = $1 AND l.created_at >= $2 AND l.created_at < $3
+			  AND l.archived_at IS NULL
 			GROUP BY l.id
 			HAVING MAX(q.score) >= $4
 		) sub`,
@@ -310,7 +314,8 @@ func (r *Repository) GetCostRatios(ctx context.Context, userID uuid.UUID, from, 
 // A single query with COUNT(*) OVER() yields the page and the pre-LIMIT
 // total in one round-trip. Unqualified leads keep a NULL score and sort
 // last (NULLS LAST). status=any excludes the terminal 'closed' state;
-// an explicit status returns exactly that state.
+// an explicit status returns exactly that state. Archived leads
+// (archived_at IS NOT NULL) are excluded regardless of status.
 //
 // Tenant scope via leads.user_id. Sort is (score DESC NULLS LAST,
 // updated_at DESC) so the freshest hottest leads surface first.
@@ -324,6 +329,7 @@ func (r *Repository) GetHotLeads(ctx context.Context, userID uuid.UUID, filter H
 		FROM leads l
 		LEFT JOIN qualifications q ON q.lead_id = l.id
 		WHERE l.user_id = $1
+		  AND l.archived_at IS NULL
 		  AND ($2::timestamptz IS NULL OR l.created_at >= $2)
 		  AND (
 		        ($3 = 'any' AND l.status::text <> 'closed')
