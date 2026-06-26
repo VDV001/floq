@@ -8,10 +8,11 @@ import { useNotify } from "@/components/notifications/NotificationProvider";
 import { ProspectSuggestionBanner } from "@/components/leads/ProspectSuggestionBanner";
 import { PendingReplySection } from "@/components/leads/PendingReplySection";
 import { IdentityBadge } from "@/components/leads/IdentityBadge";
-import { api, Lead, Message, Qualification, Draft } from "@/lib/api";
+import { api, Lead, Message, Qualification, Draft, Enrichment } from "@/lib/api";
 import { unarchiveLead } from "@/lib/leadActions";
 import { getTimeAgo, getInitials } from "@/components/inbox/helpers";
 import { QualificationCard } from "@/components/inbox/QualificationCard";
+import { EnrichmentCard } from "@/components/inbox/EnrichmentCard";
 import { ConversationThread } from "@/components/inbox/ConversationThread";
 import { DraftSidebar } from "@/components/inbox/DraftSidebar";
 
@@ -28,6 +29,8 @@ export default function LeadDetailPage() {
   const [qualification, setQualification] = useState<Qualification | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
   const [draft, setDraft] = useState<Draft | null>(null);
+  const [enrichment, setEnrichment] = useState<Enrichment | null>(null);
+  const [enrichmentLoading, setEnrichmentLoading] = useState(true);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
   const [qualLoading, setQualLoading] = useState(true);
@@ -64,8 +67,13 @@ export default function LeadDetailPage() {
     const flag = aggregated;
 
     async function fetchData() {
-      try { const leadData = await api.getLead(leadId); if (!cancelled) setLead(leadData); }
+      let email: string | undefined;
+      try { const leadData = await api.getLead(leadId); if (!cancelled) setLead(leadData); email = leadData.email_address; }
       catch { if (!cancelled) setError(true); }
+      if (email) {
+        try { const enr = await api.getEnrichment(email); if (!cancelled) setEnrichment(enr); } catch {}
+      }
+      if (!cancelled) setEnrichmentLoading(false);
       try { const msgs = await api.getMessages(leadId, { aggregated: flag }); if (!cancelled) setMessages(msgs); } catch {}
       try { const qual = await api.getQualification(leadId); if (!cancelled) setQualification(qual); } catch {}
       if (!cancelled) setQualLoading(false);
@@ -160,6 +168,7 @@ export default function LeadDetailPage() {
           }}
         />
         <QualificationCard qualification={qualification} loading={qualLoading} />
+        {lead.email_address && <EnrichmentCard enrichment={enrichment} loading={enrichmentLoading} />}
 
         <section className="max-w-4xl">
           <ConversationThread messages={messages} initials={initials} />

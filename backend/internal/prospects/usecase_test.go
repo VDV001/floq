@@ -223,6 +223,19 @@ func TestImportCSV_HappyPath(t *testing.T) {
 	assert.Equal(t, "Bob", repo.batched[1].Name)
 }
 
+func TestImportCSV_EnqueuesEnrichmentPerRow(t *testing.T) {
+	repo := newMockRepo()
+	enr := &recordingEnricher{}
+	uc := NewUseCase(repo, WithLeadChecker(&mockLeadChecker{}), WithEnricher(enr))
+	userID := uuid.New()
+
+	csv := []byte("name,company,title,email\nAlice,Acme,CEO,alice@acme.com\nBob,Beta,CTO,bob@beta.com\n")
+	_, err := uc.ImportCSV(context.Background(), userID, csv)
+	require.NoError(t, err)
+	assert.ElementsMatch(t, []string{"alice@acme.com", "bob@beta.com"}, enr.emails,
+		"every imported prospect's email is enqueued for enrichment")
+}
+
 func TestImportCSV_InvalidHeader(t *testing.T) {
 	repo := newMockRepo()
 	uc := NewUseCase(repo, WithLeadChecker(&mockLeadChecker{}))
@@ -322,6 +335,38 @@ func TestCreateProspect_HappyPath(t *testing.T) {
 	input := CreateProspectInput{UserID: uuid.New(), Name: "Alice", Company: "Acme", Title: "CEO", Email: "alice@acme.com"}
 	p, err := uc.CreateProspect(context.Background(), input)
 	require.NoError(t, err)
+	assert.Contains(t, repo.prospects, p.ID)
+}
+
+type recordingEnricher struct {
+	emails []string
+	err    error
+}
+
+func (e *recordingEnricher) Enqueue(_ context.Context, _ uuid.UUID, email string) error {
+	e.emails = append(e.emails, email)
+	return e.err
+}
+
+func TestCreateProspect_EnqueuesEnrichment(t *testing.T) {
+	repo := newMockRepo()
+	enr := &recordingEnricher{}
+	uc := NewUseCase(repo, WithLeadChecker(&mockLeadChecker{}), WithEnricher(enr))
+
+	input := CreateProspectInput{UserID: uuid.New(), Name: "Alice", Company: "Acme", Email: "alice@acme.com"}
+	_, err := uc.CreateProspect(context.Background(), input)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"alice@acme.com"}, enr.emails, "create triggers a best-effort enqueue with the prospect email")
+}
+
+func TestCreateProspect_EnrichFailureDoesNotFailCreate(t *testing.T) {
+	repo := newMockRepo()
+	enr := &recordingEnricher{err: fmt.Errorf("enrich queue down")}
+	uc := NewUseCase(repo, WithLeadChecker(&mockLeadChecker{}), WithEnricher(enr))
+
+	input := CreateProspectInput{UserID: uuid.New(), Name: "Alice", Company: "Acme", Email: "alice@acme.com"}
+	p, err := uc.CreateProspect(context.Background(), input)
+	require.NoError(t, err, "enrichment is best-effort — its failure must not fail the create")
 	assert.Contains(t, repo.prospects, p.ID)
 }
 

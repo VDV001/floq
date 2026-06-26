@@ -33,6 +33,7 @@ type EmailPoller struct {
 	aiClient        AIQualifier
 	analyzer        *attachments.Analyzer
 	identityLinker  IdentityLinker
+	enricher        EnrichmentEnqueuer
 	pendingProposer PendingReplyProposer
 	bookingLink     string
 	logger          *slog.Logger
@@ -86,6 +87,13 @@ func WithAttachmentAnalyzer(a *attachments.Analyzer) EmailPollerOption {
 // flow must never block on identity-aggregation backend hiccups.
 func WithIdentityLinker(l IdentityLinker) EmailPollerOption {
 	return func(p *EmailPoller) { p.identityLinker = l }
+}
+
+// WithEmailEnricher wires the cross-context enrichment enqueuer so each newly
+// created lead's company domain is queued for background scraping. Best-effort:
+// omit it (or pass nil) to disable. Errors are logged, never block inbound.
+func WithEmailEnricher(e EnrichmentEnqueuer) EmailPollerOption {
+	return func(p *EmailPoller) { p.enricher = e }
 }
 
 // WithLogger overrides the default slog.Logger so the email poller
@@ -433,6 +441,15 @@ func (e *EmailPoller) processEmail(ctx context.Context, fromName, fromEmail, bod
 			if err := e.identityLinker.LinkLeadToIdentity(ctx, e.ownerID, lead.ID, fromEmail, "", ""); err != nil {
 				e.logger.WarnContext(ctx, "inbox: identity link failed",
 					"lead", lead.ID, "channel", "email", "err", err)
+			}
+		}
+
+		// Best-effort: queue background company-data enrichment by the sender's
+		// email domain. Failures are logged, never block the inbound flow.
+		if e.enricher != nil {
+			if err := e.enricher.Enqueue(ctx, e.ownerID, fromEmail); err != nil {
+				e.logger.WarnContext(ctx, "inbox: enrichment enqueue failed",
+					"lead", lead.ID, "err", err)
 			}
 		}
 

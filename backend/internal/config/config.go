@@ -106,6 +106,13 @@ type Config struct {
 	// batches are intended. Default false — an unconfirmed over-threshold
 	// batch is held rather than blasted.
 	OutboundMassSendConfirmed bool
+	// Auto-enrichment (#182): the background worker scrapes a lead/prospect's
+	// company domain from its public website.
+	EnrichmentRefreshInterval time.Duration // worker tick; default 1m
+	EnrichmentTTLDays         int           // how long an enriched record stays fresh; default 30
+	EnrichmentMaxAttempts     int           // give up after this many failures; default 3
+	EnrichmentBatchLimit      int           // rows scraped per tick; default 20
+	EnrichmentRateLimitPerMin int           // per-domain scrape budget per minute; default 10
 }
 
 // Load reads configuration from environment variables and returns a Config.
@@ -120,6 +127,11 @@ func Load() *Config {
 		JWTSecret:                   os.Getenv("JWT_SECRET"),
 		SecretsKEK:                  os.Getenv("FLOQ_SECRETS_KEK"),
 		SecretsKEKOld:               os.Getenv("FLOQ_SECRETS_KEK_OLD"),
+		EnrichmentRefreshInterval:   getEnvDuration("ENRICHMENT_REFRESH_INTERVAL", time.Minute),
+		EnrichmentTTLDays:           getEnvInt("ENRICHMENT_TTL_DAYS", 30),
+		EnrichmentMaxAttempts:       getEnvInt("ENRICHMENT_MAX_ATTEMPTS", 3),
+		EnrichmentBatchLimit:        getEnvInt("ENRICHMENT_BATCH_LIMIT", 20),
+		EnrichmentRateLimitPerMin:   getEnvInt("ENRICHMENT_RATE_LIMIT_PER_MIN", 10),
 		AIProvider:                  getEnv("AI_PROVIDER", "anthropic"),
 		AnthropicAPIKey:             os.Getenv("ANTHROPIC_API_KEY"),
 		OpenAIAPIKey:                os.Getenv("OPENAI_API_KEY"),
