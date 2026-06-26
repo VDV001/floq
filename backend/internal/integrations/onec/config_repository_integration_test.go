@@ -23,7 +23,7 @@ func mustConfig(t *testing.T, baseURL string, at domain.AuthType, secret, webhoo
 func TestRepository_CredentialsConfig_NotFoundThenInsertThenUpdate(t *testing.T) {
 	pool := testutil.TestDB(t)
 	userID := testutil.SeedUser(t, pool)
-	repo := onec.NewRepository(pool, testCipher(t))
+	repo := onec.NewRepository(pool, testutil.NewSecretCipher(t))
 	ctx := context.Background()
 
 	// No row yet → found=false, no error.
@@ -56,7 +56,7 @@ func TestRepository_CredentialsConfig_NotFoundThenInsertThenUpdate(t *testing.T)
 func TestRepository_CredentialsConfig_EncryptsAuthSecretAtRest(t *testing.T) {
 	pool := testutil.TestDB(t)
 	userID := testutil.SeedUser(t, pool)
-	repo := onec.NewRepository(pool, testCipher(t))
+	repo := onec.NewRepository(pool, testutil.NewSecretCipher(t))
 	ctx := context.Background()
 
 	require.NoError(t, repo.UpsertCredentialsConfig(ctx, userID,
@@ -87,7 +87,7 @@ func TestRepository_CredentialsConfig_EncryptsAuthSecretAtRest(t *testing.T) {
 func TestRepository_GetCredentialsConfig_ReturnsInactiveBlankBaseURL(t *testing.T) {
 	pool := testutil.TestDB(t)
 	userID := testutil.SeedUser(t, pool)
-	repo := onec.NewRepository(pool, testCipher(t))
+	repo := onec.NewRepository(pool, testutil.NewSecretCipher(t))
 	ctx := context.Background()
 
 	// An inactive, blank-base-url row is a real saved state (user filled the

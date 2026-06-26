@@ -19,11 +19,46 @@ import (
 	"github.com/daniil/floq/internal/integrations/onec/domain"
 	"github.com/daniil/floq/internal/leads"
 	"github.com/daniil/floq/internal/proxy"
+	"github.com/daniil/floq/internal/secrets"
 	"github.com/daniil/floq/internal/settings"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 	openaiopt "github.com/openai/openai-go/option"
 )
+
+// autoBackfillSecrets encrypts any straggler plaintext secrets into their
+// *_enc/*_nonce columns BEFORE migrations run, so migration 047's drop-guard
+// never fires on a normally-booted server (the guard stays as defense-in-depth
+// for migrations applied out-of-band via the CLI).
+//
+// It is schema-aware and idempotent: it gates on the plaintext columns still
+// existing (pre-047), so it is a no-op once 047 has dropped them and on a fresh
+// DB where the tables do not exist yet. Encrypting under the CURRENTLY
+// configured KEK also guarantees every freshly-backfilled secret is decryptable
+// after the drop. It does NOT re-key rows already encrypted under a different
+// KEK — KEK stability across the 047 deploy is an operational precondition.
+func autoBackfillSecrets(ctx context.Context, pool *pgxpool.Pool, cipher *secrets.Cipher) error {
+	// imap_password and onec_credentials.auth_secret are dropped together in
+	// 047, so the presence of one plaintext column is a faithful proxy for the
+	// pre-047 schema.
+	var pre047 bool
+	if err := pool.QueryRow(ctx,
+		`SELECT EXISTS (SELECT 1 FROM information_schema.columns
+		 WHERE table_name = 'user_settings' AND column_name = 'imap_password')`,
+	).Scan(&pre047); err != nil {
+		return fmt.Errorf("probe plaintext-secret columns: %w", err)
+	}
+	if !pre047 {
+		return nil // post-047 (or pre-schema): nothing to encrypt.
+	}
+	if _, err := settings.BackfillSecrets(ctx, pool, cipher); err != nil {
+		return fmt.Errorf("backfill settings secrets: %w", err)
+	}
+	if _, err := onec.BackfillSecrets(ctx, pool, cipher); err != nil {
+		return fmt.Errorf("backfill onec secrets: %w", err)
+	}
+	return nil
+}
 
 // onecSecretGenerator produces 1C webhook secrets from crypto/rand. This is the
 // infra side of the onec.SecretGenerator port — the usecase stays oblivious to

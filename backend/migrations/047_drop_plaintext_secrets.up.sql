@@ -1,14 +1,22 @@
 -- Step 2 of the at-rest secrets migration (037 added the *_enc/*_nonce
--- columns + a one-off backfill; this drops the legacy plaintext columns). By
--- the time this runs every secret must already live in its ciphertext column.
+-- columns + a backfill; this drops the legacy plaintext columns). By the time
+-- this runs every secret must already live in its ciphertext column.
+--
+-- The server encrypts any straggler plaintext secrets at startup BEFORE
+-- migrations run (cmd/server autoBackfillSecrets), so on a normally-booted
+-- server this GUARD is a never-fire safety net.
 --
 -- GUARD: refuse to drop while any secret is still un-backfilled (plaintext
--- non-empty AND ciphertext NULL). Dropping then would silently destroy that
--- secret. The backfill (`server -backfill-secrets`) shipped with the 037
--- release and must have been run on a prior version — note that migrations run
--- at server startup BEFORE the backfill step, so the backfill cannot be run on
--- a release that already contains this migration. If this RAISE fires, deploy
--- the prior release, run the backfill, then re-apply.
+-- non-empty AND ciphertext NULL) — e.g. when migrations are applied out-of-band
+-- via the `migrate` CLI without the server's pre-migration backfill. Dropping
+-- then would silently destroy that secret.
+--
+-- RECOVERY if this RAISE fires (CLI path): golang-migrate marks the schema
+-- dirty at v47, so first clear it with `migrate force 46`, then start the
+-- server once (its pre-migration autoBackfillSecrets encrypts the stragglers)
+-- to re-apply 047 cleanly. The guard checks ciphertext PRESENCE, not
+-- decryptability — KEK stability across this deploy is an operational
+-- precondition (a secret encrypted under a lost KEK is unrecoverable).
 DO $$
 BEGIN
     IF EXISTS (

@@ -108,6 +108,13 @@ func main() {
 	}
 	defer analyticsPool.Close()
 
+	// 1a2. Encrypt any straggler plaintext secrets BEFORE migrations run, so the
+	// migration 047 drop-guard never fires on a normally-booted server (it stays
+	// as defense-in-depth for out-of-band CLI migrations). No-op post-047.
+	if err := autoBackfillSecrets(context.Background(), pool, secretCipher); err != nil {
+		log.Fatalf("secret backfill: %v", err)
+	}
+
 	// 1b. Run migrations
 	migrationsPath := os.Getenv("MIGRATIONS_PATH")
 	if migrationsPath == "" {

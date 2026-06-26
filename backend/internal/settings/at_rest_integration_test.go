@@ -4,28 +4,16 @@ package settings_test
 
 import (
 	"context"
-	"encoding/base64"
 	"fmt"
 	"strings"
 	"testing"
 
-	"github.com/daniil/floq/internal/secrets"
 	"github.com/daniil/floq/internal/settings"
 	"github.com/daniil/floq/internal/settings/domain"
 	"github.com/daniil/floq/internal/testutil"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
-
-// atRestCipher builds a real AES-256-GCM cipher so the at-rest path is
-// exercised against actual crypto + a real database, not a stub.
-func atRestCipher(t *testing.T) *secrets.Cipher {
-	t.Helper()
-	key := base64.StdEncoding.EncodeToString([]byte("settings-integration-test-kek-32"))
-	c, err := secrets.NewCipher(key)
-	require.NoError(t, err)
-	return c
-}
 
 // TestUpdateSettings_EncryptsSecretAtRest verifies, for every secret column,
 // that saving through the repository stores a non-leaking ciphertext in the
@@ -49,7 +37,7 @@ func TestUpdateSettings_EncryptsSecretAtRest(t *testing.T) {
 			pool := testutil.TestDB(t)
 			userID := testutil.SeedUser(t, pool)
 			ctx := context.Background()
-			repo := settings.NewRepository(pool, atRestCipher(t))
+			repo := settings.NewRepository(pool, testutil.NewSecretCipher(t))
 
 			// Save through the repository.
 			require.NoError(t, repo.UpdateSettings(ctx, userID, map[string]any{tc.column: tc.value}))
