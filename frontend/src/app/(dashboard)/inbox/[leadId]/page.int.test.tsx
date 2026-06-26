@@ -10,10 +10,11 @@ import type { Lead, Message, Qualification, Draft } from "@/lib/api";
 // Dynamic route [leadId]: the page reads the id via useParams(). Pin it to
 // "lead-1" and stub usePathname (used by child <Link>/router context) so the
 // page mounts deterministically without a real Next router.
+const { pushMock } = vi.hoisted(() => ({ pushMock: vi.fn() }));
 vi.mock("next/navigation", () => ({
   useParams: () => ({ leadId: "lead-1" }),
   usePathname: () => "/inbox/lead-1",
-  useRouter: () => ({ push: vi.fn(), replace: vi.fn(), back: vi.fn() }),
+  useRouter: () => ({ push: pushMock, replace: vi.fn(), back: vi.fn() }),
 }));
 
 import LeadDetailPage from "./page";
@@ -192,5 +193,53 @@ describe("lead detail page (integration)", () => {
     expect(await screen.findByText("Спасибо за обращение!")).toBeInTheDocument();
     // At least one extra messages fetch happened after the initial mount load.
     expect(messagesFetches).toBeGreaterThanOrEqual(2);
+  });
+
+  it("archives the lead via the API and redirects to the inbox feed", async () => {
+    const user = userEvent.setup({ delay: null });
+    pushMock.mockClear();
+    let archiveHit = false;
+
+    mountWith({
+      lead: lead({ contact_name: "Архив Тест" }),
+      extra: [
+        http.post(url("/api/leads/lead-1/archive"), () => {
+          archiveHit = true;
+          return HttpResponse.json({ status: "archived" });
+        }),
+      ],
+    });
+
+    renderPage();
+
+    const btn = await screen.findByRole("button", { name: /Архив/ });
+    await user.click(btn);
+
+    await waitFor(() => expect(archiveHit).toBe(true));
+    // On success the lead leaves the working feed → redirect to /inbox.
+    await waitFor(() => expect(pushMock).toHaveBeenCalledWith("/inbox"));
+  });
+
+  it("surfaces an error and stays on the page when archive fails", async () => {
+    const user = userEvent.setup({ delay: null });
+    pushMock.mockClear();
+
+    mountWith({
+      lead: lead({ contact_name: "Архив Ошибка" }),
+      extra: [
+        http.post(url("/api/leads/lead-1/archive"), () =>
+          HttpResponse.json({ error: "boom" }, { status: 500 }),
+        ),
+      ],
+    });
+
+    renderPage();
+
+    const btn = await screen.findByRole("button", { name: /Архив/ });
+    await user.click(btn);
+
+    // Error notification shown; no redirect.
+    expect(await screen.findByText("Не удалось архивировать лид")).toBeInTheDocument();
+    expect(pushMock).not.toHaveBeenCalled();
   });
 });

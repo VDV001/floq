@@ -411,6 +411,13 @@ describe("api module", () => {
       expect(JSON.parse(opts.body)).toEqual({ status: "qualified" });
     });
 
+    it("archiveLead → POST /api/leads/:id/archive", async () => {
+      await api.archiveLead("lead-1");
+      const [url, opts] = fetchMock.mock.calls[0];
+      expect(url).toBe("http://localhost:8080/api/leads/lead-1/archive");
+      expect(opts.method).toBe("POST");
+    });
+
     it("deleteProspect → DELETE /api/prospects/:id", async () => {
       await api.deleteProspect("p-123");
       const [url, opts] = fetchMock.mock.calls[0];
