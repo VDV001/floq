@@ -77,11 +77,13 @@ func (d *daDataEnricher) Enrich(ctx context.Context, q enrichment.EnrichQuery) (
 		return mapSuggestion(resp.Suggestions[0]), true, nil
 
 	case q.CompanyName != "":
+		// Ask for 2 so we can detect ambiguity: anything but a single unique
+		// hit is treated as "not confidently identified".
 		resp, err := d.post(ctx, "/suggest/party", q.CompanyName, 2)
 		if err != nil {
 			return domain.LegalDetails{}, false, err
 		}
-		s, ok := pickConfident(resp.Suggestions, q.CompanyName)
+		s, ok := pickConfident(resp.Suggestions)
 		if !ok {
 			return domain.LegalDetails{}, false, nil
 		}
@@ -92,25 +94,16 @@ func (d *daDataEnricher) Enrich(ctx context.Context, q enrichment.EnrichQuery) (
 	}
 }
 
-// pickConfident returns a single confident match: the sole result, or — when
-// several fuzzy results come back — the first only if its name matches the
-// query exactly (normalized). Otherwise no match (don't guess).
-func pickConfident(sg []ddSuggestion, query string) (ddSuggestion, bool) {
-	switch len(sg) {
-	case 0:
-		return ddSuggestion{}, false
-	case 1:
+// pickConfident accepts a fuzzy name result only when it is a single unique
+// hit. Any set of 2+ is ambiguous — a same-named match among them does NOT
+// identify the company (many distinct entities share a name), so we return no
+// match rather than write a wrong ИНН/ОГРН. The precise INN path covers the
+// high-confidence case.
+func pickConfident(sg []ddSuggestion) (ddSuggestion, bool) {
+	if len(sg) == 1 {
 		return sg[0], true
-	default:
-		if normalizeName(sg[0].Value) == normalizeName(query) {
-			return sg[0], true
-		}
-		return ddSuggestion{}, false
 	}
-}
-
-func normalizeName(s string) string {
-	return strings.ToLower(strings.Join(strings.Fields(s), " "))
+	return ddSuggestion{}, false
 }
 
 // mapSuggestion converts a DaData suggestion to LegalDetails. INN/OGRN are
