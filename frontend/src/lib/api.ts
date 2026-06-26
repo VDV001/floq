@@ -472,6 +472,10 @@ export interface EnrichmentProfile {
   emails: string[];
   phones: string[];
   socials: string[];
+  // Phase-2 (#186) LLM-classified fields. Optional: legacy/un-enriched
+  // profiles omit them, and the API sends "" when unclassified.
+  industry?: string;
+  companySize?: string;
 }
 
 export interface Enrichment {
