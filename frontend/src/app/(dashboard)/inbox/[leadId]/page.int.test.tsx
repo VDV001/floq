@@ -247,6 +247,41 @@ describe("lead detail page (integration)", () => {
     expect(pushMock).not.toHaveBeenCalled();
   });
 
+  it("shows Разархивировать (not Архив) when the lead is archived", async () => {
+    mountWith({
+      lead: lead({ contact_name: "Архивный", archived_at: "2026-06-25T11:00:00Z" }),
+    });
+
+    renderPage();
+
+    expect(await screen.findByRole("button", { name: /Разархивировать/ })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Архив" })).not.toBeInTheDocument();
+  });
+
+  it("unarchives an archived lead via the API and swaps back to the Архив affordance", async () => {
+    const user = userEvent.setup({ delay: null });
+    let unarchiveHit = false;
+
+    mountWith({
+      lead: lead({ contact_name: "Вернуть", archived_at: "2026-06-25T11:00:00Z" }),
+      extra: [
+        http.post(url("/api/leads/lead-1/unarchive"), () => {
+          unarchiveHit = true;
+          return HttpResponse.json({ status: "active" });
+        }),
+      ],
+    });
+
+    renderPage();
+
+    await user.click(await screen.findByRole("button", { name: /Разархивировать/ }));
+
+    await waitFor(() => expect(unarchiveHit).toBe(true));
+    // The lead is active again → the button flips back to the archive control.
+    expect(await screen.findByRole("button", { name: "Архив" })).toBeInTheDocument();
+    expect(screen.getByText("Лид возвращён")).toBeInTheDocument();
+  });
+
   it("surfaces an error and stays on the page when archive fails", async () => {
     const user = userEvent.setup({ delay: null });
     pushMock.mockClear();
