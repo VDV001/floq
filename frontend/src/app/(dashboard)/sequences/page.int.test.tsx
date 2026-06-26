@@ -23,6 +23,7 @@ function sequence(over: Partial<Sequence> = {}): Sequence {
     user_id: over.user_id ?? "u-1",
     name: over.name ?? "Холодная цепочка",
     is_active: over.is_active ?? true,
+    require_approval: over.require_approval ?? false,
     created_at: over.created_at ?? "2026-06-01T00:00:00Z",
   };
 }
@@ -204,8 +205,27 @@ describe("sequences page (integration)", () => {
     renderPage();
     await screen.findByText("Холодная цепочка");
 
-    await user.click(screen.getByRole("switch"));
+    await user.click(screen.getByRole("switch", { name: "Активность секвенции" }));
     await waitFor(() => expect(toggled).toEqual({ is_active: false }));
+  });
+
+  it("toggles the per-sequence approval gate through the API", async () => {
+    const user = userEvent.setup({ delay: null });
+    let body: { require_approval?: boolean } = {};
+    mountWith({
+      sequences: [sequence({ id: "s-1", name: "Холодная цепочка", require_approval: false })],
+      extra: [
+        http.patch(url("/api/sequences/s-1/approval"), async ({ request }) => {
+          body = (await request.json()) as { require_approval: boolean };
+          return HttpResponse.json({ require_approval: true });
+        }),
+      ],
+    });
+    renderPage();
+    await screen.findByText("Холодная цепочка");
+
+    await user.click(screen.getByRole("switch", { name: "Требовать одобрение перед отправкой" }));
+    await waitFor(() => expect(body).toEqual({ require_approval: true }));
   });
 
   it("renames a sequence through the edit dialog", async () => {

@@ -103,6 +103,7 @@ export default function SequencesPage() {
             selectedSeqId={seq.selectedSeqId}
             onSelect={seq.setSelectedSeqId}
             onToggle={seq.toggleSequence}
+            onApprovalToggle={seq.setSequenceApproval}
             onEdit={(s: Sequence) => setEditDialog({ seqId: s.id, currentName: s.name })}
             onDelete={(s: Sequence) =>
               openConfirmDelete(

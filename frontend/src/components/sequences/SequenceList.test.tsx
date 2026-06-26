@@ -22,6 +22,7 @@ function makeSequence(overrides: Partial<Sequence> = {}): Sequence {
     user_id: "u-1",
     name: "Cold Outreach",
     is_active: true,
+    require_approval: false,
     created_at: "2026-01-15T10:00:00Z",
     ...overrides,
   };
@@ -30,6 +31,7 @@ function makeSequence(overrides: Partial<Sequence> = {}): Sequence {
 const defaultHandlers = {
   onSelect: vi.fn(),
   onToggle: vi.fn(),
+  onApprovalToggle: vi.fn(),
   onEdit: vi.fn(),
   onDelete: vi.fn(),
 };
@@ -65,7 +67,7 @@ describe("SequenceList", () => {
     const onSelect = vi.fn();
     const sequences = [makeSequence({ id: "s1", name: "Campaign A" })];
 
-    render(<SequenceList loading={false} sequences={sequences} selectedSeqId={null} onSelect={onSelect} onToggle={vi.fn()} onEdit={vi.fn()} onDelete={vi.fn()} />);
+    render(<SequenceList loading={false} sequences={sequences} selectedSeqId={null} onSelect={onSelect} onToggle={vi.fn()} onApprovalToggle={vi.fn()} onEdit={vi.fn()} onDelete={vi.fn()} />);
 
     await userEvent.click(screen.getByText("Campaign A"));
     expect(onSelect).toHaveBeenCalledWith("s1");
