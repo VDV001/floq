@@ -105,6 +105,41 @@ func (uc *UseCase) UpdateStatus(ctx context.Context, id uuid.UUID, status string
 	return uc.repo.UpdateLeadStatus(ctx, id, target)
 }
 
+// ArchiveLead hides the lead from working feeds and analytics without touching
+// its pipeline status. Ownership is enforced upstream by the handler's
+// authorizeLead front-door (the shared gate for every /api/leads/{id}/* route),
+// mirroring UpdateStatus. The archive invariant (reject double-archive) lives on
+// Lead.Archive; a re-archive surfaces domain.ErrAlreadyArchived for a 409.
+func (uc *UseCase) ArchiveLead(ctx context.Context, id uuid.UUID) error {
+	lead, err := uc.repo.GetLead(ctx, id)
+	if err != nil {
+		return fmt.Errorf("get lead: %w", err)
+	}
+	if lead == nil {
+		return domain.ErrLeadNotFound
+	}
+	if err := lead.Archive(); err != nil {
+		return err
+	}
+	return uc.repo.SetLeadArchived(ctx, id, lead.ArchivedAt)
+}
+
+// UnarchiveLead restores an archived lead to feeds and analytics. Returns
+// domain.ErrNotArchived when the lead is not archived.
+func (uc *UseCase) UnarchiveLead(ctx context.Context, id uuid.UUID) error {
+	lead, err := uc.repo.GetLead(ctx, id)
+	if err != nil {
+		return fmt.Errorf("get lead: %w", err)
+	}
+	if lead == nil {
+		return domain.ErrLeadNotFound
+	}
+	if err := lead.Unarchive(); err != nil {
+		return err
+	}
+	return uc.repo.SetLeadArchived(ctx, id, lead.ArchivedAt)
+}
+
 func (uc *UseCase) GetMessages(ctx context.Context, leadID uuid.UUID) ([]domain.Message, error) {
 	return uc.repo.ListMessages(ctx, leadID)
 }
