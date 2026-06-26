@@ -75,6 +75,26 @@ func TestStaleLeadsWithoutReminder_ExcludesArchived(t *testing.T) {
 	}
 }
 
+func TestCountLeads_ExcludeArchived(t *testing.T) {
+	pool := testutil.TestDB(t)
+	userID := testutil.SeedUser(t, pool)
+	repo := leads.NewRepository(pool)
+	ctx := context.Background()
+
+	seedLead(t, repo, userID, domain.StatusNew)
+	archived := seedLead(t, repo, userID, domain.StatusNew)
+	_, err := pool.Exec(ctx, `UPDATE leads SET archived_at = now() WHERE id = $1`, archived.ID)
+	require.NoError(t, err)
+
+	total, err := repo.CountTotalLeads(ctx, userID)
+	require.NoError(t, err)
+	assert.Equal(t, 1, total, "archived lead must not be counted in total usage")
+
+	month, err := repo.CountMonthLeads(ctx, userID)
+	require.NoError(t, err)
+	assert.Equal(t, 1, month, "archived lead must not be counted in month usage")
+}
+
 func TestSetLeadArchived_RoundTrip(t *testing.T) {
 	pool := testutil.TestDB(t)
 	userID := testutil.SeedUser(t, pool)
