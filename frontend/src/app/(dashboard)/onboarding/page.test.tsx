@@ -87,6 +87,44 @@ describe("OnboardingPage", () => {
     });
   });
 
+  it("renders the how-it-works overview with both engines and the pipeline", async () => {
+    render(<OnboardingPage />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Как работает Floq")).toBeInTheDocument();
+      expect(screen.getByText("Входящий поток")).toBeInTheDocument();
+      expect(screen.getByText("Исходящий поток")).toBeInTheDocument();
+      expect(screen.getByText("Путь лида по воронке")).toBeInTheDocument();
+      expect(screen.getByText("Квалифицирован")).toBeInTheDocument();
+    });
+  });
+
+  it("renders the sections map and glossary", async () => {
+    render(<OnboardingPage />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Разделы системы")).toBeInTheDocument();
+      expect(screen.getByText("Очередь отправки")).toBeInTheDocument();
+      expect(screen.getByText("Словарь терминов")).toBeInTheDocument();
+      // The lead-vs-prospect distinction is the most common confusion.
+      expect(screen.getByText("Проспект")).toBeInTheDocument();
+    });
+  });
+
+  it("renders an expandable step-by-step guide for each step", async () => {
+    render(<OnboardingPage />);
+
+    await waitFor(() => {
+      // One "Подробная инструкция" disclosure per step (7).
+      expect(screen.getAllByText("Подробная инструкция")).toHaveLength(7);
+      // Concrete numbered walkthrough copy is present (the /newbot command only
+      // appears in the detailed guide, not in the short step description).
+      expect(screen.getByText(/\/newbot/)).toBeInTheDocument();
+      // Every step's guide carries a "Зачем" rationale and a "Что дальше" result.
+      expect(screen.getAllByText(/Зачем:/)).toHaveLength(7);
+    });
+  });
+
   it("shows all-done state when all steps complete", async () => {
     vi.mocked(api.getSettings).mockResolvedValue({
       ...mockSettings,
