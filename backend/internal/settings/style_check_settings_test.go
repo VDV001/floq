@@ -63,13 +63,12 @@ func TestRepository_GetSettings_AIStyleCheckEnabledFromDB(t *testing.T) {
 					return nil
 				}}
 			},
-			// user_settings row: the new column is the last scan target
-			// (highest index — repository wires it at the end of the SELECT
-			// list per migration 025). After GREEN, scan target index 24
-			// corresponds to ai_style_check_enabled.
+			// user_settings row: ai_style_check_enabled sits at scan index 19
+			// after migration 047 dropped the 5 plaintext secret columns from
+			// the GetSettings projection.
 			func() pgx.Row {
 				return &fakeRow{scanFn: func(dest ...any) error {
-					if p, ok := dest[24].(*bool); ok {
+					if p, ok := dest[19].(*bool); ok {
 						*p = false
 					}
 					return nil

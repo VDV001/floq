@@ -60,9 +60,9 @@ func (r *Repository) GetSettings(ctx context.Context, userID uuid.UUID) (*domain
 		AutoProspectToLead:  true,
 	}
 
-	// Encrypted secret columns are appended at the end of the projection so
-	// the legacy plaintext column ordering stays stable. Each is decrypted
-	// below, preferring the ciphertext over the (possibly stale) plaintext.
+	// Secrets are read ONLY from their ciphertext columns and decrypted below;
+	// the legacy plaintext columns were dropped in migration 047. Scanned at
+	// the end of the projection so the non-secret column ordering is stable.
 	var (
 		ttEnc, ttNonce       []byte
 		imapEnc, imapNonce   []byte
@@ -71,11 +71,10 @@ func (r *Repository) GetSettings(ctx context.Context, userID uuid.UUID) (*domain
 		aiEnc, aiNonce       []byte
 	)
 	err = r.q.QueryRow(ctx,
-		`SELECT telegram_bot_token, telegram_bot_active,
-		        imap_host, imap_port, imap_user, imap_password,
-		        resend_api_key,
-		        smtp_host, smtp_port, smtp_user, smtp_password,
-		        ai_provider, ai_model, ai_api_key,
+		`SELECT telegram_bot_active,
+		        imap_host, imap_port, imap_user,
+		        smtp_host, smtp_port, smtp_user,
+		        ai_provider, ai_model,
 		        notify_telegram, notify_email_digest,
 		        auto_qualify, auto_draft, auto_send, auto_send_delay_min,
 		        auto_followup, auto_followup_days, auto_prospect_to_lead, auto_verify_import,
@@ -88,11 +87,10 @@ func (r *Repository) GetSettings(ctx context.Context, userID uuid.UUID) (*domain
 		        ai_api_key_enc, ai_api_key_nonce
 		 FROM user_settings WHERE user_id = $1`, userID,
 	).Scan(
-		&s.TelegramBotToken, &s.TelegramBotActive,
-		&s.IMAPHost, &s.IMAPPort, &s.IMAPUser, &s.IMAPPassword,
-		&s.ResendAPIKey,
-		&s.SMTPHost, &s.SMTPPort, &s.SMTPUser, &s.SMTPPassword,
-		&s.AIProvider, &s.AIModel, &s.AIAPIKey,
+		&s.TelegramBotActive,
+		&s.IMAPHost, &s.IMAPPort, &s.IMAPUser,
+		&s.SMTPHost, &s.SMTPPort, &s.SMTPUser,
+		&s.AIProvider, &s.AIModel,
 		&s.NotifyTelegram, &s.NotifyEmailDigest,
 		&s.AutoQualify, &s.AutoDraft, &s.AutoSend, &s.AutoSendDelayMin,
 		&s.AutoFollowup, &s.AutoFollowupDays, &s.AutoProspectToLead, &s.AutoVerifyImport,
@@ -118,7 +116,7 @@ func (r *Repository) GetSettings(ctx context.Context, userID uuid.UUID) (*domain
 		{smtpEnc, smtpNonce, &s.SMTPPassword},
 		{aiEnc, aiNonce, &s.AIAPIKey},
 	} {
-		plain, derr := decryptOrFallback(r.cipher, sec.enc, sec.nonce, *sec.field)
+		plain, derr := r.cipher.Decrypt(sec.enc, sec.nonce)
 		if derr != nil {
 			return nil, fmt.Errorf("decrypt secret: %w", derr)
 		}
@@ -142,11 +140,10 @@ func (r *Repository) UpdateSettings(ctx context.Context, userID uuid.UUID, field
 
 	i := 2
 	for name, val := range fields {
-		// Secret columns are encrypted at this boundary and stored in their
-		// <col>_enc/<col>_nonce byte columns; the legacy plaintext column is
-		// never written (it survives only for read-fallback until migration
-		// 038). A non-string value for a secret column is a programming
-		// error — settings secrets are always strings.
+		// Secret columns are encrypted at this boundary and stored ONLY in
+		// their <col>_enc/<col>_nonce byte columns — the legacy plaintext
+		// column was dropped in migration 047. A non-string value for a secret
+		// column is a programming error — settings secrets are always strings.
 		if secretColumns[name] {
 			plaintext, ok := val.(string)
 			if !ok {
@@ -156,13 +153,10 @@ func (r *Repository) UpdateSettings(ctx context.Context, userID uuid.UUID, field
 			if err != nil {
 				return fmt.Errorf("encrypt %s: %w", name, err)
 			}
-			// Blank the legacy plaintext column (literal '') alongside writing
-			// the ciphertext, so an older plaintext value cannot survive a
-			// re-save and linger in a DB dump until migration 038.
 			encCol, nonceCol := name+"_enc", name+"_nonce"
-			insertCols += fmt.Sprintf(", %s, %s, %s", name, encCol, nonceCol)
-			insertVals += fmt.Sprintf(", '', $%d, $%d", i, i+1)
-			updateSet += fmt.Sprintf(", %s = '', %s = $%d, %s = $%d", name, encCol, i, nonceCol, i+1)
+			insertCols += fmt.Sprintf(", %s, %s", encCol, nonceCol)
+			insertVals += fmt.Sprintf(", $%d, $%d", i, i+1)
+			updateSet += fmt.Sprintf(", %s = $%d, %s = $%d", encCol, i, nonceCol, i+1)
 			args = append(args, ciphertext, nonce)
 			i += 2
 			continue
@@ -190,14 +184,13 @@ func (r *Repository) UpdateSettings(ctx context.Context, userID uuid.UUID, field
 // GetStoredIMAPPassword reads the stored IMAP password for test-imap flow.
 // This is an extra method on the concrete type, not part of the domain interface.
 func (r *Repository) GetStoredIMAPPassword(ctx context.Context, userID uuid.UUID) (string, error) {
-	var pwd string
 	var enc, nonce []byte
 	err := r.q.QueryRow(ctx,
-		`SELECT imap_password, imap_password_enc, imap_password_nonce
+		`SELECT imap_password_enc, imap_password_nonce
 		 FROM user_settings WHERE user_id = $1`, userID,
-	).Scan(&pwd, &enc, &nonce)
+	).Scan(&enc, &nonce)
 	if err != nil {
 		return "", err
 	}
-	return decryptOrFallback(r.cipher, enc, nonce, pwd)
+	return r.cipher.Decrypt(enc, nonce)
 }

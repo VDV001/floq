@@ -13,9 +13,10 @@ import (
 // idempotent — empty or already-encrypted secrets are skipped — and returns
 // the number of secrets encrypted.
 //
-// Run once after migration 037 (via the server's -backfill-secrets flag) and
-// before migration 038 drops the plaintext columns. The plaintext columns are
-// left intact so the read path can still fall back until 038.
+// Invoked via `server -backfill-secrets`, which runs it (then exits WITHOUT
+// migrating) before migration 047 drops the plaintext columns. Requires the
+// schema to have both the plaintext columns (to read) and the *_enc columns
+// (to write), i.e. between migrations 037 and 047.
 func BackfillSecrets(ctx context.Context, q db.Querier, cipher SecretCipher) (int, error) {
 	count := 0
 	for col := range secretColumns {

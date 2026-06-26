@@ -72,8 +72,10 @@ func main() {
 	// Load .env file (ignore error if missing — production uses real env vars).
 	_ = godotenv.Load()
 
-	// -backfill-secrets runs the one-off at-rest encryption backfill (migration
-	// 037 → 038 transition) and exits without starting the server.
+	// -backfill-secrets encrypts legacy plaintext secrets into their *_enc
+	// columns and exits WITHOUT running migrations. Run it before deploying the
+	// migration 047 drop if its guard reports un-backfilled rows. Requires a
+	// schema that already has the *_enc columns (>= migration 037).
 	backfillSecrets := flag.Bool("backfill-secrets", false,
 		"encrypt legacy plaintext secrets into their *_enc columns, then exit")
 	flag.Parse()
@@ -88,6 +90,34 @@ func main() {
 		log.Fatalf("FLOQ_SECRETS_KEK invalid (must be base64-encoded 32 bytes): %v", err)
 	}
 
+	// 1. DB pool
+	pool, err := pgxpool.New(context.Background(), cfg.DatabaseURL)
+	if err != nil {
+		log.Fatalf("connect to db: %v", err)
+	}
+	defer pool.Close()
+
+	// 1a2. One-off secret backfill (run before migration 047). Encrypts any
+	// legacy plaintext secret into its *_enc/*_nonce columns, then exits WITHOUT
+	// running migrations — so it can prepare a pre-047 schema for the 047
+	// drop-guard even when this binary already contains migration 047. Requires
+	// a schema between migrations 037 and 047 (the plaintext + *_enc columns
+	// must both exist); idempotent (only touches plaintext-set, *_enc-NULL
+	// rows). Placed before the proxy/analytics wiring so the command pulls up
+	// only the one pool it needs.
+	if *backfillSecrets {
+		nSettings, err := settings.BackfillSecrets(context.Background(), pool, secretCipher)
+		if err != nil {
+			log.Fatalf("backfill settings secrets: %v", err)
+		}
+		nOnec, err := onec.BackfillSecrets(context.Background(), pool, secretCipher)
+		if err != nil {
+			log.Fatalf("backfill onec secrets: %v", err)
+		}
+		log.Printf("secret backfill complete: %d settings secrets, %d 1C secrets encrypted", nSettings, nOnec)
+		return
+	}
+
 	// 0. Proxy provider (empty PROXY_URL = direct connection)
 	proxyProvider, err := proxy.NewFromURL(cfg.ProxyURL)
 	if err != nil {
@@ -95,13 +125,6 @@ func main() {
 	}
 	httpClient := proxyProvider.HTTPClient()
 	proxyDialer := proxyProvider.Dialer() // non-nil for SOCKS5 only
-
-	// 1. DB pool
-	pool, err := pgxpool.New(context.Background(), cfg.DatabaseURL)
-	if err != nil {
-		log.Fatalf("connect to db: %v", err)
-	}
-	defer pool.Close()
 
 	// 1a. Read-only analytics pool. A separate pool/config from its own DSN
 	// so heavy analytics aggregations are isolated from the OLTP path; all
@@ -122,6 +145,7 @@ func main() {
 	}
 	// golang-migrate pgx/v5 driver uses "pgx5://" scheme
 	migrateDBURL := strings.Replace(cfg.DatabaseURL, "postgres://", "pgx5://", 1)
+	migrated := false
 	for attempt := 1; attempt <= 5; attempt++ {
 		m, err := migrate.New(migrationsPath, migrateDBURL)
 		if err != nil {
@@ -135,22 +159,14 @@ func main() {
 		}
 		log.Println("migrations applied")
 		m.Close()
+		migrated = true
 		break
 	}
-
-	// 1c. One-off secret backfill: encrypt legacy plaintext secrets, then exit.
-	// Idempotent, so it is safe to re-run if a previous pass was interrupted.
-	if *backfillSecrets {
-		nSettings, err := settings.BackfillSecrets(context.Background(), pool, secretCipher)
-		if err != nil {
-			log.Fatalf("backfill settings secrets: %v", err)
-		}
-		nOnec, err := onec.BackfillSecrets(context.Background(), pool, secretCipher)
-		if err != nil {
-			log.Fatalf("backfill onec secrets: %v", err)
-		}
-		log.Printf("secret backfill complete: %d settings secrets, %d 1C secrets encrypted", nSettings, nOnec)
-		return
+	// Fail fast instead of booting against an un-migrated schema: if every
+	// attempt to reach the DB failed, the server would otherwise come up
+	// half-initialised and serve against stale/missing tables.
+	if !migrated {
+		log.Fatalf("migrations: could not connect to the database after 5 attempts")
 	}
 
 	// 2. Settings store (reads user_settings from DB, used by services)
