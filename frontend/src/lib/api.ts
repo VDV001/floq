@@ -476,6 +476,17 @@ export interface EnrichmentProfile {
   // profiles omit them, and the API sends "" when unclassified.
   industry?: string;
   companySize?: string;
+  // Phase-3 (#188) registry (ЕГРЮЛ) details. Optional/zero when not looked up.
+  legal?: LegalDetails;
+}
+
+export interface LegalDetails {
+  inn?: string;
+  ogrn?: string;
+  fullName?: string;
+  address?: string;
+  okved?: string;
+  status?: string;
 }
 
 export interface Enrichment {
