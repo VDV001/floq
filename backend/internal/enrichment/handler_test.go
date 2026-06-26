@@ -57,6 +57,31 @@ func TestHandler_Get_Enriched(t *testing.T) {
 	assert.Equal(t, []string{"info@acme.ru"}, body.Profile.Emails)
 }
 
+func TestHandler_Get_ExposesPhase2Fields(t *testing.T) {
+	userID := uuid.New()
+	d, _ := domain.NewDomain("ivan@acme.ru")
+	e, _ := domain.NewPendingEnrichment(userID, d)
+	e.MarkEnriched(domain.CompanyProfile{
+		Title:       "Acme",
+		Industry:    "fintech",
+		CompanySize: domain.CompanySizeMedium,
+	}, 3600)
+	uc := newUC(&fakeStore{getResult: e}, fakeFetcher{}, fakeExtractor{}, fakeLimiter{allow: true})
+
+	rec := getReq(t, mountEnrichment(uc), "/api/enrichment?email=ivan@acme.ru", &userID)
+	require.Equal(t, http.StatusOK, rec.Code)
+
+	var body struct {
+		Profile struct {
+			Industry    string `json:"industry"`
+			CompanySize string `json:"companySize"`
+		} `json:"profile"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+	assert.Equal(t, "fintech", body.Profile.Industry)
+	assert.Equal(t, "medium", body.Profile.CompanySize)
+}
+
 func TestHandler_Get_NotFoundReturnsNone(t *testing.T) {
 	userID := uuid.New()
 	uc := newUC(&fakeStore{getResult: nil}, fakeFetcher{}, fakeExtractor{}, fakeLimiter{allow: true})
