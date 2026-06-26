@@ -622,6 +622,7 @@ describe("api module", () => {
       { name: "launchSequence default sendNow=true", run: () => api.launchSequence("s1", ["p1"]), url: "/api/sequences/s1/launch", method: "POST", body: { prospect_ids: ["p1"], send_now: true } },
       { name: "launchSequence sendNow=false", run: () => api.launchSequence("s1", ["p1"], false), url: "/api/sequences/s1/launch", method: "POST", body: { prospect_ids: ["p1"], send_now: false } },
       { name: "toggleSequence", run: () => api.toggleSequence("s1", true), url: "/api/sequences/s1/toggle", method: "PATCH", body: { is_active: true } },
+      { name: "setRequireApproval", run: () => api.setRequireApproval("s1", true), url: "/api/sequences/s1/approval", method: "PATCH", body: { require_approval: true } },
       // Outbound
       { name: "getOutboundQueue", run: () => api.getOutboundQueue(), url: "/api/outbound/queue" },
       { name: "approveMessage", run: () => api.approveMessage("m1"), url: "/api/outbound/m1/approve", method: "POST" },

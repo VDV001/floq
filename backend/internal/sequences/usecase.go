@@ -173,6 +173,23 @@ func (uc *UseCase) ToggleActive(ctx context.Context, userID, id uuid.UUID, activ
 	return uc.repo.UpdateSequence(ctx, s)
 }
 
+// SetRequireApproval flips the per-sequence outbound HITL gate. It loads the
+// owned sequence, mutates the flag, and persists via UpdateSequence — the same
+// load→authorize→mutate→persist shape as ToggleActive (the port deliberately
+// has no column-specific setter, see domain.Repository). require_approval has
+// no invariant, so the field is set directly rather than via an intent method.
+func (uc *UseCase) SetRequireApproval(ctx context.Context, userID, id uuid.UUID, require bool) error {
+	s, err := uc.authorizeSequence(ctx, userID, id)
+	if err != nil {
+		return err
+	}
+	if s == nil {
+		return fmt.Errorf("sequence not found")
+	}
+	s.RequireApproval = require
+	return uc.repo.UpdateSequence(ctx, s)
+}
+
 func (uc *UseCase) ListSteps(ctx context.Context, sequenceID uuid.UUID) ([]domain.SequenceStep, error) {
 	return uc.repo.ListSteps(ctx, sequenceID)
 }
@@ -214,9 +231,15 @@ func (uc *UseCase) launchInner(ctx context.Context, userID uuid.UUID, sequenceID
 	// Checked before reading steps so a foreign sequence's content is never
 	// touched. authorizeSequence collapses missing+foreign to ErrSequenceNotOwned
 	// and is a no-op when userID is nil (unit tests).
-	if _, err := uc.authorizeSequence(ctx, userID, sequenceID); err != nil {
+	seq, err := uc.authorizeSequence(ctx, userID, sequenceID)
+	if err != nil {
 		return fmt.Errorf("launch: %w", err)
 	}
+	// The per-sequence approval gate (see domain.InitialOutboundStatus) forces
+	// every launched message through human review, overriding autopilot. seq is
+	// nil only in unit tests that don't seed a sequence (userID nil); treat that
+	// as no gate so their behaviour is unchanged.
+	requireApproval := seq != nil && seq.RequireApproval
 
 	steps, err := uc.repo.ListSteps(ctx, sequenceID)
 	if err != nil {
@@ -269,6 +292,12 @@ func (uc *UseCase) launchInner(ctx context.Context, userID uuid.UUID, sequenceID
 		}
 		autopilot = s
 	}
+
+	// Single source of truth for the launch-time HITL decision: auto-approve
+	// (skip the draft queue) only when autopilot is on and the sequence has no
+	// approval gate. Drives both the send-delay grace and the status transition
+	// below so they can never disagree.
+	autoApprove := domain.InitialOutboundStatus(autopilot.Enabled, requireApproval) == domain.OutboundStatusApproved
 
 	for _, pid := range prospectIDs {
 		prospect, err := uc.prospects.GetProspect(ctx, pid)
@@ -355,14 +384,14 @@ func (uc *UseCase) launchInner(ctx context.Context, userID uuid.UUID, sequenceID
 			if immediate {
 				scheduledAt = now
 			}
-			if autopilot.Enabled {
+			if autoApprove {
 				// Push the send out by the configured grace window so an
 				// auto-approved message isn't dispatched on the very next sender
 				// tick — leaving the operator time to intervene before a real send.
 				scheduledAt = scheduledAt.Add(autopilot.SendDelay)
 			}
 			msg := domain.NewOutboundMessage(pid, sequenceID, step.StepOrder, step.Channel, body, scheduledAt)
-			if autopilot.Enabled {
+			if autoApprove {
 				// Skip the draft → human-approval step. draft → approved is a
 				// legal transition (see outboundTransitions); the entity guards
 				// the state machine so this can't silently corrupt status.

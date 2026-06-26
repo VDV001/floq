@@ -37,6 +37,11 @@ export function useSequences() {
     setSequences((prev) => prev.map((s) => (s.id === seqId ? { ...s, is_active: isActive } : s)));
   }, []);
 
+  const setSequenceApproval = useCallback(async (seqId: string, requireApproval: boolean) => {
+    await api.setRequireApproval(seqId, requireApproval);
+    setSequences((prev) => prev.map((s) => (s.id === seqId ? { ...s, require_approval: requireApproval } : s)));
+  }, []);
+
   const renameSequence = useCallback(async (seqId: string, name: string) => {
     const updated = await api.updateSequence(seqId, name);
     setSequences((prev) => prev.map((s) => (s.id === seqId ? { ...s, name: updated.name } : s)));
@@ -53,6 +58,7 @@ export function useSequences() {
     createSequence,
     deleteSequence,
     toggleSequence,
+    setSequenceApproval,
     renameSequence,
   };
 }

@@ -90,11 +90,30 @@ func (c StepChannel) String() string {
 // --- Domain entities ---
 
 type Sequence struct {
-	ID        uuid.UUID
-	UserID    uuid.UUID
-	Name      string
-	IsActive  bool
-	CreatedAt time.Time
+	ID       uuid.UUID
+	UserID   uuid.UUID
+	Name     string
+	IsActive bool
+	// RequireApproval is the per-sequence outbound HITL gate. When true, every
+	// message this sequence launches starts as a draft awaiting operator
+	// approval — even under autopilot, which it overrides (see
+	// InitialOutboundStatus). Default false keeps the prior behaviour: autopilot
+	// (a user-global setting) alone decides whether a launch auto-sends.
+	RequireApproval bool
+	CreatedAt       time.Time
+}
+
+// InitialOutboundStatus decides the status a freshly launched message starts
+// in. A message skips human review (starts Approved, so the async sender
+// dispatches it) ONLY when autopilot is enabled AND the sequence does not
+// require approval; otherwise it starts as a Draft awaiting an operator
+// decision. requireApproval is the per-sequence HITL gate and overrides
+// autopilot — a cautious sequence is always reviewed before send.
+func InitialOutboundStatus(autopilotEnabled, requireApproval bool) OutboundStatus {
+	if autopilotEnabled && !requireApproval {
+		return OutboundStatusApproved
+	}
+	return OutboundStatusDraft
 }
 
 // NewSequence creates a new Sequence with generated ID and timestamp.

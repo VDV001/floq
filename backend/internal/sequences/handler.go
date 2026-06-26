@@ -91,6 +91,7 @@ func RegisterRoutes(router chi.Router, uc *UseCase) {
 	router.Delete("/api/sequences/{id}/steps/{stepId}", deleteStep(uc))
 	router.Post("/api/sequences/{id}/launch", launchSequence(uc))
 	router.Patch("/api/sequences/{id}/toggle", toggleActive(uc))
+	router.Patch("/api/sequences/{id}/approval", setApproval(uc))
 
 	router.Get("/api/outbound/queue", getQueue(uc))
 	router.Get("/api/outbound/sent", getSent(uc))
@@ -373,6 +374,38 @@ func launchSequence(uc *UseCase) http.HandlerFunc {
 			return
 		}
 		httputil.WriteJSON(w, http.StatusOK, map[string]string{"status": "launched"})
+	}
+}
+
+// setApproval flips the per-sequence outbound HITL gate (require_approval).
+// Mirrors toggleActive: parse → usecase → echo. Ownership/anti-enumeration is
+// enforced in the usecase (ErrSequenceNotOwned → 404 via writeSequenceOpError).
+func setApproval(uc *UseCase) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		userID, ok := httputil.UserIDFromContext(r.Context())
+		if !ok {
+			httputil.WriteError(w, http.StatusUnauthorized, "unauthorized")
+			return
+		}
+		id, err := httputil.ParseIDParam(r, "id")
+		if err != nil {
+			httputil.WriteError(w, http.StatusBadRequest, "invalid sequence id")
+			return
+		}
+
+		var body struct {
+			RequireApproval bool `json:"require_approval"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			httputil.WriteError(w, http.StatusBadRequest, "invalid request body")
+			return
+		}
+
+		if err := uc.SetRequireApproval(r.Context(), userID, id, body.RequireApproval); err != nil {
+			writeSequenceOpError(w, err, "failed to set sequence approval gate")
+			return
+		}
+		httputil.WriteJSON(w, http.StatusOK, map[string]bool{"require_approval": body.RequireApproval})
 	}
 }
 

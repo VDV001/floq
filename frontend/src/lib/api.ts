@@ -338,6 +338,8 @@ export const api = {
     apiFetch(`/api/sequences/${seqId}/launch`, { method: "POST", body: JSON.stringify({ prospect_ids: prospectIds, send_now: sendNow }) }),
   toggleSequence: (seqId: string, isActive: boolean) =>
     apiFetch(`/api/sequences/${seqId}/toggle`, { method: "PATCH", body: JSON.stringify({ is_active: isActive }) }),
+  setRequireApproval: (seqId: string, requireApproval: boolean) =>
+    apiFetch(`/api/sequences/${seqId}/approval`, { method: "PATCH", body: JSON.stringify({ require_approval: requireApproval }) }),
 
   // Outbound
   getOutboundQueue: () => apiFetch<OutboundMessage[]>("/api/outbound/queue"),
@@ -699,6 +701,9 @@ export interface Sequence {
   user_id: string;
   name: string;
   is_active: boolean;
+  /** Per-sequence outbound HITL gate: when true, launched messages wait for
+   * operator approval before sending, overriding autopilot. */
+  require_approval: boolean;
   created_at: string;
 }
 

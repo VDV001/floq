@@ -36,6 +36,38 @@ func TestCreateAndGetSequence(t *testing.T) {
 	assert.Equal(t, false, got.IsActive)
 }
 
+func TestSequence_RequireApproval_RoundTrips(t *testing.T) {
+	pool := testutil.TestDB(t)
+	userID := testutil.SeedUser(t, pool)
+	repo := sequences.NewRepository(pool)
+	ctx := context.Background()
+
+	seq, _ := domain.NewSequence(userID, "Gated")
+	seq.RequireApproval = true
+	require.NoError(t, repo.CreateSequence(ctx, seq))
+
+	// create → get carries the flag.
+	got, err := repo.GetSequence(ctx, seq.ID)
+	require.NoError(t, err)
+	require.NotNil(t, got)
+	assert.True(t, got.RequireApproval, "require_approval must persist through create→get")
+
+	// list (user-scoped) carries the flag too.
+	list, err := repo.ListSequences(ctx, userID)
+	require.NoError(t, err)
+	require.Len(t, list, 1)
+	assert.True(t, list[0].RequireApproval)
+
+	// UpdateSequence persists a flipped flag (the usecase's toggle path: load
+	// entity → mutate → UpdateSequence, mirroring how Activate/Deactivate work).
+	got.RequireApproval = false
+	require.NoError(t, repo.UpdateSequence(ctx, got))
+	off, err := repo.GetSequence(ctx, seq.ID)
+	require.NoError(t, err)
+	require.NotNil(t, off)
+	assert.False(t, off.RequireApproval)
+}
+
 func TestGetSequence_NotFound(t *testing.T) {
 	pool := testutil.TestDB(t)
 	repo := sequences.NewRepository(pool)
