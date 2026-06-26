@@ -362,7 +362,7 @@ func main() {
 	// injected as the best-effort enqueuer into prospects + inbox.
 	enrichmentUC := enrichment.NewUseCase(
 		enrichment.NewRepository(pool),
-		enrichment.NewWebsiteFetcher(httpClient),
+		enrichment.NewWebsiteFetcher(),
 		enrichment.NewHTMLExtractor(),
 		newLimiter(cfg.EnrichmentRateLimitPerMin, time.Minute),
 		enrichment.Config{
