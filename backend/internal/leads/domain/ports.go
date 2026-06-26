@@ -29,6 +29,10 @@ var (
 // runs the SQL against that transaction automatically.
 type Repository interface {
 	ListLeads(ctx context.Context, userID uuid.UUID) ([]LeadWithSource, error)
+	// ListAllLeads returns every lead for the user including archived ones
+	// (with ArchivedAt populated) — used by the CSV export so a backup is
+	// complete. ListLeads, by contrast, hides archived leads (inbox feed).
+	ListAllLeads(ctx context.Context, userID uuid.UUID) ([]LeadWithSource, error)
 	GetLead(ctx context.Context, id uuid.UUID) (*Lead, error)
 	// GetLeadForUser returns the lead iff it belongs to userID; returns nil
 	// otherwise (ownership mismatch indistinguishable from not-found at this

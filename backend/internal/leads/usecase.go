@@ -282,7 +282,10 @@ func (uc *UseCase) RegenerateDraft(ctx context.Context, leadID uuid.UUID) (*doma
 }
 
 func (uc *UseCase) ExportCSV(ctx context.Context, userID uuid.UUID) ([]byte, error) {
-	leads, err := uc.repo.ListLeads(ctx, userID)
+	// Export is a backup — it must include archived leads (ListAllLeads), not
+	// just the active inbox feed, and mark each row's archived state so the
+	// file round-trips the full picture.
+	leads, err := uc.repo.ListAllLeads(ctx, userID)
 	if err != nil {
 		return nil, fmt.Errorf("list leads: %w", err)
 	}
@@ -292,7 +295,7 @@ func (uc *UseCase) ExportCSV(ctx context.Context, userID uuid.UUID) ([]byte, err
 	buf.Write([]byte{0xEF, 0xBB, 0xBF})
 
 	w := csv.NewWriter(&buf)
-	header := []string{"contact_name", "company", "channel", "email_address", "status", "first_message", "created_at"}
+	header := []string{"contact_name", "company", "channel", "email_address", "status", "first_message", "created_at", "archived"}
 	if err := w.Write(header); err != nil {
 		return nil, fmt.Errorf("write csv header: %w", err)
 	}
@@ -302,6 +305,10 @@ func (uc *UseCase) ExportCSV(ctx context.Context, userID uuid.UUID) ([]byte, err
 		if l.EmailAddress != nil {
 			emailAddr = *l.EmailAddress
 		}
+		archived := "false"
+		if l.ArchivedAt != nil {
+			archived = "true"
+		}
 		record := []string{
 			l.ContactName,
 			l.Company,
@@ -310,6 +317,7 @@ func (uc *UseCase) ExportCSV(ctx context.Context, userID uuid.UUID) ([]byte, err
 			string(l.Status),
 			l.FirstMessage,
 			l.CreatedAt.Format(time.RFC3339),
+			archived,
 		}
 		if err := w.Write(record); err != nil {
 			return nil, fmt.Errorf("write csv record: %w", err)

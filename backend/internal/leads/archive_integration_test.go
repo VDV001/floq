@@ -123,6 +123,27 @@ func TestSetLeadArchived_RejectsUnarchiveWhenNotArchived(t *testing.T) {
 	assert.ErrorIs(t, err, domain.ErrNotArchived)
 }
 
+func TestExportCSV_IncludesArchived(t *testing.T) {
+	pool := testutil.TestDB(t)
+	userID := testutil.SeedUser(t, pool)
+	repo := leads.NewRepository(pool)
+	uc := leads.NewUseCase(repo, nil, nil)
+	ctx := context.Background()
+
+	active := seedLead(t, repo, userID, domain.StatusNew)
+	archived := seedLead(t, repo, userID, domain.StatusNew)
+	_, err := pool.Exec(ctx, `UPDATE leads SET archived_at = now() WHERE id = $1`, archived.ID)
+	require.NoError(t, err)
+
+	data, err := uc.ExportCSV(ctx, userID)
+	require.NoError(t, err)
+	csv := string(data)
+
+	assert.Contains(t, csv, active.ContactName, "active lead in export")
+	assert.Contains(t, csv, archived.ContactName, "archived lead must be included in the CSV backup")
+	assert.Contains(t, csv, "archived", "export carries an archived column header")
+}
+
 func TestSetLeadArchived_RoundTrip(t *testing.T) {
 	pool := testutil.TestDB(t)
 	userID := testutil.SeedUser(t, pool)

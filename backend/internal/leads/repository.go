@@ -55,6 +55,32 @@ func (r *Repository) ListLeads(ctx context.Context, userID uuid.UUID) ([]domain.
 	return leads, rows.Err()
 }
 
+// ListAllLeads returns every lead for the user INCLUDING archived ones, with
+// archived_at populated. ListLeads (the inbox feed) reads active_leads and
+// hides archived; ListAllLeads exists for the CSV export, which is a backup —
+// omitting archived leads would present an incomplete file as a full one.
+func (r *Repository) ListAllLeads(ctx context.Context, userID uuid.UUID) ([]domain.LeadWithSource, error) {
+	rows, err := r.q(ctx).Query(ctx,
+		`SELECT l.id, l.user_id, l.channel, l.contact_name, l.company, l.first_message, l.status, l.telegram_chat_id, l.email_address, l.source_id, l.archived_at, COALESCE(ls.name, ''), l.created_at, l.updated_at
+		 FROM leads l
+		 LEFT JOIN lead_sources ls ON ls.id = l.source_id
+		 WHERE l.user_id = $1 ORDER BY l.created_at DESC`, userID)
+	if err != nil {
+		return nil, fmt.Errorf("list all leads: %w", err)
+	}
+	defer rows.Close()
+
+	var leads []domain.LeadWithSource
+	for rows.Next() {
+		var item domain.LeadWithSource
+		if err := rows.Scan(&item.ID, &item.UserID, &item.Channel, &item.ContactName, &item.Company, &item.FirstMessage, &item.Status, &item.TelegramChatID, &item.EmailAddress, &item.SourceID, &item.ArchivedAt, &item.SourceName, &item.CreatedAt, &item.UpdatedAt); err != nil {
+			return nil, fmt.Errorf("scan lead: %w", err)
+		}
+		leads = append(leads, item)
+	}
+	return leads, rows.Err()
+}
+
 func (r *Repository) GetLead(ctx context.Context, id uuid.UUID) (*domain.Lead, error) {
 	var l domain.Lead
 	err := r.q(ctx).QueryRow(ctx,
