@@ -1,12 +1,15 @@
 "use client";
 
-import { api } from "@/lib/api";
 import Link from "next/link";
-import { Mail, Send, Upload, Download, Link2 } from "lucide-react";
+import { api } from "@/lib/api";
+import { Upload, Download, Archive } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { STATUS_STYLES, FILTER_TABS } from "@/components/inbox/constants";
+import { FILTER_TABS } from "@/components/inbox/constants";
 import { PipelineSidebar } from "@/components/inbox/PipelineSidebar";
+import { LeadCard } from "@/components/leads/LeadCard";
+import { PendingQueueTabs } from "@/components/pending-queue/PendingQueueTabs";
 import { useInboxPage } from "@/hooks/useInboxPage";
+import { useNotify } from "@/components/notifications/NotificationProvider";
 
 export default function InboxPage() {
   const {
@@ -14,6 +17,7 @@ export default function InboxPage() {
     loading, leads, statusCounts, sourceFilter, setSourceFilter,
     suggestionCounts, filteredLeads,
   } = useInboxPage();
+  const { notify, notifyError } = useNotify();
 
   return (
     <div className="flex h-full">
@@ -22,6 +26,7 @@ export default function InboxPage() {
 
       <section className="flex-1 overflow-y-auto px-4 sm:px-8 lg:px-12 py-8">
         <div className="mx-auto max-w-4xl space-y-8">
+          <PendingQueueTabs />
           <div className="flex items-end justify-between">
             <div>
               <div className="flex items-center gap-3">
@@ -29,18 +34,35 @@ export default function InboxPage() {
                 {loading && <div className="size-5 animate-spin rounded-full border-2 border-[#3b6ef6] border-t-transparent" />}
               </div>
               <p className="mt-1 text-sm text-[#434655]">Показано {leads.length} активных лидов для <span className="font-bold">Новые лиды</span></p>
+              <p className="mt-1 max-w-xl text-xs leading-relaxed text-[#737686]">
+                <span className="font-semibold text-[#434655]">Лиды</span> — это входящие: те, кто написал вам сам (Telegram, Email).
+                Если вы загружаете базу для холодной рассылки — это <span className="font-semibold text-[#434655]">Проспекты</span>, раздел «Проспекты».
+              </p>
             </div>
             <div className="flex items-center gap-2 mr-4">
-              <button onClick={() => api.exportLeadsCSV().catch(() => alert("Ошибка экспорта"))}
+              <Link href="/inbox/archived"
+                title="Заархивированные лиды — скрытые из ленты"
+                className="flex items-center gap-1.5 rounded-lg border border-[#c3c6d7]/30 bg-[#c3c6d7]/10 px-4 py-2 text-xs font-semibold text-[#0d1c2e] transition-all hover:bg-[#c3c6d7]/20">
+                <Archive className="size-4" /> Архив
+              </Link>
+              <button onClick={() => api.exportLeadsCSV().catch((err) => notifyError(err, "Не удалось выгрузить лиды"))}
                 className="flex items-center gap-1.5 rounded-lg border border-[#c3c6d7]/30 bg-[#c3c6d7]/10 px-4 py-2 text-xs font-semibold text-[#0d1c2e] transition-all hover:bg-[#c3c6d7]/20">
                 <Download className="size-4" /> Экспорт
               </button>
-              <label className="flex cursor-pointer items-center gap-1.5 rounded-lg border border-[#c3c6d7]/30 bg-[#c3c6d7]/10 px-4 py-2 text-xs font-semibold text-[#0d1c2e] transition-all hover:bg-[#c3c6d7]/20">
-                <Upload className="size-4" /> Импорт
+              <label
+                title="Импорт входящих лидов (кто написал вам). Для холодной базы используйте «Импорт CSV» в разделе Проспекты."
+                className="flex cursor-pointer items-center gap-1.5 rounded-lg border border-[#c3c6d7]/30 bg-[#c3c6d7]/10 px-4 py-2 text-xs font-semibold text-[#0d1c2e] transition-all hover:bg-[#c3c6d7]/20">
+                <Upload className="size-4" /> Импорт лидов
                 <input type="file" accept=".csv" className="hidden" onChange={async (e) => {
                   const file = e.target.files?.[0]; if (!file) return;
-                  try { const res = await api.importLeadsCSV(file); alert(`Импортировано ${res.imported} лидов`); window.location.reload(); }
-                  catch { alert("Ошибка импорта"); } e.target.value = "";
+                  try {
+                    const res = await api.importLeadsCSV(file);
+                    notify({ type: "success", title: "Импорт завершён", message: `Загружено лидов: ${res.imported}.` });
+                    window.location.reload();
+                  } catch (err) {
+                    notifyError(err, "Не удалось импортировать лиды");
+                  }
+                  e.target.value = "";
                 }} />
               </label>
             </div>
@@ -58,37 +80,25 @@ export default function InboxPage() {
           <div className="space-y-3">
             {!loading && filteredLeads.length === 0 && (
               <div className="rounded-xl bg-white p-12 text-center">
-                <p className="text-lg font-bold text-[#0d1c2e]">Нет лидов</p>
-                <p className="mt-2 text-sm text-[#434655]">Напишите вашему Telegram боту чтобы создать первый лид</p>
+                <p className="text-lg font-bold text-[#0d1c2e]">Пока нет входящих лидов</p>
+                <p className="mt-2 text-sm text-[#434655]">Лиды появляются, когда вам пишут в Telegram или на Email. Напишите вашему Telegram-боту, чтобы создать первый лид.</p>
+                <p className="mt-1 text-xs text-[#737686]">Загрузили базу для рассылки? Она в разделе <span className="font-semibold">«Проспекты»</span>, а не здесь.</p>
               </div>
             )}
             {filteredLeads.map((lead) => (
-              <Link key={lead.id} href={`/inbox/${lead.id}`}
-                className="group relative flex cursor-pointer rounded-xl border border-transparent bg-white p-5 transition-all hover:border-[#c3c6d7]/10 hover:bg-[#dce9ff]/40">
-                <div className="flex items-start gap-4 flex-1 min-w-0">
-                  <div className={cn("flex size-12 shrink-0 items-center justify-center rounded-xl", lead.channel === "email" ? "bg-[#dbe1ff]" : "bg-[#d5e0f8]")}>
-                    {lead.channel === "email" ? <Mail className="size-5 text-[#004ac6]" /> : <Send className="size-5 text-[#229ED9]" />}
-                  </div>
-                  <div className="min-w-0 flex-1">
-                    <h4 className="font-bold leading-none text-[#0d1c2e]">{lead.company}</h4>
-                    <p className="mt-1 text-xs font-medium text-[#737686]">{lead.channel === "email" ? "по email" : "через Telegram"} · {lead.contact}</p>
-                    <div className="mt-2 flex items-center gap-2">
-                      {lead.sourceName && <span className="rounded-full bg-[#eff4ff] px-2 py-0.5 text-[10px] font-semibold text-[#004ac6]">{lead.sourceName}</span>}
-                    </div>
-                    <p className="mt-1 line-clamp-2 text-sm leading-relaxed text-[#434655]">{lead.preview}</p>
-                  </div>
-                </div>
-                <div className="ml-4 flex shrink-0 flex-col items-end gap-2">
-                  <span className="text-[10px] font-bold uppercase tracking-wider text-[#737686]">{lead.timeAgo}</span>
-                  <span className={cn("whitespace-nowrap rounded-full px-3 py-1 text-[10px] font-bold", STATUS_STYLES[lead.status])}>{lead.status}</span>
-                  {suggestionCounts[lead.id] > 0 && (
-                    <span className="inline-flex items-center gap-1 rounded-full bg-[#fff3cd] px-2 py-0.5 text-[10px] font-semibold text-[#8a5a00]"
-                      title={`${suggestionCounts[lead.id]} возможных совпадений с проспектом`}>
-                      <Link2 className="size-3" />{suggestionCounts[lead.id]}
-                    </span>
-                  )}
-                </div>
-              </Link>
+              <LeadCard
+                key={lead.id}
+                id={lead.id}
+                company={lead.company}
+                contact={lead.contact}
+                channel={lead.channel}
+                preview={lead.preview}
+                timeAgo={lead.timeAgo}
+                status={lead.status}
+                sourceName={lead.sourceName}
+                pendingRepliesCount={lead.pendingRepliesCount}
+                suggestionCount={suggestionCounts[lead.id]}
+              />
             ))}
           </div>
         </div>

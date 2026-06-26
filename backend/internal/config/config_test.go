@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -15,6 +16,8 @@ func TestLoad_Defaults(t *testing.T) {
 		"OLLAMA_MODEL", "GROQ_MODEL", "IMAP_PORT", "OWNER_USER_ID",
 		"BOOKING_LINK", "SENDER_NAME", "SENDER_COMPANY", "STALE_DAYS",
 		"DATABASE_URL", "REDIS_URL", "JWT_SECRET",
+		"AUTH_LOGIN_RATE_LIMIT", "AUTH_REGISTER_RATE_LIMIT", "TRUST_PROXY",
+		"AUDIT_RETENTION_DAYS", "AUDIT_RETENTION_INTERVAL",
 	} {
 		t.Setenv(key, "")
 		os.Unsetenv(key)
@@ -35,6 +38,11 @@ func TestLoad_Defaults(t *testing.T) {
 	assert.Equal(t, "Дмитрий", cfg.SenderName)
 	assert.Equal(t, "dev-bot.su", cfg.SenderCompany)
 	assert.Equal(t, 2, cfg.StaleDays)
+	assert.Equal(t, 5, cfg.AuthLoginRateLimit)
+	assert.Equal(t, 3, cfg.AuthRegisterRateLimit)
+	assert.False(t, cfg.TrustProxyHeaders, "TRUST_PROXY must default to false — app is exposed directly")
+	assert.Equal(t, 30, cfg.AuditRetentionDays)
+	assert.Equal(t, 24*time.Hour, cfg.AuditRetentionInterval)
 	assert.Empty(t, cfg.DatabaseURL)
 	assert.Empty(t, cfg.JWTSecret)
 }
@@ -43,9 +51,15 @@ func TestLoad_CustomEnvVars(t *testing.T) {
 	t.Setenv("APP_PORT", "9090")
 	t.Setenv("DATABASE_URL", "postgres://localhost/test")
 	t.Setenv("JWT_SECRET", "supersecret")
+	t.Setenv("FLOQ_SECRETS_KEK", "dGVzdC1rZWstMzItYnl0ZXMtZXhhY3RseS0xMjM0NQ==")
 	t.Setenv("AI_PROVIDER", "openai")
 	t.Setenv("STALE_DAYS", "7")
 	t.Setenv("SENDER_NAME", "Иван")
+	t.Setenv("AUTH_LOGIN_RATE_LIMIT", "10")
+	t.Setenv("AUTH_REGISTER_RATE_LIMIT", "1")
+	t.Setenv("TRUST_PROXY", "true")
+	t.Setenv("AUDIT_RETENTION_DAYS", "90")
+	t.Setenv("AUDIT_RETENTION_INTERVAL", "6h")
 
 	cfg := Load()
 	require.NotNil(t, cfg)
@@ -53,9 +67,15 @@ func TestLoad_CustomEnvVars(t *testing.T) {
 	assert.Equal(t, "9090", cfg.AppPort)
 	assert.Equal(t, "postgres://localhost/test", cfg.DatabaseURL)
 	assert.Equal(t, "supersecret", cfg.JWTSecret)
+	assert.Equal(t, "dGVzdC1rZWstMzItYnl0ZXMtZXhhY3RseS0xMjM0NQ==", cfg.SecretsKEK)
 	assert.Equal(t, "openai", cfg.AIProvider)
 	assert.Equal(t, 7, cfg.StaleDays)
 	assert.Equal(t, "Иван", cfg.SenderName)
+	assert.Equal(t, 10, cfg.AuthLoginRateLimit)
+	assert.Equal(t, 1, cfg.AuthRegisterRateLimit)
+	assert.True(t, cfg.TrustProxyHeaders)
+	assert.Equal(t, 90, cfg.AuditRetentionDays)
+	assert.Equal(t, 6*time.Hour, cfg.AuditRetentionInterval)
 }
 
 func TestGetEnvInt_ValidInt(t *testing.T) {

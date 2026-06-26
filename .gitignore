@@ -1,10 +1,25 @@
 # Env
 .env
 
-# Claude Code
+# Claude Code / AI assistant tooling
 CLAUDE.md
-frontend/CLAUDE.md
-frontend/AGENTS.md
+**/CLAUDE.md
+.claude/
+**/.claude/
+AGENTS.md
+**/AGENTS.md
+.cursorrules
+.cursor/
+.aider*
+.github/copilot-instructions.md
+
+# MCP servers
+.mcp.json
+.mcp/
+**/.mcp/
+*-mcp/
+**/.playwright-mcp/
+.serena/
 
 # Go binary
 backend/server
@@ -12,11 +27,8 @@ backend/tmp/
 backend/vendor/
 
 # Node
-frontend/node_modules/
+node_modules/
 frontend/.next/
-
-# Playwright MCP logs/snapshots
-.playwright-mcp/
 
 # Screenshots from testing
 *.png
@@ -24,7 +36,9 @@ frontend/.next/
 
 # IDE
 .idea/
-.vscode/
+.vscode/*
+# Allow workspace-pinned safe defaults (#55) without exposing per-user state.
+!.vscode/settings.json
 *.swp
 *.swo
 
@@ -38,9 +52,6 @@ docs/
 # Docker
 docker-compose.override.yml
 
-# Serena MCP
-.serena/
-
 # Misc
 *.pdf
 
@@ -48,3 +59,7 @@ docker-compose.override.yml
 backend/coverage.out
 *.docx
 backend/server
+
+# Local-only working files (not part of the repo)
+combined_leads.csv
+demo/

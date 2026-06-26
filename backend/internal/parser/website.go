@@ -39,7 +39,8 @@ var junkPrefixes = []string{
 // ScrapeEmails fetches the target URL and its common contact pages,
 // extracts email addresses from the HTML, deduplicates, filters junk,
 // and returns up to 50 unique emails.
-func ScrapeEmails(targetURL string) ([]string, error) {
+// If httpClient is nil, a default client is created.
+func ScrapeEmails(targetURL string, httpClient *http.Client) ([]string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
@@ -52,8 +53,12 @@ func ScrapeEmails(targetURL string) ([]string, error) {
 		return nil, fmt.Errorf("invalid URL %q: %w", targetURL, err)
 	}
 
+	if httpClient == nil {
+		httpClient = &http.Client{}
+	}
 	client := &http.Client{
-		Timeout: 10 * time.Second,
+		Transport: httpClient.Transport,
+		Timeout:   10 * time.Second,
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
 			if len(via) >= 3 {
 				return fmt.Errorf("stopped after 3 redirects")

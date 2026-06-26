@@ -22,9 +22,10 @@ type SettingsInput struct {
 	SMTPPort          string `json:"smtp_port"`
 	SMTPUser          string `json:"smtp_user"`
 	SMTPPassword      string `json:"smtp_password"`
-	AIProvider        string `json:"ai_provider"`
-	AIModel           string `json:"ai_model"`
-	AIAPIKey          string `json:"ai_api_key"`
+	AIProvider          string `json:"ai_provider"`
+	AIModel             string `json:"ai_model"`
+	AIAPIKey            string `json:"ai_api_key"`
+	AIStyleCheckEnabled bool   `json:"ai_style_check_enabled"`
 	NotifyTelegram    bool   `json:"notify_telegram"`
 	NotifyEmailDigest bool   `json:"notify_email_digest"`
 	AutoQualify       bool   `json:"auto_qualify"`
@@ -35,6 +36,11 @@ type SettingsInput struct {
 	AutoFollowupDays  int    `json:"auto_followup_days"`
 	AutoProspectToLead bool  `json:"auto_prospect_to_lead"`
 	AutoVerifyImport  bool   `json:"auto_verify_import"`
+
+	// AggregatedInboxView toggles the unified-identity lead detail
+	// timeline (#27). Server default is TRUE; the field is part of
+	// the SettingsInput so the UI can let users opt out per-account.
+	AggregatedInboxView bool `json:"aggregated_inbox_view"`
 }
 
 type UseCase struct {
@@ -47,19 +53,10 @@ func NewUseCase(repo domain.Repository, tgValidator domain.TelegramTokenValidato
 }
 
 func (uc *UseCase) GetSettings(ctx context.Context, userID uuid.UUID) (*domain.Settings, error) {
-	s, err := uc.repo.GetSettings(ctx, userID)
-	if err != nil {
-		return nil, err
-	}
-
-	// Mask sensitive fields before returning.
-	s.TelegramBotToken = maskSecret(s.TelegramBotToken)
-	s.IMAPPassword = maskSecret(s.IMAPPassword)
-	s.ResendAPIKey = maskSecret(s.ResendAPIKey)
-	s.SMTPPassword = maskSecret(s.SMTPPassword)
-	s.AIAPIKey = maskSecret(s.AIAPIKey)
-
-	return s, nil
+	// Returns raw domain values. Masking is a presentation concern applied
+	// in the DTO mapping (handler layer); internal callers need the unmasked
+	// secrets.
+	return uc.repo.GetSettings(ctx, userID)
 }
 
 func (uc *UseCase) UpdateSettings(ctx context.Context, userID uuid.UUID, raw map[string]json.RawMessage, input SettingsInput) (*domain.Settings, error) {
@@ -119,6 +116,9 @@ func (uc *UseCase) UpdateSettings(ctx context.Context, userID uuid.UUID, raw map
 	if _, ok := raw["ai_api_key"]; ok {
 		fields["ai_api_key"] = input.AIAPIKey
 	}
+	if _, ok := raw["ai_style_check_enabled"]; ok {
+		fields["ai_style_check_enabled"] = input.AIStyleCheckEnabled
+	}
 	if _, ok := raw["notify_telegram"]; ok {
 		fields["notify_telegram"] = input.NotifyTelegram
 	}
@@ -145,6 +145,9 @@ func (uc *UseCase) UpdateSettings(ctx context.Context, userID uuid.UUID, raw map
 	}
 	if _, ok := raw["auto_prospect_to_lead"]; ok {
 		fields["auto_prospect_to_lead"] = input.AutoProspectToLead
+	}
+	if _, ok := raw["aggregated_inbox_view"]; ok {
+		fields["aggregated_inbox_view"] = input.AggregatedInboxView
 	}
 	if _, ok := raw["auto_verify_import"]; ok {
 		fields["auto_verify_import"] = input.AutoVerifyImport

@@ -434,7 +434,7 @@ func TestRegisterRoutes(t *testing.T) {
 	repo := newMockUserRepo()
 	h := newTestHandlerWithRepo(repo)
 	r := chi.NewRouter()
-	RegisterRoutes(r, h)
+	RegisterRoutes(r, h, nil, nil)
 
 	// Test that register endpoint is routed
 	body, _ := json.Marshal(registerRequest{Email: "route@test.com", Password: "secure123", FullName: "Route Test"})

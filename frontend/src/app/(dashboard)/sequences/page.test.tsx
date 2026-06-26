@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
+import { NotificationProvider } from "@/components/notifications/NotificationProvider";
 import userEvent from "@testing-library/user-event";
 import type { Sequence, SequenceStep } from "@/lib/api";
 import SequencesPage from "./page";
@@ -78,7 +79,7 @@ describe("SequencesPage", () => {
   });
 
   it("renders sequence list after loading", async () => {
-    render(<SequencesPage />);
+    render(<SequencesPage />, { wrapper: NotificationProvider });
 
     await waitFor(() => {
       expect(screen.getByText("Холодная рассылка")).toBeInTheDocument();
@@ -87,7 +88,7 @@ describe("SequencesPage", () => {
   });
 
   it("renders page header", async () => {
-    render(<SequencesPage />);
+    render(<SequencesPage />, { wrapper: NotificationProvider });
 
     await waitFor(() => {
       expect(screen.getByText("Секвенции")).toBeInTheDocument();
@@ -95,7 +96,7 @@ describe("SequencesPage", () => {
   });
 
   it("shows create button", async () => {
-    render(<SequencesPage />);
+    render(<SequencesPage />, { wrapper: NotificationProvider });
 
     await waitFor(() => {
       expect(screen.getByText("Новая секвенция")).toBeInTheDocument();
@@ -112,7 +113,7 @@ describe("SequencesPage", () => {
       created_at: "2026-01-03T00:00:00Z",
     } as Sequence);
 
-    render(<SequencesPage />);
+    render(<SequencesPage />, { wrapper: NotificationProvider });
 
     await waitFor(() => {
       expect(screen.getByText("Секвенции")).toBeInTheDocument();

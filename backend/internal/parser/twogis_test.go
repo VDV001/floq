@@ -54,7 +54,7 @@ func TestCityIDs_Count(t *testing.T) {
 }
 
 func TestNewTwoGISClient(t *testing.T) {
-	c := NewTwoGISClient("test-key")
+	c := NewTwoGISClient("test-key", nil)
 	assert.Equal(t, "test-key", c.APIKey)
 }
 

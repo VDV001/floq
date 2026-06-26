@@ -2,6 +2,7 @@ package leads
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -10,20 +11,55 @@ import (
 	"github.com/daniil/floq/internal/httputil"
 	"github.com/daniil/floq/internal/leads/domain"
 	"github.com/go-chi/chi/v5"
+	"github.com/google/uuid"
 )
 
 type Handler struct {
 	uc *UseCase
 }
 
+// authorizeLead is the shared front-door for every /api/leads/{id}/*
+// endpoint: it (a) demands a userID in the request context, (b) parses
+// the lead-id path parameter, and (c) gates on UseCase.OwnsLead so a
+// foreign tenant gets a uniform 404 — indistinguishable from a
+// non-existent leadID, no info leak.
+//
+// On any failure the helper writes the response and returns ok=false;
+// callers must early-return without touching w/r further.
+func (h *Handler) authorizeLead(w http.ResponseWriter, r *http.Request) (userID, leadID uuid.UUID, ok bool) {
+	userID, present := httputil.UserIDFromContext(r.Context())
+	if !present {
+		httputil.WriteError(w, http.StatusUnauthorized, "unauthorized")
+		return uuid.Nil, uuid.Nil, false
+	}
+	leadID, err := httputil.ParseIDParam(r, "id")
+	if err != nil {
+		httputil.WriteError(w, http.StatusBadRequest, "invalid lead id")
+		return uuid.Nil, uuid.Nil, false
+	}
+	owned, err := h.uc.OwnsLead(r.Context(), userID, leadID)
+	if err != nil {
+		httputil.WriteError(w, http.StatusInternalServerError, "failed to authorize lead")
+		return uuid.Nil, uuid.Nil, false
+	}
+	if !owned {
+		httputil.WriteError(w, http.StatusNotFound, "lead not found")
+		return uuid.Nil, uuid.Nil, false
+	}
+	return userID, leadID, true
+}
+
 func RegisterRoutes(r chi.Router, uc *UseCase) {
 	h := &Handler{uc: uc}
 	r.Get("/api/leads", h.listLeads())
+	r.Get("/api/leads/archived", h.listArchivedLeads())
 	r.Get("/api/leads/export", h.exportCSV())
 	r.Post("/api/leads/import", h.importCSV())
 	r.Get("/api/leads/suggestion-counts", h.suggestionCounts())
 	r.Get("/api/leads/{id}", h.getLead())
 	r.Patch("/api/leads/{id}/status", h.updateStatus())
+	r.Post("/api/leads/{id}/archive", h.archiveLead())
+	r.Post("/api/leads/{id}/unarchive", h.unarchiveLead())
 	r.Get("/api/leads/{id}/messages", h.listMessages())
 	r.Post("/api/leads/{id}/send", h.sendMessage())
 	r.Get("/api/leads/{id}/qualification", h.getQualification())
@@ -42,9 +78,32 @@ func (h *Handler) listLeads() http.HandlerFunc {
 			httputil.WriteError(w, http.StatusUnauthorized, "unauthorized")
 			return
 		}
-		leads, err := h.uc.ListLeads(r.Context(), userID)
+		leads, err := h.uc.ListLeadsWithPendingCounts(r.Context(), userID)
 		if err != nil {
 			httputil.WriteError(w, http.StatusInternalServerError, "failed to list leads")
+			return
+		}
+		if leads == nil {
+			leads = []LeadWithPendingCount{}
+		}
+		httputil.WriteJSON(w, http.StatusOK, LeadsWithPendingCountToResponse(leads))
+	}
+}
+
+// listArchivedLeads backs the dedicated archive view: it returns ONLY the
+// caller's archived leads (newest-archived first). Unlike the inbox feed it
+// skips pending-reply badges — archived leads are out of the working queue, so
+// there is no HITL decision to surface on them.
+func (h *Handler) listArchivedLeads() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		userID, ok := httputil.UserIDFromContext(r.Context())
+		if !ok {
+			httputil.WriteError(w, http.StatusUnauthorized, "unauthorized")
+			return
+		}
+		leads, err := h.uc.ListArchivedLeads(r.Context(), userID)
+		if err != nil {
+			httputil.WriteError(w, http.StatusInternalServerError, "failed to list archived leads")
 			return
 		}
 		if leads == nil {
@@ -56,29 +115,33 @@ func (h *Handler) listLeads() http.HandlerFunc {
 
 func (h *Handler) getLead() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		userID, ok := httputil.UserIDFromContext(r.Context())
+		if !ok {
+			httputil.WriteError(w, http.StatusUnauthorized, "unauthorized")
+			return
+		}
 		id, err := httputil.ParseIDParam(r, "id")
 		if err != nil {
 			httputil.WriteError(w, http.StatusBadRequest, "invalid lead id")
 			return
 		}
-		lead, err := h.uc.GetLead(r.Context(), id)
+		view, err := h.uc.GetLeadView(r.Context(), userID, id)
 		if err != nil {
 			httputil.WriteError(w, http.StatusInternalServerError, "failed to get lead")
 			return
 		}
-		if lead == nil {
+		if view == nil {
 			httputil.WriteError(w, http.StatusNotFound, "lead not found")
 			return
 		}
-		httputil.WriteJSON(w, http.StatusOK, LeadToResponse(lead))
+		httputil.WriteJSON(w, http.StatusOK, LeadViewToResponse(view))
 	}
 }
 
 func (h *Handler) updateStatus() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		id, err := httputil.ParseIDParam(r, "id")
-		if err != nil {
-			httputil.WriteError(w, http.StatusBadRequest, "invalid lead id")
+		_, id, ok := h.authorizeLead(w, r)
+		if !ok {
 			return
 		}
 
@@ -102,14 +165,78 @@ func (h *Handler) updateStatus() http.HandlerFunc {
 	}
 }
 
-func (h *Handler) listMessages() http.HandlerFunc {
+// archiveLead hides the lead from feeds/analytics. Ownership is gated by the
+// shared authorizeLead front-door (foreign/missing → 404). A double-archive
+// surfaces as 409 via domain.ErrAlreadyArchived; archive is orthogonal to
+// status, so the lead's pipeline state is untouched.
+func (h *Handler) archiveLead() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		id, err := httputil.ParseIDParam(r, "id")
-		if err != nil {
-			httputil.WriteError(w, http.StatusBadRequest, "invalid lead id")
+		_, id, ok := h.authorizeLead(w, r)
+		if !ok {
 			return
 		}
-		msgs, err := h.uc.GetMessages(r.Context(), id)
+		if err := h.uc.ArchiveLead(r.Context(), id); err != nil {
+			switch {
+			case errors.Is(err, domain.ErrAlreadyArchived):
+				httputil.WriteError(w, http.StatusConflict, "lead already archived")
+			case errors.Is(err, domain.ErrLeadNotFound):
+				// Deleted/ownership-changed between authorizeLead and GetLead.
+				httputil.WriteError(w, http.StatusNotFound, "lead not found")
+			default:
+				httputil.WriteError(w, http.StatusInternalServerError, "failed to archive lead")
+			}
+			return
+		}
+		httputil.WriteJSON(w, http.StatusOK, map[string]string{"status": "archived"})
+	}
+}
+
+// unarchiveLead restores an archived lead. A not-archived lead surfaces as 409
+// via domain.ErrNotArchived.
+func (h *Handler) unarchiveLead() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		_, id, ok := h.authorizeLead(w, r)
+		if !ok {
+			return
+		}
+		if err := h.uc.UnarchiveLead(r.Context(), id); err != nil {
+			switch {
+			case errors.Is(err, domain.ErrNotArchived):
+				httputil.WriteError(w, http.StatusConflict, "lead is not archived")
+			case errors.Is(err, domain.ErrLeadNotFound):
+				httputil.WriteError(w, http.StatusNotFound, "lead not found")
+			default:
+				httputil.WriteError(w, http.StatusInternalServerError, "failed to unarchive lead")
+			}
+			return
+		}
+		httputil.WriteJSON(w, http.StatusOK, map[string]string{"status": "active"})
+	}
+}
+
+func (h *Handler) listMessages() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		userID, id, ok := h.authorizeLead(w, r)
+		if !ok {
+			return
+		}
+
+		// ?aggregated=true switches to the identity-merged timeline,
+		// where messages from every lead sharing this lead's Identity
+		// surface in chronological order. The frontend pins the param
+		// to the user_settings.aggregated_inbox_view preference. The
+		// aggregated path also re-filters linked leads through the
+		// same userID so a future operator-driven cross-tenant merge
+		// (Phase 3) cannot expose foreign messages.
+		aggregated := r.URL.Query().Get("aggregated") == "true"
+
+		var msgs []domain.Message
+		var err error
+		if aggregated {
+			msgs, err = h.uc.GetAggregatedMessages(r.Context(), userID, id)
+		} else {
+			msgs, err = h.uc.GetMessages(r.Context(), id)
+		}
 		if err != nil {
 			httputil.WriteError(w, http.StatusInternalServerError, "failed to list messages")
 			return
@@ -123,9 +250,8 @@ func (h *Handler) listMessages() http.HandlerFunc {
 
 func (h *Handler) sendMessage() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		id, err := httputil.ParseIDParam(r, "id")
-		if err != nil {
-			httputil.WriteError(w, http.StatusBadRequest, "invalid lead id")
+		_, id, ok := h.authorizeLead(w, r)
+		if !ok {
 			return
 		}
 
@@ -152,9 +278,8 @@ func (h *Handler) sendMessage() http.HandlerFunc {
 
 func (h *Handler) getQualification() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		id, err := httputil.ParseIDParam(r, "id")
-		if err != nil {
-			httputil.WriteError(w, http.StatusBadRequest, "invalid lead id")
+		_, id, ok := h.authorizeLead(w, r)
+		if !ok {
 			return
 		}
 		q, err := h.uc.GetQualification(r.Context(), id)
@@ -172,9 +297,8 @@ func (h *Handler) getQualification() http.HandlerFunc {
 
 func (h *Handler) qualifyLead() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		id, err := httputil.ParseIDParam(r, "id")
-		if err != nil {
-			httputil.WriteError(w, http.StatusBadRequest, "invalid lead id")
+		_, id, ok := h.authorizeLead(w, r)
+		if !ok {
 			return
 		}
 		q, err := h.uc.QualifyLead(r.Context(), id)
@@ -188,9 +312,8 @@ func (h *Handler) qualifyLead() http.HandlerFunc {
 
 func (h *Handler) getDraft() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		id, err := httputil.ParseIDParam(r, "id")
-		if err != nil {
-			httputil.WriteError(w, http.StatusBadRequest, "invalid lead id")
+		_, id, ok := h.authorizeLead(w, r)
+		if !ok {
 			return
 		}
 		d, err := h.uc.GetDraft(r.Context(), id)
@@ -208,9 +331,8 @@ func (h *Handler) getDraft() http.HandlerFunc {
 
 func (h *Handler) regenerateDraft() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		id, err := httputil.ParseIDParam(r, "id")
-		if err != nil {
-			httputil.WriteError(w, http.StatusBadRequest, "invalid lead id")
+		_, id, ok := h.authorizeLead(w, r)
+		if !ok {
 			return
 		}
 		d, err := h.uc.RegenerateDraft(r.Context(), id)
@@ -246,6 +368,10 @@ func (h *Handler) importCSV() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		file, _, err := r.FormFile("file")
 		if err != nil {
+			if httputil.IsBodyTooLarge(err) {
+				httputil.WriteError(w, http.StatusRequestEntityTooLarge, "uploaded file too large")
+				return
+			}
 			httputil.WriteError(w, http.StatusBadRequest, "missing file field")
 			return
 		}
@@ -253,6 +379,13 @@ func (h *Handler) importCSV() http.HandlerFunc {
 
 		data, err := io.ReadAll(file)
 		if err != nil {
+			// Belt-and-suspenders: an oversized body almost always trips the cap
+			// earlier in FormFile/ParseMultipartForm, but keep the 413 mapping
+			// here too so a streamed read can never surface as a generic 400.
+			if httputil.IsBodyTooLarge(err) {
+				httputil.WriteError(w, http.StatusRequestEntityTooLarge, "uploaded file too large")
+				return
+			}
 			httputil.WriteError(w, http.StatusBadRequest, "failed to read file")
 			return
 		}

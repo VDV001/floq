@@ -17,7 +17,7 @@ func TestHTTPTelegramValidator_Validate_OK(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	v := &HTTPTelegramValidator{baseURL: srv.URL}
+	v := &HTTPTelegramValidator{BaseURL: srv.URL}
 	err := v.Validate("test-token")
 	assert.NoError(t, err)
 }
@@ -29,7 +29,7 @@ func TestHTTPTelegramValidator_Validate_NotOK(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	v := &HTTPTelegramValidator{baseURL: srv.URL}
+	v := &HTTPTelegramValidator{BaseURL: srv.URL}
 	err := v.Validate("bad-token")
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "ok=false")
@@ -41,7 +41,7 @@ func TestHTTPTelegramValidator_Validate_Non200(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	v := &HTTPTelegramValidator{baseURL: srv.URL}
+	v := &HTTPTelegramValidator{BaseURL: srv.URL}
 	err := v.Validate("bad-token")
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "status 401")
@@ -53,14 +53,14 @@ func TestHTTPTelegramValidator_Validate_InvalidJSON(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	v := &HTTPTelegramValidator{baseURL: srv.URL}
+	v := &HTTPTelegramValidator{BaseURL: srv.URL}
 	err := v.Validate("token")
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "decode")
 }
 
 func TestHTTPTelegramValidator_Validate_ConnectionError(t *testing.T) {
-	v := &HTTPTelegramValidator{baseURL: "http://127.0.0.1:1"}
+	v := &HTTPTelegramValidator{BaseURL: "http://127.0.0.1:1"}
 	err := v.Validate("token")
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to reach")

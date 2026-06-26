@@ -1,8 +1,10 @@
 package verify
 
 import (
+	"context"
 	"testing"
 
+	"github.com/daniil/floq/internal/prospects/domain"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -74,18 +76,18 @@ func TestFreeProviders(t *testing.T) {
 }
 
 func TestVerifyEmail_InvalidSyntax(t *testing.T) {
-	result := VerifyEmail("not-an-email")
+	result := VerifyEmail(context.Background(), "not-an-email", nil)
 	assert.False(t, result.IsValidSyntax)
 	assert.Equal(t, 0, result.Score)
-	assert.Equal(t, "invalid", result.Status)
+	assert.Equal(t, domain.VerifyStatusInvalid, result.Status)
 	assert.Equal(t, "not-an-email", result.Email)
 }
 
 func TestVerifyEmail_EmptyString(t *testing.T) {
-	result := VerifyEmail("")
+	result := VerifyEmail(context.Background(), "", nil)
 	assert.False(t, result.IsValidSyntax)
 	assert.Equal(t, 0, result.Score)
-	assert.Equal(t, "invalid", result.Status)
+	assert.Equal(t, domain.VerifyStatusInvalid, result.Status)
 }
 
 func TestScoreCalculation(t *testing.T) {

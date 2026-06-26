@@ -26,9 +26,10 @@ type Settings struct {
 	SMTPPassword string
 
 	// AI
-	AIProvider string
-	AIModel    string
-	AIAPIKey   string
+	AIProvider          string
+	AIModel             string
+	AIAPIKey            string
+	AIStyleCheckEnabled bool
 
 	// Notifications
 	NotifyTelegram    bool
@@ -43,6 +44,12 @@ type Settings struct {
 	AutoFollowupDays   int
 	AutoProspectToLead bool
 	AutoVerifyImport   bool
+
+	// Inbox view preference: when true (default), the lead detail page
+	// uses the unified-identity view that merges messages from every
+	// lead sharing the same Identity. When false, the page stays in
+	// strict per-source mode (legacy behaviour).
+	AggregatedInboxView bool
 }
 
 // UserConfig holds credentials and provider settings needed by background

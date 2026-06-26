@@ -3,11 +3,18 @@ package inbox
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
+	"fmt"
 	"io"
 	"log"
+	"log/slog"
 	"strings"
 	"time"
 
+	auditdomain "github.com/daniil/floq/internal/audit/domain"
+	"github.com/daniil/floq/internal/inbox/attachments"
+	"github.com/daniil/floq/internal/normalize"
+	"github.com/daniil/floq/internal/proxy"
 	"github.com/emersion/go-imap/v2"
 	"github.com/emersion/go-imap/v2/imapclient"
 	"github.com/emersion/go-message/mail"
@@ -15,13 +22,22 @@ import (
 )
 
 // EmailPoller polls an IMAP mailbox for new emails and creates leads.
+// When analyzer is non-nil, attachments on each inbound message are
+// extracted and their text content is appended to the qualification
+// context. A nil analyzer keeps the legacy text-only behaviour.
 type EmailPoller struct {
-	store        ConfigStore
-	repo         LeadRepository
-	prospectRepo ProspectRepository
-	seqRepo      SequenceRepository
-	aiClient     AIQualifier
-	ownerID      uuid.UUID
+	store           ConfigStore
+	repo            LeadRepository
+	prospectRepo    ProspectRepository
+	seqRepo         SequenceRepository
+	aiClient        AIQualifier
+	analyzer        *attachments.Analyzer
+	identityLinker  IdentityLinker
+	pendingProposer PendingReplyProposer
+	bookingLink     string
+	logger          *slog.Logger
+	ownerID         uuid.UUID
+	dialer          proxy.ContextDialer
 
 	fallbackHost     string
 	fallbackPort     string
@@ -29,19 +45,88 @@ type EmailPoller struct {
 	fallbackPassword string
 }
 
-func NewEmailPoller(store ConfigStore, ownerID uuid.UUID, fallbackHost, fallbackPort, fallbackUser, fallbackPassword string, repo LeadRepository, prospectRepo ProspectRepository, seqRepo SequenceRepository, aiClient AIQualifier) *EmailPoller {
-	return &EmailPoller{
+func NewEmailPoller(store ConfigStore, ownerID uuid.UUID, fallbackHost, fallbackPort, fallbackUser, fallbackPassword string, repo LeadRepository, prospectRepo ProspectRepository, seqRepo SequenceRepository, aiClient AIQualifier, dialer proxy.ContextDialer, opts ...EmailPollerOption) *EmailPoller {
+	p := &EmailPoller{
 		store:            store,
 		repo:             repo,
 		prospectRepo:     prospectRepo,
 		seqRepo:          seqRepo,
 		aiClient:         aiClient,
 		ownerID:          ownerID,
+		dialer:           dialer,
+		logger:           slog.Default(),
 		fallbackHost:     fallbackHost,
 		fallbackPort:     fallbackPort,
 		fallbackUser:     fallbackUser,
 		fallbackPassword: fallbackPassword,
 	}
+	for _, opt := range opts {
+		opt(p)
+	}
+	return p
+}
+
+// EmailPollerOption configures optional EmailPoller behaviour. The
+// existing call sites in cmd/server keep working unchanged; new
+// capabilities (currently only the attachments analyzer) plug in
+// through variadic options.
+type EmailPollerOption func(*EmailPoller)
+
+// WithAttachmentAnalyzer wires the analyzer used to extract text from
+// PDFs and screenshots so it reaches the AI qualification step. Pass
+// nil to disable; the poller silently degrades to text-only.
+func WithAttachmentAnalyzer(a *attachments.Analyzer) EmailPollerOption {
+	return func(p *EmailPoller) { p.analyzer = a }
+}
+
+// WithIdentityLinker wires the IdentityLinker used to resolve and
+// link each newly created lead to a unified Identity. Pass nil (or
+// omit the option) to disable; the poller continues to create leads
+// untouched. Linker errors are logged and swallowed — the inbound
+// flow must never block on identity-aggregation backend hiccups.
+func WithIdentityLinker(l IdentityLinker) EmailPollerOption {
+	return func(p *EmailPoller) { p.identityLinker = l }
+}
+
+// WithLogger overrides the default slog.Logger so the email poller
+// emits structured warnings to the same handler as the rest of the
+// server. Pass nil to keep slog.Default().
+func WithLogger(l *slog.Logger) EmailPollerOption {
+	return func(p *EmailPoller) {
+		if l != nil {
+			p.logger = l
+		}
+	}
+}
+
+// WithEmailPendingReplyProposer wires the HITL queue for the
+// email-channel auto-draft branch. Symmetric with the Telegram bot's
+// proposer wiring: when DetectCallAgreement matches the email body,
+// the poller enqueues a booking-link pending reply for operator
+// approval instead of sending the URL directly. When nil (or
+// omitted), the booking-link branch is suppressed entirely.
+//
+// Named asymmetrically to its telegram-side sibling because Go does
+// not allow option-name collisions across different option types in
+// the same package.
+func WithEmailPendingReplyProposer(p PendingReplyProposer) EmailPollerOption {
+	return func(e *EmailPoller) { e.pendingProposer = p }
+}
+
+// WithEmailBookingLink sets the calendar URL interpolated into the
+// auto-drafted booking-link reply. Must be set when
+// WithEmailPendingReplyProposer is also wired; otherwise the
+// formatted reply would carry an empty URL.
+func WithEmailBookingLink(link string) EmailPollerOption {
+	return func(e *EmailPoller) { e.bookingLink = link }
+}
+
+// SetPendingProposer wires the HITL queue after construction. Used by
+// the composition root to break a wiring cycle when the inbox usecase
+// (acting as proposer) depends on transports built from the poller's
+// own collaborators.
+func (e *EmailPoller) SetPendingProposer(p PendingReplyProposer) {
+	e.pendingProposer = p
 }
 
 func (e *EmailPoller) Start(ctx context.Context) {
@@ -81,10 +166,23 @@ func (e *EmailPoller) poll(ctx context.Context) {
 	}
 
 	addr := host + ":" + port
-	c, err := imapclient.DialTLS(addr, nil)
-	if err != nil {
-		log.Printf("[email-poller] connect error: %v", err)
-		return
+	var c *imapclient.Client
+	var err error
+
+	if e.dialer != nil {
+		rawConn, dialErr := e.dialer.DialContext(ctx, "tcp", addr)
+		if dialErr != nil {
+			log.Printf("[email-poller] proxy dial error: %v", dialErr)
+			return
+		}
+		tlsConn := tls.Client(rawConn, &tls.Config{ServerName: host})
+		c = imapclient.New(tlsConn, nil)
+	} else {
+		c, err = imapclient.DialTLS(addr, nil)
+		if err != nil {
+			log.Printf("[email-poller] connect error: %v", err)
+			return
+		}
 	}
 	defer c.Close()
 
@@ -160,14 +258,19 @@ func (e *EmailPoller) poll(ctx context.Context) {
 			continue
 		}
 
-		// Extract text body from body section
+		// Extract text body + any non-inline attachments. Both share the
+		// same raw body bytes, so we parse the MIME structure twice for
+		// clarity rather than threading a more complex helper through
+		// the existing test surface.
 		var bodyText string
+		var atts []attachments.Attachment
 		if len(buf.BodySection) > 0 {
 			bodyText = extractTextBody(buf.BodySection[0].Bytes)
+			atts = extractAttachments(buf.BodySection[0].Bytes)
 		}
 
 		if fromEmail != "" && bodyText != "" {
-			e.processEmail(ctx, fromName, fromEmail, bodyText)
+			e.processEmail(ctx, fromName, fromEmail, bodyText, atts)
 			processedUIDs = append(processedUIDs, buf.UID)
 		}
 	}
@@ -219,6 +322,42 @@ func shouldSkipEmail(email string) bool {
 	return false
 }
 
+// extractAttachments walks the multipart MIME tree of raw and returns
+// every non-inline part — i.e. real attachments — as attachments.Attachment
+// records the analyser can consume. Inline body parts (text/plain,
+// text/html) are handled by extractTextBody and skipped here. A
+// malformed or non-MIME body yields an empty slice rather than an
+// error; the caller treats no-attachments and parse-failed identically.
+func extractAttachments(raw []byte) []attachments.Attachment {
+	mr, err := mail.CreateReader(bytes.NewReader(raw))
+	if err != nil {
+		return nil
+	}
+	var atts []attachments.Attachment
+	for {
+		p, err := mr.NextPart()
+		if err != nil {
+			break
+		}
+		ah, ok := p.Header.(*mail.AttachmentHeader)
+		if !ok {
+			continue
+		}
+		data, err := io.ReadAll(p.Body)
+		if err != nil {
+			continue
+		}
+		filename, _ := ah.Filename()
+		contentType, _, _ := ah.ContentType()
+		atts = append(atts, attachments.Attachment{
+			Filename:    filename,
+			ContentType: contentType,
+			Data:        data,
+		})
+	}
+	return atts
+}
+
 func extractTextBody(raw []byte) string {
 	mr, err := mail.CreateReader(bytes.NewReader(raw))
 	if err != nil {
@@ -247,7 +386,8 @@ func extractTextBody(raw []byte) string {
 	return textBody
 }
 
-func (e *EmailPoller) processEmail(ctx context.Context, fromName, fromEmail, body string) {
+func (e *EmailPoller) processEmail(ctx context.Context, fromName, fromEmail, body string, atts []attachments.Attachment) {
+	fromEmail = normalize.Email(fromEmail)
 	existing, err := e.repo.GetLeadByEmailAddress(ctx, e.ownerID, fromEmail)
 	if err != nil {
 		log.Printf("[email-poller] error looking up lead for %s: %v", fromEmail, err)
@@ -289,6 +429,13 @@ func (e *EmailPoller) processEmail(ctx context.Context, fromName, fromEmail, bod
 		}
 		log.Printf("[email-poller] new lead created for %s (%s)", fromEmail, contactName)
 
+		if e.identityLinker != nil {
+			if err := e.identityLinker.LinkLeadToIdentity(ctx, e.ownerID, lead.ID, fromEmail, "", ""); err != nil {
+				e.logger.WarnContext(ctx, "inbox: identity link failed",
+					"lead", lead.ID, "channel", "email", "err", err)
+			}
+		}
+
 		// Auto-convert matched prospect to lead
 		if hasProspectMatch {
 			if convErr := e.prospectRepo.ConvertToLead(ctx, prospect.ID, lead.ID); convErr != nil {
@@ -301,6 +448,16 @@ func (e *EmailPoller) processEmail(ctx context.Context, fromName, fromEmail, bod
 		}
 	} else {
 		lead = existing
+		// Re-engagement: a new inbound email on an archived lead resurfaces it
+		// so the reply reappears in the inbox feed instead of attaching to a
+		// hidden lead and being silently lost (symmetric with telegram.go).
+		if existing.ArchivedAt != nil {
+			if err := e.repo.UnarchiveLead(ctx, lead.ID); err != nil {
+				log.Printf("[email-poller] error unarchiving lead %s on re-engagement: %v", lead.ID, err)
+			} else {
+				lead.ArchivedAt = nil
+			}
+		}
 	}
 
 	message := NewInboxMessage(lead.ID, DirectionInbound, body)
@@ -309,11 +466,67 @@ func (e *EmailPoller) processEmail(ctx context.Context, fromName, fromEmail, bod
 		return
 	}
 
+	// HITL gate for the email booking-link branch — symmetric with the
+	// Telegram bot (telegram.go). When DetectCallAgreement triggers,
+	// enqueue a pending reply for operator approval rather than
+	// sending the calendar URL directly via SMTP/Resend. The secure
+	// default when no proposer is wired is to suppress the branch
+	// entirely; we do NOT fall back to instant send.
+	if DetectCallAgreement(body) {
+		switch {
+		case e.pendingProposer == nil:
+			e.logger.WarnContext(ctx, "email booking link suppressed: no pending reply proposer wired",
+				"lead_id", lead.ID.String(), "email", fromEmail)
+		case e.bookingLink == "":
+			// Enqueueing with an empty URL would let an operator
+			// approve a customer-visible message that says "here is
+			// your calendar link: " followed by nothing. Suppress the
+			// branch instead — operator can write the message
+			// manually if needed.
+			e.logger.WarnContext(ctx, "email booking link suppressed: bookingLink not configured",
+				"lead_id", lead.ID.String(), "email", fromEmail)
+		default:
+			bookingMsg := fmt.Sprintf(bookingLinkReplyTemplate, e.bookingLink)
+			if _, err := e.pendingProposer.Propose(ctx, lead.UserID, lead.ID, ChannelEmail, PendingReplyKindBookingLink, bookingMsg, body); err != nil {
+				e.logger.WarnContext(ctx, "failed to enqueue email booking reply for approval",
+					"lead_id", lead.ID.String(), "error", err)
+			}
+		}
+	}
+
 	if isNewLead {
+		// Build the text the AI qualifier sees: the email body plus any
+		// extracted attachment content. We don't mutate lead.FirstMessage
+		// (that's the conversation record) — qualifyText is ephemeral.
+		qualifyText := body
+		if e.analyzer != nil {
+			imgLeadID := lead.ID
+			imgCtx := auditdomain.ContextWithCallMeta(ctx, auditdomain.CallMeta{
+				UserID:      lead.UserID,
+				LeadID:      &imgLeadID,
+				RequestType: auditdomain.RequestTypeImageAnalysis,
+			})
+			for _, att := range atts {
+				res := e.analyzer.Analyze(imgCtx, att)
+				if res.Skipped != "" {
+					e.logger.WarnContext(ctx, "inbox: attachment skipped",
+						"filename", att.Filename, "reason", res.Skipped, "err", res.Err)
+					continue
+				}
+				qualifyText += "\n\n[Вложение: " + att.Filename + "]\n" + res.Text
+			}
+		}
+
 		go func() {
-			qCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			qCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 			defer cancel()
-			result, err := e.aiClient.Qualify(qCtx, fromName, string(lead.Channel), lead.FirstMessage)
+			qLeadID := lead.ID
+			qCtx = auditdomain.ContextWithCallMeta(qCtx, auditdomain.CallMeta{
+				UserID:      lead.UserID,
+				LeadID:      &qLeadID,
+				RequestType: auditdomain.RequestTypeQualification,
+			})
+			result, err := e.aiClient.Qualify(qCtx, fromName, string(lead.Channel), qualifyText)
 			if err != nil {
 				log.Printf("[email-poller] qualification error for lead %s: %v", lead.ID, err)
 				return

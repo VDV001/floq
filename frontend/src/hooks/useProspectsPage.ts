@@ -44,6 +44,16 @@ export function useProspectsPage() {
     } catch { showToast("Ошибка проверки", "error"); } finally { setVerifying(false); }
   }, [fetchProspects, showToast]);
 
+  const handleSetConsent = useCallback(async (id: string, status: "obtained" | "withdrawn") => {
+    try {
+      await api.setProspectConsent(id, status);
+      await fetchProspects();
+      showToast(status === "obtained" ? "Согласие отмечено" : "Согласие отозвано", "success");
+    } catch {
+      showToast("Не удалось изменить согласие", "error");
+    }
+  }, [fetchProspects, showToast]);
+
   const sourceNames = [...new Set(prospects.map((p) => p.sourceName).filter(Boolean))].sort();
 
   const filteredProspects = prospects.filter((p) => {
@@ -77,6 +87,7 @@ export function useProspectsPage() {
     showToast,
     fetchProspects,
     handleVerifyBatch,
+    handleSetConsent,
     sourceNames,
     filteredProspects,
     totalPages,

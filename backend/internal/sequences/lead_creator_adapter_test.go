@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	leadsdomain "github.com/daniil/floq/internal/leads/domain"
 	"github.com/daniil/floq/internal/sequences/domain"
@@ -22,6 +23,12 @@ type mockLeadsRepo struct {
 func (m *mockLeadsRepo) ListLeads(_ context.Context, _ uuid.UUID) ([]leadsdomain.LeadWithSource, error) {
 	return nil, nil
 }
+func (m *mockLeadsRepo) ListAllLeads(_ context.Context, _ uuid.UUID) ([]leadsdomain.LeadWithSource, error) {
+	return nil, nil
+}
+func (m *mockLeadsRepo) ListArchivedLeads(_ context.Context, _ uuid.UUID) ([]leadsdomain.LeadWithSource, error) {
+	return nil, nil
+}
 func (m *mockLeadsRepo) GetLead(_ context.Context, _ uuid.UUID) (*leadsdomain.Lead, error) {
 	return nil, nil
 }
@@ -36,6 +43,9 @@ func (m *mockLeadsRepo) UpdateFirstMessage(_ context.Context, _ uuid.UUID, _ str
 	return nil
 }
 func (m *mockLeadsRepo) UpdateLeadStatus(_ context.Context, _ uuid.UUID, _ leadsdomain.LeadStatus) error {
+	return nil
+}
+func (m *mockLeadsRepo) SetLeadArchived(_ context.Context, _ uuid.UUID, _ *time.Time) error {
 	return nil
 }
 func (m *mockLeadsRepo) UpdateSourceID(_ context.Context, _ uuid.UUID, _ *uuid.UUID) error {
@@ -95,6 +105,30 @@ func TestLeadCreatorAdapter_CreateLeadFromProspect(t *testing.T) {
 	assert.Equal(t, "Alice", repo.createdLead.ContactName)
 	assert.Equal(t, "Acme", repo.createdLead.Company)
 	assert.Equal(t, &sourceID, repo.createdLead.SourceID)
+}
+
+// TestLeadCreatorAdapter_PropagatesEmail pins that a prospect's email is
+// carried onto the new lead. The happy-path test above leaves Email empty and
+// never asserts EmailAddress, so a "prospect.Email != ''" → "== ''" mutation
+// survived: it drops a real email (leaving EmailAddress nil) yet still creates
+// the lead.
+func TestLeadCreatorAdapter_PropagatesEmail(t *testing.T) {
+	repo := &mockLeadsRepo{}
+	adapter := NewLeadCreatorAdapter(repo)
+
+	userID := uuid.New()
+	prospect := &domain.ProspectView{
+		ID:     uuid.New(),
+		UserID: userID,
+		Name:   "Alice",
+		Email:  "alice@acme.com",
+	}
+
+	_, err := adapter.CreateLeadFromProspect(context.Background(), prospect, userID)
+	require.NoError(t, err)
+	require.NotNil(t, repo.createdLead)
+	require.NotNil(t, repo.createdLead.EmailAddress, "lead must carry the prospect's email, not drop it")
+	assert.Equal(t, "alice@acme.com", *repo.createdLead.EmailAddress)
 }
 
 func TestLeadCreatorAdapter_CreateLeadFromProspect_Error(t *testing.T) {

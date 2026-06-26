@@ -3,6 +3,7 @@ package settings
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -14,6 +15,40 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 )
+
+// smtpErrorToUserMessage maps a typed SMTP error from the composition
+// root's tester into a Russian user-facing message. Owning this mapping
+// here (rather than in cmd/server/helpers.go) is the Clean Architecture
+// rule: UI strings live next to the handler that emits them, not in the
+// infrastructure that produces the technical error.
+func smtpErrorToUserMessage(err error) string {
+	switch {
+	case errors.Is(err, ErrSMTPProxyDial):
+		return "Не удалось подключиться через прокси"
+	case errors.Is(err, ErrSMTPDial):
+		return "Не удалось подключиться"
+	case errors.Is(err, ErrSMTPClient):
+		return "Ошибка создания SMTP-клиента"
+	case errors.Is(err, ErrSMTPStartTLS):
+		return "Ошибка STARTTLS"
+	case errors.Is(err, ErrSMTPAuth):
+		return "Неверный логин или пароль SMTP"
+	default:
+		return "Ошибка SMTP"
+	}
+}
+
+// resendErrorToUserMessage mirrors smtpErrorToUserMessage for Resend.
+func resendErrorToUserMessage(err error) string {
+	switch {
+	case errors.Is(err, ErrResendAuth):
+		return "Неверный API ключ Resend"
+	case errors.Is(err, ErrResendRequest):
+		return "Ошибка запроса"
+	default:
+		return "Ошибка Resend"
+	}
+}
 
 // Settings is the JSON DTO returned by the API.
 type Settings struct {
@@ -42,9 +77,10 @@ type Settings struct {
 	SMTPActive   bool   `json:"smtp_active"`
 
 	// AI
-	AIProvider string `json:"ai_provider"`
-	AIModel    string `json:"ai_model"`
-	AIAPIKey   string `json:"ai_api_key"`
+	AIProvider          string `json:"ai_provider"`
+	AIModel             string `json:"ai_model"`
+	AIAPIKey            string `json:"ai_api_key"`
+	AIStyleCheckEnabled bool   `json:"ai_style_check_enabled"`
 
 	// Connection statuses (computed, read-only)
 	IMAPActive   bool `json:"imap_active"`
@@ -64,6 +100,9 @@ type Settings struct {
 	AutoFollowupDays   int  `json:"auto_followup_days"`
 	AutoProspectToLead bool `json:"auto_prospect_to_lead"`
 	AutoVerifyImport   bool `json:"auto_verify_import"`
+
+	// Inbox view preference — see domain.Settings.AggregatedInboxView.
+	AggregatedInboxView bool `json:"aggregated_inbox_view"`
 }
 
 // AITester tests an AI provider connection by sending a simple prompt.
@@ -101,14 +140,16 @@ func RegisterRoutes(r chi.Router, uc *UseCase, aiTester AITester, smtpTester SMT
 	r.Get("/api/usage", h.getUsage())
 }
 
-// maskSecret returns the last 4 characters of a secret prefixed with "...",
-// or an empty string if the input is empty.
+// maskSecret reveals only the last 4 characters of a secret so the read API
+// never exposes a usable credential. A secret too short to mask meaningfully
+// (≤4 chars) is replaced wholesale rather than leaked verbatim (matches the
+// onec package's copy).
 func maskSecret(s string) string {
 	if s == "" {
 		return ""
 	}
 	if len(s) <= 4 {
-		return "..." + s
+		return "••••"
 	}
 	return "..." + s[len(s)-4:]
 }
@@ -118,36 +159,40 @@ func domainToDTO(ds *domain.Settings) Settings {
 	aiActive := ds.AIProvider == "ollama" || (ds.AIProvider != "" && ds.AIAPIKey != "")
 
 	return Settings{
-		FullName:           ds.FullName,
-		Email:              ds.Email,
-		TelegramBotToken:   ds.TelegramBotToken,
-		TelegramBotActive:  ds.TelegramBotActive,
-		IMAPHost:           ds.IMAPHost,
-		IMAPPort:           ds.IMAPPort,
-		IMAPUser:           ds.IMAPUser,
-		IMAPPassword:       ds.IMAPPassword,
-		ResendAPIKey:       ds.ResendAPIKey,
-		SMTPHost:           ds.SMTPHost,
-		SMTPPort:           ds.SMTPPort,
-		SMTPUser:           ds.SMTPUser,
-		SMTPPassword:       ds.SMTPPassword,
-		SMTPActive:         ds.SMTPHost != "" && ds.SMTPUser != "" && ds.SMTPPassword != "",
-		AIProvider:         ds.AIProvider,
-		AIModel:            ds.AIModel,
-		AIAPIKey:           ds.AIAPIKey,
-		IMAPActive:         ds.IMAPHost != "" && ds.IMAPUser != "" && ds.IMAPPassword != "",
-		ResendActive:       ds.ResendAPIKey != "",
-		AIActive:           aiActive,
-		NotifyTelegram:     ds.NotifyTelegram,
-		NotifyEmailDigest:  ds.NotifyEmailDigest,
-		AutoQualify:        ds.AutoQualify,
-		AutoDraft:          ds.AutoDraft,
-		AutoSend:           ds.AutoSend,
-		AutoSendDelayMin:   ds.AutoSendDelayMin,
-		AutoFollowup:       ds.AutoFollowup,
-		AutoFollowupDays:   ds.AutoFollowupDays,
-		AutoProspectToLead: ds.AutoProspectToLead,
-		AutoVerifyImport:   ds.AutoVerifyImport,
+		FullName: ds.FullName,
+		Email:    ds.Email,
+		// Secrets are masked here, at the presentation boundary — the usecase
+		// returns them raw.
+		TelegramBotToken:    maskSecret(ds.TelegramBotToken),
+		TelegramBotActive:   ds.TelegramBotActive,
+		IMAPHost:            ds.IMAPHost,
+		IMAPPort:            ds.IMAPPort,
+		IMAPUser:            ds.IMAPUser,
+		IMAPPassword:        maskSecret(ds.IMAPPassword),
+		ResendAPIKey:        maskSecret(ds.ResendAPIKey),
+		SMTPHost:            ds.SMTPHost,
+		SMTPPort:            ds.SMTPPort,
+		SMTPUser:            ds.SMTPUser,
+		SMTPPassword:        maskSecret(ds.SMTPPassword),
+		SMTPActive:          ds.SMTPHost != "" && ds.SMTPUser != "" && ds.SMTPPassword != "",
+		AIProvider:          ds.AIProvider,
+		AIModel:             ds.AIModel,
+		AIAPIKey:            maskSecret(ds.AIAPIKey),
+		AIStyleCheckEnabled: ds.AIStyleCheckEnabled,
+		IMAPActive:          ds.IMAPHost != "" && ds.IMAPUser != "" && ds.IMAPPassword != "",
+		ResendActive:        ds.ResendAPIKey != "",
+		AIActive:            aiActive,
+		NotifyTelegram:      ds.NotifyTelegram,
+		NotifyEmailDigest:   ds.NotifyEmailDigest,
+		AutoQualify:         ds.AutoQualify,
+		AutoDraft:           ds.AutoDraft,
+		AutoSend:            ds.AutoSend,
+		AutoSendDelayMin:    ds.AutoSendDelayMin,
+		AutoFollowup:        ds.AutoFollowup,
+		AutoFollowupDays:    ds.AutoFollowupDays,
+		AutoProspectToLead:  ds.AutoProspectToLead,
+		AutoVerifyImport:    ds.AutoVerifyImport,
+		AggregatedInboxView: ds.AggregatedInboxView,
 	}
 }
 
@@ -352,7 +397,7 @@ func (h *Handler) testResend() http.HandlerFunc {
 		defer cancel()
 
 		if err := h.resendTester(ctx, body.APIKey); err != nil {
-			httputil.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "error": err.Error()})
+			httputil.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "error": resendErrorToUserMessage(err)})
 			return
 		}
 
@@ -390,7 +435,7 @@ func (h *Handler) testSMTP() http.HandlerFunc {
 		defer cancel()
 
 		if err := h.smtpTester(ctx, body.Host, body.Port, body.User, body.Password); err != nil {
-			httputil.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "error": err.Error()})
+			httputil.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "error": smtpErrorToUserMessage(err)})
 			return
 		}
 
@@ -421,10 +466,10 @@ func (h *Handler) getUsage() http.HandlerFunc {
 		limit := 1000
 
 		httputil.WriteJSON(w, http.StatusOK, map[string]any{
-			"plan":         plan,
-			"limit":        limit,
-			"month_leads":  monthLeads,
-			"total_leads":  totalLeads,
+			"plan":        plan,
+			"limit":       limit,
+			"month_leads": monthLeads,
+			"total_leads": totalLeads,
 		})
 	}
 }

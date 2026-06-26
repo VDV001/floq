@@ -62,6 +62,7 @@ function makeSettings(overrides: Partial<UserSettings> = {}): UserSettings {
     auto_followup_days: 2,
     auto_prospect_to_lead: false,
     auto_verify_import: false,
+    aggregated_inbox_view: true,
     ...overrides,
   };
 }

@@ -57,6 +57,12 @@ vi.mock("@/lib/api", () => ({
     testSMTP: vi.fn(),
     testResend: vi.fn(),
     tgAccountStatus: vi.fn(),
+    getOnecConfig: vi.fn(),
+    updateOnecConfig: vi.fn(),
+    regenerateOnecWebhook: vi.fn(),
+    testOnec: vi.fn(),
+    getOnecMapping: vi.fn(),
+    updateOnecMapping: vi.fn(),
   },
 }));
 
@@ -78,6 +84,10 @@ describe("SettingsPage", () => {
     vi.clearAllMocks();
     vi.mocked(api.getSettings).mockResolvedValue(mockSettings as UserSettings);
     vi.mocked(api.tgAccountStatus).mockResolvedValue({ connected: false, phone: "" });
+    vi.mocked(api.getOnecConfig).mockResolvedValue({
+      base_url: "", auth_type: "basic", auth_secret: "", webhook_secret: "", is_active: false,
+    });
+    vi.mocked(api.getOnecMapping).mockResolvedValue({ rules: [] });
   });
 
   it("renders settings page with header after loading", async () => {

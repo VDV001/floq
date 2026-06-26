@@ -3,6 +3,7 @@ package domain
 import (
 	"context"
 	"errors"
+	"time"
 
 	"github.com/google/uuid"
 )
@@ -28,6 +29,14 @@ var (
 // runs the SQL against that transaction automatically.
 type Repository interface {
 	ListLeads(ctx context.Context, userID uuid.UUID) ([]LeadWithSource, error)
+	// ListAllLeads returns every lead for the user including archived ones
+	// (with ArchivedAt populated) — used by the CSV export so a backup is
+	// complete. ListLeads, by contrast, hides archived leads (inbox feed).
+	ListAllLeads(ctx context.Context, userID uuid.UUID) ([]LeadWithSource, error)
+	// ListArchivedLeads returns ONLY archived leads (archived_at IS NOT NULL),
+	// newest-archived first — the inverse of ListLeads. Backs the archive view
+	// where leads hidden from the working feed are inspected and unarchived.
+	ListArchivedLeads(ctx context.Context, userID uuid.UUID) ([]LeadWithSource, error)
 	GetLead(ctx context.Context, id uuid.UUID) (*Lead, error)
 	// GetLeadForUser returns the lead iff it belongs to userID; returns nil
 	// otherwise (ownership mismatch indistinguishable from not-found at this
@@ -36,6 +45,9 @@ type Repository interface {
 	CreateLead(ctx context.Context, lead *Lead) error
 	UpdateFirstMessage(ctx context.Context, id uuid.UUID, message string) error
 	UpdateLeadStatus(ctx context.Context, id uuid.UUID, status LeadStatus) error
+	// SetLeadArchived writes the archive flag: non-nil archives, nil unarchives.
+	// The archive invariant lives on Lead.Archive/Unarchive; this just persists.
+	SetLeadArchived(ctx context.Context, id uuid.UUID, archivedAt *time.Time) error
 	UpdateSourceID(ctx context.Context, id uuid.UUID, sourceID *uuid.UUID) error
 	GetLeadByTelegramChatID(ctx context.Context, userID uuid.UUID, chatID int64) (*Lead, error)
 	GetLeadByEmailAddress(ctx context.Context, userID uuid.UUID, email string) (*Lead, error)
@@ -71,6 +83,16 @@ type AIService interface {
 // Notifier sends alerts and notifications.
 type Notifier interface {
 	SendAlert(ctx context.Context, leadName string, company string, message string) error
+}
+
+// QualificationObserver is notified after a lead is successfully qualified, so
+// cross-context side-effects (e.g. creating a counterparty in 1C, #108) can fire
+// without the leads context importing those modules. The implementation lives in
+// the composition root and bridges to the onec context. A nil observer disables
+// the hook. The method returns nothing on purpose: a failing side-effect must
+// never fail qualification — the observer owns its own error handling.
+type QualificationObserver interface {
+	OnLeadQualified(ctx context.Context, lead *Lead)
 }
 
 // --- Prospect suggestion (cross-channel dedup) ---

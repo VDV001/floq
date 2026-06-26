@@ -5,10 +5,13 @@ import (
 	"context"
 	"encoding/csv"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"time"
 
+	auditdomain "github.com/daniil/floq/internal/audit/domain"
 	"github.com/daniil/floq/internal/leads/domain"
 	"github.com/google/uuid"
 )
@@ -18,6 +21,10 @@ type UseCase struct {
 	ai               domain.AIService
 	sender           domain.MessageSender
 	suggestionFinder domain.ProspectSuggestionFinder
+	identityReader   IdentityReader
+	pendingCounter   PendingReplyCounter
+	qualObserver     domain.QualificationObserver
+	logger           *slog.Logger
 }
 
 // Option configures a *UseCase at construction. Used for dependencies that
@@ -31,8 +38,26 @@ func WithSuggestionFinder(f domain.ProspectSuggestionFinder) Option {
 	return func(uc *UseCase) { uc.suggestionFinder = f }
 }
 
+// WithQualificationObserver wires the post-qualification hook (issue #108).
+// Supplied from the composition root via an adapter that bridges to the onec
+// context. nil leaves the hook disabled.
+func WithQualificationObserver(o domain.QualificationObserver) Option {
+	return func(uc *UseCase) { uc.qualObserver = o }
+}
+
+// WithLogger overrides the default slog.Logger so the use case emits
+// structured warnings through the server-wide handler. Pass nil to
+// keep slog.Default().
+func WithLogger(l *slog.Logger) Option {
+	return func(uc *UseCase) {
+		if l != nil {
+			uc.logger = l
+		}
+	}
+}
+
 func NewUseCase(repo domain.Repository, ai domain.AIService, sender domain.MessageSender, opts ...Option) *UseCase {
-	uc := &UseCase{repo: repo, ai: ai, sender: sender}
+	uc := &UseCase{repo: repo, ai: ai, sender: sender, logger: slog.Default()}
 	for _, opt := range opts {
 		opt(uc)
 	}
@@ -45,8 +70,21 @@ func (uc *UseCase) SetSender(sender domain.MessageSender) {
 	uc.sender = sender
 }
 
+// SetQualificationObserver wires the post-qualification hook after construction,
+// needed because the onec outbound use case (which the observer bridges to) is
+// built later in the composition root than the leads use case.
+func (uc *UseCase) SetQualificationObserver(o domain.QualificationObserver) {
+	uc.qualObserver = o
+}
+
 func (uc *UseCase) ListLeads(ctx context.Context, userID uuid.UUID) ([]domain.LeadWithSource, error) {
 	return uc.repo.ListLeads(ctx, userID)
+}
+
+// ListArchivedLeads returns the user's archived leads (newest-archived first)
+// for the dedicated archive view. Active leads live in ListLeads.
+func (uc *UseCase) ListArchivedLeads(ctx context.Context, userID uuid.UUID) ([]domain.LeadWithSource, error) {
+	return uc.repo.ListArchivedLeads(ctx, userID)
 }
 
 func (uc *UseCase) GetLead(ctx context.Context, id uuid.UUID) (*domain.Lead, error) {
@@ -64,7 +102,7 @@ func (uc *UseCase) UpdateStatus(ctx context.Context, id uuid.UUID, status string
 		return fmt.Errorf("get lead: %w", err)
 	}
 	if lead == nil {
-		return fmt.Errorf("lead not found")
+		return domain.ErrLeadNotFound
 	}
 
 	if err := lead.TransitionTo(target); err != nil {
@@ -74,8 +112,54 @@ func (uc *UseCase) UpdateStatus(ctx context.Context, id uuid.UUID, status string
 	return uc.repo.UpdateLeadStatus(ctx, id, target)
 }
 
+// ArchiveLead hides the lead from working feeds and analytics without touching
+// its pipeline status. Ownership is enforced upstream by the handler's
+// authorizeLead front-door (the shared gate for every /api/leads/{id}/* route),
+// mirroring UpdateStatus. The archive invariant (reject double-archive) lives on
+// Lead.Archive; a re-archive surfaces domain.ErrAlreadyArchived for a 409.
+func (uc *UseCase) ArchiveLead(ctx context.Context, id uuid.UUID) error {
+	lead, err := uc.repo.GetLead(ctx, id)
+	if err != nil {
+		return fmt.Errorf("get lead: %w", err)
+	}
+	if lead == nil {
+		return domain.ErrLeadNotFound
+	}
+	if err := lead.Archive(); err != nil {
+		return err
+	}
+	return uc.repo.SetLeadArchived(ctx, id, lead.ArchivedAt)
+}
+
+// UnarchiveLead restores an archived lead to feeds and analytics. Returns
+// domain.ErrNotArchived when the lead is not archived.
+func (uc *UseCase) UnarchiveLead(ctx context.Context, id uuid.UUID) error {
+	lead, err := uc.repo.GetLead(ctx, id)
+	if err != nil {
+		return fmt.Errorf("get lead: %w", err)
+	}
+	if lead == nil {
+		return domain.ErrLeadNotFound
+	}
+	if err := lead.Unarchive(); err != nil {
+		return err
+	}
+	return uc.repo.SetLeadArchived(ctx, id, lead.ArchivedAt)
+}
+
 func (uc *UseCase) GetMessages(ctx context.Context, leadID uuid.UUID) ([]domain.Message, error) {
 	return uc.repo.ListMessages(ctx, leadID)
+}
+
+// OwnsLead returns true iff the lead exists AND belongs to userID. The
+// (nil-lead, nil-error) shape from GetLeadForUser maps to false here so
+// handlers can branch on a single boolean. Errors propagate.
+func (uc *UseCase) OwnsLead(ctx context.Context, userID, leadID uuid.UUID) (bool, error) {
+	lead, err := uc.repo.GetLeadForUser(ctx, userID, leadID)
+	if err != nil {
+		return false, err
+	}
+	return lead != nil, nil
 }
 
 func (uc *UseCase) SendMessage(ctx context.Context, leadID uuid.UUID, body string) (*domain.Message, error) {
@@ -122,7 +206,13 @@ func (uc *UseCase) QualifyLead(ctx context.Context, leadID uuid.UUID) (*domain.Q
 		return nil, fmt.Errorf("lead not found")
 	}
 
-	aiResult, err := uc.ai.Qualify(ctx, lead.ContactName, lead.Channel, lead.FirstMessage)
+	auditLeadID := lead.ID
+	auditCtx := auditdomain.ContextWithCallMeta(ctx, auditdomain.CallMeta{
+		UserID:      lead.UserID,
+		LeadID:      &auditLeadID,
+		RequestType: auditdomain.RequestTypeQualification,
+	})
+	aiResult, err := uc.ai.Qualify(auditCtx, lead.ContactName, lead.Channel, lead.FirstMessage)
 	if err != nil {
 		return nil, err
 	}
@@ -137,6 +227,13 @@ func (uc *UseCase) QualifyLead(ctx context.Context, leadID uuid.UUID) (*domain.Q
 	}
 	if err := uc.repo.UpdateLeadStatus(ctx, leadID, domain.StatusQualified); err != nil {
 		return nil, err
+	}
+	lead.Status = domain.StatusQualified
+
+	// Fire the post-qualification side-effect (e.g. push a counterparty to 1C).
+	// The observer owns its errors — a failure here must not fail qualification.
+	if uc.qualObserver != nil {
+		uc.qualObserver.OnLeadQualified(ctx, lead)
 	}
 
 	return q, nil
@@ -168,7 +265,13 @@ func (uc *UseCase) RegenerateDraft(ctx context.Context, leadID uuid.UUID) (*doma
 		}
 	}
 
-	body, err := uc.ai.DraftReply(ctx, lead.ContactName, firstMsg)
+	auditLeadID := lead.ID
+	auditCtx := auditdomain.ContextWithCallMeta(ctx, auditdomain.CallMeta{
+		UserID:      lead.UserID,
+		LeadID:      &auditLeadID,
+		RequestType: auditdomain.RequestTypeDraftReply,
+	})
+	body, err := uc.ai.DraftReply(auditCtx, lead.ContactName, firstMsg)
 	if err != nil {
 		return nil, err
 	}
@@ -186,7 +289,10 @@ func (uc *UseCase) RegenerateDraft(ctx context.Context, leadID uuid.UUID) (*doma
 }
 
 func (uc *UseCase) ExportCSV(ctx context.Context, userID uuid.UUID) ([]byte, error) {
-	leads, err := uc.repo.ListLeads(ctx, userID)
+	// Export is a backup — it must include archived leads (ListAllLeads), not
+	// just the active inbox feed, and mark each row's archived state so the
+	// file round-trips the full picture.
+	leads, err := uc.repo.ListAllLeads(ctx, userID)
 	if err != nil {
 		return nil, fmt.Errorf("list leads: %w", err)
 	}
@@ -196,7 +302,10 @@ func (uc *UseCase) ExportCSV(ctx context.Context, userID uuid.UUID) ([]byte, err
 	buf.Write([]byte{0xEF, 0xBB, 0xBF})
 
 	w := csv.NewWriter(&buf)
-	header := []string{"contact_name", "company", "channel", "email_address", "status", "first_message", "created_at"}
+	// archived_at carries the FULL archive state (the exact timestamp, empty for
+	// active) so a backup round-trips it precisely — not just a boolean, which
+	// would reset the archive date to the import day on restore.
+	header := []string{"contact_name", "company", "channel", "email_address", "status", "first_message", "created_at", "archived_at"}
 	if err := w.Write(header); err != nil {
 		return nil, fmt.Errorf("write csv header: %w", err)
 	}
@@ -206,6 +315,10 @@ func (uc *UseCase) ExportCSV(ctx context.Context, userID uuid.UUID) ([]byte, err
 		if l.EmailAddress != nil {
 			emailAddr = *l.EmailAddress
 		}
+		archivedAt := ""
+		if l.ArchivedAt != nil {
+			archivedAt = l.ArchivedAt.Format(time.RFC3339)
+		}
 		record := []string{
 			l.ContactName,
 			l.Company,
@@ -214,6 +327,7 @@ func (uc *UseCase) ExportCSV(ctx context.Context, userID uuid.UUID) ([]byte, err
 			string(l.Status),
 			l.FirstMessage,
 			l.CreatedAt.Format(time.RFC3339),
+			archivedAt,
 		}
 		if err := w.Write(record); err != nil {
 			return nil, fmt.Errorf("write csv record: %w", err)
@@ -228,6 +342,10 @@ func (uc *UseCase) ExportCSV(ctx context.Context, userID uuid.UUID) ([]byte, err
 }
 
 func (uc *UseCase) ImportCSV(ctx context.Context, userID uuid.UUID, csvData []byte) (int, error) {
+	// Strip a leading UTF-8 BOM so the first header name parses as "contact_name"
+	// rather than a BOM-prefixed variant. ExportCSV writes a BOM for Excel, so
+	// without this our own backup files fail to re-import (missing contact_name).
+	csvData = bytes.TrimPrefix(csvData, []byte{0xEF, 0xBB, 0xBF})
 	reader := csv.NewReader(bytes.NewReader(csvData))
 
 	// Read and validate header
@@ -280,6 +398,16 @@ func (uc *UseCase) ImportCSV(ctx context.Context, userID uuid.UUID, csvData []by
 		company := getCol(record, "company")
 		firstMessage := getCol(record, "first_message")
 		emailAddr := getCol(record, "email_address")
+		// The export's "archived_at" column lets a backup round-trip the exact
+		// archive timestamp. Empty (or absent, for a normal user-provided list)
+		// reads as active.
+		var importedArchivedAt *time.Time
+		if raw := getCol(record, "archived_at"); raw != "" {
+			if t, perr := time.Parse(time.RFC3339, raw); perr == nil {
+				utc := t.UTC()
+				importedArchivedAt = &utc
+			}
+		}
 
 		var emailPtr *string
 		if emailAddr != "" {
@@ -288,6 +416,17 @@ func (uc *UseCase) ImportCSV(ctx context.Context, userID uuid.UUID, csvData []by
 				return 0, fmt.Errorf("dedup lead check: %w", err)
 			}
 			if existing != nil {
+				// Re-importing an *active* row resurfaces a matched archived lead —
+				// that reads as re-engagement, not lost data. A row that is itself
+				// archived leaves the existing state untouched; an active duplicate
+				// is a true dedup hit. SetLeadArchived(nil) is the guarded unarchive;
+				// swallow ErrNotArchived in case a concurrent inbound already did it.
+				if existing.IsArchived() && importedArchivedAt == nil {
+					if err := uc.repo.SetLeadArchived(ctx, existing.ID, nil); err != nil && !errors.Is(err, domain.ErrNotArchived) {
+						return 0, fmt.Errorf("persist resurface: %w", err)
+					}
+					count++
+				}
 				continue
 			}
 			emailPtr = &emailAddr
@@ -297,6 +436,10 @@ func (uc *UseCase) ImportCSV(ctx context.Context, userID uuid.UUID, csvData []by
 		if err != nil {
 			continue // skip invalid rows
 		}
+		// Rehydrate the exact archive timestamp from the backup so a restore
+		// preserves history instead of flooding archived leads back as active
+		// (CreateLead persists archived_at).
+		lead.ArchivedAt = importedArchivedAt
 		if err := uc.repo.CreateLead(ctx, lead); err != nil {
 			return 0, fmt.Errorf("create lead: %w", err)
 		}

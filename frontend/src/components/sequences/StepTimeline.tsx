@@ -11,7 +11,7 @@ interface StepTimelineProps {
   steps: SequenceStep[];
   stepsLoading: boolean;
   onDeleteStep: (stepId: string) => void;
-  onAddStep: (params: { channel: "email" | "telegram"; delay_days: number; prompt_hint: string }) => Promise<void>;
+  onAddStep: (params: { channel: "email" | "telegram"; delay_days: number; prompt_hint: string; body?: string }) => Promise<void>;
   onConfirmDelete: (title: string, message: string, onConfirm: () => void) => void;
 }
 
@@ -115,25 +115,38 @@ export function StepTimeline({
                     </div>
                   </div>
 
-                  {step.prompt_hint && (
-                    <p className="mt-2 text-xs leading-relaxed text-[#434655]">{step.prompt_hint}</p>
-                  )}
+                  {step.body ? (
+                    <div className="mt-2">
+                      <span className="inline-flex items-center gap-1 rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-[#434655]">
+                        Написано вручную
+                      </span>
+                      <p className="mt-1.5 whitespace-pre-line rounded-lg bg-[#f8f9ff] p-3 text-xs leading-relaxed text-[#0d1c2e]">
+                        {step.body}
+                      </p>
+                    </div>
+                  ) : (
+                    <>
+                      {step.prompt_hint && (
+                        <p className="mt-2 text-xs leading-relaxed text-[#434655]">{step.prompt_hint}</p>
+                      )}
 
-                  <div className="mt-3">
-                    <button
-                      onClick={() => { setPreviewStepId(step.id); }}
-                      className="rounded-lg bg-[#004ac6] px-3 py-1.5 text-xs font-medium text-white transition hover:bg-[#004ac6]/90"
-                    >
-                      Сгенерировать пример
-                    </button>
-                  </div>
+                      <div className="mt-3">
+                        <button
+                          onClick={() => { setPreviewStepId(step.id); }}
+                          className="rounded-lg bg-[#004ac6] px-3 py-1.5 text-xs font-medium text-white transition hover:bg-[#004ac6]/90"
+                        >
+                          Сгенерировать пример
+                        </button>
+                      </div>
 
-                  {previewStepId === step.id && (
-                    <StepPreview
-                      channel={step.channel}
-                      promptHint={step.prompt_hint || "первое касание"}
-                      onClose={() => setPreviewStepId(null)}
-                    />
+                      {previewStepId === step.id && (
+                        <StepPreview
+                          channel={step.channel}
+                          promptHint={step.prompt_hint || "первое касание"}
+                          onClose={() => setPreviewStepId(null)}
+                        />
+                      )}
+                    </>
                   )}
                 </div>
               );

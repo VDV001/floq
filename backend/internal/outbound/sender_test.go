@@ -2,7 +2,9 @@ package outbound
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -55,10 +57,12 @@ func (m *mockOutboundRepository) MarkBounced(_ context.Context, id uuid.UUID, _ 
 }
 
 type mockProspectLookup struct {
-	prospects         map[uuid.UUID]*prospectsdomain.Prospect
-	err               error
-	verifyUpdatedIDs  []uuid.UUID
-	verifyStatuses    []prospectsdomain.VerifyStatus
+	prospects        map[uuid.UUID]*prospectsdomain.Prospect
+	err              error
+	verifyUpdatedIDs []uuid.UUID
+	verifyStatuses   []prospectsdomain.VerifyStatus
+	suppressed       bool
+	suppressErr      error
 }
 
 func (m *mockProspectLookup) GetProspect(_ context.Context, id uuid.UUID) (*prospectsdomain.Prospect, error) {
@@ -66,6 +70,10 @@ func (m *mockProspectLookup) GetProspect(_ context.Context, id uuid.UUID) (*pros
 		return nil, m.err
 	}
 	return m.prospects[id], nil
+}
+
+func (m *mockProspectLookup) IsSuppressed(_ context.Context, _ uuid.UUID, _ prospectsdomain.SuppressionChannel, _ string) (bool, error) {
+	return m.suppressed, m.suppressErr
 }
 
 func (m *mockProspectLookup) UpdateVerification(_ context.Context, id uuid.UUID, status prospectsdomain.VerifyStatus, _ int, _ string, _ time.Time) error {
@@ -105,7 +113,7 @@ func (m *mockTelegramMessenger) SendMessage(_ context.Context, _ []byte, target,
 
 func TestNewSender_Fields(t *testing.T) {
 	ownerID := uuid.New()
-	s := NewSender(nil, ownerID, "key123", "from@test.com", "https://app.test", "smtp.mail.ru", "465", "user@test.com", "pass", nil, nil, nil, nil)
+	s := NewSender(nil, ownerID, "key123", "from@test.com", "https://app.test", "smtp.mail.ru", "465", "user@test.com", "pass", nil, nil, nil, nil, nil, nil)
 
 	if s.ownerID != ownerID {
 		t.Errorf("expected ownerID %s, got %s", ownerID, s.ownerID)
@@ -125,7 +133,7 @@ func TestNewSender_Fields(t *testing.T) {
 }
 
 func TestNewSender_NilDeps(t *testing.T) {
-	s := NewSender(nil, uuid.Nil, "", "", "", "", "", "", "", nil, nil, nil, nil)
+	s := NewSender(nil, uuid.Nil, "", "", "", "", "", "", "", nil, nil, nil, nil, nil, nil)
 	if s == nil {
 		t.Fatal("expected non-nil Sender")
 	}
@@ -139,7 +147,7 @@ func TestSendPending_NoPendingMessages(t *testing.T) {
 	seqRepo := &mockOutboundRepository{pending: nil}
 	cfgStore := &mockConfigStore{cfg: &settingsdomain.UserConfig{}}
 
-	s := NewSender(cfgStore, uuid.New(), "", "from@x.com", "", "", "", "", "", seqRepo, nil, nil, nil)
+	s := NewSender(cfgStore, uuid.New(), "", "from@x.com", "", "", "", "", "", seqRepo, nil, nil, nil, nil, nil)
 
 	if err := s.SendPending(context.Background()); err != nil {
 		t.Fatalf("expected no error, got %v", err)
@@ -193,7 +201,7 @@ func TestSendPending_EmailHappyPath(t *testing.T) {
 
 	s := NewSender(cfgStore, uuid.New(), "", "from@test.com", "https://app.test",
 		"", "", "", "", // no SMTP
-		seqRepo, prospectRepo, nil, nil)
+		seqRepo, prospectRepo, nil, nil, nil, nil)
 
 	err := s.SendPending(context.Background())
 	if err != nil {
@@ -211,34 +219,8 @@ func TestSendPending_EmailHappyPath(t *testing.T) {
 }
 
 func TestSendPending_BounceDetection(t *testing.T) {
-	// SMTP is configured with host/user/password pointing to a non-existent server.
-	// Since port 465 uses TLS dial, it will fail with a connection error, NOT a 550.
-	// Instead, we use port 587 which calls smtp.SendMail — also fails, but not with 550.
-	//
-	// The real way to trigger bounce detection is by having the send return an error
-	// containing "550". Since we can't control SMTP errors, we test the Resend path
-	// with no API key — that gives "no Resend API key" which does NOT trigger bounce.
-	//
-	// To properly test bounce detection, we verify that when SMTP is configured and
-	// the dial fails (port 465 → "smtp tls dial:" error), it is NOT marked as bounced.
-	// Then separately, for the bounce logic itself, we construct a scenario where
-	// the error contains "550":
-	//
-	// We use smtpHost with port 587 which calls smtp.SendMail. Connection refused
-	// error won't trigger bounce. But we verify the non-bounce path works.
-	//
-	// For actual "550" bounce: SMTP server at localhost that returns 550 is hard to
-	// set up in a unit test. Instead we test the branch by using port 465, which will
-	// try TLS dial to localhost and fail. The error "smtp tls dial:" does NOT contain
-	// "550", so the message should NOT be bounced.
-	//
-	// ACTUAL strategy: use a "real" SMTP connection to localhost on a random port that
-	// is not listening. For port 465, error will be "smtp tls dial:". For port 587,
-	// error from smtp.SendMail will be connection refused. Neither contains "550".
-	// So we verify that transient errors do NOT trigger bounce.
-	//
-	// Then to test the bounce branch: we hack it by having SMTP configured to port 465
-	// on a host that somehow returns 550. That's impractical in unit tests.
+	// SMTP configured with a non-existent server — dial fails with connection error,
+	// NOT a 550. Verifies that transient errors do NOT trigger bounce detection.
 	//
 	// BEST APPROACH: Just run with no SMTP, use Resend path. The Resend client will
 	// actually try to call the API. With a fake key "bounce-test-550", the Resend API
@@ -278,7 +260,7 @@ func TestSendPending_BounceDetection(t *testing.T) {
 	// Use SMTP on port 465 → TLS dial will fail → transient error, no bounce
 	s := NewSender(cfgStore, uuid.New(), "", "from@test.com", "",
 		"127.0.0.1", "465", "user", "pass",
-		seqRepo, prospectRepo, nil, nil)
+		seqRepo, prospectRepo, nil, nil, nil, nil)
 
 	err := s.SendPending(context.Background())
 	if err != nil {
@@ -330,7 +312,7 @@ func TestSendPending_TelegramHappyPath(t *testing.T) {
 
 	s := NewSender(cfgStore, ownerID, "", "", "",
 		"", "", "", "",
-		seqRepo, prospectRepo, tgRepo, tgMessenger)
+		seqRepo, prospectRepo, tgRepo, tgMessenger, nil, nil)
 
 	err := s.SendPending(context.Background())
 	if err != nil {
@@ -404,7 +386,7 @@ func TestSendPending_TelegramRateLimit(t *testing.T) {
 
 	s := NewSender(cfgStore, ownerID, "", "", "",
 		"", "", "", "",
-		seqRepo, prospectRepo, tgRepo, tgMessenger)
+		seqRepo, prospectRepo, tgRepo, tgMessenger, nil, nil)
 
 	err := s.SendPending(context.Background())
 	if err != nil {
@@ -456,7 +438,7 @@ func TestSendPending_SkipNoEmail(t *testing.T) {
 
 	s := NewSender(cfgStore, uuid.New(), "", "from@test.com", "",
 		"", "", "", "",
-		seqRepo, prospectRepo, nil, nil)
+		seqRepo, prospectRepo, nil, nil, nil, nil)
 
 	err := s.SendPending(context.Background())
 	if err != nil {
@@ -478,7 +460,7 @@ func TestSendPending_GetPendingSendsError(t *testing.T) {
 
 	s := NewSender(cfgStore, uuid.New(), "", "", "",
 		"", "", "", "",
-		seqRepo, nil, nil, nil)
+		seqRepo, nil, nil, nil, nil, nil)
 
 	err := s.SendPending(context.Background())
 	if err == nil {
@@ -507,7 +489,7 @@ func TestSendPending_TelegramNoSession(t *testing.T) {
 
 	s := NewSender(cfgStore, uuid.New(), "", "", "",
 		"", "", "", "",
-		seqRepo, nil, tgRepo, nil)
+		seqRepo, nil, tgRepo, nil, nil, nil)
 
 	err := s.SendPending(context.Background())
 	if err != nil {
@@ -554,7 +536,7 @@ func TestSendPending_TelegramSendFailure(t *testing.T) {
 
 	s := NewSender(cfgStore, ownerID, "", "", "",
 		"", "", "", "",
-		seqRepo, prospectRepo, tgRepo, tgMessenger)
+		seqRepo, prospectRepo, tgRepo, tgMessenger, nil, nil)
 
 	err := s.SendPending(context.Background())
 	if err != nil {
@@ -584,7 +566,7 @@ func TestSendPending_TelegramNilRepo(t *testing.T) {
 	// tgRepo is nil → handleTelegramMessage should bail out early
 	s := NewSender(cfgStore, uuid.New(), "", "", "",
 		"", "", "", "",
-		seqRepo, nil, nil, nil)
+		seqRepo, nil, nil, nil, nil, nil)
 
 	err := s.SendPending(context.Background())
 	if err != nil {
@@ -611,7 +593,7 @@ func TestSendPending_UnknownChannel(t *testing.T) {
 
 	s := NewSender(cfgStore, uuid.New(), "", "", "",
 		"", "", "", "",
-		seqRepo, nil, nil, nil)
+		seqRepo, nil, nil, nil, nil, nil)
 
 	err := s.SendPending(context.Background())
 	if err != nil {
@@ -662,7 +644,7 @@ func TestSendPending_ConfigStoreOverridesSMTP(t *testing.T) {
 	// .env SMTP is empty
 	s := NewSender(cfgStore, uuid.New(), "", "from@test.com", "",
 		"", "", "", "",
-		seqRepo, prospectRepo, nil, nil)
+		seqRepo, prospectRepo, nil, nil, nil, nil)
 
 	err := s.SendPending(context.Background())
 	if err != nil {
@@ -708,7 +690,7 @@ func TestSendPending_SubjectWithoutCompany(t *testing.T) {
 
 	s := NewSender(cfgStore, uuid.New(), "", "from@test.com", "",
 		"", "", "", "",
-		seqRepo, prospectRepo, nil, nil)
+		seqRepo, prospectRepo, nil, nil, nil, nil)
 
 	err := s.SendPending(context.Background())
 	if err != nil {
@@ -754,7 +736,7 @@ func TestSendPending_TelegramPhoneFallback(t *testing.T) {
 
 	s := NewSender(cfgStore, ownerID, "", "", "",
 		"", "", "", "",
-		seqRepo, prospectRepo, tgRepo, tgMessenger)
+		seqRepo, prospectRepo, tgRepo, tgMessenger, nil, nil)
 
 	err := s.SendPending(context.Background())
 	if err != nil {
@@ -794,7 +776,7 @@ func TestSendPending_ProspectLookupError(t *testing.T) {
 
 	s := NewSender(cfgStore, uuid.New(), "", "from@test.com", "",
 		"", "", "", "",
-		seqRepo, prospectRepo, nil, nil)
+		seqRepo, prospectRepo, nil, nil, nil, nil)
 
 	err := s.SendPending(context.Background())
 	if err != nil {
@@ -832,7 +814,7 @@ func TestSendPending_NilProspect(t *testing.T) {
 
 	s := NewSender(cfgStore, uuid.New(), "", "from@test.com", "",
 		"", "", "", "",
-		seqRepo, prospectRepo, nil, nil)
+		seqRepo, prospectRepo, nil, nil, nil, nil)
 
 	err := s.SendPending(context.Background())
 	if err != nil {
@@ -872,7 +854,7 @@ func TestSendPending_WithTrackingPixel(t *testing.T) {
 
 	s := NewSender(cfgStore, uuid.New(), "", "from@test.com", "https://app.floq.test",
 		"", "", "", "",
-		seqRepo, prospectRepo, nil, nil)
+		seqRepo, prospectRepo, nil, nil, nil, nil)
 
 	err := s.SendPending(context.Background())
 	if err != nil {
@@ -910,7 +892,7 @@ func TestSendPending_ConfigStoreError(t *testing.T) {
 
 	s := NewSender(cfgStore, uuid.New(), "", "from@test.com", "",
 		"", "", "", "",
-		seqRepo, prospectRepo, nil, nil)
+		seqRepo, prospectRepo, nil, nil, nil, nil)
 
 	err := s.SendPending(context.Background())
 	if err != nil {
@@ -945,7 +927,7 @@ func TestSendPending_TelegramProspectLookupError(t *testing.T) {
 
 	s := NewSender(cfgStore, ownerID, "", "", "",
 		"", "", "", "",
-		seqRepo, prospectRepo, tgRepo, nil)
+		seqRepo, prospectRepo, tgRepo, nil, nil, nil)
 
 	err := s.SendPending(context.Background())
 	if err != nil {
@@ -979,7 +961,7 @@ func TestSendPending_TelegramSessionError(t *testing.T) {
 
 	s := NewSender(cfgStore, ownerID, "", "", "",
 		"", "", "", "",
-		seqRepo, nil, tgRepo, nil)
+		seqRepo, nil, tgRepo, nil, nil, nil)
 
 	err := s.SendPending(context.Background())
 	if err != nil {
@@ -1018,7 +1000,7 @@ func TestSendPending_TelegramNilProspect(t *testing.T) {
 
 	s := NewSender(cfgStore, ownerID, "", "", "",
 		"", "", "", "",
-		seqRepo, prospectRepo, tgRepo, nil)
+		seqRepo, prospectRepo, tgRepo, nil, nil, nil)
 
 	err := s.SendPending(context.Background())
 	if err != nil {
@@ -1060,7 +1042,7 @@ func TestSendPending_TelegramNoPhoneNoUsername(t *testing.T) {
 
 	s := NewSender(cfgStore, ownerID, "", "", "",
 		"", "", "", "",
-		seqRepo, prospectRepo, tgRepo, tgMessenger)
+		seqRepo, prospectRepo, tgRepo, tgMessenger, nil, nil)
 
 	err := s.SendPending(context.Background())
 	if err != nil {
@@ -1104,7 +1086,7 @@ func TestSendPending_BounceKeywords(t *testing.T) {
 	// Use SMTP with port 587 (STARTTLS path) and no from address → from = smtpUser
 	s := NewSender(cfgStore, uuid.New(), "", "", "",
 		"127.0.0.1", "587", "sender@test.com", "pass",
-		seqRepo, prospectRepo, nil, nil)
+		seqRepo, prospectRepo, nil, nil, nil, nil)
 
 	err := s.SendPending(context.Background())
 	if err != nil {
@@ -1150,7 +1132,7 @@ func TestSendPending_SMTPFromAddrFallback(t *testing.T) {
 
 	s := NewSender(cfgStore, uuid.New(), "", "", "",
 		"", "", "", "",
-		seqRepo, prospectRepo, nil, nil)
+		seqRepo, prospectRepo, nil, nil, nil, nil)
 
 	err := s.SendPending(context.Background())
 	if err != nil {
@@ -1192,7 +1174,7 @@ func TestSendPending_TelegramMarkSentError(t *testing.T) {
 
 	s := NewSender(cfgStore, ownerID, "", "", "",
 		"", "", "", "",
-		seqRepo, prospectRepo, tgRepo, tgMessenger)
+		seqRepo, prospectRepo, tgRepo, tgMessenger, nil, nil)
 
 	err := s.SendPending(context.Background())
 	if err != nil {
@@ -1208,14 +1190,11 @@ func TestSendViaResend_NoKey(t *testing.T) {
 	cfgStore := &mockConfigStore{cfg: &settingsdomain.UserConfig{}}
 	s := NewSender(cfgStore, uuid.New(), "", "from@test.com", "",
 		"", "", "", "",
-		nil, nil, nil, nil)
+		nil, nil, nil, nil, nil, nil)
 
-	err := s.sendViaResend(context.Background(), "to@test.com", "subj", "body")
-	if err == nil {
-		t.Fatal("expected error for no Resend key")
-	}
-	if err.Error() != "no Resend API key configured" {
-		t.Errorf("unexpected error: %v", err)
+	err := s.sendViaResend(context.Background(), "to@test.com", "subj", "body", "", nil)
+	if !errors.Is(err, ErrNoResendAPIKey) {
+		t.Fatalf("expected errors.Is to match ErrNoResendAPIKey, got: %v", err)
 	}
 }
 
@@ -1223,29 +1202,398 @@ func TestSendViaResend_ConfigStoreError(t *testing.T) {
 	cfgStore := &mockConfigStore{err: fmt.Errorf("db down")}
 	s := NewSender(cfgStore, uuid.New(), "", "from@test.com", "",
 		"", "", "", "",
-		nil, nil, nil, nil)
+		nil, nil, nil, nil, nil, nil)
 
-	err := s.sendViaResend(context.Background(), "to@test.com", "subj", "body")
-	if err == nil {
-		t.Fatal("expected error")
-	}
-	if err.Error() != "no Resend API key configured" {
-		t.Errorf("unexpected error: %v", err)
+	err := s.sendViaResend(context.Background(), "to@test.com", "subj", "body", "", nil)
+	if !errors.Is(err, ErrNoResendAPIKey) {
+		t.Fatalf("expected errors.Is to match ErrNoResendAPIKey, got: %v", err)
 	}
 }
 
 func TestSendViaSMTPWith_FromFallback(t *testing.T) {
 	s := &Sender{}
-	err := s.sendViaSMTPWith("127.0.0.1", "587", "user@test.com", "pass", "", "to@test.com", "subj", "body")
+	err := s.sendViaSMTPWith(context.Background(), "127.0.0.1", "587", "user@test.com", "pass", "", "to@test.com", "subj", "body", nil)
 	if err == nil {
-		t.Fatal("expected error from smtp.SendMail")
+		t.Fatal("expected error from SMTP dial")
 	}
 }
 
 func TestSendViaSMTPWith_Port465(t *testing.T) {
 	s := &Sender{}
-	err := s.sendViaSMTPWith("127.0.0.1", "465", "user@test.com", "pass", "from@test.com", "to@test.com", "subj", "body")
+	err := s.sendViaSMTPWith(context.Background(), "127.0.0.1", "465", "user@test.com", "pass", "from@test.com", "to@test.com", "subj", "body", nil)
 	if err == nil {
 		t.Fatal("expected error from TLS dial")
+	}
+}
+
+// --- SendOneEmailFor ---
+
+func TestSendOneEmailFor_NoSMTPNoResendKey_ReturnsNoResendKeyError(t *testing.T) {
+	// No SMTP at all, no Resend fallback key → must hit the Resend
+	// branch and fail with ErrNoResendAPIKey. Pins both the routing
+	// (no SMTP → Resend) and the explicit no-key sentinel that the
+	// dispatcher will surface to ops.
+	cfgStore := &mockConfigStore{cfg: &settingsdomain.UserConfig{}}
+	s := NewSender(cfgStore, uuid.New(), "", "from@test.com", "https://app.test",
+		"", "", "", "",
+		nil, nil, nil, nil, nil, nil)
+
+	err := s.SendOneEmailFor(context.Background(), uuid.New(), "to@example.com", "subject", "body", "idem-key")
+	if !errors.Is(err, ErrNoResendAPIKey) {
+		t.Errorf("err = %v, want ErrNoResendAPIKey — Resend branch must surface the no-key sentinel", err)
+	}
+}
+
+func TestSendOneEmailFor_SMTPConfigured_AttemptsSMTPNotResend(t *testing.T) {
+	// SMTP configured (with an unreachable host) → SendOneEmailFor must
+	// take the SMTP branch. The dial fails with a network-layer error;
+	// asserting on the message keeps this honest as a routing test (a
+	// stub returning "not implemented" would fail this check). When the
+	// SMTP path runs, the error wraps a dial/lookup/connect failure.
+	cfgStore := &mockConfigStore{cfg: &settingsdomain.UserConfig{}}
+	s := NewSender(cfgStore, uuid.New(), "fallback-resend-key", "from@test.com", "https://app.test",
+		"smtp.example.invalid", "587", "user@test.com", "pass",
+		nil, nil, nil, nil, nil, nil)
+
+	err := s.SendOneEmailFor(context.Background(), uuid.New(), "to@example.com", "subject", "body", "idem-key")
+	if err == nil {
+		t.Fatal("expected SMTP dial error, got nil — SMTP host is unreachable")
+	}
+	if errors.Is(err, ErrNoResendAPIKey) {
+		t.Errorf("SMTP-configured caller fell through to Resend: %v", err)
+	}
+	// The wrapped error from sendViaSMTPWith should mention smtp/dial/lookup;
+	// a placeholder stub message will not.
+	emsg := strings.ToLower(err.Error())
+	if !strings.Contains(emsg, "smtp") && !strings.Contains(emsg, "dial") && !strings.Contains(emsg, "lookup") && !strings.Contains(emsg, "no such host") {
+		t.Errorf("error %q does not look like a network-layer SMTP failure — routing may not have taken the SMTP branch", err.Error())
+	}
+}
+
+func TestSendOneEmailFor_ResolvesConfigForGivenUserNotOwnerID(t *testing.T) {
+	// The Sender was constructed with one ownerID but the method takes
+	// an explicit userID; the config-store call MUST use the explicit
+	// one. Otherwise the dispatcher would always read the boot-time
+	// owner's SMTP/Resend, which is wrong in multi-tenant deployments.
+	ownerID := uuid.New()
+	otherUser := uuid.New()
+	var seenUserID uuid.UUID
+	cfgStore := &spyConfigStore{
+		cfg: &settingsdomain.UserConfig{},
+		onCall: func(id uuid.UUID) { seenUserID = id },
+	}
+	s := NewSender(cfgStore, ownerID, "", "from@test.com", "https://app.test",
+		"", "", "", "",
+		nil, nil, nil, nil, nil, nil)
+
+	_ = s.SendOneEmailFor(context.Background(), otherUser, "to@example.com", "subject", "body", "idem-key")
+
+	if seenUserID != otherUser {
+		t.Errorf("config-store userID = %v, want %v — SendOneEmailFor must use the explicit userID, not s.ownerID (%v)", seenUserID, otherUser, ownerID)
+	}
+}
+
+// spyConfigStore records the userID passed to GetConfig.
+type spyConfigStore struct {
+	cfg    *settingsdomain.UserConfig
+	err    error
+	onCall func(uuid.UUID)
+}
+
+func (s *spyConfigStore) GetConfig(_ context.Context, id uuid.UUID) (*settingsdomain.UserConfig, error) {
+	if s.onCall != nil {
+		s.onCall(id)
+	}
+	return s.cfg, s.err
+}
+
+// TestSendPending_ConsentGate pins the outbound consent gate on the Telegram
+// path (where the mock messenger makes a successful send observable):
+// withdrawn is hard-blocked, obtained sends freely, and a cold 'none' prospect
+// still sends under the logged lawful-basis override. Table-driven (3 states).
+func TestSendPending_ConsentGate(t *testing.T) {
+	tests := []struct {
+		name      string
+		consent   func(t *testing.T, p *prospectsdomain.Prospect)
+		wantSends int
+	}{
+		{
+			name: "withdrawn is hard-blocked",
+			consent: func(t *testing.T, p *prospectsdomain.Prospect) {
+				mustConsent(t, p.WithdrawConsent("unsubscribe", time.Now().UTC()))
+			},
+			wantSends: 0,
+		},
+		{
+			name: "obtained sends freely",
+			consent: func(t *testing.T, p *prospectsdomain.Prospect) {
+				mustConsent(t, p.GrantConsent("inbound_reply", time.Now().UTC()))
+			},
+			wantSends: 1,
+		},
+		{
+			name:      "none sends as cold under lawful-basis override",
+			consent:   func(t *testing.T, p *prospectsdomain.Prospect) {},
+			wantSends: 1,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			prospectID := uuid.New()
+			msgID := uuid.New()
+			ownerID := uuid.New()
+
+			seqRepo := &mockOutboundRepository{
+				pending: []seqdomain.OutboundMessage{
+					{
+						ID:         msgID,
+						ProspectID: prospectID,
+						Channel:    seqdomain.StepChannelTelegram,
+						Status:     seqdomain.OutboundStatusApproved,
+						Body:       "hi",
+					},
+				},
+			}
+			p := &prospectsdomain.Prospect{ID: prospectID, TelegramUsername: "target_user"}
+			tt.consent(t, p)
+			prospectRepo := &mockProspectLookup{
+				prospects: map[uuid.UUID]*prospectsdomain.Prospect{prospectID: p},
+			}
+			tgRepo := &mockTelegramSessionStore{phone: "+70001234567", sessionData: []byte("session")}
+			tgMessenger := &mockTelegramMessenger{}
+			cfgStore := &mockConfigStore{cfg: &settingsdomain.UserConfig{}}
+
+			s := NewSender(cfgStore, ownerID, "", "", "",
+				"", "", "", "",
+				seqRepo, prospectRepo, tgRepo, tgMessenger, nil, nil)
+
+			if err := s.SendPending(context.Background()); err != nil {
+				t.Fatalf("expected no top-level error, got %v", err)
+			}
+
+			if len(tgMessenger.calls) != tt.wantSends {
+				t.Errorf("expected %d TG send calls, got %d", tt.wantSends, len(tgMessenger.calls))
+			}
+			if len(seqRepo.sentIDs) != tt.wantSends {
+				t.Errorf("expected %d sent, got %d", tt.wantSends, len(seqRepo.sentIDs))
+			}
+		})
+	}
+}
+
+func mustConsent(t *testing.T, err error) {
+	t.Helper()
+	if err != nil {
+		t.Fatalf("consent setup failed: %v", err)
+	}
+}
+
+// TestSendPending_SuppressionBlocksSend pins the suppression pre-check: a
+// suppressed address must not be contacted even with obtained consent. Covers
+// both a positive hit and fail-closed behavior when the check errors.
+func TestSendPending_SuppressionBlocksSend(t *testing.T) {
+	tests := []struct {
+		name        string
+		suppressed  bool
+		suppressErr error
+		wantSends   int
+	}{
+		{"address on suppression list", true, nil, 0},
+		{"check errors → fail closed", false, fmt.Errorf("suppression db down"), 0},
+		{"not suppressed → passes", false, nil, 1},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			prospectID := uuid.New()
+			msgID := uuid.New()
+			ownerID := uuid.New()
+
+			seqRepo := &mockOutboundRepository{
+				pending: []seqdomain.OutboundMessage{
+					{
+						ID:         msgID,
+						ProspectID: prospectID,
+						Channel:    seqdomain.StepChannelTelegram,
+						Status:     seqdomain.OutboundStatusApproved,
+						Body:       "hi",
+					},
+				},
+			}
+			p := &prospectsdomain.Prospect{ID: prospectID, TelegramUsername: "target_user"}
+			mustConsent(t, p.GrantConsent("inbound_reply", time.Now().UTC())) // obtained — consent alone would allow
+			prospectRepo := &mockProspectLookup{
+				prospects:   map[uuid.UUID]*prospectsdomain.Prospect{prospectID: p},
+				suppressed:  tt.suppressed,
+				suppressErr: tt.suppressErr,
+			}
+			tgRepo := &mockTelegramSessionStore{phone: "+70001234567", sessionData: []byte("session")}
+			tgMessenger := &mockTelegramMessenger{}
+			cfgStore := &mockConfigStore{cfg: &settingsdomain.UserConfig{}}
+
+			s := NewSender(cfgStore, ownerID, "", "", "",
+				"", "", "", "",
+				seqRepo, prospectRepo, tgRepo, tgMessenger, nil, nil)
+
+			if err := s.SendPending(context.Background()); err != nil {
+				t.Fatalf("expected no top-level error, got %v", err)
+			}
+
+			if len(tgMessenger.calls) != tt.wantSends {
+				t.Errorf("expected %d TG sends, got %d", tt.wantSends, len(tgMessenger.calls))
+			}
+			if len(seqRepo.sentIDs) != tt.wantSends {
+				t.Errorf("expected %d sent, got %d", tt.wantSends, len(seqRepo.sentIDs))
+			}
+		})
+	}
+}
+
+// TestUnsubscribeURL covers the per-email unsubscribe link: present and
+// round-trippable when secret+baseURL are set, absent otherwise.
+func TestUnsubscribeURL(t *testing.T) {
+	prospectID := uuid.New()
+
+	t.Run("absent without secret", func(t *testing.T) {
+		s := NewSender(nil, uuid.New(), "", "", "https://app.test", "", "", "", "", nil, nil, nil, nil, nil, nil)
+		if _, ok := s.unsubscribeURL(prospectID); ok {
+			t.Error("expected no URL without an unsubscribe secret")
+		}
+	})
+
+	t.Run("absent without base URL", func(t *testing.T) {
+		s := NewSender(nil, uuid.New(), "", "", "", "", "", "", "", nil, nil, nil, nil, nil, nil)
+		s.SetUnsubscribeSecret("sekret")
+		if _, ok := s.unsubscribeURL(prospectID); ok {
+			t.Error("expected no URL without a base URL")
+		}
+	})
+
+	t.Run("present and verifiable", func(t *testing.T) {
+		s := NewSender(nil, uuid.New(), "", "", "https://app.test/", "", "", "", "", nil, nil, nil, nil, nil, nil)
+		s.SetUnsubscribeSecret("sekret")
+		url, ok := s.unsubscribeURL(prospectID)
+		if !ok {
+			t.Fatal("expected a URL")
+		}
+		const prefix = "https://app.test/unsubscribe/"
+		if !strings.HasPrefix(url, prefix) {
+			t.Fatalf("url %q missing prefix %q", url, prefix)
+		}
+		token := strings.TrimPrefix(url, prefix)
+		got, err := prospectsdomain.ParseUnsubscribeToken(token, "sekret")
+		if err != nil {
+			t.Fatalf("token in URL must verify: %v", err)
+		}
+		if got != prospectID {
+			t.Errorf("token resolves to %s, want %s", got, prospectID)
+		}
+	})
+}
+
+func TestUnsubscribeEmailHeaders(t *testing.T) {
+	h := unsubscribeEmailHeaders("https://app.test/unsubscribe/tok")
+	if h["List-Unsubscribe"] != "<https://app.test/unsubscribe/tok>" {
+		t.Errorf("List-Unsubscribe = %q", h["List-Unsubscribe"])
+	}
+	if h["List-Unsubscribe-Post"] != "List-Unsubscribe=One-Click" {
+		t.Errorf("List-Unsubscribe-Post = %q", h["List-Unsubscribe-Post"])
+	}
+}
+
+func TestBuildSMTPMessage_IncludesExtraHeaders(t *testing.T) {
+	msg := string(buildSMTPMessage("from@x.com", "to@y.com", "Subj", "<p>hi</p>",
+		map[string]string{"List-Unsubscribe": "<https://app.test/u/tok>"}))
+
+	for _, want := range []string{
+		"From: from@x.com\r\n",
+		"To: to@y.com\r\n",
+		"Subject: Subj\r\n",
+		"List-Unsubscribe: <https://app.test/u/tok>\r\n",
+		"\r\n\r\n<p>hi</p>", // blank line separates headers from body
+	} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("message missing %q\n---\n%s", want, msg)
+		}
+	}
+}
+
+// --- Layer 3: outbound send guard wiring ---
+
+type spyGuard struct {
+	batchOK        bool
+	recipientOK    bool
+	batchSizes     []int
+	recipientCalls [][2]string
+}
+
+func (g *spyGuard) CheckBatch(size int) (bool, string) {
+	g.batchSizes = append(g.batchSizes, size)
+	if g.batchOK {
+		return true, ""
+	}
+	return false, "mass send refused"
+}
+
+func (g *spyGuard) CheckRecipient(channel, recipient string) (bool, string) {
+	g.recipientCalls = append(g.recipientCalls, [2]string{channel, recipient})
+	if g.recipientOK {
+		return true, ""
+	}
+	return false, "recipient refused"
+}
+
+func senderWithGuard(t *testing.T, guard SendGuard) (*Sender, *mockOutboundRepository) {
+	t.Helper()
+	prospectID := uuid.New()
+	seqRepo := &mockOutboundRepository{
+		pending: []seqdomain.OutboundMessage{{
+			ID: uuid.New(), ProspectID: prospectID,
+			Channel: seqdomain.StepChannelEmail, Status: seqdomain.OutboundStatusApproved,
+			Body: "<p>Hi</p>",
+		}},
+	}
+	prospectRepo := &mockProspectLookup{prospects: map[uuid.UUID]*prospectsdomain.Prospect{
+		prospectID: {ID: prospectID, Name: "Alice", Company: "Acme", Email: "alice@acme.com"},
+	}}
+	s := NewSender(&mockConfigStore{cfg: &settingsdomain.UserConfig{}}, uuid.New(), "", "from@test.com", "https://app.test",
+		"", "", "", "", seqRepo, prospectRepo, nil, nil, nil, nil)
+	s.SetSendGuard(guard)
+	return s, seqRepo
+}
+
+func TestSendPending_GuardChecksBatchAndRecipient(t *testing.T) {
+	guard := &spyGuard{batchOK: true, recipientOK: true}
+	s, _ := senderWithGuard(t, guard)
+	if err := s.SendPending(context.Background()); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(guard.batchSizes) != 1 || guard.batchSizes[0] != 1 {
+		t.Errorf("expected CheckBatch(1), got %v", guard.batchSizes)
+	}
+	if len(guard.recipientCalls) != 1 || guard.recipientCalls[0] != [2]string{"email", "alice@acme.com"} {
+		t.Errorf("expected CheckRecipient(email, alice@acme.com), got %v", guard.recipientCalls)
+	}
+}
+
+func TestSendPending_GuardRefusedBatchSkipsAll(t *testing.T) {
+	guard := &spyGuard{batchOK: false, recipientOK: true}
+	s, _ := senderWithGuard(t, guard)
+	if err := s.SendPending(context.Background()); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(guard.recipientCalls) != 0 {
+		t.Errorf("refused batch must skip the per-message loop, got recipient calls %v", guard.recipientCalls)
+	}
+}
+
+func TestSendPending_GuardRefusedRecipientSkipsSend(t *testing.T) {
+	guard := &spyGuard{batchOK: true, recipientOK: false}
+	s, seqRepo := senderWithGuard(t, guard)
+	if err := s.SendPending(context.Background()); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(seqRepo.sentIDs) != 0 {
+		t.Errorf("refused recipient must not be sent, got %d sent", len(seqRepo.sentIDs))
 	}
 }

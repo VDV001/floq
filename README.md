@@ -4,9 +4,9 @@
 
 Единый инструмент: входящие лиды + холодный аутрич + AI-мозг.
 
-[![Version](https://img.shields.io/badge/version-0.6.0-blue)](VERSION)
+[![Version](https://img.shields.io/badge/version-0.52.0-blue)](VERSION)
 [![CI](https://github.com/VDV001/floq/actions/workflows/ci.yml/badge.svg)](https://github.com/VDV001/floq/actions/workflows/ci.yml)
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![License: AGPL-3.0](https://img.shields.io/badge/license-AGPL--3.0-blue)](LICENSE)
 
 ---
 
@@ -186,10 +186,10 @@ floq/
 │   │   ├── config/                  # Чтение .env
 │   │   ├── db/                      # TxManager, транзакции
 │   │   └── httputil/                # JSON-ответы, контекст запроса
-│   └── migrations/                  # 16 SQL-миграций (up + down)
+│   └── migrations/                  # 40 SQL-миграций (up + down)
 ├── frontend/
-│   ├── src/app/                     # 11 страниц (App Router)
-│   ├── src/components/              # 18+ компонентов (shadcn/ui)
+│   ├── src/app/                     # 13+ страниц (App Router)
+│   ├── src/components/              # 30+ компонентов (shadcn/ui)
 │   └── src/lib/api.ts               # API-клиент
 ├── docker-compose.yml
 ├── .env.example
@@ -275,12 +275,15 @@ cd backend
 go test -race ./...
 ```
 
+Фронтенд-тесты следуют конвенции `vi.stubGlobal('fetch')` для контрактов api и
+`vi.mock('@/lib/api')` для UI-тестов — подробности в [`frontend/TESTING.md`](frontend/TESTING.md).
+
 ### Добавить миграцию
 
 ```bash
-# Создать файлы миграции
-touch backend/migrations/017_описание.up.sql
-touch backend/migrations/017_описание.down.sql
+# Создать файлы миграции (следующий свободный номер — 041)
+touch backend/migrations/041_описание.up.sql
+touch backend/migrations/041_описание.down.sql
 ```
 
 Миграции применяются автоматически при старте сервера.
@@ -296,4 +299,10 @@ npm run lint
 
 ## Лицензия
 
-[MIT](LICENSE)
+Copyright © 2026 Daniil Vdovin.
+
+Этот проект лицензирован под **GNU Affero General Public License v3.0** — см. файл [LICENSE](LICENSE).
+
+Если вы модифицируете код и предоставляете его как сетевой сервис, вы обязаны опубликовать исходный код ваших изменений под той же лицензией.
+
+Для коммерческого использования без ограничений AGPL — свяжитесь с автором для получения коммерческой лицензии.

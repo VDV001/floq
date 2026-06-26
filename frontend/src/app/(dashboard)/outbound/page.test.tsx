@@ -16,17 +16,6 @@ vi.mock("next/link", () => ({
   ),
 }));
 
-vi.mock("@/components/ui/switch", () => ({
-  Switch: ({ checked, onCheckedChange, ...props }: { checked: boolean; onCheckedChange: (v: boolean) => void; [key: string]: unknown }) => (
-    <button
-      role="switch"
-      aria-checked={checked}
-      onClick={() => onCheckedChange?.(!checked)}
-      {...props}
-    />
-  ),
-}));
-
 const mockQueue = [
   {
     id: "msg-1",
@@ -74,6 +63,7 @@ vi.mock("@/lib/api", () => ({
     approveMessage: vi.fn(),
     rejectMessage: vi.fn(),
     editMessage: vi.fn(),
+    getSettings: vi.fn(),
   },
 }));
 
@@ -85,6 +75,7 @@ describe("OutboundPage", () => {
     vi.mocked(api.getOutboundQueue).mockResolvedValue(mockQueue as OutboundMessage[]);
     vi.mocked(api.getOutboundSent).mockResolvedValue(mockSent as OutboundMessage[]);
     vi.mocked(api.getOutboundStats).mockResolvedValue(mockStats as OutboundStats);
+    vi.mocked(api.getSettings).mockResolvedValue({ auto_send: false } as Awaited<ReturnType<typeof api.getSettings>>);
   });
 
   it("renders page header", async () => {
@@ -138,5 +129,18 @@ describe("OutboundPage", () => {
     await waitFor(() => {
       expect(screen.getByText("Нет сообщений в очереди")).toBeInTheDocument();
     });
+  });
+
+  it("shows autopilot status (read-only) with a link to configure it in Automations", async () => {
+    vi.mocked(api.getSettings).mockResolvedValue({ auto_send: true } as Awaited<ReturnType<typeof api.getSettings>>);
+
+    render(<OutboundPage />);
+
+    // Status badge reflects the setting; the control itself lives in Automations.
+    await waitFor(() => {
+      expect(screen.getByText("Вкл")).toBeInTheDocument();
+    });
+    const link = screen.getByRole("link", { name: /Настроить/ });
+    expect(link).toHaveAttribute("href", "/automations");
   });
 });

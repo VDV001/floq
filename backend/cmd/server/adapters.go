@@ -2,19 +2,35 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"log/slog"
+	"time"
 
 	"github.com/daniil/floq/internal/ai"
+	"github.com/daniil/floq/internal/ai/security"
 	"github.com/daniil/floq/internal/chat"
 	"github.com/daniil/floq/internal/db"
 	"github.com/daniil/floq/internal/inbox"
+	"github.com/daniil/floq/internal/integrations/onec"
+	onecdomain "github.com/daniil/floq/internal/integrations/onec/domain"
 	"github.com/daniil/floq/internal/leads"
 	leadsdomain "github.com/daniil/floq/internal/leads/domain"
+	"github.com/daniil/floq/internal/outbound"
 	"github.com/daniil/floq/internal/prospects"
 	prospectsdomain "github.com/daniil/floq/internal/prospects/domain"
+	sequencesdomain "github.com/daniil/floq/internal/sequences/domain"
 	settingsdomain "github.com/daniil/floq/internal/settings/domain"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
+
+// Compile-time check that *leads.UseCase satisfies the structural
+// port inbox.LeadOwnershipChecker. Pinned here so a future signature
+// drift on leads.UseCase.OwnsLead breaks the build at the wiring
+// edge instead of silently breaking the structural conformance
+// inbox.RegisterPendingReplyRoutes relies on.
+var _ inbox.LeadOwnershipChecker = (*leads.UseCase)(nil)
 
 // --- LeadChecker adapter (prospects → leads boundary) ---
 
@@ -92,7 +108,24 @@ func (a *prospectRepoAdapter) ConvertToLead(ctx context.Context, prospectID, lea
 		if err := p.MarkConvertedToLead(leadID); err != nil {
 			return fmt.Errorf("convert to lead: %w", err)
 		}
-		return a.repo.ConvertToLead(txCtx, p.ID, leadID)
+		if err := a.repo.ConvertToLead(txCtx, p.ID, leadID); err != nil {
+			return err
+		}
+		// An inbound reply is the prospect engaging with us — the legitimate
+		// basis for contact. Record obtained consent in the same transaction so
+		// future outbound to them needs no cold-contact override.
+		//
+		// Withdrawal is the absolute red line: a prospect who opted out and then
+		// writes (about anything) must NOT be silently resurrected to obtained.
+		// Lifting a withdrawal is a deliberate fresh opt-in (the manual toggle),
+		// never an automatic side effect of a reply.
+		if p.Consent.Status == prospectsdomain.ConsentStatusWithdrawn {
+			return nil
+		}
+		if err := p.GrantConsent(prospectsdomain.ConsentSourceInboundReply, time.Now().UTC()); err != nil {
+			return fmt.Errorf("grant inbound consent: %w", err)
+		}
+		return a.repo.UpdateConsent(txCtx, p.ID, p.Consent)
 	})
 }
 
@@ -145,6 +178,61 @@ func (a *inboxLeadRepoAdapter) UpdateLeadStatus(ctx context.Context, id uuid.UUI
 	return a.repo.UpdateLeadStatus(ctx, id, leadsdomain.LeadStatus(status))
 }
 
+// UnarchiveLead resurfaces an archived lead on re-engagement. It delegates to
+// the guarded SetLeadArchived(nil), which only clears the flag when the lead is
+// actually archived; a no-op (ErrNotArchived, e.g. the lead was never archived
+// or a concurrent inbound already resurfaced it) is benign on this path and
+// swallowed so a normal inbound message never fails over it.
+func (a *inboxLeadRepoAdapter) UnarchiveLead(ctx context.Context, id uuid.UUID) error {
+	if err := a.repo.SetLeadArchived(ctx, id, nil); err != nil && !errors.Is(err, leadsdomain.ErrNotArchived) {
+		return err
+	}
+	return nil
+}
+
+// --- ReplyTarget adapter (inbox reply-dispatch → leads boundary) ---
+//
+// leadReplyTargetAdapter resolves the channel-native destination (Telegram
+// chat id / email address) for an approved reply by lead id, mapping a
+// leads-context Lead onto inbox.ReplyTarget. It is the seam that lets the
+// inbox reply dispatchers stay free of the leads domain: the dispatchers
+// depend on inbox.ReplyTargetLookup, and this composition-root adapter is
+// the only place that knows both vocabularies.
+
+type leadReplyTargetSource interface {
+	GetLead(ctx context.Context, id uuid.UUID) (*leadsdomain.Lead, error)
+}
+
+type leadReplyTargetAdapter struct {
+	leads leadReplyTargetSource
+}
+
+func newLeadReplyTargetAdapter(leads leadReplyTargetSource) inbox.ReplyTargetLookup {
+	return &leadReplyTargetAdapter{leads: leads}
+}
+
+// LookupReplyTarget maps a found lead onto its reply destination. A missing
+// lead returns (nil, nil) so the inbox dispatcher surfaces its own clear
+// "lead not found" error rather than learning the leads-domain semantics; a
+// lookup error propagates unchanged so the usecase keeps the row Approved.
+func (a *leadReplyTargetAdapter) LookupReplyTarget(ctx context.Context, leadID uuid.UUID) (*inbox.ReplyTarget, error) {
+	lead, err := a.leads.GetLead(ctx, leadID)
+	if err != nil {
+		return nil, err
+	}
+	if lead == nil {
+		return nil, nil
+	}
+	return &inbox.ReplyTarget{
+		TelegramChatID: lead.TelegramChatID,
+		EmailAddress:   lead.EmailAddress,
+	}, nil
+}
+
+// Compile-time check that the adapter satisfies the inbox port so signature
+// drift breaks the build at the wiring edge.
+var _ inbox.ReplyTargetLookup = (*leadReplyTargetAdapter)(nil)
+
 // --- InboxAI adapter (inbox → ai boundary) ---
 
 type inboxAIAdapter struct {
@@ -172,6 +260,40 @@ func (a *inboxAIAdapter) Qualify(ctx context.Context, contactName, channel, firs
 
 func (a *inboxAIAdapter) ProviderName() string {
 	return a.client.ProviderName()
+}
+
+// --- InboxInputClassifier adapter (inbox → ai/security boundary) ---
+//
+// Adapts security.InputFirewall to the inbox.InputClassifier port so the
+// inbox context can stamp a reply's InputSeverity without importing
+// internal/ai/security. The severity-ladder translation lives here, at the
+// boundary — the only place that legitimately knows both vocabularies.
+
+type inboxInputClassifier struct {
+	firewall *security.InputFirewall
+}
+
+func newInboxInputClassifier(firewall *security.InputFirewall) inbox.InputClassifier {
+	return &inboxInputClassifier{firewall: firewall}
+}
+
+func (c *inboxInputClassifier) Classify(text string) inbox.Severity {
+	return mapSecuritySeverity(c.firewall.Scan(text).Severity)
+}
+
+// mapSecuritySeverity translates the security severity ladder onto the
+// inbox one. Kept a pure function (no firewall dependency) so the mapping
+// is unit-testable in isolation; an unknown value defaults to Info, the
+// safe baseline (never escalates an unrecognised verdict to a block).
+func mapSecuritySeverity(s security.Severity) inbox.Severity {
+	switch s {
+	case security.SeverityBlock:
+		return inbox.SeverityBlock
+	case security.SeverityWarn:
+		return inbox.SeverityWarn
+	default:
+		return inbox.SeverityInfo
+	}
 }
 
 // --- InboxConfig adapter (inbox → settings boundary) ---
@@ -219,6 +341,7 @@ func toInboxLead(lead *leadsdomain.Lead) *inbox.InboxLead {
 		TelegramChatID: lead.TelegramChatID,
 		EmailAddress:   lead.EmailAddress,
 		SourceID:       lead.SourceID,
+		ArchivedAt:     lead.ArchivedAt,
 		CreatedAt:      lead.CreatedAt,
 		UpdatedAt:      lead.UpdatedAt,
 	}
@@ -239,6 +362,7 @@ func fromInboxLead(lead *inbox.InboxLead) *leadsdomain.Lead {
 		TelegramChatID: lead.TelegramChatID,
 		EmailAddress:   lead.EmailAddress,
 		SourceID:       lead.SourceID,
+		ArchivedAt:     lead.ArchivedAt,
 		CreatedAt:      lead.CreatedAt,
 		UpdatedAt:      lead.UpdatedAt,
 	}
@@ -430,3 +554,387 @@ func (a *chatAIAdapter) ProviderName() string {
 	return a.client.ProviderName()
 }
 
+// --- IdentityLinker adapter (inbox + prospects → leads-identity boundary) ---
+
+// identityLinkerAdapter bridges the narrow IdentityLinker ports the
+// inbox + prospects contexts expose to the leads-context machinery.
+// Both LinkLeadToIdentity and LinkProspectToIdentity route through one
+// resolver, so a lead and a prospect that share an identifier collapse
+// to the same Identity row.
+type identityLinkerAdapter struct {
+	resolver leadsdomain.IdentityResolver
+	repo     leadsdomain.IdentityRepository
+}
+
+// Compile-time checks: the adapter must satisfy BOTH narrow ports.
+var (
+	_ inbox.IdentityLinker     = (*identityLinkerAdapter)(nil)
+	_ prospects.IdentityLinker = (*identityLinkerAdapter)(nil)
+)
+
+func newIdentityLinkerAdapter(resolver leadsdomain.IdentityResolver, repo leadsdomain.IdentityRepository) *identityLinkerAdapter {
+	return &identityLinkerAdapter{resolver: resolver, repo: repo}
+}
+
+func (a *identityLinkerAdapter) LinkLeadToIdentity(ctx context.Context, userID, leadID uuid.UUID, email, phone, telegramUsername string) error {
+	id, err := a.resolver.Resolve(ctx, userID, email, phone, telegramUsername)
+	if err != nil {
+		return fmt.Errorf("resolve identity for lead: %w", err)
+	}
+	return a.repo.LinkLead(ctx, leadID, id.ID)
+}
+
+func (a *identityLinkerAdapter) LinkProspectToIdentity(ctx context.Context, userID, prospectID uuid.UUID, email, phone, telegramUsername string) error {
+	id, err := a.resolver.Resolve(ctx, userID, email, phone, telegramUsername)
+	if err != nil {
+		return fmt.Errorf("resolve identity for prospect: %w", err)
+	}
+	return a.repo.LinkProspect(ctx, prospectID, id.ID)
+}
+
+// --- SQL BackfillSource for IdentityBackfill ---
+
+// sqlBackfillSource feeds IdentityBackfill from the legacy leads +
+// prospects tables. Queries are intentionally simple full scans
+// scoped by `... IS NOT NULL` / non-empty filters — backfill is a
+// one-shot startup job, not a hot path.
+type sqlBackfillSource struct {
+	pool *pgxpool.Pool
+}
+
+var _ leads.BackfillSource = (*sqlBackfillSource)(nil)
+
+func newSQLBackfillSource(pool *pgxpool.Pool) *sqlBackfillSource {
+	return &sqlBackfillSource{pool: pool}
+}
+
+func (s *sqlBackfillSource) LeadsForBackfill(ctx context.Context) ([]leads.LeadIdentifierRow, error) {
+	rows, err := s.pool.Query(ctx,
+		`SELECT id, user_id, COALESCE(email_address, '')
+		 FROM leads
+		 WHERE email_address IS NOT NULL AND email_address <> ''`)
+	if err != nil {
+		return nil, fmt.Errorf("backfill source: query leads: %w", err)
+	}
+	defer rows.Close()
+	var out []leads.LeadIdentifierRow
+	for rows.Next() {
+		var r leads.LeadIdentifierRow
+		if err := rows.Scan(&r.LeadID, &r.UserID, &r.Email); err != nil {
+			return nil, fmt.Errorf("backfill source: scan lead: %w", err)
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+func (s *sqlBackfillSource) ProspectsForBackfill(ctx context.Context) ([]leads.ProspectIdentifierRow, error) {
+	rows, err := s.pool.Query(ctx,
+		`SELECT id, user_id, email, phone, telegram_username
+		 FROM prospects
+		 WHERE email <> '' OR phone <> '' OR telegram_username <> ''`)
+	if err != nil {
+		return nil, fmt.Errorf("backfill source: query prospects: %w", err)
+	}
+	defer rows.Close()
+	var out []leads.ProspectIdentifierRow
+	for rows.Next() {
+		var r leads.ProspectIdentifierRow
+		if err := rows.Scan(&r.ProspectID, &r.UserID, &r.Email, &r.Phone, &r.TelegramUsername); err != nil {
+			return nil, fmt.Errorf("backfill source: scan prospect: %w", err)
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+// pendingReplyCounterAdapter bridges inbox.PendingReplyRepository to
+// leads.PendingReplyCounter so the leads inbox-list view can render
+// the badge count without the leads context importing the inbox
+// package directly.
+type pendingReplyCounterAdapter struct {
+	repo inbox.PendingReplyRepository
+}
+
+func newPendingReplyCounterAdapter(repo inbox.PendingReplyRepository) *pendingReplyCounterAdapter {
+	return &pendingReplyCounterAdapter{repo: repo}
+}
+
+func (a *pendingReplyCounterAdapter) CountPendingByUser(ctx context.Context, userID uuid.UUID) (map[uuid.UUID]int, error) {
+	return a.repo.CountPendingByUser(ctx, userID)
+}
+
+// inboxEmailSenderAdapter bridges outbound.Sender to inbox.EmailSender
+// so the email HITL dispatcher can dispatch approved replies through
+// the same SMTP/Resend machinery used by the outbound sequence
+// pipeline, without inbox having to import outbound directly.
+//
+// Idempotency caveat — empty key is passed to SendOneEmailFor. That
+// covers the WITHIN-CALL retry loop in dispatchToResend (the loop
+// reuses the same empty key across attempts, so a transient 5xx is
+// safe to retry — Resend ignores the absent header consistently
+// across attempts). It does NOT cover the BETWEEN-CALL case where
+// an operator double-Approves: each Approve produces a fresh HTTP
+// request with no Idempotency-Key, so Resend cannot dedup. The
+// usecase optimistic-lock (status=pending) blocks the second
+// Approve from running unless the first crashed pre-Update, which
+// is a narrow race. Threading pr.ID.String() through the port is
+// the obvious tightening when the race shows up in practice.
+type inboxEmailSenderAdapter struct {
+	sender *outbound.Sender
+}
+
+func newInboxEmailSenderAdapter(sender *outbound.Sender) *inboxEmailSenderAdapter {
+	return &inboxEmailSenderAdapter{sender: sender}
+}
+
+func (a *inboxEmailSenderAdapter) SendEmail(ctx context.Context, userID uuid.UUID, to, subject, body string) error {
+	return a.sender.SendOneEmailFor(ctx, userID, to, subject, body, "")
+}
+
+// Compile-time check that the adapter satisfies inbox.EmailSender so
+// signature drift on the port breaks the build at the wiring edge.
+var _ inbox.EmailSender = (*inboxEmailSenderAdapter)(nil)
+
+// --- 1C EventApplier adapter (onec → leads/prospects boundary) ---
+//
+// Implements onec.EventApplier so the onec context never imports leads or
+// prospects directly. Each handler resolves the Floq entity by the
+// counterparty email extracted from the 1C payload. Actions that target an
+// existing entity (payment/order/shipment) no-op when no lead matches or when
+// the lead's state machine forbids the transition — surfaced as a log line, not
+// an error, since a 1C webhook must not be failed for a benign mismatch.
+// counterparty-created upserts a prospect.
+//
+// Dependencies are narrow interfaces (not concrete *leads/*prospects types) so
+// the routing/transition logic is unit-testable with fakes.
+type onecLeadLookup interface {
+	GetLeadByEmailAddress(ctx context.Context, userID uuid.UUID, email string) (*leadsdomain.Lead, error)
+}
+type onecLeadMover interface {
+	UpdateStatus(ctx context.Context, id uuid.UUID, status string) error
+}
+type onecProspectStore interface {
+	FindByEmail(ctx context.Context, userID uuid.UUID, email string) (*prospectsdomain.Prospect, error)
+	CreateProspect(ctx context.Context, input prospects.CreateProspectInput) (*prospectsdomain.Prospect, error)
+}
+
+type onecApplierAdapter struct {
+	leadLookup onecLeadLookup
+	leadMover  onecLeadMover
+	prospects  onecProspectStore
+	logger     *slog.Logger
+}
+
+func newOnecApplierAdapter(leadLookup onecLeadLookup, leadMover onecLeadMover, prospectStore onecProspectStore, logger *slog.Logger) *onecApplierAdapter {
+	return &onecApplierAdapter{leadLookup: leadLookup, leadMover: leadMover, prospects: prospectStore, logger: logger}
+}
+
+// HandlePayment: counterparty paid → the deal is won.
+func (a *onecApplierAdapter) HandlePayment(ctx context.Context, userID uuid.UUID, email string) error {
+	return a.moveLeadByEmail(ctx, userID, email, leadsdomain.StatusWon)
+}
+
+// HandleOrderStatus: order moved → mark the lead as in active conversation.
+func (a *onecApplierAdapter) HandleOrderStatus(ctx context.Context, userID uuid.UUID, email string) error {
+	return a.moveLeadByEmail(ctx, userID, email, leadsdomain.StatusInConversation)
+}
+
+// HandleShipment: goods shipped → flag the lead for follow-up.
+func (a *onecApplierAdapter) HandleShipment(ctx context.Context, userID uuid.UUID, email string) error {
+	return a.moveLeadByEmail(ctx, userID, email, leadsdomain.StatusFollowup)
+}
+
+// moveLeadByEmail transitions the lead matched by email to target, skipping
+// benignly when there is no match or the transition is illegal for the lead's
+// current state. The legality decision belongs to the domain
+// (Lead.TransitionTo), not this adapter: we attempt the move and swallow only
+// the benign ErrInvalidTransition sentinel, surfaced as a log line — a 1C
+// webhook must not be failed for a state mismatch. Any other error propagates.
+func (a *onecApplierAdapter) moveLeadByEmail(ctx context.Context, userID uuid.UUID, email string, target leadsdomain.LeadStatus) error {
+	if email == "" {
+		return nil
+	}
+	lead, err := a.leadLookup.GetLeadByEmailAddress(ctx, userID, email)
+	if err != nil {
+		return err
+	}
+	if lead == nil {
+		a.logger.Info("onec: no lead for counterparty email; action skipped", "target", target.String())
+		return nil
+	}
+	if err := a.leadMover.UpdateStatus(ctx, lead.ID, target.String()); err != nil {
+		// Benign outcomes for a 1C webhook: the lead's state machine forbids
+		// this edge, or the lead vanished between the email lookup and the
+		// update (a concurrent delete). Neither is a state the webhook should
+		// fail on — skip with a log line. Anything else propagates.
+		if errors.Is(err, leadsdomain.ErrInvalidTransition) || errors.Is(err, leadsdomain.ErrLeadNotFound) {
+			a.logger.Info("onec: lead action skipped",
+				"lead_id", lead.ID, "to", target.String(), "reason", err)
+			return nil
+		}
+		return err
+	}
+	return nil
+}
+
+// HandleCounterpartyCreated upserts a prospect for a new 1C counterparty. An
+// existing prospect (matched by email) is left untouched; a missing name falls
+// back to the email so the prospect invariant (non-empty name) holds.
+func (a *onecApplierAdapter) HandleCounterpartyCreated(ctx context.Context, userID uuid.UUID, email, name, company string) error {
+	if email == "" {
+		return nil
+	}
+	existing, err := a.prospects.FindByEmail(ctx, userID, email)
+	if err != nil {
+		return err
+	}
+	if existing != nil {
+		return nil
+	}
+	if name == "" {
+		name = email
+	}
+	_, err = a.prospects.CreateProspect(ctx, prospects.CreateProspectInput{
+		UserID:  userID,
+		Name:    name,
+		Company: company,
+		Email:   email,
+	})
+	return err
+}
+
+// Compile-time check that the adapter satisfies onec.EventApplier.
+var _ onec.EventApplier = (*onecApplierAdapter)(nil)
+
+// --- 1C qualification observer (leads → onec outbound boundary) ---
+//
+// Implements leadsdomain.QualificationObserver so the leads context can fire a
+// post-qualification side-effect without importing onec. It translates a
+// qualified Lead into a CounterpartyDraft and pushes it to 1C. All failures are
+// swallowed (logged) — qualification must never fail because the 1C push did.
+// counterpartyPusher is the narrow slice of the onec outbound use case this
+// adapter needs — kept an interface (not the concrete *onec.OutboundUseCase) so
+// the adapter's branching and goroutine can be unit-tested with a fake.
+type counterpartyPusher interface {
+	PushCounterparty(ctx context.Context, userID uuid.UUID, draft *onecdomain.CounterpartyDraft) error
+}
+
+type onecQualificationAdapter struct {
+	outbound counterpartyPusher
+	logger   *slog.Logger
+}
+
+func newOnecQualificationAdapter(outbound counterpartyPusher, logger *slog.Logger) *onecQualificationAdapter {
+	return &onecQualificationAdapter{outbound: outbound, logger: logger}
+}
+
+// onecPushTimeout bounds the detached counterparty push (HTTP to 1C with
+// retries) independently of the request that triggered qualification.
+const onecPushTimeout = 35 * time.Second
+
+// OnLeadQualified builds a counterparty draft from the lead and pushes it to 1C.
+// A lead with neither name nor email cannot become a counterparty — skipped.
+//
+// The push runs in a detached goroutine on a fresh background context for two
+// distinct reasons:
+//
+//  1. Latency/cancellation isolation (the reason for detaching from the REQUEST
+//     context): a slow 1C must not block the user's /qualify call, and a client
+//     disconnect must not cancel the push mid-flight — which would lose even the
+//     'error' ledger entry the push records.
+//  2. Not bound to the APP-lifecycle context: like the outbound email cron
+//     goroutine, an in-flight push is not awaited on server shutdown, so a push
+//     started inside the shutdown window can be lost. This is a deliberate
+//     trade-off — outbound pushes lost to shutdown (or any gap) are exactly what
+//     the scheduled reconciliation (#109) re-applies idempotently.
+func (a *onecQualificationAdapter) OnLeadQualified(_ context.Context, lead *leadsdomain.Lead) {
+	email := ""
+	if lead.EmailAddress != nil {
+		email = *lead.EmailAddress
+	}
+	draft, err := onecdomain.NewCounterpartyDraft(lead.ContactName, email, lead.Company)
+	if err != nil {
+		a.logger.Info("onec: qualified lead has no name/email; counterparty push skipped", "lead_id", lead.ID)
+		return
+	}
+	userID, leadID := lead.UserID, lead.ID
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), onecPushTimeout)
+		defer cancel()
+		if err := a.outbound.PushCounterparty(ctx, userID, draft); err != nil {
+			a.logger.Warn("onec: counterparty push to 1C failed", "lead_id", leadID, "err", err)
+		}
+	}()
+}
+
+// Compile-time check that the adapter satisfies the leads observer port.
+var _ leadsdomain.QualificationObserver = (*onecQualificationAdapter)(nil)
+
+// queueDepthAdapter bridges the inbox pending-reply repository to the
+// metrics package's QueueDepthSource port, so the metrics context polls
+// queue depth without importing inbox (cross-context wiring lives here,
+// at the composition root).
+type queueDepthAdapter struct {
+	repo *inbox.PendingReplyRepo
+}
+
+func (a queueDepthAdapter) QueueDepths(ctx context.Context) (map[string]int, error) {
+	return a.repo.CountPendingByKind(ctx)
+}
+
+// emailConfigCheckerAdapter satisfies sequencesdomain.EmailConfigChecker. It
+// resolves the user's mailer credentials with DB-then-env precedence (the same
+// ResolveConfig fallback the outbound sender uses) and delegates the
+// "is email set up" decision to settingsdomain.IsEmailConfigured, so that rule
+// lives in the settings context, not here. Cross-context wiring
+// (settings -> sequences) is the only thing this root adapter owns.
+type emailConfigCheckerAdapter struct {
+	store interface {
+		GetConfig(ctx context.Context, userID uuid.UUID) (*settingsdomain.UserConfig, error)
+	}
+	envResendKey    string
+	envSMTPHost     string
+	envSMTPUser     string
+	envSMTPPassword string
+}
+
+func (a emailConfigCheckerAdapter) IsEmailConfigured(ctx context.Context, userID uuid.UUID) error {
+	cfg, err := a.store.GetConfig(ctx, userID)
+	if err != nil {
+		return fmt.Errorf("email config check: %w", err)
+	}
+	if settingsdomain.IsEmailConfigured(
+		settingsdomain.ResolveConfig(cfg.ResendAPIKey, a.envResendKey),
+		settingsdomain.ResolveConfig(cfg.SMTPHost, a.envSMTPHost),
+		settingsdomain.ResolveConfig(cfg.SMTPUser, a.envSMTPUser),
+		settingsdomain.ResolveConfig(cfg.SMTPPassword, a.envSMTPPassword),
+	) {
+		return nil
+	}
+	return sequencesdomain.ErrEmailNotConfigured
+}
+
+// autopilotCheckerAdapter satisfies sequencesdomain.AutopilotChecker. It reads
+// the user's AutoSend flag from the settings store; when set, sequence launch
+// auto-approves queued messages so the async sender dispatches them without a
+// manual approval step. A read error propagates so the launch fails rather
+// than guessing the send mode (and silently auto-sending). Cross-context
+// wiring (settings -> sequences) is the only thing this root adapter owns.
+type autopilotCheckerAdapter struct {
+	settings interface {
+		GetSettings(ctx context.Context, userID uuid.UUID) (*settingsdomain.Settings, error)
+	}
+}
+
+func (a autopilotCheckerAdapter) ResolveAutopilot(ctx context.Context, userID uuid.UUID) (sequencesdomain.AutopilotSettings, error) {
+	s, err := a.settings.GetSettings(ctx, userID)
+	if err != nil {
+		return sequencesdomain.AutopilotSettings{}, fmt.Errorf("autopilot check: %w", err)
+	}
+	delayMin := max(s.AutoSendDelayMin, 0)
+	return sequencesdomain.AutopilotSettings{
+		Enabled:   s.AutoSend,
+		SendDelay: time.Duration(delayMin) * time.Minute,
+	}, nil
+}

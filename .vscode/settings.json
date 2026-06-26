@@ -1,0 +1,30 @@
+{
+  "git.detectSubmodulesLimit": 0,
+  "git.repositoryScanMaxDepth": 0,
+
+  // --- Phantom-edit guardrails (issue #55) ---
+  //
+  // Two incidents (2026-05-17) had an exported Go function silently
+  // removed between commits, breaking the build. Root cause was never
+  // definitively pinned but narrowed to three suspects, all eliminated
+  // by this block:
+  //
+  //   1. files.autoSave: "afterDelay" (user default) → unintended
+  //      writes within ~1s of any keystroke. Force conscious saves.
+  //   2. tabnine.experimentalAutoImports (user default: true) →
+  //      AI-driven auto-rewriting of imports. Disable.
+  //   3. gopls "Refactor: Remove" lightbulb actions on save would
+  //      land silently with autosave on. Kept formatOnSave (gofmt
+  //      only — safe), explicit organize-imports stays "explicit".
+  //
+  // Override user-level settings for this workspace only.
+  "files.autoSave": "off",
+  "tabnine.experimentalAutoImports": false,
+  "[go]": {
+    "editor.formatOnSave": true,
+    "editor.defaultFormatter": "golang.go",
+    "editor.codeActionsOnSave": {
+      "source.organizeImports": "explicit"
+    }
+  }
+}

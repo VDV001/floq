@@ -99,7 +99,7 @@ ORDER BY
 func (r *Repository) CountSuggestionsForUser(ctx context.Context, userID uuid.UUID) (map[uuid.UUID]int, error) {
 	const q = `
 SELECT l.id, COUNT(p.id)
-FROM leads l
+FROM active_leads l
 JOIN prospects p ON
      p.user_id = l.user_id
  AND p.status <> 'converted'

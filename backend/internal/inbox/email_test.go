@@ -3,10 +3,13 @@ package inbox
 import (
 	"context"
 	"errors"
+	"log/slog"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/daniil/floq/internal/inbox/attachments"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -129,6 +132,7 @@ func newTestEmailPoller(repo LeadRepository, prospectRepo ProspectRepository, se
 		seqRepo:      seqRepo,
 		aiClient:     aiClient,
 		ownerID:      ownerID,
+		logger:       slog.Default(),
 	}
 }
 
@@ -211,6 +215,118 @@ func TestExtractTextBody_RawFallback(t *testing.T) {
 }
 
 // =============================================
+// processEmail with attachment analyzer
+// =============================================
+
+// stubVisionClient is a minimal VisionClient that returns a canned OCR
+// string. Lives in email_test.go because it's only used by the analyser
+// wiring tests; promote to a shared helper if a second consumer appears.
+type stubVisionClient struct {
+	resp string
+	err  error
+}
+
+func (s *stubVisionClient) AnalyzeImage(_ context.Context, _ []byte, _, _ string) (string, error) {
+	return s.resp, s.err
+}
+
+func TestProcessEmail_WithAnalyzer_AppendsAttachmentTextToQualify(t *testing.T) {
+	repo := newEmailMockLeadRepo()
+	prospectRepo := newEmailMockProspectRepo()
+	seqRepo := newMockSequenceRepo()
+	aiClient := &mockAIQualifier{result: &QualificationResult{Score: 5}}
+
+	vc := &stubVisionClient{resp: "OCR: backlog item — fix login"}
+	analyzer := attachments.New(vc)
+
+	poller := NewEmailPoller(nil, uuid.New(), "", "", "", "", repo, prospectRepo, seqRepo, aiClient, nil,
+		WithAttachmentAnalyzer(analyzer))
+
+	atts := []attachments.Attachment{
+		{Filename: "shot.png", ContentType: "image/png", Data: []byte("png-bytes")},
+	}
+	poller.processEmail(context.Background(), "Alice", "alice@example.com", "Email body text", atts)
+	waitQualifyDone(t, &repo.mockLeadRepo)
+
+	got := aiClient.lastQualifyInput()
+	assert.Contains(t, got, "Email body text", "qualifier input must contain the email body")
+	assert.Contains(t, got, "[Вложение: shot.png]", "qualifier input must label the attachment section")
+	assert.Contains(t, got, "OCR: backlog item", "qualifier input must contain the analyser's extracted text")
+
+	// lead.FirstMessage стая = body, без вложений (ephemeral context only)
+	require.Len(t, repo.mockLeadRepo.leads, 1)
+	assert.Equal(t, "Email body text", repo.mockLeadRepo.leads[0].FirstMessage)
+}
+
+func TestProcessEmail_WithAnalyzer_SkippedAttachmentNotAppended(t *testing.T) {
+	repo := newEmailMockLeadRepo()
+	prospectRepo := newEmailMockProspectRepo()
+	seqRepo := newMockSequenceRepo()
+	aiClient := &mockAIQualifier{result: &QualificationResult{Score: 5}}
+
+	// Unsupported MIME type ⇒ analyser skips, qualify-context stays
+	// equal to the body alone.
+	analyzer := attachments.New(&stubVisionClient{})
+	poller := NewEmailPoller(nil, uuid.New(), "", "", "", "", repo, prospectRepo, seqRepo, aiClient, nil,
+		WithAttachmentAnalyzer(analyzer))
+
+	atts := []attachments.Attachment{
+		{Filename: "weird.docx", ContentType: "application/vnd.openxmlformats", Data: []byte("docx")},
+	}
+	poller.processEmail(context.Background(), "Alice", "alice@example.com", "Body only", atts)
+	waitQualifyDone(t, &repo.mockLeadRepo)
+
+	got := aiClient.lastQualifyInput()
+	assert.Equal(t, "Body only", got, "skipped attachment must not pollute qualify input")
+}
+
+// =============================================
+// extractAttachments tests
+// =============================================
+
+func TestExtractAttachments_PicksUpPDFAndImage(t *testing.T) {
+	// Multipart/mixed with one text/plain body part plus two attachments
+	// (PDF and PNG). extractAttachments returns the two attachments;
+	// extractTextBody handles the text part separately.
+	raw := "MIME-Version: 1.0\r\n" +
+		"Content-Type: multipart/mixed; boundary=mix1\r\n\r\n" +
+		"--mix1\r\n" +
+		"Content-Type: text/plain; charset=utf-8\r\n\r\n" +
+		"Plain body\r\n" +
+		"--mix1\r\n" +
+		"Content-Type: application/pdf\r\n" +
+		"Content-Disposition: attachment; filename=\"kp.pdf\"\r\n" +
+		"Content-Transfer-Encoding: 7bit\r\n\r\n" +
+		"<pdf-bytes>\r\n" +
+		"--mix1\r\n" +
+		"Content-Type: image/png\r\n" +
+		"Content-Disposition: attachment; filename=\"screenshot.png\"\r\n" +
+		"Content-Transfer-Encoding: 7bit\r\n\r\n" +
+		"<png-bytes>\r\n" +
+		"--mix1--\r\n"
+
+	atts := extractAttachments([]byte(raw))
+	require.Len(t, atts, 2)
+	assert.Equal(t, "kp.pdf", atts[0].Filename)
+	assert.Equal(t, "application/pdf", atts[0].ContentType)
+	assert.Contains(t, string(atts[0].Data), "pdf-bytes")
+	assert.Equal(t, "screenshot.png", atts[1].Filename)
+	assert.Equal(t, "image/png", atts[1].ContentType)
+}
+
+func TestExtractAttachments_NoAttachments_ReturnsEmpty(t *testing.T) {
+	// Plain text-only email — extractAttachments returns nil/empty.
+	raw := "Content-Type: text/plain; charset=utf-8\r\n\r\nJust text"
+	atts := extractAttachments([]byte(raw))
+	assert.Empty(t, atts)
+}
+
+func TestExtractAttachments_MalformedMIME_ReturnsEmpty(t *testing.T) {
+	atts := extractAttachments([]byte("not a valid mime body"))
+	assert.Empty(t, atts)
+}
+
+// =============================================
 // processEmail tests
 // =============================================
 
@@ -227,7 +343,7 @@ func TestProcessEmail_NewLead_NoProspect(t *testing.T) {
 	ownerID := uuid.New()
 	poller := newTestEmailPoller(repo, prospectRepo, seqRepo, aiClient, ownerID)
 
-	poller.processEmail(context.Background(), "John Doe", "john@example.com", "I need a website built")
+	poller.processEmail(context.Background(), "John Doe", "john@example.com", "I need a website built", nil)
 
 	// Wait for async qualification.
 	waitQualifyDone(t, &repo.mockLeadRepo)
@@ -291,7 +407,7 @@ func TestProcessEmail_NewLead_WithProspectMatch(t *testing.T) {
 	poller := newTestEmailPoller(repo, prospectRepo, seqRepo, aiClient, ownerID)
 
 	// Use email as fromName to test name override from prospect.
-	poller.processEmail(context.Background(), "prospect@company.com", "prospect@company.com", "Interested in your service")
+	poller.processEmail(context.Background(), "prospect@company.com", "prospect@company.com", "Interested in your service", nil)
 
 	waitQualifyDone(t, &repo.mockLeadRepo)
 
@@ -341,7 +457,7 @@ func TestProcessEmail_ExistingLead_AddsMessage(t *testing.T) {
 
 	poller := newTestEmailPoller(repo, prospectRepo, seqRepo, aiClient, ownerID)
 
-	poller.processEmail(context.Background(), "Existing User", "existing@example.com", "Follow-up message")
+	poller.processEmail(context.Background(), "Existing User", "existing@example.com", "Follow-up message", nil)
 
 	// For existing leads, no async qualification — give a short moment just in case.
 	// Actually processEmail only qualifies new leads, so no waitQualifyDone needed.
@@ -384,7 +500,7 @@ func TestProcessEmail_ProspectAlreadyConverted_SkipsConversion(t *testing.T) {
 
 	poller := newTestEmailPoller(repo, prospectRepo, seqRepo, aiClient, ownerID)
 
-	poller.processEmail(context.Background(), "Someone", "converted@example.com", "Hello again")
+	poller.processEmail(context.Background(), "Someone", "converted@example.com", "Hello again", nil)
 
 	waitQualifyDone(t, &repo.mockLeadRepo)
 
@@ -426,7 +542,7 @@ func TestProcessEmail_NewLead_ProspectNameNotOverriddenWhenFromNameDiffers(t *te
 	poller := newTestEmailPoller(repo, prospectRepo, seqRepo, aiClient, ownerID)
 
 	// fromName != fromEmail, so prospect name should NOT override.
-	poller.processEmail(context.Background(), "John D.", "john@company.com", "Hello")
+	poller.processEmail(context.Background(), "John D.", "john@company.com", "Hello", nil)
 
 	waitQualifyDone(t, &repo.mockLeadRepo)
 
@@ -450,7 +566,7 @@ func TestProcessEmail_GetLeadByEmailError(t *testing.T) {
 
 	poller := newTestEmailPoller(repo, prospectRepo, seqRepo, aiClient, ownerID)
 
-	poller.processEmail(context.Background(), "Test", "test@example.com", "Hello")
+	poller.processEmail(context.Background(), "Test", "test@example.com", "Hello", nil)
 
 	repo.mu.Lock()
 	defer repo.mu.Unlock()
@@ -470,7 +586,7 @@ func TestProcessEmail_CreateLeadError(t *testing.T) {
 
 	poller := newTestEmailPoller(repo, prospectRepo, seqRepo, aiClient, ownerID)
 
-	poller.processEmail(context.Background(), "Test", "test@example.com", "Hello")
+	poller.processEmail(context.Background(), "Test", "test@example.com", "Hello", nil)
 
 	repo.mu.Lock()
 	defer repo.mu.Unlock()
@@ -501,7 +617,7 @@ func TestProcessEmail_CreateMessageError(t *testing.T) {
 
 	poller := newTestEmailPoller(repo, prospectRepo, seqRepo, aiClient, ownerID)
 
-	poller.processEmail(context.Background(), "Existing", "err@example.com", "Follow-up")
+	poller.processEmail(context.Background(), "Existing", "err@example.com", "Follow-up", nil)
 
 	repo.mu.Lock()
 	defer repo.mu.Unlock()
@@ -519,7 +635,7 @@ func TestProcessEmail_AIQualificationError(t *testing.T) {
 
 	poller := newTestEmailPoller(repo, prospectRepo, seqRepo, aiClient, ownerID)
 
-	poller.processEmail(context.Background(), "Test", "test@example.com", "Hello")
+	poller.processEmail(context.Background(), "Test", "test@example.com", "Hello", nil)
 
 	// Give goroutine time to finish (returns early on error).
 	time.Sleep(200 * time.Millisecond)
@@ -553,7 +669,7 @@ func TestProcessEmail_ProspectConvertError(t *testing.T) {
 
 	poller := newTestEmailPoller(repo, prospectRepo, seqRepo, aiClient, ownerID)
 
-	poller.processEmail(context.Background(), "conv-err@example.com", "conv-err@example.com", "Hello")
+	poller.processEmail(context.Background(), "conv-err@example.com", "conv-err@example.com", "Hello", nil)
 
 	waitQualifyDone(t, &repo.mockLeadRepo)
 
@@ -598,7 +714,7 @@ func TestProcessEmail_NewLeadError_EmptyName(t *testing.T) {
 	poller := newTestEmailPoller(repo, prospectRepo, seqRepo, aiClient, ownerID)
 
 	// Empty fromName triggers NewInboxLead error (contactName required).
-	poller.processEmail(context.Background(), "", "empty@example.com", "Hello")
+	poller.processEmail(context.Background(), "", "empty@example.com", "Hello", nil)
 
 	repo.mu.Lock()
 	defer repo.mu.Unlock()
@@ -616,7 +732,7 @@ func TestProcessEmail_UpsertQualificationError(t *testing.T) {
 
 	poller := newTestEmailPoller(repo, prospectRepo, seqRepo, aiClient, ownerID)
 
-	poller.processEmail(context.Background(), "Test", "test@example.com", "Hello")
+	poller.processEmail(context.Background(), "Test", "test@example.com", "Hello", nil)
 
 	waitQualifyDone(t, &repo.mockLeadRepo)
 
@@ -648,7 +764,7 @@ func TestProcessEmail_UpdateLeadStatusError(t *testing.T) {
 
 	poller := newTestEmailPoller(repo, prospectRepo, seqRepo, aiClient, ownerID)
 
-	poller.processEmail(context.Background(), "Test", "test@example.com", "Hello")
+	poller.processEmail(context.Background(), "Test", "test@example.com", "Hello", nil)
 
 	waitQualifyDone(t, &repo.mockLeadRepo)
 
@@ -669,7 +785,7 @@ func TestNewEmailPoller(t *testing.T) {
 		&mockConfigStore{},
 		ownerID,
 		"imap.example.com", "993", "user@example.com", "pass",
-		repo, prospectRepo, seqRepo, aiClient,
+		repo, prospectRepo, seqRepo, aiClient, nil,
 	)
 
 	require.NotNil(t, poller)
@@ -802,4 +918,119 @@ func TestEmailPoller_Poll_ConnectionError(t *testing.T) {
 	}
 	// Should not panic or block — just logs connection error
 	poller.poll(context.Background())
+}
+
+// =============================================
+// Auto-draft (HITL) trigger tests for #53
+// =============================================
+
+type recordingProposer struct {
+	mu      sync.Mutex
+	calls   []proposerCall
+	failErr error
+}
+
+type proposerCall struct {
+	userID      uuid.UUID
+	leadID      uuid.UUID
+	channel     Channel
+	kind        PendingReplyKind
+	body        string
+	inboundText string
+}
+
+func (r *recordingProposer) Propose(_ context.Context, userID, leadID uuid.UUID, channel Channel, kind PendingReplyKind, body, inboundText string) (*PendingReply, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.calls = append(r.calls, proposerCall{userID: userID, leadID: leadID, channel: channel, kind: kind, body: body, inboundText: inboundText})
+	return nil, r.failErr
+}
+
+func (r *recordingProposer) Calls() []proposerCall {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return append([]proposerCall(nil), r.calls...)
+}
+
+func TestEmailPoller_AutoDraft_DetectCallAgreementEnqueuesPendingReply(t *testing.T) {
+	repo := newEmailMockLeadRepo()
+	prospectRepo := newEmailMockProspectRepo()
+	seqRepo := &mockSequenceRepo{}
+	aiClient := &mockAIQualifier{result: &QualificationResult{Score: 0}}
+	proposer := &recordingProposer{}
+
+	poller := newTestEmailPoller(repo, prospectRepo, seqRepo, aiClient, uuid.New())
+	poller.pendingProposer = proposer
+	poller.bookingLink = "https://cal.example/floq"
+
+	// "Yes, let's schedule a call" passes DetectCallAgreement.
+	poller.processEmail(context.Background(), "Alice", "alice@example.com", "Да, давайте созвонимся в любое удобное время", nil)
+
+	calls := proposer.Calls()
+	if len(calls) != 1 {
+		t.Fatalf("proposer called %d times, want 1 — DetectCallAgreement should have triggered auto-draft", len(calls))
+	}
+	if calls[0].channel != ChannelEmail {
+		t.Errorf("channel = %v, want %v", calls[0].channel, ChannelEmail)
+	}
+	if calls[0].kind != PendingReplyKindBookingLink {
+		t.Errorf("kind = %v, want booking_link", calls[0].kind)
+	}
+	if !strings.Contains(calls[0].body, "https://cal.example/floq") {
+		t.Errorf("body %q must include the booking link URL", calls[0].body)
+	}
+}
+
+func TestEmailPoller_AutoDraft_NoTriggerWhenBodyDoesNotMatch(t *testing.T) {
+	repo := newEmailMockLeadRepo()
+	prospectRepo := newEmailMockProspectRepo()
+	seqRepo := &mockSequenceRepo{}
+	aiClient := &mockAIQualifier{result: &QualificationResult{Score: 0}}
+	proposer := &recordingProposer{}
+
+	poller := newTestEmailPoller(repo, prospectRepo, seqRepo, aiClient, uuid.New())
+	poller.pendingProposer = proposer
+	poller.bookingLink = "https://cal.example/floq"
+
+	// Unrelated body — DetectCallAgreement should NOT match.
+	poller.processEmail(context.Background(), "Alice", "alice@example.com", "Подскажите, какие у вас расценки?", nil)
+
+	if got := len(proposer.Calls()); got != 0 {
+		t.Errorf("proposer fired %d times for unrelated body — must trigger only on DetectCallAgreement match", got)
+	}
+}
+
+func TestEmailPoller_AutoDraft_SuppressedWhenBookingLinkEmpty(t *testing.T) {
+	repo := newEmailMockLeadRepo()
+	prospectRepo := newEmailMockProspectRepo()
+	seqRepo := &mockSequenceRepo{}
+	aiClient := &mockAIQualifier{result: &QualificationResult{Score: 0}}
+	proposer := &recordingProposer{}
+
+	poller := newTestEmailPoller(repo, prospectRepo, seqRepo, aiClient, uuid.New())
+	poller.pendingProposer = proposer
+	// bookingLink intentionally empty: enqueueing the template would
+	// land an operator-approvable message with a blank URL slot.
+	poller.bookingLink = ""
+
+	poller.processEmail(context.Background(), "Alice", "alice@example.com", "Да, давайте созвонимся", nil)
+
+	if got := len(proposer.Calls()); got != 0 {
+		t.Errorf("proposer fired %d times with empty bookingLink — must suppress to avoid sending a message with a blank URL", got)
+	}
+}
+
+func TestEmailPoller_AutoDraft_SuppressedWhenNoProposerWired(t *testing.T) {
+	repo := newEmailMockLeadRepo()
+	prospectRepo := newEmailMockProspectRepo()
+	seqRepo := &mockSequenceRepo{}
+	aiClient := &mockAIQualifier{result: &QualificationResult{Score: 0}}
+
+	poller := newTestEmailPoller(repo, prospectRepo, seqRepo, aiClient, uuid.New())
+	// No proposer wired; secure-by-default behaviour is that the
+	// branch is suppressed entirely (logged warning, no instant send).
+	poller.bookingLink = "https://cal.example/floq"
+
+	// Should not panic.
+	poller.processEmail(context.Background(), "Alice", "alice@example.com", "Да, давайте созвонимся", nil)
 }

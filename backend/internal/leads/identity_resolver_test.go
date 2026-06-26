@@ -1,0 +1,288 @@
+package leads
+
+import (
+	"context"
+	"sync"
+	"testing"
+
+	"github.com/daniil/floq/internal/leads/domain"
+	"github.com/google/uuid"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+// inMemoryIdentityRepo is the test double used by identity-resolver unit
+// tests. It indexes identities by each canonical identifier so the
+// lookups exercise byte-equality (matching the SQL repo's contract).
+type inMemoryIdentityRepo struct {
+	mu             sync.Mutex
+	byEmail        map[string]*domain.Identity
+	byPhone        map[string]*domain.Identity
+	byTg           map[string]*domain.Identity
+	saved          []*domain.Identity
+	leadLinks      []identityLink
+	prospectLinks  []identityLink
+}
+
+type identityLink struct {
+	OwnerID, IdentityID uuid.UUID
+}
+
+func newInMemoryIdentityRepo() *inMemoryIdentityRepo {
+	return &inMemoryIdentityRepo{
+		byEmail: make(map[string]*domain.Identity),
+		byPhone: make(map[string]*domain.Identity),
+		byTg:    make(map[string]*domain.Identity),
+	}
+}
+
+func (r *inMemoryIdentityRepo) FindByEmail(_ context.Context, _ uuid.UUID, email string) (*domain.Identity, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.byEmail[email], nil
+}
+
+func (r *inMemoryIdentityRepo) FindByPhone(_ context.Context, _ uuid.UUID, phone string) (*domain.Identity, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.byPhone[phone], nil
+}
+
+func (r *inMemoryIdentityRepo) FindByTelegramUsername(_ context.Context, _ uuid.UUID, tg string) (*domain.Identity, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.byTg[tg], nil
+}
+
+func (r *inMemoryIdentityRepo) Save(_ context.Context, id *domain.Identity) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.saved = append(r.saved, id)
+	if id.Email != "" {
+		r.byEmail[id.Email] = id
+	}
+	if id.Phone != "" {
+		r.byPhone[id.Phone] = id
+	}
+	if id.TelegramUsername != "" {
+		r.byTg[id.TelegramUsername] = id
+	}
+	return nil
+}
+
+func (r *inMemoryIdentityRepo) LinkLead(_ context.Context, leadID, identityID uuid.UUID) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for _, l := range r.leadLinks {
+		if l.OwnerID == leadID && l.IdentityID == identityID {
+			return nil
+		}
+	}
+	r.leadLinks = append(r.leadLinks, identityLink{OwnerID: leadID, IdentityID: identityID})
+	return nil
+}
+
+func (r *inMemoryIdentityRepo) LinkProspect(_ context.Context, prospectID, identityID uuid.UUID) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for _, l := range r.prospectLinks {
+		if l.OwnerID == prospectID && l.IdentityID == identityID {
+			return nil
+		}
+	}
+	r.prospectLinks = append(r.prospectLinks, identityLink{OwnerID: prospectID, IdentityID: identityID})
+	return nil
+}
+
+func (r *inMemoryIdentityRepo) GetByLeadID(_ context.Context, leadID uuid.UUID) (*domain.Identity, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for _, l := range r.leadLinks {
+		if l.OwnerID == leadID {
+			for _, id := range r.saved {
+				if id.ID == l.IdentityID {
+					copy := *id
+					return &copy, nil
+				}
+			}
+		}
+	}
+	return nil, nil
+}
+
+func (r *inMemoryIdentityRepo) LinkedLeadIDs(_ context.Context, identityID uuid.UUID) ([]uuid.UUID, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	out := make([]uuid.UUID, 0)
+	for _, l := range r.leadLinks {
+		if l.IdentityID == identityID {
+			out = append(out, l.OwnerID)
+		}
+	}
+	return out, nil
+}
+
+// preset stores an identity in all relevant indexes without going through
+// Save (so the saved counter only tracks Resolver-driven inserts).
+func (r *inMemoryIdentityRepo) preset(id *domain.Identity) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if id.Email != "" {
+		r.byEmail[id.Email] = id
+	}
+	if id.Phone != "" {
+		r.byPhone[id.Phone] = id
+	}
+	if id.TelegramUsername != "" {
+		r.byTg[id.TelegramUsername] = id
+	}
+}
+
+func TestIdentityResolver_Resolve_CreatesNewWhenNoMatch(t *testing.T) {
+	repo := newInMemoryIdentityRepo()
+	resolver := NewIdentityResolver(repo)
+
+	userID := uuid.New()
+	id, err := resolver.Resolve(context.Background(), userID, "ALICE@Acme.COM", "+7 999 123-45-67", "@Alice")
+	require.NoError(t, err)
+	require.NotNil(t, id)
+
+	assert.Equal(t, "alice@acme.com", id.Email)
+	assert.Equal(t, "+79991234567", id.Phone)
+	assert.Equal(t, "alice", id.TelegramUsername)
+	assert.Equal(t, userID, id.UserID)
+
+	require.Len(t, repo.saved, 1, "a new identity must be persisted exactly once")
+	assert.Equal(t, id.ID, repo.saved[0].ID)
+}
+
+func TestIdentityResolver_Resolve_ReturnsExistingMatch(t *testing.T) {
+	cases := []struct {
+		name        string
+		preset      func(t *testing.T) *domain.Identity
+		inputEmail  string
+		inputPhone  string
+		inputTg     string
+		expectField string // "Email", "Phone", or "TelegramUsername"
+	}{
+		{
+			name: "match by email",
+			preset: func(t *testing.T) *domain.Identity {
+				id, err := domain.NewIdentity(uuid.New(), "alice@acme.com", "", "")
+				require.NoError(t, err)
+				return id
+			},
+			inputEmail:  "ALICE@Acme.COM",
+			expectField: "Email",
+		},
+		{
+			name: "match by phone",
+			preset: func(t *testing.T) *domain.Identity {
+				id, err := domain.NewIdentity(uuid.New(), "", "+79991234567", "")
+				require.NoError(t, err)
+				return id
+			},
+			inputPhone:  "+7 (999) 123-45-67",
+			expectField: "Phone",
+		},
+		{
+			name: "match by telegram username",
+			preset: func(t *testing.T) *domain.Identity {
+				id, err := domain.NewIdentity(uuid.New(), "", "", "alice_bot")
+				require.NoError(t, err)
+				return id
+			},
+			inputTg:     "@ALICE_BOT",
+			expectField: "TelegramUsername",
+		},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			repo := newInMemoryIdentityRepo()
+			existing := c.preset(t)
+			repo.preset(existing)
+			resolver := NewIdentityResolver(repo)
+
+			got, err := resolver.Resolve(context.Background(), uuid.New(), c.inputEmail, c.inputPhone, c.inputTg)
+			require.NoError(t, err)
+			require.NotNil(t, got)
+			assert.Equal(t, existing.ID, got.ID, "must return the pre-existing identity, not a fresh one")
+			assert.Empty(t, repo.saved, "match must not trigger Save")
+		})
+	}
+}
+
+func TestIdentityResolver_Resolve_RejectsEmptyInputs(t *testing.T) {
+	repo := newInMemoryIdentityRepo()
+	resolver := NewIdentityResolver(repo)
+
+	_, err := resolver.Resolve(context.Background(), uuid.New(), "", "", "")
+	require.ErrorIs(t, err, domain.ErrIdentityNoIdentifiers)
+	assert.Empty(t, repo.saved)
+}
+
+// TestIdentityResolver_Resolve_LookupPriority documents the deterministic
+// lookup order: email > phone > tg. For each pair of identifiers that
+// could match distinct existing identities, the higher-priority one
+// wins and the resolver does not Save a new row.
+func TestIdentityResolver_Resolve_LookupPriority(t *testing.T) {
+	cases := []struct {
+		name     string
+		winner   func(t *testing.T) *domain.Identity
+		loser    func(t *testing.T) *domain.Identity
+		email    string
+		phone    string
+		tg       string
+		winLabel string
+	}{
+		{
+			name:     "email wins over phone",
+			winner:   func(t *testing.T) *domain.Identity { return mustIdentity(t, "alice@acme.com", "", "") },
+			loser:    func(t *testing.T) *domain.Identity { return mustIdentity(t, "", "+79991234567", "") },
+			email:    "alice@acme.com",
+			phone:    "+79991234567",
+			winLabel: "email",
+		},
+		{
+			name:     "email wins over telegram",
+			winner:   func(t *testing.T) *domain.Identity { return mustIdentity(t, "alice@acme.com", "", "") },
+			loser:    func(t *testing.T) *domain.Identity { return mustIdentity(t, "", "", "alice_bot") },
+			email:    "alice@acme.com",
+			tg:       "alice_bot",
+			winLabel: "email",
+		},
+		{
+			name:     "phone wins over telegram",
+			winner:   func(t *testing.T) *domain.Identity { return mustIdentity(t, "", "+79991234567", "") },
+			loser:    func(t *testing.T) *domain.Identity { return mustIdentity(t, "", "", "alice_bot") },
+			phone:    "+79991234567",
+			tg:       "alice_bot",
+			winLabel: "phone",
+		},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			repo := newInMemoryIdentityRepo()
+			winner := c.winner(t)
+			loser := c.loser(t)
+			repo.preset(winner)
+			repo.preset(loser)
+			require.NotEqual(t, winner.ID, loser.ID)
+
+			resolver := NewIdentityResolver(repo)
+			got, err := resolver.Resolve(context.Background(), uuid.New(), c.email, c.phone, c.tg)
+			require.NoError(t, err)
+			assert.Equal(t, winner.ID, got.ID, "%s match must win", c.winLabel)
+			assert.Empty(t, repo.saved, "match must not trigger Save")
+		})
+	}
+}
+
+func mustIdentity(t *testing.T, email, phone, tg string) *domain.Identity {
+	t.Helper()
+	id, err := domain.NewIdentity(uuid.New(), email, phone, tg)
+	require.NoError(t, err)
+	return id
+}

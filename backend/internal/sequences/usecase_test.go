@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/daniil/floq/internal/ai"
 	"github.com/daniil/floq/internal/sequences/domain"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
@@ -71,6 +72,17 @@ func (m *mockRepo) UpdateSequence(_ context.Context, _ *domain.Sequence) error {
 func (m *mockRepo) DeleteSequence(_ context.Context, _ uuid.UUID) error { return m.deleteSeqErr }
 func (m *mockRepo) ListSteps(_ context.Context, _ uuid.UUID) ([]domain.SequenceStep, error) {
 	return m.steps, m.stepErr
+}
+func (m *mockRepo) GetStep(_ context.Context, stepID uuid.UUID) (*domain.SequenceStep, error) {
+	if m.stepErr != nil {
+		return nil, m.stepErr
+	}
+	for i := range m.steps {
+		if m.steps[i].ID == stepID {
+			return &m.steps[i], nil
+		}
+	}
+	return nil, nil
 }
 func (m *mockRepo) CreateStep(_ context.Context, _ *domain.SequenceStep) error {
 	return m.createStepErr
@@ -233,7 +245,7 @@ func TestLaunch_HappyPath(t *testing.T) {
 
 	uc := NewUseCase(repo, ai, pr, &mockLeadCreator{})
 
-	err := uc.Launch(context.Background(), seqID, []uuid.UUID{pid})
+	err := uc.Launch(context.Background(), uuid.Nil, seqID, []uuid.UUID{pid})
 	require.NoError(t, err)
 
 	// Should create 2 outbound messages (one per step)
@@ -258,6 +270,82 @@ func TestLaunch_HappyPath(t *testing.T) {
 	assert.Equal(t, 2, ai.calls)
 }
 
+// TestLaunch_ManualBodySkipsAI pins that a step with a hand-written body is
+// used verbatim and does NOT call the AI generator — so a launch works even
+// with no AI provider configured.
+func TestLaunch_ManualBodySkipsAI(t *testing.T) {
+	seqID := uuid.New()
+	pid := uuid.New()
+
+	repo := &mockRepo{
+		steps: []domain.SequenceStep{
+			{ID: uuid.New(), SequenceID: seqID, StepOrder: 1, DelayDays: 0, Channel: domain.StepChannelEmail, Body: "Привет, написано вручную"},
+		},
+	}
+	pr := newMockProspectReader()
+	pr.prospects[pid] = &domain.ProspectView{
+		ID: pid, UserID: uuid.New(), Name: "Alice", Company: "Acme", Title: "CEO",
+		Email: "alice@acme.com", Status: "new", VerifyStatus: "valid", IsEligibleForSequence: true,
+	}
+	// AI generator that would error if called — proves it is not invoked.
+	ai := &mockAI{err: errors.New("AI must not be called for a manual step")}
+	uc := NewUseCase(repo, ai, pr, &mockLeadCreator{})
+
+	err := uc.Launch(context.Background(), uuid.Nil, seqID, []uuid.UUID{pid})
+	require.NoError(t, err)
+	require.Len(t, repo.messages, 1)
+	assert.Equal(t, "Привет, написано вручную", repo.messages[0].Body)
+	assert.Equal(t, 0, ai.calls, "AI generator must not be called for a manual step")
+}
+
+// TestLaunch_AINotConfiguredPropagates pins the cross-layer contract the
+// handler relies on: when message generation fails because the AI provider
+// isn't configured, Launch propagates ai.ErrNotConfigured (via %w) so the
+// handler can map it to a human "connect AI" response instead of a generic 500.
+func TestLaunch_AINotConfiguredPropagates(t *testing.T) {
+	seqID := uuid.New()
+	pid := uuid.New()
+
+	repo := &mockRepo{
+		steps: []domain.SequenceStep{
+			{ID: uuid.New(), SequenceID: seqID, StepOrder: 1, DelayDays: 0, Channel: domain.StepChannelEmail, PromptHint: "intro"},
+		},
+	}
+	pr := newMockProspectReader()
+	pr.prospects[pid] = &domain.ProspectView{
+		ID: pid, UserID: uuid.New(), Name: "Alice", Company: "Acme", Title: "CEO",
+		Email: "alice@acme.com", Status: "new", VerifyStatus: "valid", IsEligibleForSequence: true,
+	}
+
+	uc := NewUseCase(repo, &mockAI{err: ai.ErrNotConfigured}, pr, &mockLeadCreator{})
+
+	err := uc.Launch(context.Background(), uuid.Nil, seqID, []uuid.UUID{pid})
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, ai.ErrNotConfigured), "expected ai.ErrNotConfigured, got %v", err)
+	// No messages should be persisted when generation fails.
+	assert.Empty(t, repo.messages)
+}
+
+// TestLaunch_EmptyProspectIDs pins that launching with no prospects is a
+// no-op, not a crash. The feedback-examples block dereferences prospectIDs[0]
+// guarded by "len(prospectIDs) > 0"; a ">= 0" boundary mutation enters that
+// block on an empty slice and panics with an index-out-of-range. Steps are
+// present so the earlier "no steps" guard passes and execution reaches the
+// boundary.
+func TestLaunch_EmptyProspectIDs(t *testing.T) {
+	seqID := uuid.New()
+	repo := &mockRepo{
+		steps: []domain.SequenceStep{
+			{ID: uuid.New(), SequenceID: seqID, StepOrder: 1, DelayDays: 0, Channel: domain.StepChannelEmail, PromptHint: "intro"},
+		},
+	}
+	uc := NewUseCase(repo, &mockAI{}, newMockProspectReader(), &mockLeadCreator{})
+
+	err := uc.Launch(context.Background(), uuid.Nil, seqID, []uuid.UUID{})
+	require.NoError(t, err)
+	assert.Empty(t, repo.messages, "no prospects → no outbound messages")
+}
+
 func TestLaunch_SkipConverted(t *testing.T) {
 	seqID := uuid.New()
 	pid := uuid.New()
@@ -278,7 +366,7 @@ func TestLaunch_SkipConverted(t *testing.T) {
 
 	uc := NewUseCase(repo, &mockAI{coldBody: "hi"}, pr, &mockLeadCreator{})
 
-	err := uc.Launch(context.Background(), seqID, []uuid.UUID{pid})
+	err := uc.Launch(context.Background(), uuid.Nil, seqID, []uuid.UUID{pid})
 	require.NoError(t, err)
 
 	// No messages should be created for converted prospects
@@ -306,7 +394,7 @@ func TestLaunch_SkipOptedOut(t *testing.T) {
 
 	uc := NewUseCase(repo, &mockAI{coldBody: "hi"}, pr, &mockLeadCreator{})
 
-	err := uc.Launch(context.Background(), seqID, []uuid.UUID{pid})
+	err := uc.Launch(context.Background(), uuid.Nil, seqID, []uuid.UUID{pid})
 	require.NoError(t, err)
 
 	assert.Empty(t, repo.messages)
@@ -332,7 +420,7 @@ func TestLaunch_SkipInSequence(t *testing.T) {
 
 	uc := NewUseCase(repo, &mockAI{coldBody: "hi"}, pr, &mockLeadCreator{})
 
-	err := uc.Launch(context.Background(), seqID, []uuid.UUID{pid})
+	err := uc.Launch(context.Background(), uuid.Nil, seqID, []uuid.UUID{pid})
 	require.NoError(t, err)
 
 	assert.Empty(t, repo.messages)
@@ -357,7 +445,7 @@ func TestLaunch_SkipInvalidVerify(t *testing.T) {
 
 	uc := NewUseCase(repo, &mockAI{coldBody: "hi"}, pr, &mockLeadCreator{})
 
-	err := uc.Launch(context.Background(), seqID, []uuid.UUID{pid})
+	err := uc.Launch(context.Background(), uuid.Nil, seqID, []uuid.UUID{pid})
 	require.NoError(t, err)
 
 	assert.Empty(t, repo.messages)
@@ -383,7 +471,7 @@ func TestLaunch_SkipNotCheckedWithEmail(t *testing.T) {
 
 	uc := NewUseCase(repo, &mockAI{coldBody: "hi"}, pr, &mockLeadCreator{})
 
-	err := uc.Launch(context.Background(), seqID, []uuid.UUID{pid})
+	err := uc.Launch(context.Background(), uuid.Nil, seqID, []uuid.UUID{pid})
 	require.NoError(t, err)
 
 	assert.Empty(t, repo.messages)
@@ -413,7 +501,7 @@ func TestLaunch_AllowNotCheckedWithoutEmail(t *testing.T) {
 	ai := &mockAI{coldBody: "Hey Bob"}
 	uc := NewUseCase(repo, ai, pr, &mockLeadCreator{})
 
-	err := uc.Launch(context.Background(), seqID, []uuid.UUID{pid})
+	err := uc.Launch(context.Background(), uuid.Nil, seqID, []uuid.UUID{pid})
 	require.NoError(t, err)
 
 	// Should proceed: not_checked + no email is allowed
@@ -426,7 +514,7 @@ func TestLaunch_NoSteps(t *testing.T) {
 	pr := newMockProspectReader()
 	uc := NewUseCase(repo, &mockAI{}, pr, &mockLeadCreator{})
 
-	err := uc.Launch(context.Background(), uuid.New(), []uuid.UUID{uuid.New()})
+	err := uc.Launch(context.Background(), uuid.Nil, uuid.New(), []uuid.UUID{uuid.New()})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "sequence has no steps")
 }
@@ -436,7 +524,7 @@ func TestLaunch_ListStepsError(t *testing.T) {
 	pr := newMockProspectReader()
 	uc := NewUseCase(repo, &mockAI{}, pr, &mockLeadCreator{})
 
-	err := uc.Launch(context.Background(), uuid.New(), []uuid.UUID{uuid.New()})
+	err := uc.Launch(context.Background(), uuid.Nil, uuid.New(), []uuid.UUID{uuid.New()})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "list steps")
 }
@@ -454,9 +542,10 @@ func TestLaunch_ProspectNotFound(t *testing.T) {
 	pr := newMockProspectReader() // empty -- no prospects
 	uc := NewUseCase(repo, &mockAI{coldBody: "hi"}, pr, &mockLeadCreator{})
 
-	err := uc.Launch(context.Background(), seqID, []uuid.UUID{missingID})
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "not found")
+	err := uc.Launch(context.Background(), uuid.Nil, seqID, []uuid.UUID{missingID})
+	// A missing prospect maps to the same error as a foreign one (→ 404) so the
+	// launch can't be used to probe which prospect ids exist.
+	require.ErrorIs(t, err, domain.ErrProspectNotOwned)
 }
 
 func TestLaunch_AIGeneratorError(t *testing.T) {
@@ -479,7 +568,7 @@ func TestLaunch_AIGeneratorError(t *testing.T) {
 	ai := &mockAI{err: errors.New("openai timeout")}
 	uc := NewUseCase(repo, ai, pr, &mockLeadCreator{})
 
-	err := uc.Launch(context.Background(), seqID, []uuid.UUID{pid})
+	err := uc.Launch(context.Background(), uuid.Nil, seqID, []uuid.UUID{pid})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "generate message")
 }
@@ -506,7 +595,7 @@ func TestLaunch_PhoneCallChannel(t *testing.T) {
 	ai := &mockAI{callBody: "Call brief for Charlie"}
 	uc := NewUseCase(repo, ai, pr, &mockLeadCreator{})
 
-	err := uc.Launch(context.Background(), seqID, []uuid.UUID{pid})
+	err := uc.Launch(context.Background(), uuid.Nil, seqID, []uuid.UUID{pid})
 	require.NoError(t, err)
 
 	require.Len(t, repo.messages, 1)
@@ -540,7 +629,7 @@ func TestLaunch_MultipleProspects_MixedStatuses(t *testing.T) {
 	ai := &mockAI{coldBody: "Hello"}
 	uc := NewUseCase(repo, ai, pr, &mockLeadCreator{})
 
-	err := uc.Launch(context.Background(), seqID, []uuid.UUID{pidOK, pidConverted, pidInvalid})
+	err := uc.Launch(context.Background(), uuid.Nil, seqID, []uuid.UUID{pidOK, pidConverted, pidInvalid})
 	require.NoError(t, err)
 
 	// Only pidOK should get a message
@@ -575,7 +664,7 @@ func TestLaunch_CumulativeDelay(t *testing.T) {
 	ai := &mockAI{coldBody: "msg"}
 	uc := NewUseCase(repo, ai, pr, &mockLeadCreator{})
 
-	err := uc.Launch(context.Background(), seqID, []uuid.UUID{pid})
+	err := uc.Launch(context.Background(), uuid.Nil, seqID, []uuid.UUID{pid})
 	require.NoError(t, err)
 	require.Len(t, repo.messages, 3)
 
@@ -695,7 +784,7 @@ func TestGetSequence(t *testing.T) {
 	repo := &mockRepo{sequences: []domain.Sequence{{ID: id, Name: "Test"}}}
 	uc := NewUseCase(repo, &mockAI{}, newMockProspectReader(), &mockLeadCreator{})
 
-	result, err := uc.GetSequence(context.Background(), id)
+	result, err := uc.GetSequence(context.Background(), uuid.Nil, id)
 	require.NoError(t, err)
 	require.NotNil(t, result)
 	assert.Equal(t, "Test", result.Name)
@@ -705,7 +794,7 @@ func TestGetSequence_NotFound(t *testing.T) {
 	repo := &mockRepo{}
 	uc := NewUseCase(repo, &mockAI{}, newMockProspectReader(), &mockLeadCreator{})
 
-	result, err := uc.GetSequence(context.Background(), uuid.New())
+	result, err := uc.GetSequence(context.Background(), uuid.Nil, uuid.New())
 	require.NoError(t, err)
 	assert.Nil(t, result)
 }
@@ -736,7 +825,7 @@ func TestDeleteSequence(t *testing.T) {
 	repo := &mockRepo{}
 	uc := NewUseCase(repo, &mockAI{}, newMockProspectReader(), &mockLeadCreator{})
 
-	err := uc.DeleteSequence(context.Background(), uuid.New())
+	err := uc.DeleteSequence(context.Background(), uuid.Nil, uuid.New())
 	require.NoError(t, err)
 }
 
@@ -744,7 +833,7 @@ func TestDeleteSequence_Error(t *testing.T) {
 	repo := &mockRepo{deleteSeqErr: errors.New("delete failed")}
 	uc := NewUseCase(repo, &mockAI{}, newMockProspectReader(), &mockLeadCreator{})
 
-	err := uc.DeleteSequence(context.Background(), uuid.New())
+	err := uc.DeleteSequence(context.Background(), uuid.Nil, uuid.New())
 	require.Error(t, err)
 }
 
@@ -754,8 +843,8 @@ func TestCreateStep(t *testing.T) {
 	repo := &mockRepo{}
 	uc := NewUseCase(repo, &mockAI{}, newMockProspectReader(), &mockLeadCreator{})
 
-	step := domain.NewSequenceStep(uuid.New(), 1, 0, domain.StepChannelEmail, "intro")
-	err := uc.CreateStep(context.Background(), step)
+	step := domain.NewSequenceStep(uuid.New(), 1, 0, domain.StepChannelEmail, "intro", "")
+	err := uc.CreateStep(context.Background(), uuid.Nil, step)
 	require.NoError(t, err)
 }
 
@@ -763,7 +852,7 @@ func TestDeleteStep(t *testing.T) {
 	repo := &mockRepo{}
 	uc := NewUseCase(repo, &mockAI{}, newMockProspectReader(), &mockLeadCreator{})
 
-	err := uc.DeleteStep(context.Background(), uuid.New())
+	err := uc.DeleteStep(context.Background(), uuid.Nil, uuid.New())
 	require.NoError(t, err)
 }
 
@@ -771,7 +860,7 @@ func TestDeleteStep_Error(t *testing.T) {
 	repo := &mockRepo{deleteStepErr: errors.New("step not found")}
 	uc := NewUseCase(repo, &mockAI{}, newMockProspectReader(), &mockLeadCreator{})
 
-	err := uc.DeleteStep(context.Background(), uuid.New())
+	err := uc.DeleteStep(context.Background(), uuid.Nil, uuid.New())
 	require.Error(t, err)
 }
 
@@ -792,7 +881,7 @@ func TestApproveMessage_DraftTransitionsToApproved(t *testing.T) {
 	msg := seedDraftMessage(repo)
 	uc := NewUseCase(repo, &mockAI{}, newMockProspectReader(), &mockLeadCreator{})
 
-	err := uc.ApproveMessage(context.Background(), msg.ID)
+	err := uc.ApproveMessage(context.Background(), uuid.Nil, msg.ID)
 	require.NoError(t, err)
 	assert.Equal(t, domain.OutboundStatusApproved, msg.Status)
 }
@@ -800,7 +889,7 @@ func TestApproveMessage_DraftTransitionsToApproved(t *testing.T) {
 func TestApproveMessage_NotFound(t *testing.T) {
 	repo := &mockRepo{}
 	uc := NewUseCase(repo, &mockAI{}, newMockProspectReader(), &mockLeadCreator{})
-	err := uc.ApproveMessage(context.Background(), uuid.New())
+	err := uc.ApproveMessage(context.Background(), uuid.Nil, uuid.New())
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "not found")
 }
@@ -811,7 +900,7 @@ func TestApproveMessage_IllegalTransition_FromSent(t *testing.T) {
 	msg.Status = domain.OutboundStatusSent // simulate prior send
 	uc := NewUseCase(repo, &mockAI{}, newMockProspectReader(), &mockLeadCreator{})
 
-	err := uc.ApproveMessage(context.Background(), msg.ID)
+	err := uc.ApproveMessage(context.Background(), uuid.Nil, msg.ID)
 	require.Error(t, err)
 	// Status must not be silently rewritten.
 	assert.Equal(t, domain.OutboundStatusSent, msg.Status)
@@ -822,7 +911,7 @@ func TestApproveMessage_PersistError(t *testing.T) {
 	msg := seedDraftMessage(repo)
 	uc := NewUseCase(repo, &mockAI{}, newMockProspectReader(), &mockLeadCreator{})
 
-	err := uc.ApproveMessage(context.Background(), msg.ID)
+	err := uc.ApproveMessage(context.Background(), uuid.Nil, msg.ID)
 	require.Error(t, err)
 }
 
@@ -831,7 +920,7 @@ func TestRejectMessage_DraftTransitionsToRejected(t *testing.T) {
 	msg := seedDraftMessage(repo)
 	uc := NewUseCase(repo, &mockAI{}, newMockProspectReader(), &mockLeadCreator{})
 
-	err := uc.RejectMessage(context.Background(), msg.ID)
+	err := uc.RejectMessage(context.Background(), uuid.Nil, msg.ID)
 	require.NoError(t, err)
 	assert.Equal(t, domain.OutboundStatusRejected, msg.Status)
 }
@@ -842,7 +931,7 @@ func TestRejectMessage_IllegalTransition_FromBounced(t *testing.T) {
 	msg.Status = domain.OutboundStatusBounced // terminal
 	uc := NewUseCase(repo, &mockAI{}, newMockProspectReader(), &mockLeadCreator{})
 
-	err := uc.RejectMessage(context.Background(), msg.ID)
+	err := uc.RejectMessage(context.Background(), uuid.Nil, msg.ID)
 	require.Error(t, err)
 	assert.Equal(t, domain.OutboundStatusBounced, msg.Status)
 }
@@ -852,7 +941,7 @@ func TestRejectMessage_PersistError(t *testing.T) {
 	msg := seedDraftMessage(repo)
 	uc := NewUseCase(repo, &mockAI{}, newMockProspectReader(), &mockLeadCreator{})
 
-	err := uc.RejectMessage(context.Background(), msg.ID)
+	err := uc.RejectMessage(context.Background(), uuid.Nil, msg.ID)
 	require.Error(t, err)
 }
 
@@ -872,7 +961,7 @@ func TestEditMessage_HappyPath(t *testing.T) {
 	pr.prospects[pid] = &domain.ProspectView{ID: pid, UserID: userID, Context: "CEO at Acme"}
 
 	uc := NewUseCase(repo, &mockAI{}, pr, &mockLeadCreator{})
-	err := uc.EditMessage(context.Background(), msgID, "edited body")
+	err := uc.EditMessage(context.Background(), uuid.Nil, msgID, "edited body")
 	require.NoError(t, err)
 
 	// Should have saved feedback
@@ -885,7 +974,7 @@ func TestEditMessage_NotFound(t *testing.T) {
 	repo := &mockRepo{}
 	uc := NewUseCase(repo, &mockAI{}, newMockProspectReader(), &mockLeadCreator{})
 
-	err := uc.EditMessage(context.Background(), uuid.New(), "new body")
+	err := uc.EditMessage(context.Background(), uuid.Nil, uuid.New(), "new body")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "message not found")
 }
@@ -901,7 +990,7 @@ func TestEditMessage_SameBody_NoFeedback(t *testing.T) {
 	}
 	uc := NewUseCase(repo, &mockAI{}, newMockProspectReader(), &mockLeadCreator{})
 
-	err := uc.EditMessage(context.Background(), msgID, body)
+	err := uc.EditMessage(context.Background(), uuid.Nil, msgID, body)
 	require.NoError(t, err)
 	assert.Empty(t, repo.feedbackSaved)
 }
@@ -963,12 +1052,12 @@ func TestToggleActive_LoadsAndPersistsViaDomain(t *testing.T) {
 	uc := NewUseCase(repo, &mockAI{}, newMockProspectReader(), &mockLeadCreator{})
 
 	// Activate — should load, call entity.Activate, persist via UpdateSequence.
-	require.NoError(t, uc.ToggleActive(context.Background(), id, true))
+	require.NoError(t, uc.ToggleActive(context.Background(), uuid.Nil, id, true))
 	got := repo.sequences[0]
 	assert.True(t, got.IsActive, "Activate should set IsActive=true")
 
 	// Deactivate.
-	require.NoError(t, uc.ToggleActive(context.Background(), id, false))
+	require.NoError(t, uc.ToggleActive(context.Background(), uuid.Nil, id, false))
 	got = repo.sequences[0]
 	assert.False(t, got.IsActive, "Deactivate should set IsActive=false")
 }
@@ -976,7 +1065,7 @@ func TestToggleActive_LoadsAndPersistsViaDomain(t *testing.T) {
 func TestToggleActive_NotFound(t *testing.T) {
 	repo := &mockRepo{}
 	uc := NewUseCase(repo, &mockAI{}, newMockProspectReader(), &mockLeadCreator{})
-	err := uc.ToggleActive(context.Background(), uuid.New(), true)
+	err := uc.ToggleActive(context.Background(), uuid.Nil, uuid.New(), true)
 	require.Error(t, err)
 }
 
@@ -985,7 +1074,7 @@ func TestUpdateSequence(t *testing.T) {
 	repo := &mockRepo{sequences: []domain.Sequence{{ID: id, Name: "Old"}}}
 	uc := NewUseCase(repo, &mockAI{}, newMockProspectReader(), &mockLeadCreator{})
 
-	err := uc.UpdateSequence(context.Background(), id, "Updated")
+	err := uc.UpdateSequence(context.Background(), uuid.Nil, id, "Updated")
 	require.NoError(t, err)
 }
 
@@ -993,7 +1082,7 @@ func TestUpdateSequence_NotFound(t *testing.T) {
 	repo := &mockRepo{}
 	uc := NewUseCase(repo, &mockAI{}, newMockProspectReader(), &mockLeadCreator{})
 
-	err := uc.UpdateSequence(context.Background(), uuid.New(), "Updated")
+	err := uc.UpdateSequence(context.Background(), uuid.Nil, uuid.New(), "Updated")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "not found")
 }
@@ -1003,7 +1092,7 @@ func TestUpdateSequence_Error(t *testing.T) {
 	repo := &mockRepo{sequences: []domain.Sequence{{ID: id, Name: "Old"}}, updateSeqErr: errors.New("update failed")}
 	uc := NewUseCase(repo, &mockAI{}, newMockProspectReader(), &mockLeadCreator{})
 
-	err := uc.UpdateSequence(context.Background(), id, "Updated")
+	err := uc.UpdateSequence(context.Background(), uuid.Nil, id, "Updated")
 	require.Error(t, err)
 }
 
@@ -1038,7 +1127,7 @@ func TestLaunch_SendNow(t *testing.T) {
 	ai := &mockAI{coldBody: "msg"}
 	uc := NewUseCase(repo, ai, pr, &mockLeadCreator{})
 
-	err := uc.Launch(context.Background(), seqID, []uuid.UUID{pid}, true)
+	err := uc.Launch(context.Background(), uuid.Nil, seqID, []uuid.UUID{pid}, true)
 	require.NoError(t, err)
 	require.Len(t, repo.messages, 2)
 
@@ -1070,7 +1159,7 @@ func TestLaunch_WithConversationHistory(t *testing.T) {
 	ai := &mockAI{coldBody: "follow up"}
 	uc := NewUseCase(repo, ai, pr, &mockLeadCreator{})
 
-	err := uc.Launch(context.Background(), seqID, []uuid.UUID{pid})
+	err := uc.Launch(context.Background(), uuid.Nil, seqID, []uuid.UUID{pid})
 	require.NoError(t, err)
 	require.Len(t, repo.messages, 1)
 }
@@ -1098,7 +1187,7 @@ func TestLaunch_WithFeedbackExamples(t *testing.T) {
 	ai := &mockAI{coldBody: "msg"}
 	uc := NewUseCase(repo, ai, pr, &mockLeadCreator{})
 
-	err := uc.Launch(context.Background(), seqID, []uuid.UUID{pid})
+	err := uc.Launch(context.Background(), uuid.Nil, seqID, []uuid.UUID{pid})
 	require.NoError(t, err)
 	require.Len(t, repo.messages, 1)
 }
@@ -1137,7 +1226,7 @@ func TestLaunch_WithTxManager(t *testing.T) {
 	ai := &mockAI{coldBody: "msg"}
 	uc := NewUseCase(repo, ai, pr, &mockLeadCreator{}, WithTxManager(txMgr))
 
-	err := uc.Launch(context.Background(), seqID, []uuid.UUID{pid})
+	err := uc.Launch(context.Background(), uuid.Nil, seqID, []uuid.UUID{pid})
 	require.NoError(t, err)
 	assert.True(t, txMgr.called)
 }
@@ -1176,7 +1265,7 @@ func TestEditMessage_BodyUpdateError(t *testing.T) {
 	}
 	uc := NewUseCase(repo, &mockAI{}, newMockProspectReader(), &mockLeadCreator{})
 
-	err := uc.EditMessage(context.Background(), msgID, "new")
+	err := uc.EditMessage(context.Background(), uuid.Nil, msgID, "new")
 	require.Error(t, err)
 }
 
@@ -1185,7 +1274,7 @@ func TestEditMessage_GetOriginalError(t *testing.T) {
 	repo := &mockRepo{}
 	uc := NewUseCase(repo, &mockAI{}, newMockProspectReader(), &mockLeadCreator{})
 
-	err := uc.EditMessage(context.Background(), uuid.New(), "new")
+	err := uc.EditMessage(context.Background(), uuid.Nil, uuid.New(), "new")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "message not found")
 }
@@ -1207,7 +1296,7 @@ func TestLaunch_CreateOutboundMessageError(t *testing.T) {
 	}
 
 	uc := NewUseCase(repo, &mockAI{coldBody: "msg"}, pr, &mockLeadCreator{})
-	err := uc.Launch(context.Background(), seqID, []uuid.UUID{pid})
+	err := uc.Launch(context.Background(), uuid.Nil, seqID, []uuid.UUID{pid})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "create outbound message")
 }
@@ -1229,7 +1318,7 @@ func TestLaunch_UpdateProspectStatusError(t *testing.T) {
 	pr.updateErr = errors.New("status update failed")
 
 	uc := NewUseCase(repo, &mockAI{coldBody: "msg"}, pr, &mockLeadCreator{})
-	err := uc.Launch(context.Background(), seqID, []uuid.UUID{pid})
+	err := uc.Launch(context.Background(), uuid.Nil, seqID, []uuid.UUID{pid})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "update prospect status")
 }
@@ -1252,7 +1341,7 @@ func TestLaunch_TelegramAIError(t *testing.T) {
 	ai := &mockAI{err: errors.New("telegram gen error")}
 	uc := NewUseCase(repo, ai, pr, &mockLeadCreator{})
 
-	err := uc.Launch(context.Background(), seqID, []uuid.UUID{pid})
+	err := uc.Launch(context.Background(), uuid.Nil, seqID, []uuid.UUID{pid})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "generate message")
 }
@@ -1275,7 +1364,7 @@ func TestLaunch_PhoneCallAIError(t *testing.T) {
 	ai := &mockAI{err: errors.New("call gen error")}
 	uc := NewUseCase(repo, ai, pr, &mockLeadCreator{})
 
-	err := uc.Launch(context.Background(), seqID, []uuid.UUID{pid})
+	err := uc.Launch(context.Background(), uuid.Nil, seqID, []uuid.UUID{pid})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "generate message")
 }
@@ -1294,7 +1383,7 @@ func TestEditMessage_ChannelEmpty_DefaultsToEmail(t *testing.T) {
 	pr.prospects[pid] = &domain.ProspectView{ID: pid, UserID: userID}
 
 	uc := NewUseCase(repo, &mockAI{}, pr, &mockLeadCreator{})
-	err := uc.EditMessage(context.Background(), msgID, "edited")
+	err := uc.EditMessage(context.Background(), uuid.Nil, msgID, "edited")
 	require.NoError(t, err)
 
 	require.Len(t, repo.feedbackSaved, 1)
@@ -1314,7 +1403,7 @@ func TestEditMessage_ProspectNotFound_StillSavesFeedback(t *testing.T) {
 	pr := newMockProspectReader()
 
 	uc := NewUseCase(repo, &mockAI{}, pr, &mockLeadCreator{})
-	err := uc.EditMessage(context.Background(), msgID, "edited")
+	err := uc.EditMessage(context.Background(), uuid.Nil, msgID, "edited")
 	require.NoError(t, err)
 
 	// Feedback saved with Nil userID since prospect not found
@@ -1361,7 +1450,7 @@ func TestLaunch_GetProspectError(t *testing.T) {
 	pr := &mockProspectReaderWithErr{getErr: errors.New("prospect db error")}
 	uc := NewUseCase(repo, &mockAI{coldBody: "hi"}, pr, &mockLeadCreator{})
 
-	err := uc.Launch(context.Background(), seqID, []uuid.UUID{pid})
+	err := uc.Launch(context.Background(), uuid.Nil, seqID, []uuid.UUID{pid})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "get prospect")
 }

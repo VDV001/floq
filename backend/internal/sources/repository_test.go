@@ -10,6 +10,7 @@ import (
 	"github.com/daniil/floq/internal/sources/domain"
 	"github.com/daniil/floq/internal/testutil"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -230,4 +231,45 @@ func TestSourceStats(t *testing.T) {
 		}
 	}
 	assert.True(t, found)
+}
+
+func TestSourceStats_ExcludesArchivedLeads(t *testing.T) {
+	pool := testutil.TestDB(t)
+	userID := testutil.SeedUser(t, pool)
+	repo := sources.NewRepository(pool)
+	ctx := context.Background()
+
+	cat, err := domain.NewCategory(userID, "ArchCat-"+uuid.New().String()[:8])
+	require.NoError(t, err)
+	require.NoError(t, repo.CreateCategory(ctx, cat))
+	src, err := domain.NewSource(userID, cat.ID, "ArchSrc-"+uuid.New().String()[:8])
+	require.NoError(t, err)
+	require.NoError(t, repo.CreateSource(ctx, src))
+
+	// One active lead, one archived lead, both attributed to this source.
+	seedSourcedLead(t, pool, userID, src.ID, false)
+	seedSourcedLead(t, pool, userID, src.ID, true)
+
+	stats, err := repo.SourceStats(ctx, userID)
+	require.NoError(t, err)
+
+	for _, s := range stats {
+		if s.SourceID == src.ID {
+			assert.Equal(t, 1, s.LeadCount, "archived lead must not be counted in source stats")
+		}
+	}
+}
+
+func seedSourcedLead(t *testing.T, pool *pgxpool.Pool, userID, sourceID uuid.UUID, archived bool) {
+	t.Helper()
+	id := uuid.New()
+	_, err := pool.Exec(context.Background(),
+		`INSERT INTO leads (id, user_id, channel, contact_name, first_message, status, source_id, created_at, updated_at)
+		 VALUES ($1, $2, 'email', 'c', 'hi', 'new', $3, now(), now())`,
+		id, userID, sourceID)
+	require.NoError(t, err, "seed sourced lead")
+	if archived {
+		_, err = pool.Exec(context.Background(), `UPDATE leads SET archived_at = now() WHERE id = $1`, id)
+		require.NoError(t, err, "archive lead")
+	}
 }

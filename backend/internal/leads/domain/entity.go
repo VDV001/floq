@@ -1,10 +1,27 @@
 package domain
 
 import (
+	"errors"
 	"fmt"
 	"time"
 
+	"github.com/daniil/floq/internal/normalize"
 	"github.com/google/uuid"
+)
+
+// Transition errors. Declared as package vars so callers can use
+// errors.Is — notably the 1C applier adapter, which swallows only a
+// benign disallowed-edge (ErrInvalidTransition) and propagates anything
+// else. A bare fmt.Errorf for these business outcomes would force string
+// matching at the boundary; the sentinels keep the rule in the domain.
+var (
+	ErrInvalidLeadStatus = errors.New("leads: invalid lead status")
+	ErrInvalidTransition = errors.New("leads: invalid lead status transition")
+
+	// Archive errors. Sentinels so the HTTP boundary can errors.Is the
+	// idempotency outcome (already-archived → 409) without string matching.
+	ErrAlreadyArchived = errors.New("leads: lead already archived")
+	ErrNotArchived     = errors.New("leads: lead is not archived")
 )
 
 // --- LeadStatus value object ---
@@ -88,6 +105,7 @@ type Lead struct {
 	TelegramChatID *int64
 	EmailAddress   *string
 	SourceID       *uuid.UUID
+	ArchivedAt     *time.Time
 	CreatedAt      time.Time
 	UpdatedAt      time.Time
 }
@@ -110,6 +128,11 @@ func NewLead(userID uuid.UUID, channel Channel, contactName, company, firstMessa
 		return nil, fmt.Errorf("contact name is required")
 	}
 	now := time.Now().UTC()
+	var normalizedEmail *string
+	if emailAddress != nil {
+		canon := normalize.Email(*emailAddress)
+		normalizedEmail = &canon
+	}
 	return &Lead{
 		ID:             uuid.New(),
 		UserID:         userID,
@@ -119,7 +142,7 @@ func NewLead(userID uuid.UUID, channel Channel, contactName, company, firstMessa
 		FirstMessage:   firstMessage,
 		Status:         StatusNew,
 		TelegramChatID: telegramChatID,
-		EmailAddress:   emailAddress,
+		EmailAddress:   normalizedEmail,
 		CreatedAt:      now,
 		UpdatedAt:      now,
 	}, nil
@@ -171,14 +194,46 @@ func (l *Lead) OnOutboundSent() (changed bool) {
 // TransitionTo validates and applies a status transition.
 func (l *Lead) TransitionTo(target LeadStatus) error {
 	if !target.IsValid() {
-		return fmt.Errorf("invalid lead status: %q", target)
+		return fmt.Errorf("%w: %q", ErrInvalidLeadStatus, target)
 	}
 	if !l.Status.CanTransitionTo(target) {
-		return fmt.Errorf("cannot transition lead from %q to %q", l.Status, target)
+		return fmt.Errorf("%w: %q -> %q", ErrInvalidTransition, l.Status, target)
 	}
 	l.Status = target
 	l.UpdatedAt = time.Now().UTC()
 	return nil
+}
+
+// Archive marks the lead as archived — orthogonal to its pipeline status, so
+// the status is left untouched (the whole reason archive is a separate flag and
+// not status='closed'). Idempotent-by-rejection: archiving an already-archived
+// lead returns ErrAlreadyArchived rather than silently re-stamping the time, so
+// the HTTP boundary can surface a 409.
+func (l *Lead) Archive() error {
+	if l.ArchivedAt != nil {
+		return ErrAlreadyArchived
+	}
+	now := time.Now().UTC()
+	l.ArchivedAt = &now
+	l.UpdatedAt = now
+	return nil
+}
+
+// Unarchive clears the archive flag, restoring the lead to working feeds and
+// analytics. Returns ErrNotArchived when the lead was not archived, mirroring
+// Archive's reject-on-noop contract.
+func (l *Lead) Unarchive() error {
+	if l.ArchivedAt == nil {
+		return ErrNotArchived
+	}
+	l.ArchivedAt = nil
+	l.UpdatedAt = time.Now().UTC()
+	return nil
+}
+
+// IsArchived reports whether the lead is currently archived.
+func (l *Lead) IsArchived() bool {
+	return l.ArchivedAt != nil
 }
 
 type Message struct {

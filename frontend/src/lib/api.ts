@@ -1,5 +1,21 @@
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8080";
 
+// ApiError carries the backend's human-readable message plus an optional
+// machine `code` and `remedy` ("what to do") so the UI can show the real cause
+// of a failure instead of a generic "API error: 500".
+export class ApiError extends Error {
+  readonly status: number;
+  readonly code?: string;
+  readonly remedy?: string;
+  constructor(message: string, status: number, code?: string, remedy?: string) {
+    super(message);
+    this.name = "ApiError";
+    this.status = status;
+    this.code = code;
+    this.remedy = remedy;
+  }
+}
+
 async function apiFetch<T>(path: string, options?: RequestInit): Promise<T> {
   const token =
     typeof window !== "undefined" ? localStorage.getItem("token") : null;
@@ -36,7 +52,10 @@ async function apiFetch<T>(path: string, options?: RequestInit): Promise<T> {
               ...options?.headers,
             },
           });
-          if (retryRes.ok) return retryRes.json();
+          if (retryRes.ok) {
+            if (retryRes.status === 204) return undefined as T;
+            return retryRes.json();
+          }
         }
       } catch {
         // refresh failed
@@ -48,9 +67,24 @@ async function apiFetch<T>(path: string, options?: RequestInit): Promise<T> {
   }
 
   if (!res.ok) {
-    throw new Error(`API error: ${res.status} ${res.statusText}`);
+    // Read the backend error envelope ({error, code, remedy}) so the real
+    // cause and the suggested fix reach the user. Fall back to the status
+    // line when the body is empty or not JSON.
+    let body: { error?: string; code?: string; remedy?: string } | null = null;
+    try {
+      body = await res.json();
+    } catch {
+      // non-JSON or empty body — keep the status-line fallback
+    }
+    const message = body?.error || `${res.status} ${res.statusText}`;
+    throw new ApiError(message, res.status, body?.code, body?.remedy);
   }
 
+  // 204 No Content has an empty body — calling .json() throws
+  // SyntaxError. The HITL approve/reject endpoints answer 204 on
+  // success; callers expect undefined (the generic T is typically
+  // void at the call site).
+  if (res.status === 204) return undefined as T;
   return res.json();
 }
 
@@ -85,7 +119,10 @@ async function apiUploadFile<T>(path: string, file: File): Promise<T> {
     headers: token ? { Authorization: `Bearer ${token}` } : {},
     body: formData,
   });
-  if (!res.ok) throw new Error(`Upload error: ${res.status}`);
+  if (!res.ok) {
+    const body = await res.json().catch(() => null);
+    throw new Error(body?.error || `Upload error: ${res.status}`);
+  }
   return res.json();
 }
 
@@ -111,12 +148,17 @@ export const api = {
 
   // Leads
   getLeads: () => apiFetch<Lead[]>("/api/leads"),
+  getArchivedLeads: () => apiFetch<Lead[]>("/api/leads/archived"),
   getLead: (id: string) => apiFetch<Lead>(`/api/leads/${id}`),
   updateLeadStatus: (id: string, status: string) =>
     apiFetch(`/api/leads/${id}/status`, {
       method: "PATCH",
       body: JSON.stringify({ status }),
     }),
+  archiveLead: (id: string) =>
+    apiFetch(`/api/leads/${id}/archive`, { method: "POST" }),
+  unarchiveLead: (id: string) =>
+    apiFetch(`/api/leads/${id}/unarchive`, { method: "POST" }),
 
   exportLeadsCSV: () => apiDownload("/api/leads/export"),
   importLeadsCSV: (file: File) =>
@@ -139,8 +181,15 @@ export const api = {
     apiFetch<Record<string, number>>("/api/leads/suggestion-counts"),
 
   // Messages
-  getMessages: (leadId: string) =>
-    apiFetch<Message[]>(`/api/leads/${leadId}/messages`),
+  //
+  // When `aggregated` is true the backend merges messages from every
+  // lead sharing the same Identity (multi-source dedup, #27). Default
+  // is single-lead — backward-compatible with callers that don't pass
+  // the flag.
+  getMessages: (leadId: string, opts?: { aggregated?: boolean }) =>
+    apiFetch<Message[]>(
+      `/api/leads/${leadId}/messages${opts?.aggregated ? "?aggregated=true" : ""}`
+    ),
   sendMessage: (leadId: string, body: string) =>
     apiFetch<Message>(`/api/leads/${leadId}/send`, {
       method: "POST",
@@ -158,6 +207,47 @@ export const api = {
     apiFetch<Draft>(`/api/leads/${leadId}/draft`),
   regenerateDraft: (leadId: string) =>
     apiFetch<Draft>(`/api/leads/${leadId}/draft/regen`, { method: "POST" }),
+
+  // Pending replies (HITL approval queue)
+  //
+  // The inbox flow parks auto-drafted replies that would otherwise
+  // reach the customer (currently the booking-link branch in the
+  // Telegram bot) until an operator approves them. List per lead,
+  // approve to dispatch and mark sent, reject to terminate the
+  // draft. Approve / reject return 204; status flips are visible by
+  // re-listing.
+  getPendingReplies: (leadId: string) =>
+    apiFetch<PendingReply[]>(`/api/leads/${leadId}/pending-replies`),
+  // listPendingReplies — operator queue: every pending row across
+  // every lead the operator owns, with the joined lead snippet so the
+  // page renders contact + company in one request (no N+1). The
+  // status filter is explicit on the wire — keeps room for a future
+  // ?status=approved tab without silently widening the contract.
+  listPendingReplies: () =>
+    apiFetch<PendingReplyQueueRow[]>("/api/pending-replies?status=pending"),
+  // bulkPendingReplies — power-operator endpoint: apply the same
+  // decision to many drafts in one round-trip. Per-row outcomes come
+  // back under `results` so the UI can surface partial failures
+  // (NotFound / AlreadyDecided / dispatcher 5xx) without aborting the
+  // whole batch.
+  bulkPendingReplies: (body: { ids: string[]; decision: PendingReplyBulkDecision }) =>
+    apiFetch<{ results: PendingReplyBulkResult[] }>("/api/pending-replies/bulk", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  approvePendingReply: (id: string) =>
+    apiFetch<void>(`/api/pending-replies/${id}/approve`, { method: "POST" }),
+  rejectPendingReply: (id: string) =>
+    apiFetch<void>(`/api/pending-replies/${id}/reject`, { method: "POST" }),
+  // Edit-before-approve (#48). Returns the updated PendingReply so the
+  // caller can render the new body in place without a refetch round-trip.
+  // Only valid while the row is in 'pending' status — backend answers
+  // 409 once approved/sent/rejected.
+  updatePendingReply: (id: string, body: string) =>
+    apiFetch<PendingReply>(`/api/pending-replies/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify({ body }),
+    }),
 
   // Reminders
   getReminders: () => apiFetch<Reminder[]>("/api/reminders"),
@@ -189,7 +279,13 @@ export const api = {
     }),
   deleteProspect: (id: string) =>
     apiFetch(`/api/prospects/${id}`, { method: "DELETE" }),
+  setProspectConsent: (id: string, status: "obtained" | "withdrawn") =>
+    apiFetch<{ consent_status: string }>(`/api/prospects/${id}/consent`, {
+      method: "POST",
+      body: JSON.stringify({ status }),
+    }),
   exportProspectsCSV: () => apiDownload("/api/prospects/export"),
+  downloadProspectTemplate: () => apiDownload("/api/prospects/template"),
   importProspectsCSV: (file: File) =>
     apiUploadFile<{ imported: number }>("/api/prospects/import", file),
 
@@ -225,7 +321,7 @@ export const api = {
     apiFetch<Sequence>(`/api/sequences/${id}`, { method: "PUT", body: JSON.stringify({ name }) }),
   deleteSequence: (id: string) =>
     apiFetch(`/api/sequences/${id}`, { method: "DELETE" }),
-  addStep: (seqId: string, data: { step_order: number; delay_days: number; channel: string; prompt_hint: string }) =>
+  addStep: (seqId: string, data: { step_order: number; delay_days: number; channel: string; prompt_hint: string; body?: string }) =>
     apiFetch<SequenceStep>(`/api/sequences/${seqId}/steps`, { method: "POST", body: JSON.stringify(data) }),
   deleteStep: (seqId: string, stepId: string) =>
     apiFetch(`/api/sequences/${seqId}/steps/${stepId}`, { method: "DELETE" }),
@@ -303,6 +399,41 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ api_key: apiKey, use_stored: useStored || false }),
     }),
+
+  // Analytics
+  getSequenceAnalytics: (period: AnalyticsPeriod = "all") =>
+    apiFetch<SequenceAnalyticsResponse>(`/api/analytics/sequences?period=${period}`),
+  getCostRatios: (period: AnalyticsPeriod = "month") =>
+    apiFetch<CostRatiosResponse>(`/api/analytics/cost-ratios?period=${period}`),
+  getHotLeads: (params: HotLeadsParams = {}) => {
+    const q = new URLSearchParams();
+    if (params.period) q.set("period", params.period);
+    if (params.status) q.set("status", params.status);
+    if (params.channel) q.set("channel", params.channel);
+    if (params.limit != null) q.set("limit", String(params.limit));
+    const qs = q.toString();
+    return apiFetch<HotLeadsResponse>(`/api/analytics/hot-leads${qs ? `?${qs}` : ""}`);
+  },
+  getInboxAnalytics: (period: AnalyticsPeriod = "month") =>
+    apiFetch<InboxFlowResponse>(`/api/analytics/inbox?period=${period}`),
+  getQualificationDistribution: (period: AnalyticsPeriod = "all") =>
+    apiFetch<QualificationDistributionResponse>(`/api/analytics/qualification-distribution?period=${period}`),
+  getSequenceConversion: (period: AnalyticsPeriod = "all") =>
+    apiFetch<SequenceConversionResponse>(`/api/analytics/sequence-conversion?period=${period}`),
+
+  // 1C integration settings
+  getOnecConfig: () => apiFetch<OnecConfig>("/api/onec/config"),
+  updateOnecConfig: (data: OnecConfigUpdate) =>
+    apiFetch<OnecConfig>("/api/onec/config", { method: "PUT", body: JSON.stringify(data) }),
+  regenerateOnecWebhook: () =>
+    apiFetch<{ webhook_secret: string }>("/api/onec/config/regenerate-webhook", { method: "POST" }),
+  testOnec: (data: { base_url?: string; auth_type?: string; auth_secret?: string }) =>
+    apiFetch<OnecTestResult>("/api/onec/test", { method: "POST", body: JSON.stringify(data) }),
+  getOnecMapping: () => apiFetch<OnecMapping>("/api/onec/mapping"),
+  updateOnecMapping: (rules: OnecMappingRule[]) =>
+    apiFetch<{ saved: boolean }>("/api/onec/mapping", { method: "PUT", body: JSON.stringify({ rules }) }),
+  getCostSummary: (from: string, to: string) =>
+    apiFetch<CostSummaryResponse>(`/api/audit/cost-summary?from=${from}&to=${to}`),
 };
 
 // Types
@@ -345,6 +476,27 @@ export interface Lead {
   source_name?: string;
   created_at: string;
   updated_at: string;
+  /** Set only for archived leads. Present on the archive-view feed and on the
+   *  single-lead detail; absent for active leads. Clients use presence to
+   *  toggle between the archive and unarchive affordance. */
+  archived_at?: string;
+  identity?: IdentitySummary;
+  /** Count of HITL drafts on this lead awaiting operator decision.
+   *  Omitted by the backend when zero; clients default to 0. */
+  pending_replies_count?: number;
+}
+
+// IdentitySummary surfaces the unified Identity attached to a lead via
+// lead_identities. All identifier fields are pre-canonicalized
+// server-side (lowercase + trim for email/tg, digits + leading "+"
+// for phone). `linked_lead_ids` always includes the current lead when
+// the identity is present — clients dedupe when rendering siblings.
+export interface IdentitySummary {
+  id: string;
+  email?: string;
+  phone?: string;
+  telegram_username?: string;
+  linked_lead_ids: string[];
 }
 
 export type SuggestionConfidence = "high" | "medium" | "low";
@@ -388,6 +540,55 @@ export interface Draft {
   created_at: string;
 }
 
+export type PendingReplyStatus = "pending" | "approved" | "sent" | "rejected";
+export type PendingReplyKind = "booking_link";
+
+export interface PendingReply {
+  id: string;
+  lead_id: string;
+  channel: "telegram" | "email";
+  kind: PendingReplyKind;
+  body: string;
+  status: PendingReplyStatus;
+  created_at: string;
+  decided_at?: string;
+  sent_at?: string;
+}
+
+// PendingReplyLeadSnippet is the minimal lead context the operator
+// queue needs per row — contact + company + channel + identifiers.
+// telegram_chat_id / email_address are omitempty on the wire so a
+// telegram lead never carries a null email and vice versa.
+export interface PendingReplyLeadSnippet {
+  contact_name: string;
+  company: string;
+  channel: "telegram" | "email";
+  telegram_chat_id?: number;
+  email_address?: string;
+}
+
+// PendingReplyQueueRow is the wire-shape returned by
+// GET /api/pending-replies — every pending row across every lead the
+// operator owns, joined with the lead snippet so the queue UI avoids
+// an N+1 lookup.
+export interface PendingReplyQueueRow extends PendingReply {
+  lead: PendingReplyLeadSnippet;
+}
+
+// PendingReplyBulkDecision matches the BulkDecision enum on the
+// backend — the two terminal actions an operator can apply en-masse
+// to a slice of pending replies.
+export type PendingReplyBulkDecision = "approve" | "reject";
+
+// PendingReplyBulkResult is the per-row outcome surfaced by
+// POST /api/pending-replies/bulk. `error` is omitempty server-side
+// for success rows, so it's optional on the wire too.
+export interface PendingReplyBulkResult {
+  id: string;
+  ok: boolean;
+  error?: string;
+}
+
 export interface Reminder {
   id: string;
   lead_id: string;
@@ -414,6 +615,8 @@ export interface Prospect {
   source_id?: string;
   source_name?: string;
   status: "new" | "in_sequence" | "replied" | "converted" | "opted_out";
+  consent_status: "none" | "obtained" | "withdrawn";
+  consent_source?: string;
   verify_status: "not_checked" | "valid" | "risky" | "invalid";
   verify_score: number;
   verify_details: Record<string, unknown>;
@@ -471,6 +674,7 @@ export interface SequenceStep {
   step_order: number;
   delay_days: number;
   prompt_hint: string;
+  body: string;
   channel: "email" | "telegram" | "phone_call";
   created_at: string;
 }
@@ -495,6 +699,181 @@ export interface OutboundStats {
   opened: number;
   replied: number;
   bounced: number;
+}
+
+export type AnalyticsPeriod = "week" | "month" | "all";
+
+export interface SequenceAnalyticsRow {
+  id: string;
+  name: string;
+  sent: number;
+  delivered: number;
+  opened: number;
+  replied: number;
+  converted: number;
+  open_rate: number;
+  reply_rate: number;
+  conversion_rate: number;
+}
+
+export interface SequenceAnalyticsResponse {
+  sequences: SequenceAnalyticsRow[];
+  period: AnalyticsPeriod;
+}
+
+export interface CostRatiosResponse {
+  period: { from: string; to: string };
+  total_cost_usd: number;
+  total_calls: number;
+  leads_count: number;
+  qualified_leads_count: number;
+  converted_count: number;
+  drafts_sent_count: number;
+  cost_per_lead_usd: number;
+  cost_per_qualified_lead_usd: number;
+  cost_per_converted_usd: number;
+  cost_per_draft_sent_usd: number;
+}
+
+export type LeadStatusFilter = "any" | "new" | "qualified" | "in_conversation" | "followup" | "closed";
+export type ChannelFilter = "any" | "telegram" | "email";
+
+export interface HotLead {
+  id: string;
+  contact_name: string;
+  channel: string;
+  status: string;
+  score: number | null;
+  score_reason: string;
+  last_activity_at: string;
+  qualified_at: string | null;
+}
+
+export interface HotLeadsResponse {
+  leads: HotLead[];
+  total_matching: number;
+  limit_applied: number;
+}
+
+export interface HotLeadsParams {
+  period?: AnalyticsPeriod;
+  status?: LeadStatusFilter;
+  channel?: ChannelFilter;
+  limit?: number;
+}
+
+export interface QualBucket {
+  lo: number;
+  hi: number;
+  label: string;
+  count: number;
+}
+
+export interface QualificationDistributionResponse {
+  step: number;
+  total: number;
+  buckets: QualBucket[];
+}
+
+export interface SequenceStepConversion {
+  sequence_id: string;
+  sequence_name: string;
+  step_order: number;
+  entered: number;
+  replied: number;
+  advanced: number;
+  reply_rate: number;
+  advance_rate: number;
+}
+
+export interface SequenceConversionResponse {
+  steps: SequenceStepConversion[];
+}
+
+export interface ScoreBucket {
+  range: string;
+  count: number;
+}
+
+// 1C integration. Secrets (auth_secret, webhook_secret) arrive MASKED from the
+// API — never the raw value. Send a new auth_secret only when replacing it; an
+// empty or masked value tells the backend to keep the stored one.
+export type OnecAuthType = "basic" | "token";
+
+export interface OnecConfig {
+  base_url: string;
+  auth_type: OnecAuthType;
+  auth_secret: string; // masked
+  webhook_secret: string; // masked
+  is_active: boolean;
+}
+
+export interface OnecConfigUpdate {
+  base_url?: string;
+  auth_type?: OnecAuthType;
+  auth_secret?: string;
+  is_active?: boolean;
+}
+
+export type OnecEventKind = "payment" | "counterparty_created" | "order_status" | "shipment";
+
+export interface OnecMappingRule {
+  external_type: string;
+  kind: OnecEventKind;
+  email_field: string;
+  name_field?: string;
+  company_field?: string;
+}
+
+export interface OnecMapping {
+  rules: OnecMappingRule[];
+}
+
+export interface OnecTestResult {
+  success: boolean;
+  error?: string;
+}
+
+// InboxFlowResponse is the View 3 (inbox flow) read model. by_channel /
+// by_status are open maps keyed by the lead enum members present in the
+// period. There is no edited_then_approved field — pending_replies
+// stores no original body to diff against, so it's dropped in v1.
+export interface InboxFlowResponse {
+  period: { from: string; to: string };
+  leads: {
+    total: number;
+    by_channel: Record<string, number>;
+    by_status: Record<string, number>;
+  };
+  qualifications: {
+    score_histogram: ScoreBucket[];
+    avg_score: number;
+  };
+  pending_replies: {
+    approved: number;
+    rejected: number;
+    currently_pending: number;
+    approve_rate: number;
+    p50_time_to_decide_seconds: number;
+    p95_time_to_decide_seconds: number;
+  };
+}
+
+export interface CostBreakdownRow {
+  request_type?: string;
+  model?: string;
+  calls: number;
+  usd: number;
+  tokens_in: number;
+  tokens_out: number;
+}
+
+export interface CostSummaryResponse {
+  total_usd: number;
+  total_calls: number;
+  by_request_type: CostBreakdownRow[];
+  by_model: CostBreakdownRow[];
+  period: { from: string; to: string };
 }
 
 export interface UserSettings {
@@ -528,4 +907,6 @@ export interface UserSettings {
   auto_followup_days: number;
   auto_prospect_to_lead: boolean;
   auto_verify_import: boolean;
+  ai_style_check_enabled?: boolean;
+  aggregated_inbox_view: boolean;
 }

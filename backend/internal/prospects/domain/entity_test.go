@@ -192,6 +192,70 @@ func TestNewProspect_RejectsEmptyName(t *testing.T) {
 	require.Error(t, err, "empty name must be rejected")
 }
 
+func TestNewProspect_NormalizesEmail(t *testing.T) {
+	cases := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{"upper-cased", "ALICE@ACME.COM", "alice@acme.com"},
+		{"surrounding whitespace", "  alice@acme.com  ", "alice@acme.com"},
+		{"mixed case", "Alice@Acme.Com", "alice@acme.com"},
+		{"already canonical", "alice@acme.com", "alice@acme.com"},
+		{"empty stays empty", "", ""},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			p, err := NewProspect(uuid.New(), "Alice", "Acme", "CEO", c.in, "manual")
+			require.NoError(t, err)
+			assert.Equal(t, c.want, p.Email)
+		})
+	}
+}
+
+func TestProspect_SetPhone_Normalizes(t *testing.T) {
+	cases := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{"e164 ru with separators", "+7 999 (123) 45-67", "+79991234567"},
+		{"local ru", "8 (800) 000-00-00", "88000000000"},
+		{"empty", "", ""},
+		{"no digits", "not a phone", ""},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			p, err := NewProspect(uuid.New(), "Alice", "Acme", "CEO", "", "manual")
+			require.NoError(t, err)
+			p.SetPhone(c.in)
+			assert.Equal(t, c.want, p.Phone)
+		})
+	}
+}
+
+func TestProspect_SetTelegramUsername_Normalizes(t *testing.T) {
+	cases := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{"leading at", "@alice_bot", "alice_bot"},
+		{"leading at mixed case", "@Alice_Bot", "alice_bot"},
+		{"no at sign", "Alice", "alice"},
+		{"surrounding whitespace", "  @alice  ", "alice"},
+		{"empty", "", ""},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			p, err := NewProspect(uuid.New(), "Alice", "Acme", "CEO", "", "manual")
+			require.NoError(t, err)
+			p.SetTelegramUsername(c.in)
+			assert.Equal(t, c.want, p.TelegramUsername)
+		})
+	}
+}
+
 func TestNewProspect(t *testing.T) {
 	userID := uuid.New()
 	name := "John Doe"

@@ -62,3 +62,45 @@ func TestWriteError(t *testing.T) {
 		t.Errorf("error = %q, want %q", body["error"], "invalid input")
 	}
 }
+
+func TestWriteErrorDetail(t *testing.T) {
+	w := httptest.NewRecorder()
+	WriteErrorDetail(w, http.StatusBadRequest, "ИИ не подключён", "ai_not_configured", "Откройте Настройки → ИИ")
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want %d", w.Code, http.StatusBadRequest)
+	}
+
+	var body map[string]string
+	if err := json.NewDecoder(w.Body).Decode(&body); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if body["error"] != "ИИ не подключён" {
+		t.Errorf("error = %q", body["error"])
+	}
+	if body["code"] != "ai_not_configured" {
+		t.Errorf("code = %q", body["code"])
+	}
+	if body["remedy"] != "Откройте Настройки → ИИ" {
+		t.Errorf("remedy = %q", body["remedy"])
+	}
+}
+
+func TestWriteErrorDetail_OmitsEmptyFields(t *testing.T) {
+	w := httptest.NewRecorder()
+	WriteErrorDetail(w, http.StatusInternalServerError, "boom", "", "")
+
+	var body map[string]string
+	if err := json.NewDecoder(w.Body).Decode(&body); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if body["error"] != "boom" {
+		t.Errorf("error = %q, want boom", body["error"])
+	}
+	if _, ok := body["code"]; ok {
+		t.Errorf("code should be omitted when empty, got %q", body["code"])
+	}
+	if _, ok := body["remedy"]; ok {
+		t.Errorf("remedy should be omitted when empty, got %q", body["remedy"])
+	}
+}

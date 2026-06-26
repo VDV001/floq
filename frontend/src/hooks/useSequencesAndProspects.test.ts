@@ -1,23 +1,30 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { renderHook, act, waitFor } from "@testing-library/react";
+import { renderHook, act, waitFor, screen } from "@testing-library/react";
 
-vi.mock("@/lib/api", () => ({
-  api: {
-    getProspects: vi.fn(),
-    getSequences: vi.fn(),
-    getSequence: vi.fn(),
-    createSequence: vi.fn(),
-    deleteSequence: vi.fn(),
-    toggleSequence: vi.fn(),
-    updateSequence: vi.fn(),
-    launchSequence: vi.fn(),
-    addStep: vi.fn(),
-    deleteStep: vi.fn(),
-  },
-}));
+vi.mock("@/lib/api", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/api")>();
+  return {
+    // Keep the real ApiError class (used by the notification layer) while
+    // stubbing the api methods.
+    ApiError: actual.ApiError,
+    api: {
+      getProspects: vi.fn(),
+      getSequences: vi.fn(),
+      getSequence: vi.fn(),
+      createSequence: vi.fn(),
+      deleteSequence: vi.fn(),
+      toggleSequence: vi.fn(),
+      updateSequence: vi.fn(),
+      launchSequence: vi.fn(),
+      addStep: vi.fn(),
+      deleteStep: vi.fn(),
+    },
+  };
+});
 import { api } from "@/lib/api";
 import type { Prospect, Sequence, SequenceStep } from "@/lib/api";
 import { useProspects } from "./useProspects";
+import { NotificationProvider } from "@/components/notifications/NotificationProvider";
 import { useSequences } from "./useSequences";
 import { useSequenceSteps } from "./useSequenceSteps";
 
@@ -39,6 +46,7 @@ function makeProspect(overrides: Partial<Prospect> = {}): Prospect {
     context: "",
     source: "csv",
     status: "new",
+    consent_status: "none",
     verify_status: "not_checked",
     verify_score: 0,
     verify_details: {},
@@ -68,6 +76,7 @@ function makeStep(overrides: Partial<SequenceStep> = {}): SequenceStep {
     step_order: 1,
     delay_days: 0,
     prompt_hint: "Intro email",
+    body: "",
     channel: "email",
     created_at: "2026-01-01T00:00:00Z",
     ...overrides,
@@ -92,7 +101,7 @@ describe("useProspects", () => {
     const data = [makeProspect({ id: "p-1" }), makeProspect({ id: "p-2" })];
     mockedApi.getProspects.mockResolvedValue(data);
 
-    const { result } = renderHook(() => useProspects());
+    const { result } = renderHook(() => useProspects(), { wrapper: NotificationProvider });
 
     await waitFor(() => {
       expect(result.current.prospects).toHaveLength(2);
@@ -103,7 +112,7 @@ describe("useProspects", () => {
   it("returns empty array when API fails on mount", async () => {
     mockedApi.getProspects.mockRejectedValue(new Error("network"));
 
-    const { result } = renderHook(() => useProspects());
+    const { result } = renderHook(() => useProspects(), { wrapper: NotificationProvider });
 
     // Should stay empty (error caught silently)
     await waitFor(() => {
@@ -122,7 +131,7 @@ describe("useProspects", () => {
 
     it.each(cases)("$name → $expected", async ({ prospects, expected }) => {
       mockedApi.getProspects.mockResolvedValue(prospects);
-      const { result } = renderHook(() => useProspects());
+      const { result } = renderHook(() => useProspects(), { wrapper: NotificationProvider });
 
       await waitFor(() => {
         expect(result.current.newProspectsCount).toBe(expected);
@@ -133,7 +142,7 @@ describe("useProspects", () => {
   describe("toggleProspect", () => {
     it("adds prospect to selection, then removes on second toggle", async () => {
       mockedApi.getProspects.mockResolvedValue([makeProspect({ id: "p-1" })]);
-      const { result } = renderHook(() => useProspects());
+      const { result } = renderHook(() => useProspects(), { wrapper: NotificationProvider });
 
       await waitFor(() => expect(result.current.prospects).toHaveLength(1));
 
@@ -146,7 +155,7 @@ describe("useProspects", () => {
 
     it("supports multiple selections", async () => {
       mockedApi.getProspects.mockResolvedValue([]);
-      const { result } = renderHook(() => useProspects());
+      const { result } = renderHook(() => useProspects(), { wrapper: NotificationProvider });
 
       await waitFor(() => expect(mockedApi.getProspects).toHaveBeenCalled());
 
@@ -164,7 +173,7 @@ describe("useProspects", () => {
     it("selects all when none selected", async () => {
       const data = [makeProspect({ id: "p-1" }), makeProspect({ id: "p-2" }), makeProspect({ id: "p-3" })];
       mockedApi.getProspects.mockResolvedValue(data);
-      const { result } = renderHook(() => useProspects());
+      const { result } = renderHook(() => useProspects(), { wrapper: NotificationProvider });
 
       await waitFor(() => expect(result.current.prospects).toHaveLength(3));
 
@@ -175,7 +184,7 @@ describe("useProspects", () => {
     it("deselects all when all selected", async () => {
       const data = [makeProspect({ id: "p-1" }), makeProspect({ id: "p-2" })];
       mockedApi.getProspects.mockResolvedValue(data);
-      const { result } = renderHook(() => useProspects());
+      const { result } = renderHook(() => useProspects(), { wrapper: NotificationProvider });
 
       await waitFor(() => expect(result.current.prospects).toHaveLength(2));
 
@@ -189,7 +198,7 @@ describe("useProspects", () => {
     it("selects all when only some selected (partial → all)", async () => {
       const data = [makeProspect({ id: "p-1" }), makeProspect({ id: "p-2" }), makeProspect({ id: "p-3" })];
       mockedApi.getProspects.mockResolvedValue(data);
-      const { result } = renderHook(() => useProspects());
+      const { result } = renderHook(() => useProspects(), { wrapper: NotificationProvider });
 
       await waitFor(() => expect(result.current.prospects).toHaveLength(3));
 
@@ -207,7 +216,7 @@ describe("useProspects", () => {
       mockedApi.getProspects.mockResolvedValue(data);
       mockedApi.launchSequence.mockResolvedValue(undefined);
 
-      const { result } = renderHook(() => useProspects());
+      const { result } = renderHook(() => useProspects(), { wrapper: NotificationProvider });
 
       await waitFor(() => expect(result.current.prospects).toHaveLength(2));
 
@@ -223,15 +232,16 @@ describe("useProspects", () => {
 
       expect(mockedApi.launchSequence).toHaveBeenCalledWith("seq-1", ["p-1", "p-2"], true);
       expect(result.current.selectedProspects.size).toBe(0);
-      expect(result.current.launchResult).toBe("Запущено для 2 проспектов");
       expect(result.current.launching).toBe(false);
+      // Success is surfaced through the global notification, not inline state.
+      expect(screen.getByText("Письма подготовлены")).toBeInTheDocument();
     });
 
-    it("sets error message on failure", async () => {
+    it("notifies the real failure cause and stops the spinner on error", async () => {
       mockedApi.getProspects.mockResolvedValue([]);
       mockedApi.launchSequence.mockRejectedValue(new Error("fail"));
 
-      const { result } = renderHook(() => useProspects());
+      const { result } = renderHook(() => useProspects(), { wrapper: NotificationProvider });
 
       await waitFor(() => expect(mockedApi.getProspects).toHaveBeenCalled());
 
@@ -239,38 +249,15 @@ describe("useProspects", () => {
         await result.current.launchSequence("seq-1", ["p-1"], false);
       });
 
-      expect(result.current.launchResult).toBe("Ошибка запуска");
       expect(result.current.launching).toBe(false);
-    });
-
-    it("clears launchResult after 4 seconds", async () => {
-      vi.useFakeTimers({ shouldAdvanceTime: true });
-      mockedApi.getProspects.mockResolvedValue([]);
-      mockedApi.launchSequence.mockResolvedValue(undefined);
-
-      const { result } = renderHook(() => useProspects());
-
-      await waitFor(() => expect(mockedApi.getProspects).toHaveBeenCalled());
-
-      await act(async () => {
-        await result.current.launchSequence("seq-1", ["p-1"], true);
-      });
-
-      expect(result.current.launchResult).toBe("Запущено для 1 проспектов");
-
-      await act(async () => {
-        vi.advanceTimersByTime(4000);
-      });
-
-      expect(result.current.launchResult).toBeNull();
-      vi.useRealTimers();
+      expect(screen.getByText("Не удалось запустить отправку")).toBeInTheDocument();
     });
 
     it("reloads prospects after successful launch", async () => {
       mockedApi.getProspects.mockResolvedValue([makeProspect({ id: "p-1", status: "new" })]);
       mockedApi.launchSequence.mockResolvedValue(undefined);
 
-      const { result } = renderHook(() => useProspects());
+      const { result } = renderHook(() => useProspects(), { wrapper: NotificationProvider });
 
       await waitFor(() => expect(result.current.prospects).toHaveLength(1));
 

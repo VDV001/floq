@@ -10,19 +10,43 @@ import (
 // --- Response DTOs ---
 
 type LeadResponse struct {
-	ID             uuid.UUID `json:"id"`
-	UserID         uuid.UUID `json:"user_id"`
-	Channel        string    `json:"channel"`
-	ContactName    string    `json:"contact_name"`
-	Company        string    `json:"company"`
-	FirstMessage   string    `json:"first_message"`
-	Status         string    `json:"status"`
-	TelegramChatID *int64    `json:"telegram_chat_id,omitempty"`
-	EmailAddress   *string    `json:"email_address,omitempty"`
-	SourceID       *uuid.UUID `json:"source_id,omitempty"`
-	SourceName     string     `json:"source_name,omitempty"`
-	CreatedAt      time.Time  `json:"created_at"`
-	UpdatedAt      time.Time `json:"updated_at"`
+	ID                  uuid.UUID                `json:"id"`
+	UserID              uuid.UUID                `json:"user_id"`
+	Channel             string                   `json:"channel"`
+	ContactName         string                   `json:"contact_name"`
+	Company             string                   `json:"company"`
+	FirstMessage        string                   `json:"first_message"`
+	Status              string                   `json:"status"`
+	TelegramChatID      *int64                   `json:"telegram_chat_id,omitempty"`
+	EmailAddress        *string                  `json:"email_address,omitempty"`
+	SourceID            *uuid.UUID               `json:"source_id,omitempty"`
+	SourceName          string                   `json:"source_name,omitempty"`
+	CreatedAt           time.Time                `json:"created_at"`
+	UpdatedAt           time.Time                `json:"updated_at"`
+	// ArchivedAt is set only for archived leads (the archived-view feed and
+	// single-lead detail). Active leads omit it from the wire so clients can
+	// use presence-of-key to switch between the archive/unarchive affordance.
+	ArchivedAt          *time.Time               `json:"archived_at,omitempty"`
+	Identity            *IdentitySummaryResponse `json:"identity,omitempty"`
+	// PendingRepliesCount badges the inbox-list UI when an operator
+	// has HITL drafts awaiting decision on this lead. Omitted from
+	// the wire when zero so the field is absent rather than carrying
+	// noise. The /api/leads list endpoint is the only path that
+	// populates this — single-lead detail endpoints leave it zero.
+	PendingRepliesCount int                      `json:"pending_replies_count,omitempty"`
+}
+
+// IdentitySummaryResponse projects the unified-identity context onto
+// the lead detail page. LinkedLeadIDs always includes the requesting
+// lead — clients dedupe when rendering the IdentityBadge sibling list.
+// All identifier fields are pre-canonicalized server-side; the
+// frontend renders them as-is.
+type IdentitySummaryResponse struct {
+	ID               uuid.UUID   `json:"id"`
+	Email            string      `json:"email,omitempty"`
+	Phone            string      `json:"phone,omitempty"`
+	TelegramUsername string      `json:"telegram_username,omitempty"`
+	LinkedLeadIDs    []uuid.UUID `json:"linked_lead_ids"`
 }
 
 type MessageResponse struct {
@@ -71,7 +95,30 @@ func LeadToResponse(l *domain.Lead) LeadResponse {
 		SourceID:       l.SourceID,
 		CreatedAt:      l.CreatedAt,
 		UpdatedAt:      l.UpdatedAt,
+		ArchivedAt:     l.ArchivedAt,
 	}
+}
+
+// LeadViewToResponse maps the full identity-aware view used by the
+// detail page. Identity is omitted from the JSON (omitempty) when the
+// lead has no linked Identity yet — the frontend treats absence as
+// "single-channel lead" and hides the IdentityBadge.
+func LeadViewToResponse(v *LeadView) LeadResponse {
+	resp := LeadToResponse(v.Lead)
+	if v.Identity != nil {
+		linked := v.LinkedLeadIDs
+		if linked == nil {
+			linked = []uuid.UUID{}
+		}
+		resp.Identity = &IdentitySummaryResponse{
+			ID:               v.Identity.ID,
+			Email:            v.Identity.Email,
+			Phone:            v.Identity.Phone,
+			TelegramUsername: v.Identity.TelegramUsername,
+			LinkedLeadIDs:    linked,
+		}
+	}
+	return resp
 }
 
 // LeadWithSourceToResponse projects the list read-model including source_name.
@@ -85,6 +132,18 @@ func LeadsToResponse(leads []domain.LeadWithSource) []LeadResponse {
 	resp := make([]LeadResponse, len(leads))
 	for i := range leads {
 		resp[i] = LeadWithSourceToResponse(&leads[i])
+	}
+	return resp
+}
+
+// LeadsWithPendingCountToResponse maps the inbox-list projection
+// (lead + per-lead pending-reply count) onto the wire DTO. Counts of
+// zero are omitted via the json:",omitempty" tag on the DTO field.
+func LeadsWithPendingCountToResponse(leads []LeadWithPendingCount) []LeadResponse {
+	resp := make([]LeadResponse, len(leads))
+	for i := range leads {
+		resp[i] = LeadWithSourceToResponse(&leads[i].LeadWithSource)
+		resp[i].PendingRepliesCount = leads[i].PendingCount
 	}
 	return resp
 }

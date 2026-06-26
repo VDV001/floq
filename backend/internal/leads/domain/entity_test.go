@@ -1,6 +1,7 @@
 package domain
 
 import (
+	"errors"
 	"testing"
 	"time"
 
@@ -8,6 +9,34 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+func TestNewLead_NormalizesEmail(t *testing.T) {
+	cases := []struct {
+		name string
+		in   *string
+		want *string
+	}{
+		{"upper-cased", strPtr("ALICE@ACME.COM"), strPtr("alice@acme.com")},
+		{"surrounding whitespace", strPtr("  alice@acme.com  "), strPtr("alice@acme.com")},
+		{"mixed case", strPtr("Alice@Acme.Com"), strPtr("alice@acme.com")},
+		{"already canonical", strPtr("alice@acme.com"), strPtr("alice@acme.com")},
+		{"nil stays nil", nil, nil},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			lead, err := NewLead(uuid.New(), ChannelEmail, "Alice", "Acme", "hello", nil, c.in)
+			require.NoError(t, err)
+			if c.want == nil {
+				assert.Nil(t, lead.EmailAddress)
+				return
+			}
+			require.NotNil(t, lead.EmailAddress)
+			assert.Equal(t, *c.want, *lead.EmailAddress)
+		})
+	}
+}
+
+func strPtr(s string) *string { return &s }
 
 func TestLead_InheritsSourceFrom(t *testing.T) {
 	leadSource := uuid.New()
@@ -205,15 +234,29 @@ func TestLead_TransitionTo_Valid(t *testing.T) {
 
 func TestLead_TransitionTo_InvalidTarget(t *testing.T) {
 	lead := &Lead{Status: StatusNew}
-	if err := lead.TransitionTo(LeadStatus("bogus")); err == nil {
-		t.Error("expected error for invalid target status")
+	err := lead.TransitionTo(LeadStatus("bogus"))
+	if err == nil {
+		t.Fatal("expected error for invalid target status")
+	}
+	if !errors.Is(err, ErrInvalidLeadStatus) {
+		t.Errorf("expected errors.Is(ErrInvalidLeadStatus), got %v", err)
 	}
 }
 
 func TestLead_TransitionTo_DisallowedTransition(t *testing.T) {
 	lead := &Lead{Status: StatusNew}
-	if err := lead.TransitionTo(StatusWon); err == nil {
-		t.Error("expected error for disallowed transition new -> won")
+	err := lead.TransitionTo(StatusWon)
+	if err == nil {
+		t.Fatal("expected error for disallowed transition new -> won")
+	}
+	// A disallowed (but valid-status) edge must be distinguishable from an
+	// invalid-status error so callers — notably the 1C applier adapter —
+	// can errors.Is the benign business mismatch and swallow only that.
+	if !errors.Is(err, ErrInvalidTransition) {
+		t.Errorf("expected errors.Is(ErrInvalidTransition), got %v", err)
+	}
+	if errors.Is(err, ErrInvalidLeadStatus) {
+		t.Error("disallowed-edge error must NOT also match ErrInvalidLeadStatus")
 	}
 	if lead.Status != StatusNew {
 		t.Error("status should not change on failed transition")

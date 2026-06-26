@@ -2,21 +2,47 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/tls"
+	"encoding/hex"
 	"fmt"
 	"log"
 	"net"
 	"net/http"
 	smtpLib "net/smtp"
+	"time"
 
 	"github.com/daniil/floq/internal/ai"
 	"github.com/daniil/floq/internal/ai/providers"
 	"github.com/daniil/floq/internal/config"
+	"github.com/daniil/floq/internal/integrations/onec"
+	"github.com/daniil/floq/internal/integrations/onec/domain"
 	"github.com/daniil/floq/internal/leads"
+	"github.com/daniil/floq/internal/proxy"
 	"github.com/daniil/floq/internal/settings"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
+	openaiopt "github.com/openai/openai-go/option"
 )
+
+// onecSecretGenerator produces 1C webhook secrets from crypto/rand. This is the
+// infra side of the onec.SecretGenerator port — the usecase stays oblivious to
+// how the entropy is sourced.
+type onecSecretGenerator struct{}
+
+// WebhookSecret returns the hex encoding of WebhookSecretBytes random bytes.
+func (onecSecretGenerator) WebhookSecret() (string, error) {
+	b := make([]byte, domain.WebhookSecretBytes)
+	if _, err := rand.Read(b); err != nil {
+		return "", fmt.Errorf("onec: read random: %w", err)
+	}
+	return hex.EncodeToString(b), nil
+}
+
+// buildOnecSecretGenerator returns the crypto/rand webhook-secret generator.
+func buildOnecSecretGenerator() onec.SecretGenerator {
+	return onecSecretGenerator{}
+}
 
 func buildUsageCounter(repo *leads.Repository) settings.UsageCounter {
 	return func(ctx context.Context, userID uuid.UUID) (int, int, error) {
@@ -32,7 +58,7 @@ func buildUsageCounter(repo *leads.Repository) settings.UsageCounter {
 	}
 }
 
-func buildAITester(cfg *config.Config) settings.AITester {
+func buildAITester(cfg *config.Config, httpClient *http.Client) settings.AITester {
 	return func(ctx context.Context, provider, model, apiKey string) (string, error) {
 		var p ai.Provider
 		switch provider {
@@ -40,7 +66,7 @@ func buildAITester(cfg *config.Config) settings.AITester {
 			if apiKey == "" {
 				apiKey = cfg.AnthropicAPIKey
 			}
-			p = providers.NewClaudeProvider(apiKey)
+			p = providers.NewClaudeProvider(apiKey, model, httpClient)
 		case "openai":
 			if apiKey == "" {
 				apiKey = cfg.OpenAIAPIKey
@@ -48,7 +74,11 @@ func buildAITester(cfg *config.Config) settings.AITester {
 			if model == "" {
 				model = cfg.OpenAIModel
 			}
-			p = providers.NewOpenAIProvider(apiKey, model)
+			var opts []openaiopt.RequestOption
+			if httpClient != nil {
+				opts = append(opts, openaiopt.WithHTTPClient(httpClient))
+			}
+			p = providers.NewOpenAIProvider(apiKey, model, opts...)
 		case "groq":
 			if apiKey == "" {
 				apiKey = cfg.GroqAPIKey
@@ -56,14 +86,14 @@ func buildAITester(cfg *config.Config) settings.AITester {
 			if model == "" {
 				model = cfg.GroqModel
 			}
-			p = providers.NewOpenAICompatibleProvider(apiKey, model, "https://api.groq.com/openai/v1")
+			p = providers.NewOpenAICompatibleProvider(apiKey, model, "https://api.groq.com/openai/v1", httpClient)
 		case "ollama":
 			if model == "" {
 				model = cfg.OllamaModel
 			}
-			p = providers.NewOllamaProvider(cfg.OllamaBaseURL, model)
+			p = providers.NewOllamaProvider(cfg.OllamaBaseURL, model, httpClient)
 		default:
-			return "", fmt.Errorf("неизвестный провайдер: %s", provider)
+			return "", fmt.Errorf("%w: %s", settings.ErrAIUnknownProvider, provider)
 		}
 
 		resp, err := p.Complete(ctx, ai.CompletionRequest{
@@ -78,50 +108,85 @@ func buildAITester(cfg *config.Config) settings.AITester {
 	}
 }
 
-func buildSMTPTester() settings.SMTPTester {
+func buildSMTPTester(proxyDialer proxy.ContextDialer) settings.SMTPTester {
 	return func(ctx context.Context, host, port, user, password string) error {
 		addr := net.JoinHostPort(host, port)
-		dialer := &net.Dialer{}
-		conn, err := tls.DialWithDialer(
-			dialer, "tcp", addr,
-			&tls.Config{ServerName: host},
-		)
-		if err != nil {
-			return fmt.Errorf("Не удалось подключиться: %v", err)
+
+		var conn net.Conn
+		var err error
+
+		if port == "465" {
+			if proxyDialer != nil {
+				rawConn, dialErr := proxyDialer.DialContext(ctx, "tcp", addr)
+				if dialErr != nil {
+					return fmt.Errorf("%w: %v", settings.ErrSMTPProxyDial, dialErr)
+				}
+				conn = tls.Client(rawConn, &tls.Config{ServerName: host})
+			} else {
+				conn, err = tls.DialWithDialer(
+					&net.Dialer{Timeout: 10 * time.Second}, "tcp", addr,
+					&tls.Config{ServerName: host},
+				)
+				if err != nil {
+					return fmt.Errorf("%w: %v", settings.ErrSMTPDial, err)
+				}
+			}
+		} else {
+			if proxyDialer != nil {
+				conn, err = proxyDialer.DialContext(ctx, "tcp", addr)
+				if err != nil {
+					return fmt.Errorf("%w: %v", settings.ErrSMTPProxyDial, err)
+				}
+			} else {
+				conn, err = net.DialTimeout("tcp", addr, 10*time.Second)
+				if err != nil {
+					return fmt.Errorf("%w: %v", settings.ErrSMTPDial, err)
+				}
+			}
 		}
 		defer conn.Close()
 
 		client, err := smtpLib.NewClient(conn, host)
 		if err != nil {
-			return fmt.Errorf("Ошибка создания SMTP-клиента")
+			return fmt.Errorf("%w: %v", settings.ErrSMTPClient, err)
 		}
 		defer client.Close()
 
+		if port != "465" {
+			if err := client.StartTLS(&tls.Config{ServerName: host}); err != nil {
+				return fmt.Errorf("%w: %v", settings.ErrSMTPStartTLS, err)
+			}
+		}
+
 		auth := smtpLib.PlainAuth("", user, password, host)
 		if err := client.Auth(auth); err != nil {
-			return fmt.Errorf("Неверный логин или пароль SMTP")
+			return fmt.Errorf("%w: %v", settings.ErrSMTPAuth, err)
 		}
 		_ = client.Quit()
 		return nil
 	}
 }
 
-func buildResendTester() settings.ResendTester {
+func buildResendTester(httpClient *http.Client) settings.ResendTester {
 	return func(ctx context.Context, apiKey string) error {
 		req, err := http.NewRequestWithContext(ctx, "GET", "https://api.resend.com/api-keys", nil)
 		if err != nil {
-			return fmt.Errorf("Ошибка запроса: %v", err)
+			return fmt.Errorf("%w: %v", settings.ErrResendRequest, err)
 		}
 		req.Header.Set("Authorization", "Bearer "+apiKey)
 
-		resp, err := http.DefaultClient.Do(req)
+		client := httpClient
+		if client == nil {
+			client = http.DefaultClient
+		}
+		resp, err := client.Do(req)
 		if err != nil {
-			return fmt.Errorf("Ошибка запроса: %v", err)
+			return fmt.Errorf("%w: %v", settings.ErrResendRequest, err)
 		}
 		defer resp.Body.Close()
 
 		if resp.StatusCode != 200 {
-			return fmt.Errorf("Неверный API ключ Resend")
+			return settings.ErrResendAuth
 		}
 		return nil
 	}

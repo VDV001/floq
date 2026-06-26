@@ -289,9 +289,35 @@ func TestHandler_ImportCSV_OK(t *testing.T) {
 	router.ServeHTTP(w, req)
 
 	assert.Equal(t, http.StatusOK, w.Code)
-	var resp map[string]int
+	var resp ImportReportResponse
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
-	assert.Equal(t, 1, resp["imported"])
+	assert.Equal(t, 1, resp.Imported)
+	assert.Empty(t, resp.Skipped)
+}
+
+func TestHandler_ImportCSV_TooLarge(t *testing.T) {
+	repo := newMockRepo()
+	uc := NewUseCase(repo, WithLeadChecker(&mockLeadChecker{}))
+	// Tiny caps exercise the 413 path without a real 50 MiB body: upload=50 bytes.
+	r := chi.NewRouter()
+	r.Use(httputil.MaxBodyBytesWithUploads(10, 50))
+	RegisterRoutes(r, uc)
+
+	var buf bytes.Buffer
+	mw := multipart.NewWriter(&buf)
+	fw, err := mw.CreateFormFile("file", "big.csv")
+	require.NoError(t, err)
+	_, err = fw.Write(bytes.Repeat([]byte("x"), 200)) // exceeds the 50-byte upload cap
+	require.NoError(t, err)
+	mw.Close()
+
+	req := httptest.NewRequest(http.MethodPost, "/api/prospects/import", &buf)
+	req.Header.Set("Content-Type", mw.FormDataContentType())
+	req = authedRequest(req, uuid.New())
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusRequestEntityTooLarge, w.Code, "oversized upload must be 413, not 400")
 }
 
 func TestHandler_ImportCSV_MissingFile(t *testing.T) {
@@ -417,4 +443,30 @@ func TestHandler_ImportCSV_BadCSV(t *testing.T) {
 	router.ServeHTTP(w, req)
 
 	assert.Equal(t, http.StatusBadRequest, w.Code)
+}
+
+func TestHandler_SetConsent(t *testing.T) {
+	repo := newMockRepo()
+	userID := uuid.New()
+	p, err := domain.NewProspect(userID, "Bob", "Acme", "CEO", "bob@acme.com", "manual")
+	require.NoError(t, err)
+	repo.prospects[p.ID] = p
+	uc := NewUseCase(repo)
+	router := setupRouter(uc)
+
+	do := func(id, body string, uid *uuid.UUID) int {
+		req := httptest.NewRequest(http.MethodPost, "/api/prospects/"+id+"/consent", bytes.NewBufferString(body))
+		if uid != nil {
+			req = authedRequest(req, *uid)
+		}
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+		return w.Code
+	}
+
+	assert.Equal(t, http.StatusOK, do(p.ID.String(), `{"status":"obtained"}`, &userID))
+	assert.Equal(t, domain.ConsentStatusObtained, repo.prospects[p.ID].Consent.Status)
+	assert.Equal(t, http.StatusBadRequest, do(p.ID.String(), `{"status":"bogus"}`, &userID))
+	assert.Equal(t, http.StatusUnauthorized, do(p.ID.String(), `{"status":"obtained"}`, nil))
+	assert.Equal(t, http.StatusNotFound, do(uuid.New().String(), `{"status":"obtained"}`, &userID))
 }

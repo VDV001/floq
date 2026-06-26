@@ -2,10 +2,35 @@ package domain
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"github.com/google/uuid"
 )
+
+// ErrEmailNotConfigured is returned by an EmailConfigChecker when neither
+// Resend nor SMTP is configured for the user. Sentinel so the handler can
+// errors.Is it and surface a 400 with a human cause + remedy (instead of the
+// async sender dropping the message silently).
+var ErrEmailNotConfigured = errors.New("email not configured")
+
+// ErrProspectNotOwned is returned by Launch when a requested prospect does not
+// belong to the authenticated caller. Sentinel so the handler can errors.Is it
+// and answer 404 (not leaking whether the prospect exists for another tenant).
+var ErrProspectNotOwned = errors.New("prospect not owned by caller")
+
+// ErrSequenceNotOwned is returned when a requested sequence — or a step or
+// launch targeting it — does not belong to the authenticated caller, or does
+// not exist. A missing and a foreign sequence return the SAME sentinel so the
+// caller can't tell them apart (anti-enumeration); the handler errors.Is it
+// and answers 404.
+var ErrSequenceNotOwned = errors.New("sequence not owned by caller")
+
+// ErrMessageNotOwned is returned when an outbound message operation (approve,
+// reject, edit) targets a message whose prospect does not belong to the
+// authenticated caller, or that does not exist. Missing and foreign collapse to
+// the same sentinel (anti-enumeration) → 404 at the handler.
+var ErrMessageNotOwned = errors.New("outbound message not owned by caller")
 
 // SequenceRepo manages sequence CRUD.
 // Note: ToggleActive was removed — the usecase now loads the entity, calls
@@ -22,6 +47,10 @@ type SequenceRepo interface {
 // StepRepo manages sequence step CRUD.
 type StepRepo interface {
 	ListSteps(ctx context.Context, sequenceID uuid.UUID) ([]SequenceStep, error)
+	// GetStep loads a single step by id (returns nil if absent). Used to
+	// resolve the owning sequence when authorizing a step-scoped operation
+	// addressed only by step id (e.g. DeleteStep).
+	GetStep(ctx context.Context, stepID uuid.UUID) (*SequenceStep, error)
 	CreateStep(ctx context.Context, step *SequenceStep) error
 	DeleteStep(ctx context.Context, stepID uuid.UUID) error
 }
@@ -121,4 +150,39 @@ type LeadCreator interface {
 // TxManager provides transactional execution.
 type TxManager interface {
 	WithTx(ctx context.Context, fn func(ctx context.Context) error) error
+}
+
+// EmailConfigChecker reports whether outbound email (Resend or SMTP) is
+// configured for a user. Implemented by an adapter in the composition root
+// over the settings store + env fallback; lets launch preflight email steps
+// before queuing messages the async sender would otherwise drop silently.
+// Returns nil when configured, ErrEmailNotConfigured otherwise.
+type EmailConfigChecker interface {
+	IsEmailConfigured(ctx context.Context, userID uuid.UUID) error
+}
+
+// AutopilotSettings is the resolved autopilot configuration for one launch.
+type AutopilotSettings struct {
+	// Enabled reports whether launch should auto-approve queued messages
+	// (skipping manual approval) so the async sender dispatches them.
+	Enabled bool
+	// SendDelay is the grace window an auto-approved message waits after launch
+	// before the sender may pick it up — time for the operator to still
+	// intervene. Zero means send at the next sender tick.
+	SendDelay time.Duration
+}
+
+// AutopilotChecker resolves a user's autopilot configuration — automatic
+// approval and sending of the messages a sequence launch queues. Implemented
+// by an adapter in the composition root over the settings store (the AutoSend
+// flag + send-delay). When enabled, launch promotes each queued message
+// straight to Approved so the async sender dispatches it without a manual
+// approval step; when disabled (the default), messages stay Draft and wait for
+// a human.
+//
+// A returned error fails the launch: the usecase never guesses the send mode,
+// so an unreadable setting can never silently auto-send real messages. A nil
+// checker (the default wiring) means autopilot is off.
+type AutopilotChecker interface {
+	ResolveAutopilot(ctx context.Context, userID uuid.UUID) (AutopilotSettings, error)
 }

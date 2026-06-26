@@ -1,7 +1,7 @@
 import {
   ShieldCheck,
   FileEdit,
-  Send,
+  Bot,
   Clock,
   ArrowLeftRight,
   FileCheck,
@@ -59,11 +59,12 @@ export const AUTOMATIONS: Automation[] = [
   },
   {
     id: "auto-send",
-    icon: Send,
-    iconBg: "bg-[#dce9ff]",
-    iconColor: "text-[#434655] group-hover:text-[#004ac6] transition-colors",
-    title: "Авто-отправка email",
-    description: "Утвержденные сообщения отправляются автоматически.",
+    icon: Bot,
+    iconBg: "bg-[#e1e0ff]",
+    iconColor: "text-[#3e3fcc]",
+    title: "Автопилот",
+    description:
+      "Сообщения из секвенций отправляются автоматически, без ручного одобрения в очереди.",
     defaultOn: false,
     bottom: { type: "input", label: "Задержка (мин)", defaultValue: 5 },
   },

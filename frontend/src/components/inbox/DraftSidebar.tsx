@@ -17,16 +17,29 @@ export function DraftSidebar({ leadId, draft, draftLoading, onDraftChanged, onMe
   const [regenerating, setRegenerating] = useState(false);
   const [sending, setSending] = useState(false);
 
-  // Sync when draft changes externally
-  if (draft && draftText === "" && draft.body) setDraftText(draft.body);
+  // Reset the editor when navigating to another lead so a half-written reply
+  // never leaks across leads (textarea is always editable now). The parent
+  // re-fetches the draft async, so the draft prop can briefly lag leadId —
+  // clear to empty here and let the lead-scoped sync below refill it.
+  const [prevLeadId, setPrevLeadId] = useState(leadId);
+  if (leadId !== prevLeadId) {
+    setPrevLeadId(leadId);
+    setDraftText("");
+  }
+
+  // Adopt a server draft only once it belongs to the current lead — a stale
+  // draft from the previous lead (lagging prop) must not fill this editor.
+  if (draft && draft.lead_id === leadId && draftText === "" && draft.body) setDraftText(draft.body);
 
   return (
     <aside className="flex w-96 shrink-0 flex-col border-l border-[#c3c6d7]/10 bg-white p-6">
       <div className="mb-4 flex items-center justify-between">
-        <h4 className="text-sm font-bold text-[#0d1c2e]">ИИ-черн��вик ответа</h4>
-        <div className="flex items-center gap-1 rounded-full bg-[#e1e0ff] px-2 py-1 text-[0.6rem] font-bold uppercase text-[#3e3fcc]">
-          <Zap className="size-3" /> Умный черновик
-        </div>
+        <h4 className="text-sm font-bold text-[#0d1c2e]">Черновик ответа</h4>
+        {draft && (
+          <div className="flex items-center gap-1 rounded-full bg-[#e1e0ff] px-2 py-1 text-[0.6rem] font-bold uppercase text-[#3e3fcc]">
+            <Zap className="size-3" /> Умный черновик
+          </div>
+        )}
       </div>
 
       <div className="relative mb-4 flex-1">
@@ -35,11 +48,10 @@ export function DraftSidebar({ leadId, draft, draftLoading, onDraftChanged, onMe
             <div className="flex h-full items-center justify-center">
               <div className="size-5 animate-spin rounded-full border-2 border-[#3e3fcc] border-t-transparent" />
             </div>
-          ) : draft ? (
-            <textarea className="h-full w-full resize-none border-none bg-transparent text-sm leading-relaxed text-[#0d1c2e] outline-none"
-              value={draftText} onChange={(e) => setDraftText(e.target.value)} spellCheck={false} />
           ) : (
-            <p className="text-sm italic text-[#434655]">Чернов��к не создан</p>
+            <textarea className="h-full w-full resize-none border-none bg-transparent text-sm leading-relaxed text-[#0d1c2e] outline-none placeholder:italic placeholder:text-[#434655]"
+              value={draftText} onChange={(e) => setDraftText(e.target.value)} spellCheck={false}
+              placeholder="Напишите ответ вручную или сгенерируйте черновик кнопкой ниже." />
           )}
         </div>
       </div>
@@ -53,7 +65,7 @@ export function DraftSidebar({ leadId, draft, draftLoading, onDraftChanged, onMe
         }} disabled={regenerating}
           className="flex w-full items-center justify-center gap-2 rounded-xl border border-[#c3c6d7]/30 py-3 text-sm font-bold text-[#0d1c2e] transition-all hover:bg-[#eff4ff] disabled:opacity-50">
           {regenerating && <RefreshCw className="size-4 animate-spin" />}
-          {regenerating ? "Генерация..." : "Перегенерировать"}
+          {regenerating ? "Генерация..." : draft ? "Перегенерировать" : "Сгенерировать черновик ИИ"}
         </button>
         <button onClick={async () => {
           if (!draftText.trim()) return;
@@ -64,7 +76,7 @@ export function DraftSidebar({ leadId, draft, draftLoading, onDraftChanged, onMe
             onMessagesSent(msgs);
             setDraftText("");
             onDraftChanged(null);
-          } catch { alert("Ошибка от��равки"); }
+          } catch { alert("Ошибка отправки"); }
           finally { setSending(false); }
         }} disabled={!draftText.trim() || sending}
           className="flex w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-[#004ac6] to-[#2563eb] py-4 text-sm font-bold text-white shadow-lg shadow-[#004ac6]/20 transition-all hover:opacity-90 active:scale-95 disabled:opacity-50">

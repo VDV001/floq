@@ -15,8 +15,9 @@ import (
 // --- Mock Repository ---
 
 type mockRepo struct {
-	prospects map[uuid.UUID]*domain.Prospect
-	batched   []domain.Prospect
+	prospects          map[uuid.UUID]*domain.Prospect
+	batched            []domain.Prospect
+	updateConsentCalls int
 }
 
 func newMockRepo() *mockRepo {
@@ -60,7 +61,12 @@ func (m *mockRepo) GetProspectForUser(_ context.Context, userID, prospectID uuid
 	return p, nil
 }
 
-func (m *mockRepo) FindByTelegramUsername(_ context.Context, _ uuid.UUID, _ string) (*domain.Prospect, error) {
+func (m *mockRepo) FindByTelegramUsername(_ context.Context, userID uuid.UUID, username string) (*domain.Prospect, error) {
+	for _, p := range m.prospects {
+		if p.UserID == userID && p.TelegramUsername == username {
+			return p, nil
+		}
+	}
 	return nil, nil
 }
 
@@ -97,6 +103,14 @@ func (m *mockRepo) UpdateVerification(_ context.Context, _ uuid.UUID, _ domain.V
 	return nil
 }
 
+func (m *mockRepo) UpdateConsent(_ context.Context, prospectID uuid.UUID, c domain.Consent) error {
+	m.updateConsentCalls++
+	if p, ok := m.prospects[prospectID]; ok {
+		p.Consent = c
+	}
+	return nil
+}
+
 // --- Mock LeadChecker ---
 
 type mockLeadChecker struct {
@@ -114,12 +128,13 @@ func (m *mockLeadChecker) LeadExistsByEmail(_ context.Context, _ uuid.UUID, emai
 
 type mockErrorRepo struct {
 	mockRepo
-	listErr   error
-	getErr    error
-	createErr error
-	deleteErr error
-	findErr   error
-	batchErr  error
+	listErr    error
+	getErr     error
+	createErr  error
+	deleteErr  error
+	findErr    error
+	findByTGErr error
+	batchErr   error
 }
 
 func (m *mockErrorRepo) ListProspects(_ context.Context, _ uuid.UUID) ([]domain.ProspectWithSource, error) {
@@ -157,6 +172,13 @@ func (m *mockErrorRepo) FindByEmail(_ context.Context, _ uuid.UUID, _ string) (*
 	return nil, nil
 }
 
+func (m *mockErrorRepo) FindByTelegramUsername(_ context.Context, _ uuid.UUID, _ string) (*domain.Prospect, error) {
+	if m.findByTGErr != nil {
+		return nil, m.findByTGErr
+	}
+	return nil, nil
+}
+
 func (m *mockErrorRepo) CreateProspectsBatch(_ context.Context, _ []domain.Prospect) error {
 	if m.batchErr != nil {
 		return m.batchErr
@@ -183,9 +205,11 @@ func TestImportCSV_HappyPath(t *testing.T) {
 
 	csv := []byte("name,company,title,email\nAlice,Acme,CEO,alice@acme.com\nBob,Beta,CTO,bob@beta.com\n")
 
-	count, err := uc.ImportCSV(context.Background(), userID, csv)
+	report, err := uc.ImportCSV(context.Background(), userID, csv)
 	require.NoError(t, err)
-	assert.Equal(t, 2, count)
+	require.NotNil(t, report)
+	assert.Equal(t, 2, report.Imported)
+	assert.Empty(t, report.Skipped)
 	assert.Len(t, repo.batched, 2)
 
 	assert.Equal(t, "Alice", repo.batched[0].Name)
@@ -205,9 +229,9 @@ func TestImportCSV_InvalidHeader(t *testing.T) {
 
 	csv := []byte("first_name,company,title,email\nAlice,Acme,CEO,alice@acme.com\n")
 
-	count, err := uc.ImportCSV(context.Background(), uuid.New(), csv)
+	report, err := uc.ImportCSV(context.Background(), uuid.New(), csv)
 	assert.Error(t, err)
-	assert.Equal(t, 0, count)
+	assert.Nil(t, report)
 	assert.Contains(t, err.Error(), "invalid csv header")
 }
 
@@ -218,9 +242,9 @@ func TestImportCSV_WithOptionalColumns(t *testing.T) {
 
 	csv := []byte("name,company,title,email,phone,industry\nAlice,Acme,CEO,alice@acme.com,+7999,SaaS\n")
 
-	count, err := uc.ImportCSV(context.Background(), userID, csv)
+	report, err := uc.ImportCSV(context.Background(), userID, csv)
 	require.NoError(t, err)
-	assert.Equal(t, 1, count)
+	assert.Equal(t, 1, report.Imported)
 	assert.Equal(t, "+7999", repo.batched[0].Phone)
 	assert.Equal(t, "SaaS", repo.batched[0].Industry)
 }
@@ -425,9 +449,9 @@ func TestImportCSV_DedupSkipsExistingProspect(t *testing.T) {
 
 	uc := NewUseCase(repo, WithLeadChecker(&mockLeadChecker{}))
 	csv := []byte("name,company,title,email\nAlice,Acme,CEO,dup@test.com\nBob,Beta,CTO,fresh@test.com\n")
-	count, err := uc.ImportCSV(context.Background(), userID, csv)
+	report, err := uc.ImportCSV(context.Background(), userID, csv)
 	require.NoError(t, err)
-	assert.Equal(t, 1, count) // only Bob imported
+	assert.Equal(t, 1, report.Imported) // only Bob imported
 }
 
 func TestImportCSV_DedupSkipsExistingLead(t *testing.T) {
@@ -437,9 +461,9 @@ func TestImportCSV_DedupSkipsExistingLead(t *testing.T) {
 	userID := uuid.New()
 
 	csv := []byte("name,company,title,email\nAlice,Acme,CEO,lead@test.com\nBob,Beta,CTO,fresh@test.com\n")
-	count, err := uc.ImportCSV(context.Background(), userID, csv)
+	report, err := uc.ImportCSV(context.Background(), userID, csv)
 	require.NoError(t, err)
-	assert.Equal(t, 1, count) // only Bob
+	assert.Equal(t, 1, report.Imported) // only Bob
 }
 
 func TestImportCSV_FindByEmailError(t *testing.T) {
@@ -478,6 +502,169 @@ func TestImportCSV_EmptyCSV(t *testing.T) {
 	assert.Contains(t, err.Error(), "read csv header")
 }
 
+func TestImportCSV_StripsBOM(t *testing.T) {
+	repo := newMockRepo()
+	uc := NewUseCase(repo, WithLeadChecker(&mockLeadChecker{}))
+	userID := uuid.New()
+
+	bom := []byte{0xEF, 0xBB, 0xBF}
+	csvData := append(bom, []byte("name,company,title,email\nAlice,Acme,CEO,alice@acme.com\n")...)
+
+	report, err := uc.ImportCSV(context.Background(), userID, csvData)
+	require.NoError(t, err)
+	assert.Equal(t, 1, report.Imported)
+	assert.Equal(t, "Alice", repo.batched[0].Name)
+}
+
+func TestImportCSV_SemicolonDelimiter(t *testing.T) {
+	repo := newMockRepo()
+	uc := NewUseCase(repo, WithLeadChecker(&mockLeadChecker{}))
+	userID := uuid.New()
+
+	csvData := []byte("name;company;title;email\nAlice;Acme;CEO;alice@acme.com\n")
+
+	report, err := uc.ImportCSV(context.Background(), userID, csvData)
+	require.NoError(t, err)
+	assert.Equal(t, 1, report.Imported)
+	assert.Equal(t, "Alice", repo.batched[0].Name)
+	assert.Equal(t, "Acme", repo.batched[0].Company)
+}
+
+func TestImportCSV_FlexibleColumnOrder(t *testing.T) {
+	repo := newMockRepo()
+	uc := NewUseCase(repo, WithLeadChecker(&mockLeadChecker{}))
+	userID := uuid.New()
+
+	csvData := []byte("email,name,company,title\nalice@acme.com,Alice,Acme,CEO\n")
+
+	report, err := uc.ImportCSV(context.Background(), userID, csvData)
+	require.NoError(t, err)
+	assert.Equal(t, 1, report.Imported)
+	assert.Equal(t, "Alice", repo.batched[0].Name)
+	assert.Equal(t, "alice@acme.com", repo.batched[0].Email)
+	assert.Equal(t, "Acme", repo.batched[0].Company)
+	assert.Equal(t, "CEO", repo.batched[0].Title)
+}
+
+func TestImportCSV_RussianColumnAliases(t *testing.T) {
+	repo := newMockRepo()
+	uc := NewUseCase(repo, WithLeadChecker(&mockLeadChecker{}))
+	userID := uuid.New()
+
+	csvData := []byte("имя;компания;должность;почта;телефон;telegram\nАлиса;ООО Рога;CEO;alice@acme.com;+79991234567;alice_tg\n")
+
+	report, err := uc.ImportCSV(context.Background(), userID, csvData)
+	require.NoError(t, err)
+	assert.Equal(t, 1, report.Imported)
+	assert.Equal(t, "Алиса", repo.batched[0].Name)
+	assert.Equal(t, "ООО Рога", repo.batched[0].Company)
+	assert.Equal(t, "CEO", repo.batched[0].Title)
+	assert.Equal(t, "alice@acme.com", repo.batched[0].Email)
+	assert.Equal(t, "+79991234567", repo.batched[0].Phone)
+	assert.Equal(t, "alice_tg", repo.batched[0].TelegramUsername)
+}
+
+func TestImportCSV_TGContactsAlias(t *testing.T) {
+	repo := newMockRepo()
+	uc := NewUseCase(repo, WithLeadChecker(&mockLeadChecker{}))
+	userID := uuid.New()
+
+	csvData := []byte("имя в tg;tg-контакты;телефон;комментарий\nДарья;@crmlab_assistant;;Интегратор\n")
+
+	report, err := uc.ImportCSV(context.Background(), userID, csvData)
+	require.NoError(t, err)
+	assert.Equal(t, 1, report.Imported)
+	assert.Equal(t, "Дарья", repo.batched[0].Name)
+	assert.Equal(t, "crmlab_assistant", repo.batched[0].TelegramUsername)
+	assert.Equal(t, "Интегратор", repo.batched[0].Context)
+}
+
+func TestImportCSV_OnlyNameRequired(t *testing.T) {
+	repo := newMockRepo()
+	uc := NewUseCase(repo, WithLeadChecker(&mockLeadChecker{}))
+	userID := uuid.New()
+
+	csvData := []byte("name\nAlice\nBob\n")
+
+	report, err := uc.ImportCSV(context.Background(), userID, csvData)
+	require.NoError(t, err)
+	assert.Equal(t, 2, report.Imported)
+	assert.Equal(t, "Alice", repo.batched[0].Name)
+	assert.Equal(t, "Bob", repo.batched[1].Name)
+}
+
+func TestImportCSV_NormalizeTGUsername(t *testing.T) {
+	repo := newMockRepo()
+	uc := NewUseCase(repo, WithLeadChecker(&mockLeadChecker{}))
+	userID := uuid.New()
+
+	csvData := []byte("name,telegram_username\nAlice,@alice_bot\nBob,bob_user\n")
+
+	report, err := uc.ImportCSV(context.Background(), userID, csvData)
+	require.NoError(t, err)
+	assert.Equal(t, 2, report.Imported)
+	assert.Equal(t, "alice_bot", repo.batched[0].TelegramUsername)
+	assert.Equal(t, "bob_user", repo.batched[1].TelegramUsername)
+}
+
+func TestImportCSV_DedupByTelegramUsername(t *testing.T) {
+	repo := newMockRepo()
+	userID := uuid.New()
+	existing, _ := domain.NewProspect(userID, "Existing", "Co", "CTO", "", "manual")
+	existing.TelegramUsername = "alice_tg"
+	repo.prospects[existing.ID] = existing
+
+	uc := NewUseCase(repo, WithLeadChecker(&mockLeadChecker{}))
+	csvData := []byte("name,telegram_username\nAlice,@alice_tg\nBob,bob_tg\n")
+	report, err := uc.ImportCSV(context.Background(), userID, csvData)
+	require.NoError(t, err)
+	assert.Equal(t, 1, report.Imported) // only Bob
+	assert.Equal(t, "Bob", repo.batched[0].Name)
+}
+
+func TestImportCSV_FindByTGUsernameError(t *testing.T) {
+	repo := &mockErrorRepo{findByTGErr: fmt.Errorf("db connection refused")}
+	uc := NewUseCase(repo)
+	csvData := []byte("name,telegram_username\nAlice,alice_tg\n")
+	_, err := uc.ImportCSV(context.Background(), uuid.New(), csvData)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "dedup prospect tg check")
+}
+
+func TestImportCSV_CaseInsensitiveHeaders(t *testing.T) {
+	repo := newMockRepo()
+	uc := NewUseCase(repo, WithLeadChecker(&mockLeadChecker{}))
+	userID := uuid.New()
+
+	csvData := []byte("Name,Company,Title,Email\nAlice,Acme,CEO,alice@acme.com\n")
+
+	report, err := uc.ImportCSV(context.Background(), userID, csvData)
+	require.NoError(t, err)
+	assert.Equal(t, 1, report.Imported)
+	assert.Equal(t, "Alice", repo.batched[0].Name)
+}
+
+func TestImportCSV_NoNameColumn(t *testing.T) {
+	repo := newMockRepo()
+	uc := NewUseCase(repo)
+
+	csvData := []byte("company,title,email\nAcme,CEO,a@b.com\n")
+
+	_, err := uc.ImportCSV(context.Background(), uuid.New(), csvData)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "name")
+}
+
+func TestTemplateCSV(t *testing.T) {
+	uc := NewUseCase(newMockRepo())
+	data := uc.TemplateCSV()
+
+	csv := string(data)
+	assert.True(t, data[0] == 0xEF && data[1] == 0xBB && data[2] == 0xBF, "should have BOM")
+	assert.Contains(t, csv, "name,company,title,email")
+	assert.Contains(t, csv, "telegram_username")
+}
+
 func TestImportCSV_MalformedRecord(t *testing.T) {
 	repo := newMockRepo()
 	uc := NewUseCase(repo)
@@ -488,10 +675,202 @@ func TestImportCSV_MalformedRecord(t *testing.T) {
 	assert.Contains(t, err.Error(), "read csv record")
 }
 
+func TestImportCSV_FallbackNameToCompany(t *testing.T) {
+	repo := newMockRepo()
+	uc := NewUseCase(repo, WithLeadChecker(&mockLeadChecker{}))
+	userID := uuid.New()
+
+	csvData := []byte("name,company,email\n,Acme,info@acme.com\n")
+	report, err := uc.ImportCSV(context.Background(), userID, csvData)
+	require.NoError(t, err)
+	require.NotNil(t, report)
+	assert.Equal(t, 1, report.Imported)
+	assert.Empty(t, report.Skipped)
+	require.Len(t, repo.batched, 1)
+	assert.Equal(t, "Acme", repo.batched[0].Name, "company should fill in for missing contact name")
+	assert.Equal(t, "Acme", repo.batched[0].Company)
+	assert.Equal(t, "info@acme.com", repo.batched[0].Email)
+}
+
+func TestImportCSV_FallbackNameToEmail(t *testing.T) {
+	repo := newMockRepo()
+	uc := NewUseCase(repo, WithLeadChecker(&mockLeadChecker{}))
+	userID := uuid.New()
+
+	csvData := []byte("name,company,email\n,,info@acme.com\n")
+	report, err := uc.ImportCSV(context.Background(), userID, csvData)
+	require.NoError(t, err)
+	require.NotNil(t, report)
+	assert.Equal(t, 1, report.Imported)
+	assert.Empty(t, report.Skipped)
+	require.Len(t, repo.batched, 1)
+	assert.Equal(t, "info@acme.com", repo.batched[0].Name, "email should fill in for missing name and company")
+	assert.Equal(t, "info@acme.com", repo.batched[0].Email)
+}
+
+func TestImportCSV_NoIdentifierSkippedWithReason(t *testing.T) {
+	repo := newMockRepo()
+	uc := NewUseCase(repo, WithLeadChecker(&mockLeadChecker{}))
+	userID := uuid.New()
+
+	// Row 2 (data line 1): valid; row 3 (data line 2): blank everything.
+	csvData := []byte("name,company,email\nAlice,Acme,alice@acme.com\n,,\n")
+	report, err := uc.ImportCSV(context.Background(), userID, csvData)
+	require.NoError(t, err)
+	require.NotNil(t, report)
+	assert.Equal(t, 1, report.Imported)
+	require.Len(t, report.Skipped, 1)
+	assert.Equal(t, 3, report.Skipped[0].Line, "skipped row must reference its CSV line (1-indexed, including header)")
+	assert.Contains(t, report.Skipped[0].Reason, "identifier")
+}
+
+func TestImportCSV_FallbackName_NormalizesEmailBeforeUsingAsName(t *testing.T) {
+	// When email is the fallback identifier used as Name, the persisted Name
+	// must already be normalized — otherwise dedup by name elsewhere diverges
+	// from dedup by email.
+	repo := newMockRepo()
+	uc := NewUseCase(repo, WithLeadChecker(&mockLeadChecker{}))
+	userID := uuid.New()
+
+	csvData := []byte("name,email\n,  INFO@ACME.COM  \n")
+	report, err := uc.ImportCSV(context.Background(), userID, csvData)
+	require.NoError(t, err)
+	assert.Equal(t, 1, report.Imported)
+	require.Len(t, repo.batched, 1)
+	assert.Equal(t, "info@acme.com", repo.batched[0].Email)
+	assert.Equal(t, "info@acme.com", repo.batched[0].Name)
+}
+
+func TestImportCSV_NormalizesPhone(t *testing.T) {
+	repo := newMockRepo()
+	uc := NewUseCase(repo, WithLeadChecker(&mockLeadChecker{}))
+	userID := uuid.New()
+
+	csvData := []byte("name,phone\nAlice,+7 999 (123) 45-67\n")
+	report, err := uc.ImportCSV(context.Background(), userID, csvData)
+	require.NoError(t, err)
+	assert.Equal(t, 1, report.Imported)
+	assert.Equal(t, "+79991234567", repo.batched[0].Phone)
+}
+
 func TestExportCSV_ListError(t *testing.T) {
 	repo := &mockErrorRepo{listErr: fmt.Errorf("db down")}
 	uc := NewUseCase(repo)
 	_, err := uc.ExportCSV(context.Background(), uuid.New())
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "list prospects")
+}
+
+// TestImportCSV_ConsentColumn verifies the optional consent column: a truthy
+// value grants obtained consent (source "import"); empty/falsy leaves the
+// prospect at the cold default 'none'. Table-driven over the accepted forms.
+func TestImportCSV_ConsentColumn(t *testing.T) {
+	truthy := []string{"yes", "true", "1", "obtained", "да", "Y"}
+	for _, v := range truthy {
+		t.Run("truthy="+v, func(t *testing.T) {
+			repo := newMockRepo()
+			uc := NewUseCase(repo, WithLeadChecker(&mockLeadChecker{}))
+			csv := []byte("name,email,consent\nAlice,alice@acme.com," + v + "\n")
+			_, err := uc.ImportCSV(context.Background(), uuid.New(), csv)
+			require.NoError(t, err)
+			require.Len(t, repo.batched, 1)
+			assert.Equal(t, domain.ConsentStatusObtained, repo.batched[0].Consent.Status)
+			assert.Equal(t, "import", repo.batched[0].Consent.Source)
+			assert.False(t, repo.batched[0].Consent.Timestamp.IsZero())
+		})
+	}
+
+	falsy := []string{"", "no", "0", "false"}
+	for _, v := range falsy {
+		t.Run("falsy="+v, func(t *testing.T) {
+			repo := newMockRepo()
+			uc := NewUseCase(repo, WithLeadChecker(&mockLeadChecker{}))
+			csv := []byte("name,email,consent\nBob,bob@beta.com," + v + "\n")
+			_, err := uc.ImportCSV(context.Background(), uuid.New(), csv)
+			require.NoError(t, err)
+			require.Len(t, repo.batched, 1)
+			assert.Equal(t, domain.ConsentStatusNone, repo.batched[0].Consent.Status)
+		})
+	}
+}
+
+// TestExportCSV_IncludesConsent verifies exported rows carry consent columns.
+func TestExportCSV_IncludesConsent(t *testing.T) {
+	repo := newMockRepo()
+	uc := NewUseCase(repo)
+	userID := uuid.New()
+	p, err := domain.NewProspect(userID, "Carol", "Acme", "CEO", "carol@acme.com", "manual")
+	require.NoError(t, err)
+	require.NoError(t, p.GrantConsent("inbound_reply", time.Now().UTC()))
+	require.NoError(t, repo.CreateProspect(context.Background(), p))
+
+	out, err := uc.ExportCSV(context.Background(), userID)
+	require.NoError(t, err)
+	s := string(out)
+	assert.Contains(t, s, "consent_status")
+	assert.Contains(t, s, "consent_source")
+	assert.Contains(t, s, "obtained")
+	assert.Contains(t, s, "inbound_reply")
+}
+
+// TestSetConsent verifies the manual operator toggle: grant and withdraw
+// transition the prospect and persist (source "manual"); unsupported statuses
+// and unknown/foreign prospects are rejected.
+func TestSetConsent(t *testing.T) {
+	newOwned := func(repo *mockRepo, userID uuid.UUID) uuid.UUID {
+		p, err := domain.NewProspect(userID, "Bob", "Acme", "CEO", "bob@acme.com", "manual")
+		require.NoError(t, err)
+		repo.prospects[p.ID] = p
+		return p.ID
+	}
+
+	t.Run("grant", func(t *testing.T) {
+		repo := newMockRepo()
+		uc := NewUseCase(repo)
+		userID := uuid.New()
+		id := newOwned(repo, userID)
+		require.NoError(t, uc.SetConsent(context.Background(), userID, id, domain.ConsentStatusObtained))
+		assert.Equal(t, domain.ConsentStatusObtained, repo.prospects[id].Consent.Status)
+		assert.Equal(t, "manual", repo.prospects[id].Consent.Source)
+	})
+
+	t.Run("withdraw", func(t *testing.T) {
+		repo := newMockRepo()
+		uc := NewUseCase(repo)
+		userID := uuid.New()
+		id := newOwned(repo, userID)
+		require.NoError(t, uc.SetConsent(context.Background(), userID, id, domain.ConsentStatusWithdrawn))
+		assert.Equal(t, domain.ConsentStatusWithdrawn, repo.prospects[id].Consent.Status)
+	})
+
+	// The Consent.Status assertions above pass even if SetConsent never
+	// persists, because GrantConsent mutates the prospect pointer the mock
+	// shares with the repo. Asserting the repository write actually happened
+	// is what pins persistence — without it, a "if err != nil" → "if err == nil"
+	// mutation (early return before repo.UpdateConsent) survives.
+	t.Run("grant persists via repository", func(t *testing.T) {
+		repo := newMockRepo()
+		uc := NewUseCase(repo)
+		userID := uuid.New()
+		id := newOwned(repo, userID)
+		require.NoError(t, uc.SetConsent(context.Background(), userID, id, domain.ConsentStatusObtained))
+		assert.Equal(t, 1, repo.updateConsentCalls, "SetConsent must persist through repo.UpdateConsent exactly once")
+	})
+
+	t.Run("unsupported status (none) rejected", func(t *testing.T) {
+		repo := newMockRepo()
+		uc := NewUseCase(repo)
+		userID := uuid.New()
+		id := newOwned(repo, userID)
+		require.Error(t, uc.SetConsent(context.Background(), userID, id, domain.ConsentStatusNone))
+	})
+
+	t.Run("foreign prospect → not found", func(t *testing.T) {
+		repo := newMockRepo()
+		uc := NewUseCase(repo)
+		owner := uuid.New()
+		id := newOwned(repo, owner)
+		err := uc.SetConsent(context.Background(), uuid.New(), id, domain.ConsentStatusObtained)
+		require.ErrorIs(t, err, ErrProspectNotFound)
+	})
 }

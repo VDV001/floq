@@ -142,18 +142,41 @@ type SequenceStep struct {
 	StepOrder  int
 	DelayDays  int
 	PromptHint string
-	Channel    StepChannel
-	CreatedAt  time.Time
+	// Body, when non-empty, is the manually written message used verbatim at
+	// launch (no AI generation). PromptHint drives AI generation when Body is
+	// empty. IsManual reports which mode this step is in.
+	Body      string
+	Channel   StepChannel
+	CreatedAt time.Time
+}
+
+// IsManual reports whether the step carries a hand-written body that should be
+// used verbatim instead of generating with AI.
+func (s *SequenceStep) IsManual() bool {
+	return s.Body != ""
+}
+
+// IsEmail reports whether the step is delivered over email. An empty channel
+// counts as email: that matches launch's generation default (the AI switch
+// treats "" as email) and the persisted channel, which the step handler
+// normalizes empty -> "email" before saving. Used to scope the launch
+// email-config preflight.
+func (s *SequenceStep) IsEmail() bool {
+	return s.Channel == StepChannelEmail || s.Channel == ""
 }
 
 // NewSequenceStep creates a new SequenceStep with generated ID and timestamp.
-func NewSequenceStep(sequenceID uuid.UUID, stepOrder, delayDays int, channel StepChannel, hint string) *SequenceStep {
+// A non-empty body marks the step as manual (used verbatim, no AI). The body is
+// trimmed so a whitespace-only value can't masquerade as a manual step and ship
+// an almost-empty message — keeping IsManual reliable at every entry point.
+func NewSequenceStep(sequenceID uuid.UUID, stepOrder, delayDays int, channel StepChannel, hint, body string) *SequenceStep {
 	return &SequenceStep{
 		ID:         uuid.New(),
 		SequenceID: sequenceID,
 		StepOrder:  stepOrder,
 		DelayDays:  delayDays,
 		PromptHint: hint,
+		Body:       strings.TrimSpace(body),
 		Channel:    channel,
 		CreatedAt:  time.Now().UTC(),
 	}

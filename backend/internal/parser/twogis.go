@@ -46,13 +46,15 @@ var cityIDs = map[string]int{
 
 // TwoGISClient wraps 2GIS API calls with a configurable API key.
 type TwoGISClient struct {
-	APIKey  string
-	baseURL string // override for testing; empty = production URL
+	APIKey     string
+	baseURL    string // override for testing; empty = production URL
+	httpClient *http.Client
 }
 
 // NewTwoGISClient creates a new client with the given API key.
-func NewTwoGISClient(apiKey string) *TwoGISClient {
-	return &TwoGISClient{APIKey: apiKey}
+// If httpClient is nil, a default client is used for each request.
+func NewTwoGISClient(apiKey string, httpClient *http.Client) *TwoGISClient {
+	return &TwoGISClient{APIKey: apiKey, httpClient: httpClient}
 }
 
 // Search searches for companies on 2GIS by query and city name.
@@ -78,7 +80,14 @@ func (c *TwoGISClient) Search(ctx context.Context, query, city string) ([]TwoGIS
 	}
 	req.Header.Set("User-Agent", "Floq/1.0")
 
-	client := &http.Client{Timeout: 15 * time.Second}
+	httpClient := c.httpClient
+	if httpClient == nil {
+		httpClient = &http.Client{}
+	}
+	client := &http.Client{
+		Transport: httpClient.Transport,
+		Timeout:   15 * time.Second,
+	}
 	resp, err := client.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("2gis: request failed: %w", err)

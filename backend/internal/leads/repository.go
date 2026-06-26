@@ -10,6 +10,7 @@ import (
 	"github.com/daniil/floq/internal/leads/domain"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -35,7 +36,7 @@ func (r *Repository) q(ctx context.Context) db.Querier {
 func (r *Repository) ListLeads(ctx context.Context, userID uuid.UUID) ([]domain.LeadWithSource, error) {
 	rows, err := r.q(ctx).Query(ctx,
 		`SELECT l.id, l.user_id, l.channel, l.contact_name, l.company, l.first_message, l.status, l.telegram_chat_id, l.email_address, l.source_id, COALESCE(ls.name, ''), l.created_at, l.updated_at
-		 FROM leads l
+		 FROM active_leads l
 		 LEFT JOIN lead_sources ls ON ls.id = l.source_id
 		 WHERE l.user_id = $1 ORDER BY l.created_at DESC`, userID)
 	if err != nil {
@@ -54,12 +55,63 @@ func (r *Repository) ListLeads(ctx context.Context, userID uuid.UUID) ([]domain.
 	return leads, rows.Err()
 }
 
+// ListAllLeads returns every lead for the user INCLUDING archived ones, with
+// archived_at populated. ListLeads (the inbox feed) reads active_leads and
+// hides archived; ListAllLeads exists for the CSV export, which is a backup —
+// omitting archived leads would present an incomplete file as a full one.
+func (r *Repository) ListAllLeads(ctx context.Context, userID uuid.UUID) ([]domain.LeadWithSource, error) {
+	rows, err := r.q(ctx).Query(ctx,
+		`SELECT l.id, l.user_id, l.channel, l.contact_name, l.company, l.first_message, l.status, l.telegram_chat_id, l.email_address, l.source_id, l.archived_at, COALESCE(ls.name, ''), l.created_at, l.updated_at
+		 FROM leads l
+		 LEFT JOIN lead_sources ls ON ls.id = l.source_id
+		 WHERE l.user_id = $1 ORDER BY l.created_at DESC`, userID)
+	if err != nil {
+		return nil, fmt.Errorf("list all leads: %w", err)
+	}
+	return scanArchivableLeads(rows)
+}
+
+// scanArchivableLeads drains rows whose column order matches the
+// archived_at-bearing SELECT shared by ListAllLeads and ListArchivedLeads
+// (the inbox feed's ListLeads omits archived_at and is intentionally not
+// routed through here). Keeping one scan site means a future leads-table
+// column change touches one place, not three near-identical loops.
+func scanArchivableLeads(rows pgx.Rows) ([]domain.LeadWithSource, error) {
+	defer rows.Close()
+
+	var leads []domain.LeadWithSource
+	for rows.Next() {
+		var item domain.LeadWithSource
+		if err := rows.Scan(&item.ID, &item.UserID, &item.Channel, &item.ContactName, &item.Company, &item.FirstMessage, &item.Status, &item.TelegramChatID, &item.EmailAddress, &item.SourceID, &item.ArchivedAt, &item.SourceName, &item.CreatedAt, &item.UpdatedAt); err != nil {
+			return nil, fmt.Errorf("scan lead: %w", err)
+		}
+		leads = append(leads, item)
+	}
+	return leads, rows.Err()
+}
+
+// ListArchivedLeads returns ONLY the user's archived leads, newest-archived
+// first, with archived_at and source_name populated. This is the inverse of
+// ListLeads (active_leads view) and backs the dedicated archive view — the one
+// place an operator inspects and unarchives leads hidden from the working feed.
+func (r *Repository) ListArchivedLeads(ctx context.Context, userID uuid.UUID) ([]domain.LeadWithSource, error) {
+	rows, err := r.q(ctx).Query(ctx,
+		`SELECT l.id, l.user_id, l.channel, l.contact_name, l.company, l.first_message, l.status, l.telegram_chat_id, l.email_address, l.source_id, l.archived_at, COALESCE(ls.name, ''), l.created_at, l.updated_at
+		 FROM leads l
+		 LEFT JOIN lead_sources ls ON ls.id = l.source_id
+		 WHERE l.user_id = $1 AND l.archived_at IS NOT NULL ORDER BY l.archived_at DESC`, userID)
+	if err != nil {
+		return nil, fmt.Errorf("list archived leads: %w", err)
+	}
+	return scanArchivableLeads(rows)
+}
+
 func (r *Repository) GetLead(ctx context.Context, id uuid.UUID) (*domain.Lead, error) {
 	var l domain.Lead
 	err := r.q(ctx).QueryRow(ctx,
-		`SELECT id, user_id, channel, contact_name, company, first_message, status, telegram_chat_id, email_address, source_id, created_at, updated_at
+		`SELECT id, user_id, channel, contact_name, company, first_message, status, telegram_chat_id, email_address, source_id, archived_at, created_at, updated_at
 		 FROM leads WHERE id = $1`, id).
-		Scan(&l.ID, &l.UserID, &l.Channel, &l.ContactName, &l.Company, &l.FirstMessage, &l.Status, &l.TelegramChatID, &l.EmailAddress, &l.SourceID, &l.CreatedAt, &l.UpdatedAt)
+		Scan(&l.ID, &l.UserID, &l.Channel, &l.ContactName, &l.Company, &l.FirstMessage, &l.Status, &l.TelegramChatID, &l.EmailAddress, &l.SourceID, &l.ArchivedAt, &l.CreatedAt, &l.UpdatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
 	}
@@ -75,9 +127,9 @@ func (r *Repository) GetLead(ctx context.Context, id uuid.UUID) (*domain.Lead, e
 func (r *Repository) GetLeadForUser(ctx context.Context, userID, leadID uuid.UUID) (*domain.Lead, error) {
 	var l domain.Lead
 	err := r.q(ctx).QueryRow(ctx,
-		`SELECT id, user_id, channel, contact_name, company, first_message, status, telegram_chat_id, email_address, source_id, created_at, updated_at
+		`SELECT id, user_id, channel, contact_name, company, first_message, status, telegram_chat_id, email_address, source_id, archived_at, created_at, updated_at
 		 FROM leads WHERE id = $1 AND user_id = $2`, leadID, userID).
-		Scan(&l.ID, &l.UserID, &l.Channel, &l.ContactName, &l.Company, &l.FirstMessage, &l.Status, &l.TelegramChatID, &l.EmailAddress, &l.SourceID, &l.CreatedAt, &l.UpdatedAt)
+		Scan(&l.ID, &l.UserID, &l.Channel, &l.ContactName, &l.Company, &l.FirstMessage, &l.Status, &l.TelegramChatID, &l.EmailAddress, &l.SourceID, &l.ArchivedAt, &l.CreatedAt, &l.UpdatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
 	}
@@ -89,9 +141,9 @@ func (r *Repository) GetLeadForUser(ctx context.Context, userID, leadID uuid.UUI
 
 func (r *Repository) CreateLead(ctx context.Context, lead *domain.Lead) error {
 	_, err := r.q(ctx).Exec(ctx,
-		`INSERT INTO leads (id, user_id, channel, contact_name, company, first_message, status, telegram_chat_id, email_address, source_id, created_at, updated_at)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
-		lead.ID, lead.UserID, lead.Channel, lead.ContactName, lead.Company, lead.FirstMessage, lead.Status, lead.TelegramChatID, lead.EmailAddress, lead.SourceID, lead.CreatedAt, lead.UpdatedAt)
+		`INSERT INTO leads (id, user_id, channel, contact_name, company, first_message, status, telegram_chat_id, email_address, source_id, archived_at, created_at, updated_at)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`,
+		lead.ID, lead.UserID, lead.Channel, lead.ContactName, lead.Company, lead.FirstMessage, lead.Status, lead.TelegramChatID, lead.EmailAddress, lead.SourceID, lead.ArchivedAt, lead.CreatedAt, lead.UpdatedAt)
 	if err != nil {
 		return fmt.Errorf("create lead: %w", err)
 	}
@@ -114,6 +166,45 @@ func (r *Repository) UpdateLeadStatus(ctx context.Context, id uuid.UUID, status 
 		status, time.Now().UTC(), id)
 	if err != nil {
 		return fmt.Errorf("update lead status: %w", err)
+	}
+	return nil
+}
+
+// SetLeadArchived persists the archive flag. A non-nil archivedAt archives the
+// lead; nil unarchives it. The UPDATE is CONDITIONAL on the current state
+// (archived_at IS NULL to archive, IS NOT NULL to unarchive) so the reject-on-
+// noop idempotency invariant the domain declares is also enforced at the
+// persistence boundary: two concurrent archive requests both pass the domain's
+// read-check, but only one UPDATE matches a row — the other gets 0 rows and the
+// matching sentinel (domain.ErrAlreadyArchived / ErrNotArchived), mapped to 409
+// rather than a silent second 200. A 0-row result for a non-existent id is
+// indistinguishable here, but callers (usecase + authorizeLead) have already
+// verified existence, so in practice 0 rows means the state guard fired.
+func (r *Repository) SetLeadArchived(ctx context.Context, id uuid.UUID, archivedAt *time.Time) error {
+	var (
+		tag     pgconn.CommandTag
+		err     error
+		noopErr error
+	)
+	if archivedAt != nil {
+		noopErr = domain.ErrAlreadyArchived
+		// updated_at == archived_at: the domain stamps them equal for the same
+		// logical event (Lead.Archive), so persist that instant rather than a
+		// fresh now() that would skew the two columns by a few microseconds.
+		tag, err = r.q(ctx).Exec(ctx,
+			`UPDATE leads SET archived_at = $1, updated_at = $1 WHERE id = $2 AND archived_at IS NULL`,
+			archivedAt, id)
+	} else {
+		noopErr = domain.ErrNotArchived
+		tag, err = r.q(ctx).Exec(ctx,
+			`UPDATE leads SET archived_at = NULL, updated_at = $1 WHERE id = $2 AND archived_at IS NOT NULL`,
+			time.Now().UTC(), id)
+	}
+	if err != nil {
+		return fmt.Errorf("set lead archived: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return noopErr
 	}
 	return nil
 }
@@ -233,9 +324,9 @@ func (r *Repository) CreateDraft(ctx context.Context, d *domain.Draft) error {
 func (r *Repository) GetLeadByTelegramChatID(ctx context.Context, userID uuid.UUID, chatID int64) (*domain.Lead, error) {
 	var l domain.Lead
 	err := r.q(ctx).QueryRow(ctx,
-		`SELECT id, user_id, channel, contact_name, company, first_message, status, telegram_chat_id, email_address, source_id, created_at, updated_at
+		`SELECT id, user_id, channel, contact_name, company, first_message, status, telegram_chat_id, email_address, source_id, archived_at, created_at, updated_at
 		 FROM leads WHERE user_id = $1 AND telegram_chat_id = $2`, userID, chatID).
-		Scan(&l.ID, &l.UserID, &l.Channel, &l.ContactName, &l.Company, &l.FirstMessage, &l.Status, &l.TelegramChatID, &l.EmailAddress, &l.SourceID, &l.CreatedAt, &l.UpdatedAt)
+		Scan(&l.ID, &l.UserID, &l.Channel, &l.ContactName, &l.Company, &l.FirstMessage, &l.Status, &l.TelegramChatID, &l.EmailAddress, &l.SourceID, &l.ArchivedAt, &l.CreatedAt, &l.UpdatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
 	}
@@ -249,9 +340,9 @@ func (r *Repository) GetLeadByTelegramChatID(ctx context.Context, userID uuid.UU
 func (r *Repository) GetLeadByEmailAddress(ctx context.Context, userID uuid.UUID, email string) (*domain.Lead, error) {
 	var l domain.Lead
 	err := r.q(ctx).QueryRow(ctx,
-		`SELECT id, user_id, channel, contact_name, company, first_message, status, telegram_chat_id, email_address, source_id, created_at, updated_at
+		`SELECT id, user_id, channel, contact_name, company, first_message, status, telegram_chat_id, email_address, source_id, archived_at, created_at, updated_at
 		 FROM leads WHERE user_id = $1 AND email_address = $2`, userID, email).
-		Scan(&l.ID, &l.UserID, &l.Channel, &l.ContactName, &l.Company, &l.FirstMessage, &l.Status, &l.TelegramChatID, &l.EmailAddress, &l.SourceID, &l.CreatedAt, &l.UpdatedAt)
+		Scan(&l.ID, &l.UserID, &l.Channel, &l.ContactName, &l.Company, &l.FirstMessage, &l.Status, &l.TelegramChatID, &l.EmailAddress, &l.SourceID, &l.ArchivedAt, &l.CreatedAt, &l.UpdatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
 	}
@@ -266,7 +357,7 @@ func (r *Repository) GetLeadByEmailAddress(ctx context.Context, userID uuid.UUID
 func (r *Repository) StaleLeadsWithoutReminder(ctx context.Context, staleDays int) ([]domain.Lead, error) {
 	rows, err := r.q(ctx).Query(ctx,
 		`SELECT l.id, l.user_id, l.channel, l.contact_name, l.company, l.first_message, l.status, l.telegram_chat_id, l.email_address, l.source_id, l.created_at, l.updated_at
-		 FROM leads l
+		 FROM active_leads l
 		 WHERE l.status NOT IN ('closed')
 		   AND NOT EXISTS (
 		     SELECT 1 FROM reminders r WHERE r.lead_id = l.id AND r.dismissed = FALSE
@@ -313,7 +404,7 @@ func (r *Repository) CreateReminder(ctx context.Context, leadID uuid.UUID, messa
 func (r *Repository) CountMonthLeads(ctx context.Context, userID uuid.UUID) (int, error) {
 	var count int
 	err := r.q(ctx).QueryRow(ctx,
-		`SELECT COUNT(*) FROM leads WHERE user_id = $1 AND created_at >= date_trunc('month', CURRENT_DATE)`,
+		`SELECT COUNT(*) FROM active_leads WHERE user_id = $1 AND created_at >= date_trunc('month', CURRENT_DATE)`,
 		userID).Scan(&count)
 	if err != nil {
 		return 0, fmt.Errorf("count month leads: %w", err)
@@ -324,7 +415,7 @@ func (r *Repository) CountMonthLeads(ctx context.Context, userID uuid.UUID) (int
 func (r *Repository) CountTotalLeads(ctx context.Context, userID uuid.UUID) (int, error) {
 	var count int
 	err := r.q(ctx).QueryRow(ctx,
-		`SELECT COUNT(*) FROM leads WHERE user_id = $1`, userID).Scan(&count)
+		`SELECT COUNT(*) FROM active_leads WHERE user_id = $1`, userID).Scan(&count)
 	if err != nil {
 		return 0, fmt.Errorf("count total leads: %w", err)
 	}

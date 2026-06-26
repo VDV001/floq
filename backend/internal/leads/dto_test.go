@@ -1,12 +1,14 @@
 package leads
 
 import (
+	"encoding/json"
 	"testing"
 	"time"
 
 	"github.com/daniil/floq/internal/leads/domain"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestLeadToResponse(t *testing.T) {
@@ -62,6 +64,39 @@ func TestLeadToResponse_NilOptionals(t *testing.T) {
 	assert.Nil(t, resp.TelegramChatID)
 	assert.Nil(t, resp.EmailAddress)
 	assert.Nil(t, resp.SourceID)
+	assert.Nil(t, resp.ArchivedAt, "active lead carries no archived_at")
+}
+
+func TestLeadToResponse_ArchivedAt(t *testing.T) {
+	archivedAt := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
+	lead := &domain.Lead{
+		ID:          uuid.New(),
+		UserID:      uuid.New(),
+		Channel:     domain.ChannelTelegram,
+		ContactName: "Carol",
+		Status:      domain.StatusNew,
+		ArchivedAt:  &archivedAt,
+	}
+
+	resp := LeadToResponse(lead)
+	require.NotNil(t, resp.ArchivedAt, "archived lead must expose archived_at")
+	assert.Equal(t, archivedAt, *resp.ArchivedAt)
+}
+
+// TestLeadResponse_ArchivedAtOmittedWhenNil pins the wire contract: an
+// active lead must not emit an archived_at key, so the frontend can use
+// presence-of-key to toggle archive/unarchive affordances.
+func TestLeadResponse_ArchivedAtOmittedWhenNil(t *testing.T) {
+	active := LeadToResponse(&domain.Lead{ID: uuid.New(), Channel: domain.ChannelEmail, Status: domain.StatusNew})
+	activeJSON, err := json.Marshal(active)
+	require.NoError(t, err)
+	assert.NotContains(t, string(activeJSON), "archived_at")
+
+	archivedAt := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
+	archived := LeadToResponse(&domain.Lead{ID: uuid.New(), Channel: domain.ChannelEmail, Status: domain.StatusNew, ArchivedAt: &archivedAt})
+	archivedJSON, err := json.Marshal(archived)
+	require.NoError(t, err)
+	assert.Contains(t, string(archivedJSON), "archived_at")
 }
 
 func TestLeadsToResponse(t *testing.T) {

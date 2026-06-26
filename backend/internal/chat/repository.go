@@ -28,14 +28,14 @@ func (r *Repository) FetchStats(ctx context.Context, userID uuid.UUID) (*userSta
 
 	// Total leads
 	err := r.q.QueryRow(ctx,
-		`SELECT COUNT(*) FROM leads WHERE user_id = $1`, userID).Scan(&s.TotalLeads)
+		`SELECT COUNT(*) FROM active_leads WHERE user_id = $1`, userID).Scan(&s.TotalLeads)
 	if err != nil {
 		return nil, fmt.Errorf("total leads: %w", err)
 	}
 
 	// Leads this month
 	err = r.q.QueryRow(ctx,
-		`SELECT COUNT(*) FROM leads WHERE user_id = $1 AND created_at >= date_trunc('month', CURRENT_DATE)`,
+		`SELECT COUNT(*) FROM active_leads WHERE user_id = $1 AND created_at >= date_trunc('month', CURRENT_DATE)`,
 		userID).Scan(&s.MonthLeads)
 	if err != nil {
 		return nil, fmt.Errorf("month leads: %w", err)
@@ -43,7 +43,7 @@ func (r *Repository) FetchStats(ctx context.Context, userID uuid.UUID) (*userSta
 
 	// Leads by status
 	rows, err := r.q.Query(ctx,
-		`SELECT status::text, COUNT(*) FROM leads WHERE user_id = $1 GROUP BY status`, userID)
+		`SELECT status::text, COUNT(*) FROM active_leads WHERE user_id = $1 GROUP BY status`, userID)
 	if err != nil {
 		return nil, fmt.Errorf("status counts: %w", err)
 	}
@@ -81,7 +81,7 @@ func (r *Repository) FetchStats(ctx context.Context, userID uuid.UUID) (*userSta
 
 	// Recent leads (last 10)
 	recentRows, err := r.q.Query(ctx,
-		`SELECT contact_name, COALESCE(company, ''), status::text, created_at FROM leads WHERE user_id = $1 ORDER BY created_at DESC LIMIT 10`,
+		`SELECT contact_name, COALESCE(company, ''), status::text, created_at FROM active_leads WHERE user_id = $1 ORDER BY created_at DESC LIMIT 10`,
 		userID)
 	if err != nil {
 		return nil, fmt.Errorf("recent leads: %w", err)

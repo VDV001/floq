@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"log"
 	"time"
+
+	auditdomain "github.com/daniil/floq/internal/audit/domain"
 )
 
 // Cron periodically checks for stale leads and creates follow-up reminders.
@@ -64,7 +66,13 @@ func (c *Cron) check(ctx context.Context) {
 	for _, lead := range staleLeads {
 		// Generate a follow-up message using AI.
 		daysAgo := fmt.Sprintf("%d", c.staleDays)
-		body, err := c.aiClient.GenerateFollowup(ctx, lead.ContactName, lead.Company, daysAgo, lead.FirstMessage, "")
+		leadID := lead.ID
+		auditCtx := auditdomain.ContextWithCallMeta(ctx, auditdomain.CallMeta{
+			UserID:      lead.UserID,
+			LeadID:      &leadID,
+			RequestType: auditdomain.RequestTypeFollowup,
+		})
+		body, err := c.aiClient.GenerateFollowup(auditCtx, lead.ContactName, lead.Company, daysAgo, lead.FirstMessage, "")
 		if err != nil {
 			log.Printf("reminders cron: error generating followup for lead %s: %v", lead.ID, err)
 			continue

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"testing"
+	"time"
 
 	"github.com/daniil/floq/internal/leads/domain"
 	"github.com/google/uuid"
@@ -44,6 +45,24 @@ func (m *mockRepo) ListLeads(_ context.Context, _ uuid.UUID) ([]domain.LeadWithS
 	return result, nil
 }
 
+func (m *mockRepo) ListAllLeads(_ context.Context, _ uuid.UUID) ([]domain.LeadWithSource, error) {
+	var result []domain.LeadWithSource
+	for _, l := range m.leads {
+		result = append(result, domain.LeadWithSource{Lead: *l})
+	}
+	return result, nil
+}
+
+func (m *mockRepo) ListArchivedLeads(_ context.Context, _ uuid.UUID) ([]domain.LeadWithSource, error) {
+	var result []domain.LeadWithSource
+	for _, l := range m.leads {
+		if l.ArchivedAt != nil {
+			result = append(result, domain.LeadWithSource{Lead: *l})
+		}
+	}
+	return result, nil
+}
+
 func (m *mockRepo) GetLeadForUser(_ context.Context, userID, leadID uuid.UUID) (*domain.Lead, error) {
 	l, ok := m.leads[leadID]
 	if !ok || l.UserID != userID {
@@ -71,6 +90,13 @@ func (m *mockRepo) UpdateFirstMessage(_ context.Context, _ uuid.UUID, _ string) 
 
 func (m *mockRepo) UpdateLeadStatus(_ context.Context, id uuid.UUID, status domain.LeadStatus) error {
 	m.updatedStatuses[id] = status
+	return nil
+}
+
+func (m *mockRepo) SetLeadArchived(_ context.Context, id uuid.UUID, archivedAt *time.Time) error {
+	if l, ok := m.leads[id]; ok {
+		l.ArchivedAt = archivedAt
+	}
 	return nil
 }
 
@@ -275,6 +301,54 @@ func TestQualifyLead_HappyPath(t *testing.T) {
 
 	// Check that qualification was persisted
 	assert.NotNil(t, repo.upsertedQualification)
+}
+
+type fakeQualObserver struct {
+	calls      int
+	calledWith *domain.Lead
+}
+
+func (f *fakeQualObserver) OnLeadQualified(_ context.Context, lead *domain.Lead) {
+	f.calls++
+	f.calledWith = lead
+}
+
+func TestQualifyLead_NotifiesObserver(t *testing.T) {
+	repo := newMockRepo()
+	leadID := uuid.New()
+	repo.leads[leadID] = &domain.Lead{
+		ID:          leadID,
+		UserID:      uuid.New(),
+		ContactName: "Ivan",
+		Channel:     domain.ChannelTelegram,
+		Status:      domain.StatusNew,
+	}
+	aiSvc := &mockAI{qualifyResult: &domain.Qualification{Score: 90, ProviderUsed: "test"}}
+	obs := &fakeQualObserver{}
+
+	uc := NewUseCase(repo, aiSvc, nil, WithQualificationObserver(obs))
+
+	_, err := uc.QualifyLead(context.Background(), leadID)
+	require.NoError(t, err)
+
+	require.Equal(t, 1, obs.calls, "observer must be notified after a successful qualification")
+	require.NotNil(t, obs.calledWith)
+	assert.Equal(t, leadID, obs.calledWith.ID)
+	assert.Equal(t, domain.StatusQualified, obs.calledWith.Status, "observer sees the qualified lead")
+}
+
+func TestQualifyLead_ObserverNotCalledOnFailure(t *testing.T) {
+	repo := newMockRepo()
+	leadID := uuid.New()
+	repo.leads[leadID] = &domain.Lead{ID: leadID, ContactName: "Ivan", Channel: domain.ChannelTelegram, Status: domain.StatusNew}
+	aiSvc := &mockAI{qualifyErr: fmt.Errorf("ai down")}
+	obs := &fakeQualObserver{}
+
+	uc := NewUseCase(repo, aiSvc, nil, WithQualificationObserver(obs))
+
+	_, err := uc.QualifyLead(context.Background(), leadID)
+	require.Error(t, err)
+	assert.Equal(t, 0, obs.calls, "no qualification → no notification")
 }
 
 func TestQualifyLead_NotFound(t *testing.T) {
@@ -605,6 +679,51 @@ func TestImportCSV_DedupByEmail(t *testing.T) {
 	assert.Equal(t, 1, count) // Alice skipped (dedup), Bob imported
 }
 
+func TestImportCSV_ResurfacesArchivedDuplicate(t *testing.T) {
+	userID := uuid.New()
+	email := "alice@example.com"
+	archived := time.Now().UTC()
+	existing := &domain.Lead{ID: uuid.New(), UserID: userID, EmailAddress: &email, ArchivedAt: &archived}
+	repo := &mockRepoDedup{mockRepo: newMockRepo(), existingEmails: map[string]*domain.Lead{email: existing}}
+	repo.leads[existing.ID] = existing
+	uc := NewUseCase(repo, &mockAI{}, nil)
+
+	csvData := []byte("contact_name,channel,email_address\nAlice,email,alice@example.com\n")
+	count, err := uc.ImportCSV(context.Background(), userID, csvData)
+	require.NoError(t, err)
+	// Re-importing an archived contact resurfaces it instead of silently
+	// dropping the row.
+	assert.Nil(t, existing.ArchivedAt, "archived duplicate must be unarchived on re-import")
+	assert.Equal(t, 1, count, "resurfaced lead counts toward the import total")
+}
+
+func TestImportCSV_HonorsArchivedColumn(t *testing.T) {
+	repo := newMockRepo()
+	uc := NewUseCase(repo, &mockAI{}, nil)
+	userID := uuid.New()
+
+	csvData := []byte("contact_name,channel,email_address,archived_at\nAlice,email,alice@x.com,2026-01-02T03:04:05Z\nBob,email,bob@x.com,\n")
+	count, err := uc.ImportCSV(context.Background(), userID, csvData)
+	require.NoError(t, err)
+	assert.Equal(t, 2, count)
+
+	var alice, bob *domain.Lead
+	for _, l := range repo.leads {
+		switch l.ContactName {
+		case "Alice":
+			alice = l
+		case "Bob":
+			bob = l
+		}
+	}
+	require.NotNil(t, alice)
+	require.NotNil(t, bob)
+	require.True(t, alice.IsArchived(), "row with archived_at must import as archived (backup round-trip)")
+	// The EXACT archive timestamp round-trips, not just the boolean state.
+	assert.Equal(t, "2026-01-02T03:04:05Z", alice.ArchivedAt.Format(time.RFC3339), "exact archive timestamp preserved")
+	assert.False(t, bob.IsArchived(), "row with empty archived_at must import as active")
+}
+
 func TestImportCSV_BadCSV(t *testing.T) {
 	repo := newMockRepo()
 	uc := NewUseCase(repo, &mockAI{}, nil)
@@ -630,7 +749,7 @@ func TestUpdateStatus_LeadNotFound(t *testing.T) {
 
 	err := uc.UpdateStatus(context.Background(), uuid.New(), "qualified")
 	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "lead not found")
+	assert.ErrorIs(t, err, domain.ErrLeadNotFound)
 }
 
 func TestUpdateStatus_InvalidTransition(t *testing.T) {
@@ -644,7 +763,7 @@ func TestUpdateStatus_InvalidTransition(t *testing.T) {
 
 	err := uc.UpdateStatus(context.Background(), leadID, "won")
 	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "cannot transition")
+	assert.ErrorIs(t, err, domain.ErrInvalidTransition)
 }
 
 func TestUpdateStatus_HappyPath(t *testing.T) {
@@ -856,7 +975,7 @@ func TestQualifyLead_TransitionError(t *testing.T) {
 	q, err := uc.QualifyLead(context.Background(), leadID)
 	assert.Error(t, err)
 	assert.Nil(t, q)
-	assert.Contains(t, err.Error(), "cannot transition")
+	assert.ErrorIs(t, err, domain.ErrInvalidTransition)
 }
 
 func TestImportCSV_MissingChannelColumn(t *testing.T) {
@@ -1046,6 +1165,10 @@ type mockRepoWithListErr struct {
 }
 
 func (m *mockRepoWithListErr) ListLeads(_ context.Context, _ uuid.UUID) ([]domain.LeadWithSource, error) {
+	return nil, m.err
+}
+
+func (m *mockRepoWithListErr) ListAllLeads(_ context.Context, _ uuid.UUID) ([]domain.LeadWithSource, error) {
 	return nil, m.err
 }
 

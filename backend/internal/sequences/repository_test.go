@@ -127,8 +127,8 @@ func TestCreateAndListSteps(t *testing.T) {
 	seq, _ := domain.NewSequence(userID, "WithSteps")
 	require.NoError(t, repo.CreateSequence(ctx, seq))
 
-	step1 := domain.NewSequenceStep(seq.ID, 1, 0, domain.StepChannelEmail, "intro")
-	step2 := domain.NewSequenceStep(seq.ID, 2, 3, domain.StepChannelTelegram, "followup")
+	step1 := domain.NewSequenceStep(seq.ID, 1, 0, domain.StepChannelEmail, "intro", "")
+	step2 := domain.NewSequenceStep(seq.ID, 2, 3, domain.StepChannelTelegram, "followup", "")
 
 	require.NoError(t, repo.CreateStep(ctx, step1))
 	require.NoError(t, repo.CreateStep(ctx, step2))
@@ -149,7 +149,7 @@ func TestDeleteStep(t *testing.T) {
 	seq, _ := domain.NewSequence(userID, "DelStep")
 	require.NoError(t, repo.CreateSequence(ctx, seq))
 
-	step := domain.NewSequenceStep(seq.ID, 1, 0, domain.StepChannelEmail, "to delete")
+	step := domain.NewSequenceStep(seq.ID, 1, 0, domain.StepChannelEmail, "to delete", "")
 	require.NoError(t, repo.CreateStep(ctx, step))
 
 	require.NoError(t, repo.DeleteStep(ctx, step.ID))

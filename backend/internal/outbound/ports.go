@@ -16,6 +16,16 @@ type ConfigStore interface {
 	GetConfig(ctx context.Context, userID uuid.UUID) (*settingsdomain.UserConfig, error)
 }
 
+// SendGuard is the agent-security-defaults layer-3 validator for outbound
+// sends (channel allowlist, recipient schema, mass-send threshold). Declared
+// here in the consumer per DIP; the security.OutboundGuard implementation is
+// injected via an adapter from the composition root, so the outbound package
+// carries no dependency on internal/ai/security. Returns (allowed, reason).
+type SendGuard interface {
+	CheckBatch(size int) (bool, string)
+	CheckRecipient(channel, recipient string) (bool, string)
+}
+
 // OutboundRepository manages the outbound message queue.
 type OutboundRepository interface {
 	GetPendingSends(ctx context.Context) ([]seqdomain.OutboundMessage, error)
@@ -30,10 +40,14 @@ type OutboundRepository interface {
 	MarkBounced(ctx context.Context, id uuid.UUID, bouncedAt time.Time) error
 }
 
-// ProspectLookup reads and updates prospect data needed for sending.
+// ProspectLookup reads prospect data and the suppression list — everything the
+// outbound context needs from the prospects context to make a send decision.
 type ProspectLookup interface {
 	GetProspect(ctx context.Context, id uuid.UUID) (*prospectsdomain.Prospect, error)
 	UpdateVerification(ctx context.Context, id uuid.UUID, status prospectsdomain.VerifyStatus, score int, details string, verifiedAt time.Time) error
+	// IsSuppressed reports whether address is on the suppression list for the
+	// user on the given channel — the hard pre-check ahead of consent.
+	IsSuppressed(ctx context.Context, userID uuid.UUID, channel prospectsdomain.SuppressionChannel, address string) (bool, error)
 }
 
 // TelegramSessionStore retrieves Telegram MTProto session data.

@@ -15,6 +15,7 @@ import {
   UserPlus,
   Send,
   GraduationCap,
+  BarChart3,
   Menu,
   X,
 } from "lucide-react";
@@ -23,12 +24,13 @@ import { api } from "@/lib/api";
 
 const NAV_ITEMS = [
   { label: "Входящие", href: "/inbox", icon: Inbox, hint: "Все входящие сообщения из Telegram и Email в одном месте" },
-  { label: "Лиды", href: "/alerts", icon: Users, hint: "Потенциальные клиенты, которые написали вам первыми. Здесь AI квалифицирует и оценивает каждый контакт" },
+  { label: "Напоминания", href: "/alerts", icon: Users, hint: "Лиды, которым нужен фоллоуап: давно нет ответа. Приоритет по сроку молчания. Сама лента лидов — во «Входящих»" },
   { label: "Воронка", href: "/pipeline", icon: GitBranch, hint: "Визуальный путь лида: Новый → Квалифицирован → В диалоге → Фоллоуап → Закрыт" },
   { label: "Автоматизации", href: "/automations", icon: Zap, hint: "Автоматические действия: AI-квалификация, генерация ответов, фоллоуапы без ручной работы" },
   { label: "Проспекты", href: "/prospects", icon: UserPlus, hint: "База контактов для холодного аутрича. Импорт из CSV, парсинг 2GIS, ручное добавление" },
   { label: "Секвенции", href: "/sequences", icon: GitBranch, hint: "Цепочки автоматических касаний: Email → Telegram → Прозвон. AI пишет текст под каждый канал" },
   { label: "Очередь отправки", href: "/outbound", icon: Send, hint: "Сообщения, сгенерированные AI и ожидающие вашего одобрения перед отправкой" },
+  { label: "Аналитика", href: "/analytics/sequences", icon: BarChart3, hint: "Какая sequence работает лучше: sent / delivered / opened / replied / converted" },
   { label: "Настройки", href: "/settings", icon: Settings, hint: "Подключение каналов (Telegram, Email), выбор AI-провайдера, уведомления" },
   { label: "Обучение", href: "/onboarding", icon: GraduationCap, hint: "Пошаговая настройка системы и полезные советы для начала работы" },
 ];
@@ -106,7 +108,7 @@ export function Sidebar() {
       </div>
 
       {/* Navigation */}
-      <nav className="flex-1 space-y-1 px-4">
+      <nav aria-label="Основная навигация" className="flex-1 space-y-1 px-4">
         {NAV_ITEMS.map((item) => {
           const isActive = pathname.startsWith(item.href);
           return (
