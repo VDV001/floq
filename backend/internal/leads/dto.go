@@ -23,6 +23,10 @@ type LeadResponse struct {
 	SourceName          string                   `json:"source_name,omitempty"`
 	CreatedAt           time.Time                `json:"created_at"`
 	UpdatedAt           time.Time                `json:"updated_at"`
+	// ArchivedAt is set only for archived leads (the archived-view feed and
+	// single-lead detail). Active leads omit it from the wire so clients can
+	// use presence-of-key to switch between the archive/unarchive affordance.
+	ArchivedAt          *time.Time               `json:"archived_at,omitempty"`
 	Identity            *IdentitySummaryResponse `json:"identity,omitempty"`
 	// PendingRepliesCount badges the inbox-list UI when an operator
 	// has HITL drafts awaiting decision on this lead. Omitted from
@@ -91,6 +95,7 @@ func LeadToResponse(l *domain.Lead) LeadResponse {
 		SourceID:       l.SourceID,
 		CreatedAt:      l.CreatedAt,
 		UpdatedAt:      l.UpdatedAt,
+		ArchivedAt:     l.ArchivedAt,
 	}
 }
 
