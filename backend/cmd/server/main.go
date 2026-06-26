@@ -90,14 +90,6 @@ func main() {
 		log.Fatalf("FLOQ_SECRETS_KEK invalid (must be base64-encoded 32 bytes): %v", err)
 	}
 
-	// 0. Proxy provider (empty PROXY_URL = direct connection)
-	proxyProvider, err := proxy.NewFromURL(cfg.ProxyURL)
-	if err != nil {
-		log.Fatalf("invalid PROXY_URL: %v", err)
-	}
-	httpClient := proxyProvider.HTTPClient()
-	proxyDialer := proxyProvider.Dialer() // non-nil for SOCKS5 only
-
 	// 1. DB pool
 	pool, err := pgxpool.New(context.Background(), cfg.DatabaseURL)
 	if err != nil {
@@ -105,23 +97,14 @@ func main() {
 	}
 	defer pool.Close()
 
-	// 1a. Read-only analytics pool. A separate pool/config from its own DSN
-	// so heavy analytics aggregations are isolated from the OLTP path; all
-	// analytics reads go through it. In the MVP its DSN defaults to the
-	// primary's (same instance, separate pool) — point ANALYTICS_DATABASE_URL
-	// at a read replica in production to offload the primary without code
-	// changes.
-	analyticsPool, err := pgxpool.New(context.Background(), cfg.AnalyticsDatabaseURL)
-	if err != nil {
-		log.Fatalf("connect to analytics db: %v", err)
-	}
-	defer analyticsPool.Close()
-
 	// 1a2. One-off secret backfill (run before migration 047). Encrypts any
 	// legacy plaintext secret into its *_enc/*_nonce columns, then exits WITHOUT
 	// running migrations — so it can prepare a pre-047 schema for the 047
-	// drop-guard even when this binary already contains migration 047.
-	// Idempotent (only touches plaintext-set, ciphertext-NULL rows).
+	// drop-guard even when this binary already contains migration 047. Requires
+	// a schema between migrations 037 and 047 (the plaintext + *_enc columns
+	// must both exist); idempotent (only touches plaintext-set, *_enc-NULL
+	// rows). Placed before the proxy/analytics wiring so the command pulls up
+	// only the one pool it needs.
 	if *backfillSecrets {
 		nSettings, err := settings.BackfillSecrets(context.Background(), pool, secretCipher)
 		if err != nil {
@@ -135,6 +118,26 @@ func main() {
 		return
 	}
 
+	// 0. Proxy provider (empty PROXY_URL = direct connection)
+	proxyProvider, err := proxy.NewFromURL(cfg.ProxyURL)
+	if err != nil {
+		log.Fatalf("invalid PROXY_URL: %v", err)
+	}
+	httpClient := proxyProvider.HTTPClient()
+	proxyDialer := proxyProvider.Dialer() // non-nil for SOCKS5 only
+
+	// 1a. Read-only analytics pool. A separate pool/config from its own DSN
+	// so heavy analytics aggregations are isolated from the OLTP path; all
+	// analytics reads go through it. In the MVP its DSN defaults to the
+	// primary's (same instance, separate pool) — point ANALYTICS_DATABASE_URL
+	// at a read replica in production to offload the primary without code
+	// changes.
+	analyticsPool, err := pgxpool.New(context.Background(), cfg.AnalyticsDatabaseURL)
+	if err != nil {
+		log.Fatalf("connect to analytics db: %v", err)
+	}
+	defer analyticsPool.Close()
+
 	// 1b. Run migrations
 	migrationsPath := os.Getenv("MIGRATIONS_PATH")
 	if migrationsPath == "" {
@@ -142,6 +145,7 @@ func main() {
 	}
 	// golang-migrate pgx/v5 driver uses "pgx5://" scheme
 	migrateDBURL := strings.Replace(cfg.DatabaseURL, "postgres://", "pgx5://", 1)
+	migrated := false
 	for attempt := 1; attempt <= 5; attempt++ {
 		m, err := migrate.New(migrationsPath, migrateDBURL)
 		if err != nil {
@@ -155,7 +159,14 @@ func main() {
 		}
 		log.Println("migrations applied")
 		m.Close()
+		migrated = true
 		break
+	}
+	// Fail fast instead of booting against an un-migrated schema: if every
+	// attempt to reach the DB failed, the server would otherwise come up
+	// half-initialised and serve against stale/missing tables.
+	if !migrated {
+		log.Fatalf("migrations: could not connect to the database after 5 attempts")
 	}
 
 	// 2. Settings store (reads user_settings from DB, used by services)

@@ -8,12 +8,21 @@
 -- and must have been run before this migration applies.
 --
 -- RECOVERY if this RAISE fires: golang-migrate marks the schema dirty at v47,
--- so (1) clear it with `migrate force 46`, (2) run `server -backfill-secrets`
--- (it encrypts the stragglers and exits WITHOUT migrating — works on the
--- schema-46 DB whose *_enc columns already exist), (3) start the server
--- normally to re-apply 047. The guard checks ciphertext PRESENCE, not
--- decryptability — KEK stability across this deploy is an operational
--- precondition (a secret encrypted under a since-lost KEK is unrecoverable).
+-- and the server's startup migration step then fatals on the dirty flag on
+-- every boot. The app binary only auto-applies migrations + offers
+-- `-backfill-secrets`; it does NOT expose a force command, so recovery uses the
+-- golang-migrate CLI directly against the DB (the same tool that authors these
+-- migrations):
+--   (1) `migrate -path backend/migrations -database <pgx5-url> force 46` to
+--       clear the dirty flag,
+--   (2) `server -backfill-secrets` to encrypt the stragglers (it exits WITHOUT
+--       migrating — works on the schema-46 DB whose *_enc columns exist),
+--   (3) start the server normally to re-apply 047.
+-- The guard checks ciphertext PRESENCE, not decryptability — KEK stability
+-- across this deploy is an operational precondition (a secret encrypted under a
+-- since-lost KEK is unrecoverable). Note: this DROP also assumes a single-
+-- instance / stop-then-start deploy — during a rolling deploy an old binary
+-- still reading the plaintext columns would error until replaced.
 DO $$
 BEGIN
     IF EXISTS (
