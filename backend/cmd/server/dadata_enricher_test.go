@@ -173,6 +173,94 @@ func TestDaDataEnricher_RateLimited_SkipsWithoutCalling(t *testing.T) {
 	assert.Empty(t, stub.lastPath, "no API call when over budget — protects the daily quota")
 }
 
+func TestDaDataEnricher_ObservesOutcomes(t *testing.T) {
+	tests := []struct {
+		name        string
+		suggestions []map[string]any
+		query       enrichment.EnrichQuery
+		want        string
+	}{
+		{
+			name:        "inn hit",
+			suggestions: []map[string]any{partySuggestion("X", "7707083893", "1027700132195", "A", "1", "ACTIVE")},
+			query:       enrichment.EnrichQuery{INN: "7707083893"},
+			want:        "hit",
+		},
+		{
+			name:        "name single hit",
+			suggestions: []map[string]any{partySuggestion("Acme", "7707083893", "1027700132195", "A", "1", "ACTIVE")},
+			query:       enrichment.EnrichQuery{CompanyName: "Acme"},
+			want:        "hit",
+		},
+		{
+			name:        "no results is a miss",
+			suggestions: nil,
+			query:       enrichment.EnrichQuery{CompanyName: "Nope"},
+			want:        "miss",
+		},
+		{
+			name: "ambiguous name is a miss",
+			suggestions: []map[string]any{
+				partySuggestion("Acme A", "7707083893", "1027700132195", "A", "1", "ACTIVE"),
+				partySuggestion("Acme B", "7708503727", "1037739877295", "B", "2", "ACTIVE"),
+			},
+			query: enrichment.EnrichQuery{CompanyName: "Acme"},
+			want:  "miss",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			stub := newDadataStub(t)
+			stub.suggestions = tc.suggestions
+			enr := newDaDataEnricher(stub.srv.Client(), "k", stub.srv.URL)
+			var got []string
+			enr.observe = func(result string) { got = append(got, result) }
+
+			_, _, err := enr.Enrich(context.Background(), tc.query)
+			require.NoError(t, err)
+			assert.Equal(t, []string{tc.want}, got)
+		})
+	}
+}
+
+func TestDaDataEnricher_ObservesErrorOutcome(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	t.Cleanup(srv.Close)
+	enr := newDaDataEnricher(srv.Client(), "k", srv.URL)
+	var got []string
+	enr.observe = func(result string) { got = append(got, result) }
+
+	_, _, err := enr.Enrich(context.Background(), enrichment.EnrichQuery{INN: "7707083893"})
+	require.Error(t, err)
+	assert.Equal(t, []string{"error"}, got, "an API/transport failure is its own outcome, not a miss")
+}
+
+func TestDaDataEnricher_ObservesRateLimitedOutcome(t *testing.T) {
+	stub := newDadataStub(t)
+	stub.suggestions = []map[string]any{partySuggestion("X", "7707083893", "1027700132195", "A", "1", "ACTIVE")}
+	enr := newDaDataEnricher(stub.srv.Client(), "k", stub.srv.URL, &denyLimiter{})
+	var got []string
+	enr.observe = func(result string) { got = append(got, result) }
+
+	_, found, err := enr.Enrich(context.Background(), enrichment.EnrichQuery{INN: "7707083893"})
+	require.NoError(t, err)
+	assert.False(t, found)
+	assert.Equal(t, []string{"rate_limited"}, got, "a throttled skip is distinct from a miss — it signals quota pressure")
+}
+
+func TestDaDataEnricher_NoSignal_NotObserved(t *testing.T) {
+	stub := newDadataStub(t)
+	enr := newDaDataEnricher(stub.srv.Client(), "k", stub.srv.URL)
+	var got []string
+	enr.observe = func(result string) { got = append(got, result) }
+
+	_, _, err := enr.Enrich(context.Background(), enrichment.EnrichQuery{})
+	require.NoError(t, err)
+	assert.Empty(t, got, "no INN/name → no registry attempt → nothing to count")
+}
+
 func TestDaDataEnricher_SatisfiesPort(t *testing.T) {
 	var _ enrichment.Enricher = newDaDataEnricher(http.DefaultClient, "k", "")
 }

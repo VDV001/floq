@@ -127,6 +127,21 @@ func TestOnAuditEntry_NeverLabelsByUserID(t *testing.T) {
 	assert.NotContains(t, body, userID.String(), "user_id must never appear as a label")
 }
 
+func TestOnRegistryEnrichment_RecordsByResult(t *testing.T) {
+	m := metrics.New()
+	m.OnRegistryEnrichment("hit")
+	m.OnRegistryEnrichment("hit")
+	m.OnRegistryEnrichment("miss")
+	m.OnRegistryEnrichment("rate_limited")
+
+	body := scrape(t, m)
+	// "calls" = sum across results; "hits" = result="hit". Each result is its
+	// own series so ops can read hit-rate and quota pressure separately.
+	assert.Contains(t, body, `enrichment_registry_requests_total{result="hit"} 2`)
+	assert.Contains(t, body, `enrichment_registry_requests_total{result="miss"} 1`)
+	assert.Contains(t, body, `enrichment_registry_requests_total{result="rate_limited"} 1`)
+}
+
 func TestObserveMatviewRefresh_RecordsDuration(t *testing.T) {
 	m := metrics.New()
 	m.ObserveMatviewRefresh(2 * time.Second)
