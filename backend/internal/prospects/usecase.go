@@ -78,10 +78,20 @@ type IdentityLinker interface {
 	LinkProspectToIdentity(ctx context.Context, userID, prospectID uuid.UUID, email, phone, telegramUsername string) error
 }
 
+// EnrichmentEnqueuer is the narrow port prospects needs from the enrichment
+// context: enqueue a best-effort background company-data lookup for a newly
+// created prospect's email. The adapter in the composition root bridges this to
+// enrichment.UseCase.Enqueue. Implementations must be safe to call with a
+// free/personal or empty email (a no-op); errors are logged, never fatal.
+type EnrichmentEnqueuer interface {
+	Enqueue(ctx context.Context, userID uuid.UUID, email string) error
+}
+
 type UseCase struct {
 	repo           domain.Repository
 	leadChecker    LeadChecker
 	identityLinker IdentityLinker
+	enricher       EnrichmentEnqueuer
 	logger         *slog.Logger
 }
 
@@ -95,6 +105,13 @@ func NewUseCase(repo domain.Repository, opts ...func(*UseCase)) *UseCase {
 
 func WithLeadChecker(lc LeadChecker) func(*UseCase) {
 	return func(uc *UseCase) { uc.leadChecker = lc }
+}
+
+// WithEnricher wires the cross-context enrichment enqueuer so a newly created
+// prospect's company domain is queued for background scraping. Best-effort:
+// omit it (or pass nil) to disable enrichment.
+func WithEnricher(e EnrichmentEnqueuer) func(*UseCase) {
+	return func(uc *UseCase) { uc.enricher = e }
 }
 
 // WithIdentityLinker wires the cross-context identity linker so each
@@ -219,7 +236,19 @@ func (uc *UseCase) CreateProspect(ctx context.Context, input CreateProspectInput
 	if err := uc.repo.CreateProspect(ctx, p); err != nil {
 		return nil, err
 	}
+	uc.enqueueEnrichment(ctx, p.UserID, p.Email)
 	return p, nil
+}
+
+// enqueueEnrichment fires a best-effort background company-data lookup. Any
+// failure is logged, never propagated — enrichment must not fail a create.
+func (uc *UseCase) enqueueEnrichment(ctx context.Context, userID uuid.UUID, email string) {
+	if uc.enricher == nil || email == "" {
+		return
+	}
+	if err := uc.enricher.Enqueue(ctx, userID, email); err != nil {
+		uc.logger.WarnContext(ctx, "prospects: enrichment enqueue failed", "err", err)
+	}
 }
 
 func (uc *UseCase) DeleteProspect(ctx context.Context, id uuid.UUID) error {
@@ -358,6 +387,9 @@ func (uc *UseCase) ImportCSV(ctx context.Context, userID uuid.UUID, csvData []by
 					"prospect", p.ID, "err", err)
 			}
 		}
+	}
+	for _, p := range prospects {
+		uc.enqueueEnrichment(ctx, userID, p.Email)
 	}
 
 	return &ImportReport{Imported: len(prospects), Skipped: skipped}, nil
