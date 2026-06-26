@@ -10,6 +10,7 @@ import (
 	"github.com/daniil/floq/internal/leads/domain"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -119,15 +120,38 @@ func (r *Repository) UpdateLeadStatus(ctx context.Context, id uuid.UUID, status 
 }
 
 // SetLeadArchived persists the archive flag. A non-nil archivedAt archives the
-// lead; nil unarchives it. The domain (Lead.Archive/Unarchive) owns the
-// idempotency invariant and stamps the timestamp; the repository just writes
-// the value it is handed, bumping updated_at to match.
+// lead; nil unarchives it. The UPDATE is CONDITIONAL on the current state
+// (archived_at IS NULL to archive, IS NOT NULL to unarchive) so the reject-on-
+// noop idempotency invariant the domain declares is also enforced at the
+// persistence boundary: two concurrent archive requests both pass the domain's
+// read-check, but only one UPDATE matches a row — the other gets 0 rows and the
+// matching sentinel (domain.ErrAlreadyArchived / ErrNotArchived), mapped to 409
+// rather than a silent second 200. A 0-row result for a non-existent id is
+// indistinguishable here, but callers (usecase + authorizeLead) have already
+// verified existence, so in practice 0 rows means the state guard fired.
 func (r *Repository) SetLeadArchived(ctx context.Context, id uuid.UUID, archivedAt *time.Time) error {
-	_, err := r.q(ctx).Exec(ctx,
-		`UPDATE leads SET archived_at = $1, updated_at = $2 WHERE id = $3`,
-		archivedAt, time.Now().UTC(), id)
+	var (
+		tag     pgconn.CommandTag
+		err     error
+		now     = time.Now().UTC()
+		noopErr error
+	)
+	if archivedAt != nil {
+		noopErr = domain.ErrAlreadyArchived
+		tag, err = r.q(ctx).Exec(ctx,
+			`UPDATE leads SET archived_at = $1, updated_at = $2 WHERE id = $3 AND archived_at IS NULL`,
+			archivedAt, now, id)
+	} else {
+		noopErr = domain.ErrNotArchived
+		tag, err = r.q(ctx).Exec(ctx,
+			`UPDATE leads SET archived_at = NULL, updated_at = $1 WHERE id = $2 AND archived_at IS NOT NULL`,
+			now, id)
+	}
 	if err != nil {
 		return fmt.Errorf("set lead archived: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return noopErr
 	}
 	return nil
 }

@@ -95,6 +95,34 @@ func TestCountLeads_ExcludeArchived(t *testing.T) {
 	assert.Equal(t, 1, month, "archived lead must not be counted in month usage")
 }
 
+func TestSetLeadArchived_RejectsDoubleArchive(t *testing.T) {
+	pool := testutil.TestDB(t)
+	userID := testutil.SeedUser(t, pool)
+	repo := leads.NewRepository(pool)
+	ctx := context.Background()
+
+	lead := seedLead(t, repo, userID, domain.StatusNew)
+	now := time.Now().UTC()
+	require.NoError(t, repo.SetLeadArchived(ctx, lead.ID, &now))
+
+	// A second archive of the same lead must be rejected at the persistence
+	// boundary (guards the concurrent read-check-write race, not just the
+	// single-threaded domain check).
+	err := repo.SetLeadArchived(ctx, lead.ID, &now)
+	assert.ErrorIs(t, err, domain.ErrAlreadyArchived)
+}
+
+func TestSetLeadArchived_RejectsUnarchiveWhenNotArchived(t *testing.T) {
+	pool := testutil.TestDB(t)
+	userID := testutil.SeedUser(t, pool)
+	repo := leads.NewRepository(pool)
+	ctx := context.Background()
+
+	lead := seedLead(t, repo, userID, domain.StatusNew)
+	err := repo.SetLeadArchived(ctx, lead.ID, nil)
+	assert.ErrorIs(t, err, domain.ErrNotArchived)
+}
+
 func TestSetLeadArchived_RoundTrip(t *testing.T) {
 	pool := testutil.TestDB(t)
 	userID := testutil.SeedUser(t, pool)
