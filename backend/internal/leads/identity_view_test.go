@@ -309,6 +309,9 @@ func (m *mockUCRepo) GetLead(_ context.Context, id uuid.UUID) (*domain.Lead, err
 func (m *mockUCRepo) ListLeads(context.Context, uuid.UUID) ([]domain.LeadWithSource, error) {
 	panic("not used")
 }
+func (m *mockUCRepo) ListAllLeads(context.Context, uuid.UUID) ([]domain.LeadWithSource, error) {
+	panic("not used")
+}
 func (m *mockUCRepo) GetLeadForUser(_ context.Context, userID, leadID uuid.UUID) (*domain.Lead, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -323,6 +326,9 @@ func (m *mockUCRepo) UpdateFirstMessage(context.Context, uuid.UUID, string) erro
 	panic("not used")
 }
 func (m *mockUCRepo) UpdateLeadStatus(context.Context, uuid.UUID, domain.LeadStatus) error {
+	panic("not used")
+}
+func (m *mockUCRepo) SetLeadArchived(context.Context, uuid.UUID, *time.Time) error {
 	panic("not used")
 }
 func (m *mockUCRepo) UpdateSourceID(context.Context, uuid.UUID, *uuid.UUID) error {

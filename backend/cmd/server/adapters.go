@@ -178,6 +178,18 @@ func (a *inboxLeadRepoAdapter) UpdateLeadStatus(ctx context.Context, id uuid.UUI
 	return a.repo.UpdateLeadStatus(ctx, id, leadsdomain.LeadStatus(status))
 }
 
+// UnarchiveLead resurfaces an archived lead on re-engagement. It delegates to
+// the guarded SetLeadArchived(nil), which only clears the flag when the lead is
+// actually archived; a no-op (ErrNotArchived, e.g. the lead was never archived
+// or a concurrent inbound already resurfaced it) is benign on this path and
+// swallowed so a normal inbound message never fails over it.
+func (a *inboxLeadRepoAdapter) UnarchiveLead(ctx context.Context, id uuid.UUID) error {
+	if err := a.repo.SetLeadArchived(ctx, id, nil); err != nil && !errors.Is(err, leadsdomain.ErrNotArchived) {
+		return err
+	}
+	return nil
+}
+
 // --- ReplyTarget adapter (inbox reply-dispatch → leads boundary) ---
 //
 // leadReplyTargetAdapter resolves the channel-native destination (Telegram
@@ -329,6 +341,7 @@ func toInboxLead(lead *leadsdomain.Lead) *inbox.InboxLead {
 		TelegramChatID: lead.TelegramChatID,
 		EmailAddress:   lead.EmailAddress,
 		SourceID:       lead.SourceID,
+		ArchivedAt:     lead.ArchivedAt,
 		CreatedAt:      lead.CreatedAt,
 		UpdatedAt:      lead.UpdatedAt,
 	}
@@ -349,6 +362,7 @@ func fromInboxLead(lead *inbox.InboxLead) *leadsdomain.Lead {
 		TelegramChatID: lead.TelegramChatID,
 		EmailAddress:   lead.EmailAddress,
 		SourceID:       lead.SourceID,
+		ArchivedAt:     lead.ArchivedAt,
 		CreatedAt:      lead.CreatedAt,
 		UpdatedAt:      lead.UpdatedAt,
 	}

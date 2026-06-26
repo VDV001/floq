@@ -68,7 +68,7 @@ func (r *Repository) GetInboxFlow(ctx context.Context, userID uuid.UUID, from, t
 func (r *Repository) loadLeadsBreakdown(ctx context.Context, userID uuid.UUID, from, to time.Time, out *LeadsBreakdownDTO) error {
 	rows, err := r.pool.Query(ctx, `
 		SELECT channel::text, status::text, COUNT(*)
-		FROM leads
+		FROM active_leads
 		WHERE user_id = $1 AND created_at >= $2 AND created_at < $3
 		GROUP BY channel, status`,
 		userID, from, to,
@@ -109,7 +109,7 @@ func (r *Repository) loadQualificationDistribution(ctx context.Context, userID u
 	}
 	sb.WriteString(`
 		FROM qualifications q
-		JOIN leads l ON l.id = q.lead_id
+		JOIN active_leads l ON l.id = q.lead_id
 		WHERE l.user_id = $1 AND l.created_at >= $2 AND l.created_at < $3`)
 
 	counts := make([]int, len(scoreBuckets))
@@ -139,17 +139,17 @@ func (r *Repository) loadPendingRepliesStats(ctx context.Context, userID uuid.UU
 	var p50, p95 float64
 	err := r.pool.QueryRow(ctx, `
 		SELECT
-		    COUNT(*) FILTER (WHERE status IN ('approved', 'sent')) AS approved,
-		    COUNT(*) FILTER (WHERE status = 'rejected')           AS rejected,
-		    COUNT(*) FILTER (WHERE status = 'pending')            AS pending,
+		    COUNT(*) FILTER (WHERE pr.status IN ('approved', 'sent')) AS approved,
+		    COUNT(*) FILTER (WHERE pr.status = 'rejected')           AS rejected,
+		    COUNT(*) FILTER (WHERE pr.status = 'pending')            AS pending,
 		    COALESCE(percentile_cont(0.5) WITHIN GROUP (
-		        ORDER BY EXTRACT(EPOCH FROM (decided_at - created_at))
-		    ) FILTER (WHERE decided_at IS NOT NULL), 0) AS p50,
+		        ORDER BY EXTRACT(EPOCH FROM (pr.decided_at - pr.created_at))
+		    ) FILTER (WHERE pr.decided_at IS NOT NULL), 0) AS p50,
 		    COALESCE(percentile_cont(0.95) WITHIN GROUP (
-		        ORDER BY EXTRACT(EPOCH FROM (decided_at - created_at))
-		    ) FILTER (WHERE decided_at IS NOT NULL), 0) AS p95
-		FROM pending_replies
-		WHERE user_id = $1 AND created_at >= $2 AND created_at < $3`,
+		        ORDER BY EXTRACT(EPOCH FROM (pr.decided_at - pr.created_at))
+		    ) FILTER (WHERE pr.decided_at IS NOT NULL), 0) AS p95
+		FROM pending_replies pr
+		WHERE pr.user_id = $1 AND pr.created_at >= $2 AND pr.created_at < $3`,
 		userID, from, to,
 	).Scan(&out.Approved, &out.Rejected, &out.CurrentlyPending, &p50, &p95)
 	if err != nil {
@@ -259,6 +259,10 @@ func (r *Repository) GetCostRatios(ctx context.Context, userID uuid.UUID, from, 
 	}
 
 	if err := r.pool.QueryRow(ctx,
+		// Cost ratios are financial history: the numerator (TotalCostUSDMicro from
+		// audit_log) includes AI spend on leads later archived, so the denominator
+		// must too — querying base leads, NOT active_leads — or cost-per-lead would
+		// be overstated after archiving.
 		`SELECT COUNT(*) FROM leads
 		 WHERE user_id = $1 AND created_at >= $2 AND created_at < $3`,
 		userID, from, to,
@@ -310,7 +314,8 @@ func (r *Repository) GetCostRatios(ctx context.Context, userID uuid.UUID, from, 
 // A single query with COUNT(*) OVER() yields the page and the pre-LIMIT
 // total in one round-trip. Unqualified leads keep a NULL score and sort
 // last (NULLS LAST). status=any excludes the terminal 'closed' state;
-// an explicit status returns exactly that state.
+// an explicit status returns exactly that state. Reads FROM active_leads,
+// so archived leads are excluded regardless of status.
 //
 // Tenant scope via leads.user_id. Sort is (score DESC NULLS LAST,
 // updated_at DESC) so the freshest hottest leads surface first.
@@ -321,7 +326,7 @@ func (r *Repository) GetHotLeads(ctx context.Context, userID uuid.UUID, filter H
 		SELECT l.id, l.contact_name, l.channel::text, l.status::text, l.updated_at,
 		       q.score, q.score_reason, q.generated_at,
 		       COUNT(*) OVER() AS total_matching
-		FROM leads l
+		FROM active_leads l
 		LEFT JOIN qualifications q ON q.lead_id = l.id
 		WHERE l.user_id = $1
 		  AND ($2::timestamptz IS NULL OR l.created_at >= $2)

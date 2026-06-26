@@ -154,6 +154,8 @@ export const api = {
       method: "PATCH",
       body: JSON.stringify({ status }),
     }),
+  archiveLead: (id: string) =>
+    apiFetch(`/api/leads/${id}/archive`, { method: "POST" }),
 
   exportLeadsCSV: () => apiDownload("/api/leads/export"),
   importLeadsCSV: (file: File) =>

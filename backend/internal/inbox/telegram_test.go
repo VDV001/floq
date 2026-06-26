@@ -39,6 +39,7 @@ type mockLeadRepo struct {
 	updatedStatuses       map[uuid.UUID]LeadStatus
 	updatedFirstMessages  map[uuid.UUID]string
 	existingLeadByChatID  map[int64]*InboxLead // preset for GetLeadByTelegramChatID
+	unarchivedLeads       []uuid.UUID          // records UnarchiveLead calls
 	qualifyDone           chan struct{}
 }
 
@@ -89,6 +90,18 @@ func (m *mockLeadRepo) UpsertQualification(_ context.Context, q *InboxQualificat
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.qualifications = append(m.qualifications, q)
+	return nil
+}
+
+func (m *mockLeadRepo) UnarchiveLead(_ context.Context, id uuid.UUID) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.unarchivedLeads = append(m.unarchivedLeads, id)
+	for _, l := range m.leads {
+		if l.ID == id {
+			l.ArchivedAt = nil
+		}
+	}
 	return nil
 }
 
@@ -301,6 +314,36 @@ func TestHandleMessage_ExistingLead(t *testing.T) {
 	require.Len(t, repo.messages, 1)
 	assert.Equal(t, existingLead.ID, repo.messages[0].LeadID)
 	assert.Equal(t, DirectionInbound, repo.messages[0].Direction)
+}
+
+func TestHandleMessage_ArchivedLead_Resurfaces(t *testing.T) {
+	repo := newMockLeadRepo()
+	aiClient := &mockAIQualifier{result: &QualificationResult{Score: 5}}
+	ownerID := uuid.New()
+	archived := time.Now().UTC()
+	existingLead := &InboxLead{
+		ID:             uuid.New(),
+		UserID:         ownerID,
+		Channel:        ChannelTelegram,
+		ContactName:    "Ivan Petrov",
+		FirstMessage:   "hi",
+		Status:         StatusNew,
+		TelegramChatID: ptrInt64(99999),
+		ArchivedAt:     &archived,
+	}
+	repo.existingLeadByChatID[99999] = existingLead
+	repo.leads = append(repo.leads, existingLead)
+
+	bot := newTestBot(repo, aiClient, ownerID, "https://cal.com/test")
+	bot.handleMessage(context.Background(), makeTgMessage(99999, "Ivan", "Petrov", "Hi again, ready to proceed"))
+	waitQualifyDone(t, repo)
+
+	repo.mu.Lock()
+	defer repo.mu.Unlock()
+	// The archived lead is resurfaced so the operator sees the new message.
+	assert.Contains(t, repo.unarchivedLeads, existingLead.ID, "inbound on an archived lead must unarchive it")
+	require.Len(t, repo.messages, 1, "the inbound message is still recorded on the lead")
+	assert.Equal(t, existingLead.ID, repo.messages[0].LeadID)
 }
 
 // spyPendingProposer captures Propose calls so tests can assert that

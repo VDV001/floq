@@ -38,6 +38,13 @@ func (m *mockRepoErr) GetLeadForUser(_ context.Context, userID, leadID uuid.UUID
 	return m.mockRepo.GetLeadForUser(context.Background(), userID, leadID)
 }
 
+func (m *mockRepoErr) ListAllLeads(_ context.Context, _ uuid.UUID) ([]domain.LeadWithSource, error) {
+	if m.listLeadsErr != nil {
+		return nil, m.listLeadsErr
+	}
+	return m.mockRepo.ListAllLeads(context.Background(), uuid.Nil)
+}
+
 func (m *mockRepoErr) ListLeads(_ context.Context, _ uuid.UUID) ([]domain.LeadWithSource, error) {
 	if m.listLeadsErr != nil {
 		return nil, m.listLeadsErr

@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/csv"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -103,6 +104,41 @@ func (uc *UseCase) UpdateStatus(ctx context.Context, id uuid.UUID, status string
 	}
 
 	return uc.repo.UpdateLeadStatus(ctx, id, target)
+}
+
+// ArchiveLead hides the lead from working feeds and analytics without touching
+// its pipeline status. Ownership is enforced upstream by the handler's
+// authorizeLead front-door (the shared gate for every /api/leads/{id}/* route),
+// mirroring UpdateStatus. The archive invariant (reject double-archive) lives on
+// Lead.Archive; a re-archive surfaces domain.ErrAlreadyArchived for a 409.
+func (uc *UseCase) ArchiveLead(ctx context.Context, id uuid.UUID) error {
+	lead, err := uc.repo.GetLead(ctx, id)
+	if err != nil {
+		return fmt.Errorf("get lead: %w", err)
+	}
+	if lead == nil {
+		return domain.ErrLeadNotFound
+	}
+	if err := lead.Archive(); err != nil {
+		return err
+	}
+	return uc.repo.SetLeadArchived(ctx, id, lead.ArchivedAt)
+}
+
+// UnarchiveLead restores an archived lead to feeds and analytics. Returns
+// domain.ErrNotArchived when the lead is not archived.
+func (uc *UseCase) UnarchiveLead(ctx context.Context, id uuid.UUID) error {
+	lead, err := uc.repo.GetLead(ctx, id)
+	if err != nil {
+		return fmt.Errorf("get lead: %w", err)
+	}
+	if lead == nil {
+		return domain.ErrLeadNotFound
+	}
+	if err := lead.Unarchive(); err != nil {
+		return err
+	}
+	return uc.repo.SetLeadArchived(ctx, id, lead.ArchivedAt)
 }
 
 func (uc *UseCase) GetMessages(ctx context.Context, leadID uuid.UUID) ([]domain.Message, error) {
@@ -247,7 +283,10 @@ func (uc *UseCase) RegenerateDraft(ctx context.Context, leadID uuid.UUID) (*doma
 }
 
 func (uc *UseCase) ExportCSV(ctx context.Context, userID uuid.UUID) ([]byte, error) {
-	leads, err := uc.repo.ListLeads(ctx, userID)
+	// Export is a backup — it must include archived leads (ListAllLeads), not
+	// just the active inbox feed, and mark each row's archived state so the
+	// file round-trips the full picture.
+	leads, err := uc.repo.ListAllLeads(ctx, userID)
 	if err != nil {
 		return nil, fmt.Errorf("list leads: %w", err)
 	}
@@ -257,7 +296,10 @@ func (uc *UseCase) ExportCSV(ctx context.Context, userID uuid.UUID) ([]byte, err
 	buf.Write([]byte{0xEF, 0xBB, 0xBF})
 
 	w := csv.NewWriter(&buf)
-	header := []string{"contact_name", "company", "channel", "email_address", "status", "first_message", "created_at"}
+	// archived_at carries the FULL archive state (the exact timestamp, empty for
+	// active) so a backup round-trips it precisely — not just a boolean, which
+	// would reset the archive date to the import day on restore.
+	header := []string{"contact_name", "company", "channel", "email_address", "status", "first_message", "created_at", "archived_at"}
 	if err := w.Write(header); err != nil {
 		return nil, fmt.Errorf("write csv header: %w", err)
 	}
@@ -267,6 +309,10 @@ func (uc *UseCase) ExportCSV(ctx context.Context, userID uuid.UUID) ([]byte, err
 		if l.EmailAddress != nil {
 			emailAddr = *l.EmailAddress
 		}
+		archivedAt := ""
+		if l.ArchivedAt != nil {
+			archivedAt = l.ArchivedAt.Format(time.RFC3339)
+		}
 		record := []string{
 			l.ContactName,
 			l.Company,
@@ -275,6 +321,7 @@ func (uc *UseCase) ExportCSV(ctx context.Context, userID uuid.UUID) ([]byte, err
 			string(l.Status),
 			l.FirstMessage,
 			l.CreatedAt.Format(time.RFC3339),
+			archivedAt,
 		}
 		if err := w.Write(record); err != nil {
 			return nil, fmt.Errorf("write csv record: %w", err)
@@ -289,6 +336,10 @@ func (uc *UseCase) ExportCSV(ctx context.Context, userID uuid.UUID) ([]byte, err
 }
 
 func (uc *UseCase) ImportCSV(ctx context.Context, userID uuid.UUID, csvData []byte) (int, error) {
+	// Strip a leading UTF-8 BOM so the first header name parses as "contact_name"
+	// rather than a BOM-prefixed variant. ExportCSV writes a BOM for Excel, so
+	// without this our own backup files fail to re-import (missing contact_name).
+	csvData = bytes.TrimPrefix(csvData, []byte{0xEF, 0xBB, 0xBF})
 	reader := csv.NewReader(bytes.NewReader(csvData))
 
 	// Read and validate header
@@ -341,6 +392,16 @@ func (uc *UseCase) ImportCSV(ctx context.Context, userID uuid.UUID, csvData []by
 		company := getCol(record, "company")
 		firstMessage := getCol(record, "first_message")
 		emailAddr := getCol(record, "email_address")
+		// The export's "archived_at" column lets a backup round-trip the exact
+		// archive timestamp. Empty (or absent, for a normal user-provided list)
+		// reads as active.
+		var importedArchivedAt *time.Time
+		if raw := getCol(record, "archived_at"); raw != "" {
+			if t, perr := time.Parse(time.RFC3339, raw); perr == nil {
+				utc := t.UTC()
+				importedArchivedAt = &utc
+			}
+		}
 
 		var emailPtr *string
 		if emailAddr != "" {
@@ -349,6 +410,17 @@ func (uc *UseCase) ImportCSV(ctx context.Context, userID uuid.UUID, csvData []by
 				return 0, fmt.Errorf("dedup lead check: %w", err)
 			}
 			if existing != nil {
+				// Re-importing an *active* row resurfaces a matched archived lead —
+				// that reads as re-engagement, not lost data. A row that is itself
+				// archived leaves the existing state untouched; an active duplicate
+				// is a true dedup hit. SetLeadArchived(nil) is the guarded unarchive;
+				// swallow ErrNotArchived in case a concurrent inbound already did it.
+				if existing.IsArchived() && importedArchivedAt == nil {
+					if err := uc.repo.SetLeadArchived(ctx, existing.ID, nil); err != nil && !errors.Is(err, domain.ErrNotArchived) {
+						return 0, fmt.Errorf("persist resurface: %w", err)
+					}
+					count++
+				}
 				continue
 			}
 			emailPtr = &emailAddr
@@ -358,6 +430,10 @@ func (uc *UseCase) ImportCSV(ctx context.Context, userID uuid.UUID, csvData []by
 		if err != nil {
 			continue // skip invalid rows
 		}
+		// Rehydrate the exact archive timestamp from the backup so a restore
+		// preserves history instead of flooding archived leads back as active
+		// (CreateLead persists archived_at).
+		lead.ArchivedAt = importedArchivedAt
 		if err := uc.repo.CreateLead(ctx, lead); err != nil {
 			return 0, fmt.Errorf("create lead: %w", err)
 		}

@@ -1,9 +1,10 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { useParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import { ArrowLeft, Clock, Archive, Send } from "lucide-react";
+import { useNotify } from "@/components/notifications/NotificationProvider";
 import { ProspectSuggestionBanner } from "@/components/leads/ProspectSuggestionBanner";
 import { PendingReplySection } from "@/components/leads/PendingReplySection";
 import { IdentityBadge } from "@/components/leads/IdentityBadge";
@@ -16,6 +17,10 @@ import { DraftSidebar } from "@/components/inbox/DraftSidebar";
 export default function LeadDetailPage() {
   const params = useParams<{ leadId: string }>();
   const leadId = params.leadId;
+  const router = useRouter();
+  const { notify, notifyError } = useNotify();
+  const [archiving, setArchiving] = useState(false);
+  const [confirmingArchive, setConfirmingArchive] = useState(false);
 
   const [lead, setLead] = useState<Lead | null>(null);
   const [qualification, setQualification] = useState<Qualification | null>(null);
@@ -74,6 +79,19 @@ export default function LeadDetailPage() {
     return () => { cancelled = true; clearInterval(interval); };
   }, [leadId, aggregated]);
 
+  async function handleArchive() {
+    if (archiving) return;
+    setArchiving(true);
+    try {
+      await api.archiveLead(leadId);
+      notify({ type: "success", title: "Лид в архиве", message: "Он скрыт из ленты и аналитики." });
+      router.push("/inbox");
+    } catch (err) {
+      notifyError(err, "Не удалось архивировать лид");
+      setArchiving(false);
+    }
+  }
+
   if (loading) return <div className="flex h-full items-center justify-center"><div className="size-8 animate-spin rounded-full border-4 border-[#3b6ef6] border-t-transparent" /></div>;
   if (error || !lead) return (
     <div className="flex h-full items-center justify-center"><div className="text-center">
@@ -108,7 +126,15 @@ export default function LeadDetailPage() {
             </div>
           </div>
           <div className="flex gap-3">
-            <button className="rounded-lg border border-[#c3c6d7]/30 bg-white px-4 py-2 text-sm font-semibold text-[#0d1c2e] transition-colors hover:bg-[#eff4ff]"><Archive className="mr-1.5 inline size-4" />Архив</button>
+            {confirmingArchive ? (
+              <div className="flex items-center gap-2">
+                <span className="text-sm text-[#434655]">Архивировать лид?</span>
+                <button onClick={handleArchive} disabled={archiving} className="rounded-lg bg-[#0d1c2e] px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-[#0d1c2e]/90 disabled:cursor-not-allowed disabled:opacity-60">{archiving ? "Архивируем…" : "Да, в архив"}</button>
+                <button onClick={() => setConfirmingArchive(false)} disabled={archiving} className="rounded-lg border border-[#c3c6d7]/30 bg-white px-4 py-2 text-sm font-semibold text-[#0d1c2e] transition-colors hover:bg-[#eff4ff] disabled:opacity-60">Отмена</button>
+              </div>
+            ) : (
+              <button onClick={() => setConfirmingArchive(true)} className="rounded-lg border border-[#c3c6d7]/30 bg-white px-4 py-2 text-sm font-semibold text-[#0d1c2e] transition-colors hover:bg-[#eff4ff]"><Archive className="mr-1.5 inline size-4" />Архив</button>
+            )}
           </div>
         </section>
 

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"testing"
+	"time"
 
 	"github.com/daniil/floq/internal/leads/domain"
 	"github.com/google/uuid"
@@ -44,6 +45,14 @@ func (m *mockRepo) ListLeads(_ context.Context, _ uuid.UUID) ([]domain.LeadWithS
 	return result, nil
 }
 
+func (m *mockRepo) ListAllLeads(_ context.Context, _ uuid.UUID) ([]domain.LeadWithSource, error) {
+	var result []domain.LeadWithSource
+	for _, l := range m.leads {
+		result = append(result, domain.LeadWithSource{Lead: *l})
+	}
+	return result, nil
+}
+
 func (m *mockRepo) GetLeadForUser(_ context.Context, userID, leadID uuid.UUID) (*domain.Lead, error) {
 	l, ok := m.leads[leadID]
 	if !ok || l.UserID != userID {
@@ -71,6 +80,13 @@ func (m *mockRepo) UpdateFirstMessage(_ context.Context, _ uuid.UUID, _ string) 
 
 func (m *mockRepo) UpdateLeadStatus(_ context.Context, id uuid.UUID, status domain.LeadStatus) error {
 	m.updatedStatuses[id] = status
+	return nil
+}
+
+func (m *mockRepo) SetLeadArchived(_ context.Context, id uuid.UUID, archivedAt *time.Time) error {
+	if l, ok := m.leads[id]; ok {
+		l.ArchivedAt = archivedAt
+	}
 	return nil
 }
 
@@ -653,6 +669,51 @@ func TestImportCSV_DedupByEmail(t *testing.T) {
 	assert.Equal(t, 1, count) // Alice skipped (dedup), Bob imported
 }
 
+func TestImportCSV_ResurfacesArchivedDuplicate(t *testing.T) {
+	userID := uuid.New()
+	email := "alice@example.com"
+	archived := time.Now().UTC()
+	existing := &domain.Lead{ID: uuid.New(), UserID: userID, EmailAddress: &email, ArchivedAt: &archived}
+	repo := &mockRepoDedup{mockRepo: newMockRepo(), existingEmails: map[string]*domain.Lead{email: existing}}
+	repo.leads[existing.ID] = existing
+	uc := NewUseCase(repo, &mockAI{}, nil)
+
+	csvData := []byte("contact_name,channel,email_address\nAlice,email,alice@example.com\n")
+	count, err := uc.ImportCSV(context.Background(), userID, csvData)
+	require.NoError(t, err)
+	// Re-importing an archived contact resurfaces it instead of silently
+	// dropping the row.
+	assert.Nil(t, existing.ArchivedAt, "archived duplicate must be unarchived on re-import")
+	assert.Equal(t, 1, count, "resurfaced lead counts toward the import total")
+}
+
+func TestImportCSV_HonorsArchivedColumn(t *testing.T) {
+	repo := newMockRepo()
+	uc := NewUseCase(repo, &mockAI{}, nil)
+	userID := uuid.New()
+
+	csvData := []byte("contact_name,channel,email_address,archived_at\nAlice,email,alice@x.com,2026-01-02T03:04:05Z\nBob,email,bob@x.com,\n")
+	count, err := uc.ImportCSV(context.Background(), userID, csvData)
+	require.NoError(t, err)
+	assert.Equal(t, 2, count)
+
+	var alice, bob *domain.Lead
+	for _, l := range repo.leads {
+		switch l.ContactName {
+		case "Alice":
+			alice = l
+		case "Bob":
+			bob = l
+		}
+	}
+	require.NotNil(t, alice)
+	require.NotNil(t, bob)
+	require.True(t, alice.IsArchived(), "row with archived_at must import as archived (backup round-trip)")
+	// The EXACT archive timestamp round-trips, not just the boolean state.
+	assert.Equal(t, "2026-01-02T03:04:05Z", alice.ArchivedAt.Format(time.RFC3339), "exact archive timestamp preserved")
+	assert.False(t, bob.IsArchived(), "row with empty archived_at must import as active")
+}
+
 func TestImportCSV_BadCSV(t *testing.T) {
 	repo := newMockRepo()
 	uc := NewUseCase(repo, &mockAI{}, nil)
@@ -1094,6 +1155,10 @@ type mockRepoWithListErr struct {
 }
 
 func (m *mockRepoWithListErr) ListLeads(_ context.Context, _ uuid.UUID) ([]domain.LeadWithSource, error) {
+	return nil, m.err
+}
+
+func (m *mockRepoWithListErr) ListAllLeads(_ context.Context, _ uuid.UUID) ([]domain.LeadWithSource, error) {
 	return nil, m.err
 }
 

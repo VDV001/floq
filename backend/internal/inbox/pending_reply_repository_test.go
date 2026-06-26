@@ -83,6 +83,37 @@ func TestPendingReplyRepository_PersistsInputSeverity(t *testing.T) {
 	assert.Equal(t, inbox.SeverityWarn, list[0].InputSeverity, "ListByLead must round-trip input_severity")
 }
 
+func TestPendingReplyRepository_ListPendingByUser_KeepsArchivedLeadActionable(t *testing.T) {
+	pool := testutil.TestDB(t)
+	userID := testutil.SeedUser(t, pool)
+	activeLead := seedLeadForUser(t, pool, userID)
+	archivedLead := seedLeadForUser(t, pool, userID)
+	repo := inbox.NewPendingReplyRepository(pool)
+	ctx := context.Background()
+
+	for _, lid := range []uuid.UUID{activeLead, archivedLead} {
+		pr, err := inbox.NewPendingReply(userID, lid, inbox.ChannelTelegram, inbox.PendingReplyKindBookingLink, "draft")
+		require.NoError(t, err)
+		require.NoError(t, repo.Save(ctx, pr))
+	}
+	_, err := pool.Exec(ctx, `UPDATE leads SET archived_at = now() WHERE id = $1`, archivedLead)
+	require.NoError(t, err)
+
+	list, err := repo.ListPendingByUser(ctx, userID)
+	require.NoError(t, err)
+
+	// A pending HITL reply is an ACTIONABLE work-item: archiving the lead must
+	// not silently drop it from the approval queue (the drafted answer would
+	// otherwise be stuck forever, never approved or rejected). Both leads' pending
+	// replies remain.
+	seen := map[uuid.UUID]bool{}
+	for _, pr := range list {
+		seen[pr.Reply.LeadID] = true
+	}
+	assert.True(t, seen[activeLead], "active lead's pending reply present")
+	assert.True(t, seen[archivedLead], "archived lead's pending reply must stay actionable in the queue")
+}
+
 func TestPendingReplyRepository_CountPendingByKind(t *testing.T) {
 	pool := testutil.TestDB(t)
 	userA := testutil.SeedUser(t, pool)

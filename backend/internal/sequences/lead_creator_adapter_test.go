@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	leadsdomain "github.com/daniil/floq/internal/leads/domain"
 	"github.com/daniil/floq/internal/sequences/domain"
@@ -22,6 +23,9 @@ type mockLeadsRepo struct {
 func (m *mockLeadsRepo) ListLeads(_ context.Context, _ uuid.UUID) ([]leadsdomain.LeadWithSource, error) {
 	return nil, nil
 }
+func (m *mockLeadsRepo) ListAllLeads(_ context.Context, _ uuid.UUID) ([]leadsdomain.LeadWithSource, error) {
+	return nil, nil
+}
 func (m *mockLeadsRepo) GetLead(_ context.Context, _ uuid.UUID) (*leadsdomain.Lead, error) {
 	return nil, nil
 }
@@ -36,6 +40,9 @@ func (m *mockLeadsRepo) UpdateFirstMessage(_ context.Context, _ uuid.UUID, _ str
 	return nil
 }
 func (m *mockLeadsRepo) UpdateLeadStatus(_ context.Context, _ uuid.UUID, _ leadsdomain.LeadStatus) error {
+	return nil
+}
+func (m *mockLeadsRepo) SetLeadArchived(_ context.Context, _ uuid.UUID, _ *time.Time) error {
 	return nil
 }
 func (m *mockLeadsRepo) UpdateSourceID(_ context.Context, _ uuid.UUID, _ *uuid.UUID) error {
