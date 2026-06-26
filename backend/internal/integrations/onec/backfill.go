@@ -13,10 +13,9 @@ import (
 // idempotent — empty or already-encrypted secrets are skipped — and returns
 // the number encrypted.
 //
-// It runs automatically at startup BEFORE migrations (cmd/server
-// autoBackfillSecrets), so straggler secrets are encrypted before migration
-// 047's drop-guard runs. Requires the plaintext column to still exist
-// (pre-047); the caller gates on that.
+// Invoked via `server -backfill-secrets` before migration 047 drops the
+// plaintext column. Requires the schema to have both auth_secret (to read) and
+// auth_secret_enc (to write), i.e. between migrations 037 and 047.
 func BackfillSecrets(ctx context.Context, q db.Querier, cipher SecretCipher) (int, error) {
 	rows, err := q.Query(ctx, `
 		SELECT user_id, auth_secret FROM onec_credentials

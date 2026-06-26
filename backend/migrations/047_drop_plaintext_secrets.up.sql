@@ -1,22 +1,19 @@
 -- Step 2 of the at-rest secrets migration (037 added the *_enc/*_nonce
--- columns + a backfill; this drops the legacy plaintext columns). By the time
--- this runs every secret must already live in its ciphertext column.
---
--- The server encrypts any straggler plaintext secrets at startup BEFORE
--- migrations run (cmd/server autoBackfillSecrets), so on a normally-booted
--- server this GUARD is a never-fire safety net.
+-- columns + a one-off backfill; this drops the legacy plaintext columns). By
+-- the time this runs every secret must already live in its ciphertext column.
 --
 -- GUARD: refuse to drop while any secret is still un-backfilled (plaintext
--- non-empty AND ciphertext NULL) — e.g. when migrations are applied out-of-band
--- via the `migrate` CLI without the server's pre-migration backfill. Dropping
--- then would silently destroy that secret.
+-- non-empty AND ciphertext NULL). Dropping then would silently destroy that
+-- secret. The backfill (`server -backfill-secrets`) ships with the 037 release
+-- and must have been run before this migration applies.
 --
--- RECOVERY if this RAISE fires (CLI path): golang-migrate marks the schema
--- dirty at v47, so first clear it with `migrate force 46`, then start the
--- server once (its pre-migration autoBackfillSecrets encrypts the stragglers)
--- to re-apply 047 cleanly. The guard checks ciphertext PRESENCE, not
+-- RECOVERY if this RAISE fires: golang-migrate marks the schema dirty at v47,
+-- so (1) clear it with `migrate force 46`, (2) run `server -backfill-secrets`
+-- (it encrypts the stragglers and exits WITHOUT migrating — works on the
+-- schema-46 DB whose *_enc columns already exist), (3) start the server
+-- normally to re-apply 047. The guard checks ciphertext PRESENCE, not
 -- decryptability — KEK stability across this deploy is an operational
--- precondition (a secret encrypted under a lost KEK is unrecoverable).
+-- precondition (a secret encrypted under a since-lost KEK is unrecoverable).
 DO $$
 BEGIN
     IF EXISTS (

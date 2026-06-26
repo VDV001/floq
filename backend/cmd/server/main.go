@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"flag"
 	"log"
 	"log/slog"
 	"net/http"
@@ -71,6 +72,14 @@ func main() {
 	// Load .env file (ignore error if missing — production uses real env vars).
 	_ = godotenv.Load()
 
+	// -backfill-secrets encrypts legacy plaintext secrets into their *_enc
+	// columns and exits WITHOUT running migrations. Run it before deploying the
+	// migration 047 drop if its guard reports un-backfilled rows. Requires a
+	// schema that already has the *_enc columns (>= migration 037).
+	backfillSecrets := flag.Bool("backfill-secrets", false,
+		"encrypt legacy plaintext secrets into their *_enc columns, then exit")
+	flag.Parse()
+
 	cfg := config.Load()
 
 	// 0a. Secret cipher (at-rest encryption for client credentials). Fail
@@ -108,11 +117,22 @@ func main() {
 	}
 	defer analyticsPool.Close()
 
-	// 1a2. Encrypt any straggler plaintext secrets BEFORE migrations run, so the
-	// migration 047 drop-guard never fires on a normally-booted server (it stays
-	// as defense-in-depth for out-of-band CLI migrations). No-op post-047.
-	if err := autoBackfillSecrets(context.Background(), pool, secretCipher); err != nil {
-		log.Fatalf("secret backfill: %v", err)
+	// 1a2. One-off secret backfill (run before migration 047). Encrypts any
+	// legacy plaintext secret into its *_enc/*_nonce columns, then exits WITHOUT
+	// running migrations — so it can prepare a pre-047 schema for the 047
+	// drop-guard even when this binary already contains migration 047.
+	// Idempotent (only touches plaintext-set, ciphertext-NULL rows).
+	if *backfillSecrets {
+		nSettings, err := settings.BackfillSecrets(context.Background(), pool, secretCipher)
+		if err != nil {
+			log.Fatalf("backfill settings secrets: %v", err)
+		}
+		nOnec, err := onec.BackfillSecrets(context.Background(), pool, secretCipher)
+		if err != nil {
+			log.Fatalf("backfill onec secrets: %v", err)
+		}
+		log.Printf("secret backfill complete: %d settings secrets, %d 1C secrets encrypted", nSettings, nOnec)
+		return
 	}
 
 	// 1b. Run migrations
