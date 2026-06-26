@@ -71,6 +71,14 @@ func TestLLMExtractor_Extract(t *testing.T) {
 			wantIndustry: "",
 			wantSize:     domain.CompanySizeUnknown,
 		},
+		{
+			// A model that appends a stray brace or extra object after the
+			// first must not break parsing (last-"}" scanning would).
+			name:         "trailing junk after the object",
+			resp:         `{"industry":"Media","company_size":"small"}} extra`,
+			wantIndustry: "media",
+			wantSize:     domain.CompanySizeSmall,
+		},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
