@@ -30,6 +30,11 @@ func TestNewDomain(t *testing.T) {
 		{"no domain part", "ivan@", "", domain.ErrInvalidDomain},
 		{"no local part", "@acme.ru", "", domain.ErrInvalidDomain},
 		{"no dot in domain", "ivan@localhost", "", domain.ErrInvalidDomain},
+		{"ipv4 literal (metadata)", "x@169.254.169.254", "", domain.ErrInvalidDomain},
+		{"ipv4 loopback", "x@127.0.0.1", "", domain.ErrInvalidDomain},
+		{"ipv4 private", "x@192.168.1.1", "", domain.ErrInvalidDomain},
+		{"host with port", "x@10.0.0.5:6379", "", domain.ErrInvalidDomain},
+		{"ipv6 bracket literal", "x@[::1]", "", domain.ErrInvalidDomain},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
