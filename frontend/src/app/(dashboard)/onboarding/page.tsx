@@ -3,7 +3,10 @@
 import { cn } from "@/lib/utils";
 import { useOnboarding } from "@/hooks/useOnboarding";
 import { STEPS } from "@/components/onboarding/constants";
+import { HowItWorks } from "@/components/onboarding/HowItWorks";
 import { StepTimeline } from "@/components/onboarding/StepTimeline";
+import { SectionsMap } from "@/components/onboarding/SectionsMap";
+import { Glossary } from "@/components/onboarding/Glossary";
 import { TipsSection } from "@/components/onboarding/TipsSection";
 import { FooterBanner } from "@/components/onboarding/FooterBanner";
 
@@ -32,8 +35,8 @@ export default function OnboardingPage() {
           </h2>
           <p className="mb-8 text-lg text-[#434655]">
             {allDone
-              ? "Настройка завершена. Ваш AI-ассистент готов к работе."
-              : "Настройте систему за 5 минут и начните получать лиды."}
+              ? "Настройка завершена. Ваш AI-ассистент готов к работе. Ниже — как всё устроено, карта разделов и словарь терминов."
+              : "Полное руководство: разберитесь, как устроена система, пройдите настройку по шагам и запустите первую рассылку. Начните сверху и двигайтесь вниз."}
           </p>
 
           {/* Progress */}
@@ -55,7 +58,21 @@ export default function OnboardingPage() {
           </div>
         </header>
 
+        <HowItWorks />
+
+        <div className="mb-8">
+          <h3 className="mb-2 text-xs font-bold uppercase tracking-widest text-[#434655]/50">
+            Пошаговая настройка
+          </h3>
+          <p className="text-sm leading-relaxed text-[#434655]/80">
+            Семь шагов от пустого аккаунта до первой отправленной рассылки.
+            Раскройте «Подробную инструкцию» под каждым шагом — там всё разжёвано.
+          </p>
+        </div>
         <StepTimeline settings={settings} counts={counts} />
+
+        <SectionsMap />
+        <Glossary />
         <TipsSection />
         <FooterBanner />
       </div>
