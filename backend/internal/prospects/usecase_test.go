@@ -223,6 +223,19 @@ func TestImportCSV_HappyPath(t *testing.T) {
 	assert.Equal(t, "Bob", repo.batched[1].Name)
 }
 
+func TestImportCSV_EnqueuesEnrichmentPerRow(t *testing.T) {
+	repo := newMockRepo()
+	enr := &recordingEnricher{}
+	uc := NewUseCase(repo, WithLeadChecker(&mockLeadChecker{}), WithEnricher(enr))
+	userID := uuid.New()
+
+	csv := []byte("name,company,title,email\nAlice,Acme,CEO,alice@acme.com\nBob,Beta,CTO,bob@beta.com\n")
+	_, err := uc.ImportCSV(context.Background(), userID, csv)
+	require.NoError(t, err)
+	assert.ElementsMatch(t, []string{"alice@acme.com", "bob@beta.com"}, enr.emails,
+		"every imported prospect's email is enqueued for enrichment")
+}
+
 func TestImportCSV_InvalidHeader(t *testing.T) {
 	repo := newMockRepo()
 	uc := NewUseCase(repo, WithLeadChecker(&mockLeadChecker{}))

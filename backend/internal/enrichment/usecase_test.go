@@ -160,6 +160,26 @@ func TestProcessPending_RateLimited_SkipsRow(t *testing.T) {
 	assert.Empty(t, store.saved, "no scrape, no save when rate-limited")
 }
 
+type panicExtractor struct{}
+
+func (panicExtractor) Extract(context.Context, string) (domain.CompanyProfile, error) {
+	panic("extractor exploded")
+}
+
+func TestProcessPending_RecoversFromPanic(t *testing.T) {
+	store := &fakeStore{due: []*domain.CompanyEnrichment{duePending(t, "ivan@acme.ru")}}
+	uc := newUC(store, fakeFetcher{page: "<html>"}, panicExtractor{}, fakeLimiter{allow: true})
+
+	// A panic in one row must be recovered, recorded as a failure, and not
+	// crash the worker loop.
+	n, err := uc.ProcessPending(context.Background())
+	require.NoError(t, err)
+	assert.Equal(t, 0, n)
+	require.Len(t, store.saved, 1)
+	assert.Equal(t, domain.StatusFailed, store.saved[0].Status)
+	assert.Contains(t, store.saved[0].Error, "panic")
+}
+
 func TestProcessPending_ContinuesAfterOneFailure(t *testing.T) {
 	store := &fakeStore{due: []*domain.CompanyEnrichment{
 		duePending(t, "ivan@first.ru"),
