@@ -53,7 +53,7 @@ func (e *LLMExtractor) Extract(ctx context.Context, page string) (domain.Company
 	}
 
 	var parsed llmExtraction
-	if err := json.Unmarshal([]byte(extractJSONObject(raw)), &parsed); err != nil {
+	if err := decodeFirstJSONObject(raw, &parsed); err != nil {
 		return domain.CompanyProfile{}, fmt.Errorf("enrichment: llm extract: parse response: %w", err)
 	}
 
@@ -63,11 +63,14 @@ func (e *LLMExtractor) Extract(ctx context.Context, page string) (domain.Company
 	}, nil
 }
 
-// extractJSONObject pulls the first {...} object out of a model response,
-// tolerating markdown code fences and surrounding prose that some models add.
-// (A local twin of internal/ai.extractJSON, which is unexported there; the
-// enrichment context must not import internal/ai.)
-func extractJSONObject(s string) string {
+// decodeFirstJSONObject decodes the first JSON object found in a model
+// response into v, tolerating markdown code fences, leading prose, and any
+// trailing junk the model appends after the object. A json.Decoder reads
+// exactly one value from the first '{' and ignores the rest — more robust than
+// a first-"{"…last-"}" slice, which a stray trailing brace would break.
+// (The enrichment context must not import internal/ai, which has a private
+// extractJSON twin of the fence-stripping half.)
+func decodeFirstJSONObject(s string, v any) error {
 	s = strings.TrimSpace(s)
 	if strings.HasPrefix(s, "```") {
 		if i := strings.Index(s, "\n"); i != -1 {
@@ -79,9 +82,8 @@ func extractJSONObject(s string) string {
 		s = strings.TrimSpace(s)
 	}
 	start := strings.Index(s, "{")
-	end := strings.LastIndex(s, "}")
-	if start != -1 && end > start {
-		return s[start : end+1]
+	if start == -1 {
+		return fmt.Errorf("no JSON object found")
 	}
-	return s
+	return json.NewDecoder(strings.NewReader(s[start:])).Decode(v)
 }
