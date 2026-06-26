@@ -42,7 +42,18 @@ func newEnrichmentLLMAdapter(provider ai.Provider, maxInputRunes, maxTokens int)
 
 func (a *enrichmentLLMAdapter) Complete(ctx context.Context, systemPrompt, userPrompt string) (string, error) {
 	capped, _ := a.breaker.CapInput(userPrompt)
-	ctx = auditdomain.WithRequestType(ctx, auditdomain.RequestTypeEnrichment)
+	// The enrichment worker runs off a root ctx with no audit CallMeta, so
+	// re-tagging (WithRequestType) would be a no-op and the RecordingProvider
+	// would DROP the row. Build a fresh CallMeta from the subject user the
+	// usecase attached, so the call is cost-attributed under 'enrichment'. With
+	// no subject user we attach nothing (a Nil-user meta is rejected by
+	// NewEntry); the call still runs, just un-attributed.
+	if uid, ok := enrichment.SubjectUserFromContext(ctx); ok {
+		ctx = auditdomain.ContextWithCallMeta(ctx, auditdomain.CallMeta{
+			UserID:      uid,
+			RequestType: auditdomain.RequestTypeEnrichment,
+		})
+	}
 	res, err := a.provider.Complete(ctx, ai.CompletionRequest{
 		Messages: []ai.Message{
 			{Role: "system", Content: systemPrompt},
