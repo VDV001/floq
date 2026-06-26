@@ -29,6 +29,26 @@ func TestCompanySize_IsValid(t *testing.T) {
 	}
 }
 
+func TestParseCompanySize(t *testing.T) {
+	cases := []struct {
+		name string
+		in   string
+		want domain.CompanySize
+	}{
+		{"exact", "medium", domain.CompanySizeMedium},
+		{"uppercase trimmed", "  ENTERPRISE ", domain.CompanySizeEnterprise},
+		{"mixed case", "Small", domain.CompanySizeSmall},
+		{"unknown bucket -> unknown", "gigantic", domain.CompanySizeUnknown},
+		{"empty -> unknown", "", domain.CompanySizeUnknown},
+		{"numeric -> unknown", "500", domain.CompanySizeUnknown},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			assert.Equal(t, c.want, domain.ParseCompanySize(c.in))
+		})
+	}
+}
+
 func TestCompanySize_Constants(t *testing.T) {
 	// The zero value MUST be the unknown bucket so an un-enriched profile is
 	// never accidentally classified.
