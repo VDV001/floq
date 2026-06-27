@@ -136,6 +136,10 @@ describe("OnboardingPage", () => {
       ).toBeInTheDocument();
       // Each FAQ entry is an expandable disclosure.
       expect(screen.getAllByText("Решение").length).toBeGreaterThan(0);
+      // Solutions carry a CTA to the relevant section (the bot question → settings).
+      expect(
+        screen.getByRole("link", { name: /Открыть настройки/ })
+      ).toHaveAttribute("href", "/settings");
     });
   });
 
