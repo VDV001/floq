@@ -398,10 +398,73 @@ func TestProcessEmail_NewLead_EmitsLeadCreated(t *testing.T) {
 	poller.processEmail(context.Background(), "John Doe", "john@example.com", "I need a website", nil)
 	waitQualifyDone(t, &repo.mockLeadRepo)
 
-	// Best-effort post-commit (#206): emitted after CreateLead, not in a tx.
+	// Best-effort post-commit (no tx wired): emitted after CreateLead.
 	require.Equal(t, 1, emit.count(), "a new email lead must emit lead.created")
 	assert.Equal(t, ChannelEmail, emit.leads[0].Channel)
 	assert.Equal(t, ownerID, emit.leads[0].UserID)
+}
+
+// #206: with a TxManager wired, new-lead intake is fail-closed — CreateLead and
+// the lead.created enqueue run inside one WithTx. A failed emit must propagate
+// out of processEmail so the poll loop leaves the source email unseen for retry,
+// instead of being swallowed (which would lose the event at-most-once).
+func TestProcessEmail_NewLead_EmitFailureSignalsRetry(t *testing.T) {
+	repo := newEmailMockLeadRepo()
+	prospectRepo := newEmailMockProspectRepo()
+	seqRepo := newMockSequenceRepo()
+	aiClient := &mockAIQualifier{result: &QualificationResult{Score: 5}}
+	ownerID := uuid.New()
+	poller := newTestEmailPoller(repo, prospectRepo, seqRepo, aiClient, ownerID)
+	emit := &spyLeadCreatedEmitter{err: errors.New("enqueue failed")}
+	poller.SetLeadCreatedEmitter(emit)
+	tx := &inlineTx{}
+	poller.SetTxManager(tx)
+
+	err := poller.processEmail(context.Background(), "John Doe", "john@example.com", "I need a website", nil)
+
+	require.Error(t, err, "a failed lead.created enqueue must signal retry, not be swallowed")
+	assert.Equal(t, 1, tx.count(), "intake must run inside exactly one WithTx")
+}
+
+// #206: the happy path with a TxManager wired commits the lead and emits the
+// event, returning nil so the poll loop marks the email \Seen.
+func TestProcessEmail_NewLead_TransactionalIntake_Success(t *testing.T) {
+	repo := newEmailMockLeadRepo()
+	prospectRepo := newEmailMockProspectRepo()
+	seqRepo := newMockSequenceRepo()
+	aiClient := &mockAIQualifier{result: &QualificationResult{Score: 5}}
+	ownerID := uuid.New()
+	poller := newTestEmailPoller(repo, prospectRepo, seqRepo, aiClient, ownerID)
+	emit := &spyLeadCreatedEmitter{}
+	poller.SetLeadCreatedEmitter(emit)
+	tx := &inlineTx{}
+	poller.SetTxManager(tx)
+
+	err := poller.processEmail(context.Background(), "John Doe", "john@example.com", "I need a website", nil)
+	waitQualifyDone(t, &repo.mockLeadRepo)
+
+	require.NoError(t, err)
+	assert.Equal(t, 1, tx.count(), "intake must run inside exactly one WithTx")
+	require.Equal(t, 1, emit.count(), "a new email lead must emit lead.created")
+	repo.mu.Lock()
+	defer repo.mu.Unlock()
+	assert.Len(t, repo.leads, 1, "lead must be created")
+}
+
+// #206: a transient lookup failure (before any durable write) must signal retry
+// so the email is left unseen, instead of being silently dropped.
+func TestProcessEmail_GetLeadByEmailError_SignalsRetry(t *testing.T) {
+	repo := newEmailMockLeadRepo()
+	repo.getLeadByEmailErr = errors.New("db error")
+	prospectRepo := newEmailMockProspectRepo()
+	seqRepo := newMockSequenceRepo()
+	aiClient := &mockAIQualifier{result: &QualificationResult{Score: 5}}
+	ownerID := uuid.New()
+	poller := newTestEmailPoller(repo, prospectRepo, seqRepo, aiClient, ownerID)
+
+	err := poller.processEmail(context.Background(), "Test", "test@example.com", "Hello", nil)
+
+	require.Error(t, err, "a transient lookup error must signal retry")
 }
 
 func TestProcessEmail_AutoQualify_EmitsLeadQualified(t *testing.T) {
