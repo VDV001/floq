@@ -9,7 +9,11 @@ CREATE TABLE webhook_endpoints (
     user_id    uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     url        text NOT NULL,
     events     text[] NOT NULL,
-    secret     text NOT NULL,
+    -- The signing secret is encrypted at rest (AES-256-GCM under the KEK), like
+    -- every other secret in the system. It must be reversibly encrypted, not
+    -- hashed: the delivery worker needs the plaintext to compute the HMAC.
+    secret_ciphertext bytea NOT NULL,
+    secret_nonce      bytea NOT NULL,
     active     boolean NOT NULL DEFAULT true,
     created_at timestamptz NOT NULL DEFAULT now(),
     updated_at timestamptz NOT NULL DEFAULT now()

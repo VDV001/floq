@@ -11,21 +11,31 @@ import (
 )
 
 // Repository is the pgx-backed Store: webhook_endpoints + webhook_deliveries.
+// The endpoint signing secret is encrypted at rest via the injected cipher.
 type Repository struct {
-	pool *pgxpool.Pool
+	pool   *pgxpool.Pool
+	cipher SecretCipher
 }
 
-// NewRepository constructs the webhooks repository.
-func NewRepository(pool *pgxpool.Pool) *Repository { return &Repository{pool: pool} }
+// NewRepository constructs the webhooks repository with the at-rest cipher used
+// to seal endpoint secrets.
+func NewRepository(pool *pgxpool.Pool, cipher SecretCipher) *Repository {
+	return &Repository{pool: pool, cipher: cipher}
+}
 
 var _ Store = (*Repository)(nil)
 
-// CreateEndpoint inserts a new subscription.
+// CreateEndpoint inserts a new subscription, sealing the signing secret under
+// the KEK before it ever touches the database.
 func (r *Repository) CreateEndpoint(ctx context.Context, e *domain.WebhookEndpoint) error {
-	_, err := r.pool.Exec(ctx, `
-		INSERT INTO webhook_endpoints (id, user_id, url, events, secret, active)
-		VALUES ($1, $2, $3, $4, $5, $6)`,
-		e.ID, e.UserID, e.URL.String(), eventsToStrings(e.Events), e.Secret, e.Active)
+	ciphertext, nonce, err := r.cipher.Encrypt(e.Secret)
+	if err != nil {
+		return fmt.Errorf("webhooks: encrypt secret: %w", err)
+	}
+	_, err = r.pool.Exec(ctx, `
+		INSERT INTO webhook_endpoints (id, user_id, url, events, secret_ciphertext, secret_nonce, active)
+		VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+		e.ID, e.UserID, e.URL.String(), eventsToStrings(e.Events), ciphertext, nonce, e.Active)
 	if err != nil {
 		return fmt.Errorf("webhooks: create endpoint: %w", err)
 	}
@@ -35,7 +45,7 @@ func (r *Repository) CreateEndpoint(ctx context.Context, e *domain.WebhookEndpoi
 // ListEndpoints returns a user's endpoints, newest first.
 func (r *Repository) ListEndpoints(ctx context.Context, userID uuid.UUID) ([]*domain.WebhookEndpoint, error) {
 	rows, err := r.pool.Query(ctx, `
-		SELECT id, user_id, url, events, secret, active
+		SELECT id, user_id, url, events, secret_ciphertext, secret_nonce, active
 		FROM webhook_endpoints
 		WHERE user_id = $1
 		ORDER BY created_at DESC`, userID)
@@ -46,7 +56,7 @@ func (r *Repository) ListEndpoints(ctx context.Context, userID uuid.UUID) ([]*do
 
 	var out []*domain.WebhookEndpoint
 	for rows.Next() {
-		e, err := scanEndpoint(rows)
+		e, err := r.scanEndpoint(rows)
 		if err != nil {
 			return nil, err
 		}
@@ -58,9 +68,9 @@ func (r *Repository) ListEndpoints(ctx context.Context, userID uuid.UUID) ([]*do
 // GetEndpoint loads one endpoint by ID (ownership checked by the usecase).
 func (r *Repository) GetEndpoint(ctx context.Context, id uuid.UUID) (*domain.WebhookEndpoint, bool, error) {
 	row := r.pool.QueryRow(ctx, `
-		SELECT id, user_id, url, events, secret, active
+		SELECT id, user_id, url, events, secret_ciphertext, secret_nonce, active
 		FROM webhook_endpoints WHERE id = $1`, id)
-	e, err := scanEndpoint(row)
+	e, err := r.scanEndpoint(row)
 	if err == pgx.ErrNoRows {
 		return nil, false, nil
 	}
@@ -145,17 +155,24 @@ type scanner interface {
 	Scan(dest ...any) error
 }
 
-func scanEndpoint(s scanner) (*domain.WebhookEndpoint, error) {
+func (r *Repository) scanEndpoint(s scanner) (*domain.WebhookEndpoint, error) {
 	var (
-		e      domain.WebhookEndpoint
-		rawURL string
-		events []string
+		e          domain.WebhookEndpoint
+		rawURL     string
+		events     []string
+		ciphertext []byte
+		nonce      []byte
 	)
-	if err := s.Scan(&e.ID, &e.UserID, &rawURL, &events, &e.Secret, &e.Active); err != nil {
+	if err := s.Scan(&e.ID, &e.UserID, &rawURL, &events, &ciphertext, &nonce, &e.Active); err != nil {
 		return nil, err
+	}
+	secret, err := r.cipher.Decrypt(ciphertext, nonce)
+	if err != nil {
+		return nil, fmt.Errorf("webhooks: decrypt secret: %w", err)
 	}
 	e.URL = domain.WebhookURLFromStorage(rawURL)
 	e.Events = stringsToEvents(events)
+	e.Secret = secret
 	return &e, nil
 }
 

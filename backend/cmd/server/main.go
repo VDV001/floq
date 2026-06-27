@@ -408,7 +408,7 @@ func main() {
 	var webhooksUC *webhooks.UseCase
 	if cfg.WebhooksEnabled {
 		webhooksUC = webhooks.NewUseCase(
-			webhooks.NewRepository(pool),
+			webhooks.NewRepository(pool, secretCipher),
 			webhooks.NewHTTPDeliveryClient(),
 			webhooks.Config{MaxAttempts: cfg.WebhooksMaxAttempts, BatchLimit: cfg.WebhooksBatchLimit},
 			appMetrics,

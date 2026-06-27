@@ -26,7 +26,7 @@ func TestRepository_Endpoint_RoundTrip(t *testing.T) {
 	ctx := context.Background()
 	pool := testutil.TestDB(t)
 	userID := testutil.SeedUser(t, pool)
-	repo := webhooks.NewRepository(pool)
+	repo := webhooks.NewRepository(pool, testutil.NewSecretCipher(t))
 
 	ep := mustEndpoint(t, userID, domain.EventLeadCreated, domain.EventLeadQualified)
 	require.NoError(t, repo.CreateEndpoint(ctx, ep))
@@ -42,11 +42,36 @@ func TestRepository_Endpoint_RoundTrip(t *testing.T) {
 	assert.True(t, got[0].Subscribes(domain.EventLeadQualified))
 }
 
+// The signing secret must be encrypted at rest: a raw read of the stored bytes
+// must not contain the plaintext, and the round-trip must still recover it.
+func TestRepository_Secret_EncryptedAtRest(t *testing.T) {
+	ctx := context.Background()
+	pool := testutil.TestDB(t)
+	userID := testutil.SeedUser(t, pool)
+	repo := webhooks.NewRepository(pool, testutil.NewSecretCipher(t))
+
+	ep := mustEndpoint(t, userID, domain.EventLeadCreated)
+	require.NoError(t, repo.CreateEndpoint(ctx, ep))
+
+	var ciphertext []byte
+	require.NoError(t, pool.QueryRow(ctx,
+		`SELECT secret_ciphertext FROM webhook_endpoints WHERE id = $1`, ep.ID).Scan(&ciphertext))
+	require.NotEmpty(t, ciphertext)
+	assert.NotContains(t, string(ciphertext), "supersecretvalue123",
+		"plaintext secret must never be stored")
+
+	// And it decrypts back on read.
+	got, found, err := repo.GetEndpoint(ctx, ep.ID)
+	require.NoError(t, err)
+	require.True(t, found)
+	assert.Equal(t, "supersecretvalue123", got.Secret)
+}
+
 func TestRepository_GetEndpoint_FoundAndMissing(t *testing.T) {
 	ctx := context.Background()
 	pool := testutil.TestDB(t)
 	userID := testutil.SeedUser(t, pool)
-	repo := webhooks.NewRepository(pool)
+	repo := webhooks.NewRepository(pool, testutil.NewSecretCipher(t))
 
 	ep := mustEndpoint(t, userID, domain.EventLeadCreated)
 	require.NoError(t, repo.CreateEndpoint(ctx, ep))
@@ -64,7 +89,7 @@ func TestRepository_DeleteEndpoint_CascadesDeliveries(t *testing.T) {
 	ctx := context.Background()
 	pool := testutil.TestDB(t)
 	userID := testutil.SeedUser(t, pool)
-	repo := webhooks.NewRepository(pool)
+	repo := webhooks.NewRepository(pool, testutil.NewSecretCipher(t))
 
 	ep := mustEndpoint(t, userID, domain.EventLeadCreated)
 	require.NoError(t, repo.CreateEndpoint(ctx, ep))
@@ -85,7 +110,7 @@ func TestRepository_Delivery_EnqueueClaimSave(t *testing.T) {
 	ctx := context.Background()
 	pool := testutil.TestDB(t)
 	userID := testutil.SeedUser(t, pool)
-	repo := webhooks.NewRepository(pool)
+	repo := webhooks.NewRepository(pool, testutil.NewSecretCipher(t))
 
 	ep := mustEndpoint(t, userID, domain.EventLeadCreated)
 	require.NoError(t, repo.CreateEndpoint(ctx, ep))
@@ -111,7 +136,7 @@ func TestRepository_ClaimDue_RespectsMaxAttempts(t *testing.T) {
 	ctx := context.Background()
 	pool := testutil.TestDB(t)
 	userID := testutil.SeedUser(t, pool)
-	repo := webhooks.NewRepository(pool)
+	repo := webhooks.NewRepository(pool, testutil.NewSecretCipher(t))
 
 	ep := mustEndpoint(t, userID, domain.EventLeadCreated)
 	require.NoError(t, repo.CreateEndpoint(ctx, ep))
@@ -134,7 +159,7 @@ func TestRepository_ClaimDue_RespectsBackoff(t *testing.T) {
 	ctx := context.Background()
 	pool := testutil.TestDB(t)
 	userID := testutil.SeedUser(t, pool)
-	repo := webhooks.NewRepository(pool)
+	repo := webhooks.NewRepository(pool, testutil.NewSecretCipher(t))
 
 	ep := mustEndpoint(t, userID, domain.EventLeadCreated)
 	require.NoError(t, repo.CreateEndpoint(ctx, ep))
