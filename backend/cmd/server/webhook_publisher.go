@@ -85,6 +85,29 @@ func (b *webhookEventPublisher) OnLeadQualified(ctx context.Context, lead *leads
 	})
 }
 
+// emitInboxLeadQualified emits lead.qualified for the inbox auto-qualification
+// path. It is a distinct method from OnLeadQualified(*leadsdomain.Lead) — the
+// inbox carries its own InboxLead type, and a single struct can't have two
+// methods of the same name. inboxLeadQualifiedObserverFunc adapts it to the
+// inbox.LeadQualifiedObserver port.
+func (b *webhookEventPublisher) emitInboxLeadQualified(ctx context.Context, lead *inbox.InboxLead) {
+	b.publish(ctx, lead.UserID, webhooksdomain.EventLeadQualified, map[string]any{
+		"id":           lead.ID,
+		"status":       string(lead.Status),
+		"contact_name": lead.ContactName,
+		"company":      lead.Company,
+		"email":        strOrEmpty(lead.EmailAddress),
+	})
+}
+
+// inboxLeadQualifiedObserverFunc adapts a bridge method to the
+// inbox.LeadQualifiedObserver port without a named struct.
+type inboxLeadQualifiedObserverFunc func(context.Context, *inbox.InboxLead)
+
+func (f inboxLeadQualifiedObserverFunc) OnLeadQualified(ctx context.Context, lead *inbox.InboxLead) {
+	f(ctx, lead)
+}
+
 // OnLeadArchived emits lead.archived when a lead leaves the working feeds.
 func (b *webhookEventPublisher) OnLeadArchived(ctx context.Context, lead *leadsdomain.Lead) {
 	b.publish(ctx, lead.UserID, webhooksdomain.EventLeadArchived, map[string]any{
@@ -112,18 +135,33 @@ var _ leadsdomain.QualificationObserver = (*webhookEventPublisher)(nil)
 // wraps the multiple sinks in this composite. Each observer owns its errors.
 type compositeQualificationObserver struct {
 	observers []leadsdomain.QualificationObserver
+	logger    *slog.Logger
 }
 
-func newCompositeQualificationObserver(observers ...leadsdomain.QualificationObserver) *compositeQualificationObserver {
-	return &compositeQualificationObserver{observers: observers}
+func newCompositeQualificationObserver(logger *slog.Logger, observers ...leadsdomain.QualificationObserver) *compositeQualificationObserver {
+	if logger == nil {
+		logger = slog.Default()
+	}
+	return &compositeQualificationObserver{observers: observers, logger: logger}
 }
 
 func (c *compositeQualificationObserver) OnLeadQualified(ctx context.Context, lead *leadsdomain.Lead) {
 	for _, o := range c.observers {
 		if o != nil {
-			o.OnLeadQualified(ctx, lead)
+			c.safeNotify(o, ctx, lead)
 		}
 	}
+}
+
+// safeNotify isolates one observer: a panic in it (e.g. the 1C adapter) must not
+// crash the qualification request or skip the remaining observers.
+func (c *compositeQualificationObserver) safeNotify(o leadsdomain.QualificationObserver, ctx context.Context, lead *leadsdomain.Lead) {
+	defer func() {
+		if r := recover(); r != nil {
+			c.logger.ErrorContext(ctx, "qualification observer panicked", "lead", lead.ID, "panic", r)
+		}
+	}()
+	o.OnLeadQualified(ctx, lead)
 }
 
 var _ leadsdomain.QualificationObserver = (*compositeQualificationObserver)(nil)

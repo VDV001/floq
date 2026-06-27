@@ -43,6 +43,16 @@ type LeadCreatedObserver interface {
 	OnLeadCreated(ctx context.Context, lead *InboxLead)
 }
 
+// LeadQualifiedObserver is notified after the inbox auto-qualification path
+// scores an inbound lead and persists status=qualified. Without this, a
+// lead.qualified webhook would only fire on the manual /qualify API path (which
+// goes through leads.UseCase) and miss the dominant automatic flow. Same
+// contract as the other inbox observers: composition-root impl, nil disables,
+// returns nothing (a failing side-effect must not fail qualification).
+type LeadQualifiedObserver interface {
+	OnLeadQualified(ctx context.Context, lead *InboxLead)
+}
+
 // --- Read models ---
 
 // InboxLead is the inbox-local read model for a lead.

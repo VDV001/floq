@@ -100,10 +100,26 @@ func (c *countingQualObserver) OnLeadQualified(context.Context, *leadsdomain.Lea
 func TestCompositeQualificationObserver_FansOut(t *testing.T) {
 	a, b := &countingQualObserver{}, &countingQualObserver{}
 	// A nil member must be skipped without panicking.
-	comp := newCompositeQualificationObserver(a, nil, b)
+	comp := newCompositeQualificationObserver(nil, a, nil, b)
 	comp.OnLeadQualified(context.Background(), &leadsdomain.Lead{ID: uuid.New()})
 	assert.Equal(t, 1, a.calls)
 	assert.Equal(t, 1, b.calls)
+}
+
+type panickingQualObserver struct{}
+
+func (panickingQualObserver) OnLeadQualified(context.Context, *leadsdomain.Lead) {
+	panic("boom")
+}
+
+func TestCompositeQualificationObserver_RecoversFromPanic(t *testing.T) {
+	after := &countingQualObserver{}
+	comp := newCompositeQualificationObserver(slog.New(slog.NewTextHandler(io.Discard, nil)),
+		panickingQualObserver{}, after)
+	require.NotPanics(t, func() {
+		comp.OnLeadQualified(context.Background(), &leadsdomain.Lead{ID: uuid.New()})
+	})
+	assert.Equal(t, 1, after.calls, "a panicking observer must not skip the rest")
 }
 
 // When webhooks are disabled (nil publisher) the bridge must be a safe no-op,

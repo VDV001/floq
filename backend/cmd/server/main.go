@@ -502,6 +502,7 @@ func main() {
 	// Qualification fans out to BOTH the 1C counterparty push and the
 	// lead.qualified webhook; archive fires the lead.archived webhook.
 	leadsUC.SetQualificationObserver(newCompositeQualificationObserver(
+		slog.Default(),
 		newOnecQualificationAdapter(onecOutboundUC, slog.Default()),
 		webhookBridge,
 	))
@@ -658,6 +659,7 @@ func main() {
 			pendingReplyUC.SetDispatcher(guardReply(inbox.NewChannelReplyDispatcher(telegramDispatcher, emailDispatcher)))
 			tgBot.SetPendingProposer(pendingReplyUC)
 			tgBot.SetLeadCreatedObserver(webhookBridge)
+			tgBot.SetLeadQualifiedObserver(inboxLeadQualifiedObserverFunc(webhookBridge.emitInboxLeadQualified))
 			go tgBot.Start(ctx)
 			// Set the telegram sender on the leads use case
 			leadsUC.SetSender(leads.NewTelegramSender(tgBot.Bot()))
@@ -694,6 +696,7 @@ func main() {
 	// without the HITL gate wired.
 	emailPoller.SetPendingProposer(pendingReplyUC)
 	emailPoller.SetLeadCreatedObserver(webhookBridge)
+	emailPoller.SetLeadQualifiedObserver(inboxLeadQualifiedObserverFunc(webhookBridge.emitInboxLeadQualified))
 	go emailPoller.Start(ctx)
 
 	// Identity backfill: walk existing leads + prospects once on
