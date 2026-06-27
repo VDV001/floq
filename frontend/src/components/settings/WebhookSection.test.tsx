@@ -1,4 +1,4 @@
-import { render, screen, fireEvent } from "@testing-library/react";
+import { render, screen, fireEvent, within } from "@testing-library/react";
 import { describe, it, expect, vi } from "vitest";
 import { WebhookSection } from "./WebhookSection";
 import type { WebhookEndpoint } from "@/lib/api";
@@ -36,8 +36,11 @@ function setup(over: Partial<Props> = {}) {
 describe("WebhookSection", () => {
   it("lists existing endpoints with their URL and events", () => {
     setup();
-    expect(screen.getByText("https://hooks.example.com/a")).toBeInTheDocument();
-    expect(screen.getByText("lead.created")).toBeInTheDocument();
+    // Scope to the endpoint list item: "lead.created" also appears as a form
+    // checkbox label, so a global query would be ambiguous.
+    const item = screen.getByRole("listitem");
+    expect(within(item).getByText("https://hooks.example.com/a")).toBeInTheDocument();
+    expect(within(item).getByText("lead.created")).toBeInTheDocument();
   });
 
   it("renders an event-type checkbox for each available event", () => {
