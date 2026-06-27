@@ -64,6 +64,27 @@ func (f *fakeCompletionObserver) OnSequenceCompleted(_ context.Context, ev Seque
 	f.completed = append(f.completed, ev)
 }
 
+// fakeCompletionEmitter is the #199 transactional sink: it records emissions and
+// returns its configured error to drive the fail-closed path.
+type fakeCompletionEmitter struct {
+	completed []SequenceCompletion
+	err       error
+}
+
+func (f *fakeCompletionEmitter) EmitSequenceCompleted(_ context.Context, ev SequenceCompletion) error {
+	f.completed = append(f.completed, ev)
+	return f.err
+}
+
+// inlineTx models db.TxManager.WithTx for sender unit tests: runs fn inline and
+// propagates its error (real rollback is covered by integration tests).
+type inlineTx struct{ entered int }
+
+func (t *inlineTx) WithTx(ctx context.Context, fn func(context.Context) error) error {
+	t.entered++
+	return fn(ctx)
+}
+
 func (m *mockOutboundRepository) GetPendingSends(_ context.Context) ([]seqdomain.OutboundMessage, error) {
 	return m.pending, m.pendingErr
 }
@@ -411,6 +432,55 @@ func TestSendPending_EmitsSequenceCompletedOnLastDispatch(t *testing.T) {
 	// The completion check must be scoped to this run.
 	if len(seqRepo.countCalls) != 1 || seqRepo.countCalls[0].prospectID != prospectID || seqRepo.countCalls[0].sequenceID != sequenceID {
 		t.Fatalf("expected one run-scoped count call, got %+v", seqRepo.countCalls)
+	}
+}
+
+func TestSendPending_EmitsSequenceCompletedInTransaction(t *testing.T) {
+	prospectID := uuid.New()
+	sequenceID := uuid.New()
+	userID := uuid.New()
+	msgID := uuid.New()
+	ownerID := uuid.New()
+
+	seqRepo := &mockOutboundRepository{
+		pending: []seqdomain.OutboundMessage{{
+			ID:         msgID,
+			ProspectID: prospectID,
+			SequenceID: sequenceID,
+			Channel:    seqdomain.StepChannelTelegram,
+			Status:     seqdomain.OutboundStatusApproved,
+			Body:       "last step",
+		}},
+		pendingDispatch: 0,
+	}
+	prospectRepo := &mockProspectLookup{
+		prospects: map[uuid.UUID]*prospectsdomain.Prospect{
+			prospectID: {ID: prospectID, UserID: userID, Name: "C", TelegramUsername: "c_tg", Phone: "+700"},
+		},
+	}
+	tgRepo := &mockTelegramSessionStore{phone: "+70001234567", sessionData: []byte("s")}
+	tgMessenger := &mockTelegramMessenger{}
+	cfgStore := &mockConfigStore{cfg: &settingsdomain.UserConfig{}}
+
+	s := NewSender(cfgStore, ownerID, "", "", "", "", "", "", "", seqRepo, prospectRepo, tgRepo, tgMessenger, nil, nil)
+	emit := &fakeCompletionEmitter{}
+	tx := &inlineTx{}
+	s.SetTxManager(tx)
+	s.SetSequenceCompletionEmitter(emit)
+
+	if err := s.SendPending(context.Background()); err != nil {
+		t.Fatalf("SendPending: %v", err)
+	}
+
+	if len(emit.completed) != 1 {
+		t.Fatalf("expected one sequence.completed emission via the emitter, got %d", len(emit.completed))
+	}
+	if tx.entered < 1 {
+		t.Fatalf("completion must be emitted inside the dispatch transaction (tx entered = %d)", tx.entered)
+	}
+	ev := emit.completed[0]
+	if ev.UserID != userID || ev.ProspectID != prospectID || ev.SequenceID != sequenceID {
+		t.Fatalf("completion event = %+v, want user=%s prospect=%s sequence=%s", ev, userID, prospectID, sequenceID)
 	}
 }
 
