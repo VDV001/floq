@@ -178,6 +178,55 @@ func TestRepository_ClaimDue_RespectsBackoff(t *testing.T) {
 		"a delivery whose backoff has not elapsed must not be claimed")
 }
 
+func TestRepository_ClaimDue_OrdersByEffectiveDueTime(t *testing.T) {
+	ctx := context.Background()
+	pool := testutil.TestDB(t)
+	userID := testutil.SeedUser(t, pool)
+	repo := webhooks.NewRepository(pool, testutil.NewSecretCipher(t))
+
+	ep := mustEndpoint(t, userID, domain.EventLeadCreated)
+	require.NoError(t, repo.CreateEndpoint(ctx, ep))
+
+	// Three due deliveries with distinct effective due-times. The worker must
+	// claim them earliest-due first — by next_retry_at, treating NULL (never
+	// attempted) as due-since-creation — so retries fire in schedule order
+	// regardless of when each row was last updated (updated_at).
+	mkFailed := func(payload string, failedAt time.Time) *domain.WebhookDelivery {
+		d, err := domain.NewDelivery(userID, ep.ID, domain.EventLeadCreated, []byte(payload))
+		require.NoError(t, err)
+		require.NoError(t, repo.EnqueueDelivery(ctx, d))
+		// One retryable failure scheduled in the past → past-due now; its
+		// next_retry_at = failedAt + base backoff (30s).
+		d.MarkFailed("503", 503, 5, failedAt)
+		require.NoError(t, repo.SaveDelivery(ctx, d))
+		require.NotNil(t, d.NextRetryAt)
+		require.True(t, d.NextRetryAt.Before(time.Now()), "delivery must be past-due")
+		return d
+	}
+
+	now := time.Now()
+	// Insert A (saved first → smallest updated_at) then B (saved later → larger
+	// updated_at), but B is due earlier. Ordering by updated_at would yield
+	// [A, B, ...]; ordering by effective due-time must yield [B, A, ...].
+	a := mkFailed(`{"k":"a"}`, now.Add(-100*time.Second)) // due ≈ now-70s
+	b := mkFailed(`{"k":"b"}`, now.Add(-300*time.Second)) // due ≈ now-270s (earliest)
+
+	// C never attempted: next_retry_at is NULL → effective due = created_at ≈ now
+	// (latest of the three).
+	c, err := domain.NewDelivery(userID, ep.ID, domain.EventLeadCreated, []byte(`{"k":"c"}`))
+	require.NoError(t, err)
+	require.NoError(t, repo.EnqueueDelivery(ctx, c))
+
+	due, err := repo.ClaimDueDeliveries(ctx, 10, 5)
+	require.NoError(t, err)
+	require.Len(t, due, 3)
+
+	got := []uuid.UUID{due[0].ID, due[1].ID, due[2].ID}
+	want := []uuid.UUID{b.ID, a.ID, c.ID}
+	assert.Equal(t, want, got,
+		"claim must return due deliveries earliest-due first (next_retry_at asc, NULL treated as created_at)")
+}
+
 func containsDelivery(ds []*domain.WebhookDelivery, id uuid.UUID) bool {
 	return findDelivery(ds, id) != nil
 }
