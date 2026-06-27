@@ -105,6 +105,32 @@ type LeadArchivedObserver interface {
 	OnLeadArchived(ctx context.Context, lead *Lead)
 }
 
+// TxManager runs fn within a database transaction, exposing that transaction
+// through the context so transaction-aware repositories — and the qualification/
+// archive outbox emitters — join it via db.ConnFromCtx. Satisfied by
+// *db.TxManager. A nil TxManager (or a nil emitter) makes the usecase fall back
+// to the legacy non-transactional write path.
+type TxManager interface {
+	WithTx(ctx context.Context, fn func(ctx context.Context) error) error
+}
+
+// QualificationEmitter writes the lead.qualified event transactionally: it is
+// invoked INSIDE the qualification transaction, unlike QualificationObserver
+// which fires post-commit, best-effort. A non-nil error aborts the whole
+// qualification — the transactional-outbox guarantee (#199) that the status
+// change and its event row commit together or not at all. The implementation
+// enqueues a webhook delivery via db.ConnFromCtx and lives in the composition
+// root. A nil emitter disables transactional emission (legacy path).
+type QualificationEmitter interface {
+	EmitLeadQualified(ctx context.Context, lead *Lead) error
+}
+
+// LeadArchivedEmitter writes the lead.archived event transactionally, inside the
+// archive transaction. Same fail-closed contract as QualificationEmitter (#199).
+type LeadArchivedEmitter interface {
+	EmitLeadArchived(ctx context.Context, lead *Lead) error
+}
+
 // --- Prospect suggestion (cross-channel dedup) ---
 
 // SuggestionConfidence classifies how strong the cross-channel match signal is.
