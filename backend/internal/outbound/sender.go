@@ -104,6 +104,11 @@ type Sender struct {
 	// gates still apply). Production always wires it.
 	guard SendGuard
 
+	// seqObserver is notified when a prospect's sequence run finishes sending.
+	// Set via SetSequenceCompletionObserver at wiring time; nil disables the
+	// sequence.completed notification (e.g. when webhooks are off).
+	seqObserver SequenceCompletionObserver
+
 	tgLastSent time.Time
 	tgRateMu   sync.Mutex
 }
@@ -116,6 +121,41 @@ func (s *Sender) SetUnsubscribeSecret(secret string) { s.unsubscribeSecret = sec
 
 // SetSendGuard injects the layer-3 outbound send guard.
 func (s *Sender) SetSendGuard(guard SendGuard) { s.guard = guard }
+
+// SetSequenceCompletionObserver wires the observer notified when a prospect's
+// sequence run finishes sending. nil disables the notification.
+func (s *Sender) SetSequenceCompletionObserver(o SequenceCompletionObserver) { s.seqObserver = o }
+
+// noteRunProgress fires the sequence-completion observer if the just-dispatched
+// message was the last pending one for its (prospect, sequence) run. Best-effort
+// and non-blocking: a nil observer, a message with no sequence, or a count error
+// is a silent no-op — it must never fail or hold up a send. Emission only
+// happens on a dispatch (send/bounce), so a run cut short by a user rejecting
+// its final draft does not produce a completion event.
+//
+// Completion means "the last dispatch emptied the run's queue", not "the queue
+// is empty": a step that can never be dispatched (permanently suppressed,
+// consent-blocked, or failing non-bounce every tick) stays approved, so the
+// count never reaches zero and the run never completes. That matches the
+// "finished sending" definition and mirrors the existing infinite-retry
+// behaviour of GetPendingSends.
+func (s *Sender) noteRunProgress(ctx context.Context, msg seqdomain.OutboundMessage, userID uuid.UUID) {
+	if s.seqObserver == nil || msg.SequenceID == uuid.Nil {
+		return
+	}
+	remaining, err := s.seqRepo.CountPendingDispatch(ctx, msg.ProspectID, msg.SequenceID)
+	if err != nil {
+		log.Printf("[outbound] sequence-completion check failed for prospect %s seq %s: %v", msg.ProspectID, msg.SequenceID, err)
+		return
+	}
+	if remaining == 0 {
+		s.seqObserver.OnSequenceCompleted(ctx, SequenceCompletion{
+			UserID:     userID,
+			ProspectID: msg.ProspectID,
+			SequenceID: msg.SequenceID,
+		})
+	}
+}
 
 // recipientAllowed applies the send guard's per-recipient check, failing
 // open only when no guard is configured. Logs and returns false on refusal.
@@ -347,6 +387,7 @@ func (s *Sender) SendPending(ctx context.Context) error {
 				}
 				_ = s.seqRepo.MarkBounced(ctx, msg.ID, *msg.BouncedAt)
 				_ = s.prospectRepo.UpdateVerification(ctx, msg.ProspectID, prospectsdomain.VerifyStatusInvalid, 0, `{"bounce":true}`, time.Now().UTC())
+				s.noteRunProgress(ctx, msg, prospect.UserID)
 				continue
 			}
 			log.Printf("[outbound] send failed to %s (msg %s): %v", prospect.Email, msg.ID, sendErr)
@@ -363,6 +404,7 @@ func (s *Sender) SendPending(ctx context.Context) error {
 			log.Printf("[outbound] failed to persist %s as sent: %v", msg.ID, err)
 			continue
 		}
+		s.noteRunProgress(ctx, msg, prospect.UserID)
 
 		log.Printf("[outbound] sent email to %s (msg %s)", prospect.Email, msg.ID)
 	}
@@ -585,6 +627,7 @@ func (s *Sender) handleTelegramMessage(ctx context.Context, msg seqdomain.Outbou
 		log.Printf("[outbound] failed to persist telegram %s as sent: %v", msg.ID, err)
 		return
 	}
+	s.noteRunProgress(ctx, msg, prospect.UserID)
 
 	log.Printf("[outbound] sent telegram message to %s (msg %s)", prospect.Phone, msg.ID)
 }

@@ -564,6 +564,13 @@ func main() {
 		MassSendThreshold: cfg.OutboundMassSendThreshold,
 		MassSendConfirmed: cfg.OutboundMassSendConfirmed,
 	})))
+	// Emit sequence.completed to outgoing webhooks when a prospect's sequence run
+	// finishes sending. Only wired when webhooks are enabled so a disabled
+	// feature adds no per-send completion-count query (the bridge struct is
+	// non-nil even when its publisher is nil, so guard on webhookPub).
+	if webhookPub != nil {
+		emailSender.SetSequenceCompletionObserver(webhookBridge)
+	}
 	go func() {
 		ticker := time.NewTicker(30 * time.Second)
 		defer ticker.Stop()

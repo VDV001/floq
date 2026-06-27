@@ -35,6 +35,21 @@ func (s OutboundStatus) String() string {
 	return string(s)
 }
 
+// IsPendingDispatch reports whether a message in this status may still be sent
+// — it is awaiting dispatch (a draft awaiting approval, or an approved message
+// awaiting the send tick). Sent, rejected, and bounced messages will not be
+// dispatched again: a later async sent→bounced is a delivery outcome, not a new
+// send. A sequence run with no pending-dispatch messages left for a prospect has
+// therefore finished sending — the basis for the sequence.completed event.
+func (s OutboundStatus) IsPendingDispatch() bool {
+	switch s {
+	case OutboundStatusDraft, OutboundStatusApproved:
+		return true
+	default:
+		return false
+	}
+}
+
 // outboundTransitions encodes the business-legal state machine for outbound
 // messages. The operator approves or rejects a draft; an approved message
 // gets sent (delivery succeeded) or bounced (delivery rejected synchronously

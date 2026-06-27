@@ -39,6 +39,29 @@ type mockOutboundRepository struct {
 	sentErr    error
 	bouncedIDs []uuid.UUID
 	bouncedErr error
+	// pendingDispatch is what CountPendingDispatch returns (0 = run finished).
+	pendingDispatch    int
+	pendingDispatchErr error
+	countCalls         []countCall
+}
+
+type countCall struct {
+	prospectID uuid.UUID
+	sequenceID uuid.UUID
+}
+
+func (m *mockOutboundRepository) CountPendingDispatch(_ context.Context, prospectID, sequenceID uuid.UUID) (int, error) {
+	m.countCalls = append(m.countCalls, countCall{prospectID, sequenceID})
+	return m.pendingDispatch, m.pendingDispatchErr
+}
+
+// fakeCompletionObserver records sequence-completion notifications.
+type fakeCompletionObserver struct {
+	completed []SequenceCompletion
+}
+
+func (f *fakeCompletionObserver) OnSequenceCompleted(_ context.Context, ev SequenceCompletion) {
+	f.completed = append(f.completed, ev)
 }
 
 func (m *mockOutboundRepository) GetPendingSends(_ context.Context) ([]seqdomain.OutboundMessage, error) {
@@ -337,6 +360,163 @@ func TestSendPending_TelegramHappyPath(t *testing.T) {
 	}
 	if seqRepo.sentIDs[0] != msgID {
 		t.Errorf("expected sent ID %s, got %s", msgID, seqRepo.sentIDs[0])
+	}
+}
+
+func TestSendPending_EmitsSequenceCompletedOnLastDispatch(t *testing.T) {
+	prospectID := uuid.New()
+	sequenceID := uuid.New()
+	userID := uuid.New()
+	msgID := uuid.New()
+	ownerID := uuid.New()
+
+	seqRepo := &mockOutboundRepository{
+		pending: []seqdomain.OutboundMessage{{
+			ID:         msgID,
+			ProspectID: prospectID,
+			SequenceID: sequenceID,
+			Channel:    seqdomain.StepChannelTelegram,
+			Status:     seqdomain.OutboundStatusApproved,
+			Body:       "last step",
+		}},
+		pendingDispatch: 0, // after this send, nothing left to dispatch → run complete
+	}
+	prospectRepo := &mockProspectLookup{
+		prospects: map[uuid.UUID]*prospectsdomain.Prospect{
+			prospectID: {ID: prospectID, UserID: userID, Name: "C", TelegramUsername: "c_tg", Phone: "+700"},
+		},
+	}
+	tgRepo := &mockTelegramSessionStore{phone: "+70001234567", sessionData: []byte("s")}
+	tgMessenger := &mockTelegramMessenger{}
+	cfgStore := &mockConfigStore{cfg: &settingsdomain.UserConfig{}}
+
+	s := NewSender(cfgStore, ownerID, "", "", "", "", "", "", "", seqRepo, prospectRepo, tgRepo, tgMessenger, nil, nil)
+	obs := &fakeCompletionObserver{}
+	s.SetSequenceCompletionObserver(obs)
+
+	if err := s.SendPending(context.Background()); err != nil {
+		t.Fatalf("SendPending: %v", err)
+	}
+
+	if len(seqRepo.sentIDs) != 1 {
+		t.Fatalf("expected the message sent, got %d", len(seqRepo.sentIDs))
+	}
+	if len(obs.completed) != 1 {
+		t.Fatalf("expected one sequence.completed emission, got %d", len(obs.completed))
+	}
+	ev := obs.completed[0]
+	if ev.UserID != userID || ev.ProspectID != prospectID || ev.SequenceID != sequenceID {
+		t.Fatalf("completion event = %+v, want user=%s prospect=%s sequence=%s", ev, userID, prospectID, sequenceID)
+	}
+	// The completion check must be scoped to this run.
+	if len(seqRepo.countCalls) != 1 || seqRepo.countCalls[0].prospectID != prospectID || seqRepo.countCalls[0].sequenceID != sequenceID {
+		t.Fatalf("expected one run-scoped count call, got %+v", seqRepo.countCalls)
+	}
+}
+
+func TestSendPending_NoSequenceCompletedWhenStepsRemain(t *testing.T) {
+	prospectID := uuid.New()
+	sequenceID := uuid.New()
+	msgID := uuid.New()
+	ownerID := uuid.New()
+
+	seqRepo := &mockOutboundRepository{
+		pending: []seqdomain.OutboundMessage{{
+			ID:         msgID,
+			ProspectID: prospectID,
+			SequenceID: sequenceID,
+			Channel:    seqdomain.StepChannelTelegram,
+			Status:     seqdomain.OutboundStatusApproved,
+			Body:       "step 1 of 3",
+		}},
+		pendingDispatch: 2, // two later steps still queued → not complete
+	}
+	prospectRepo := &mockProspectLookup{
+		prospects: map[uuid.UUID]*prospectsdomain.Prospect{
+			prospectID: {ID: prospectID, UserID: uuid.New(), Name: "C", TelegramUsername: "c_tg", Phone: "+700"},
+		},
+	}
+	tgRepo := &mockTelegramSessionStore{phone: "+70001234567", sessionData: []byte("s")}
+	tgMessenger := &mockTelegramMessenger{}
+	cfgStore := &mockConfigStore{cfg: &settingsdomain.UserConfig{}}
+
+	s := NewSender(cfgStore, ownerID, "", "", "", "", "", "", "", seqRepo, prospectRepo, tgRepo, tgMessenger, nil, nil)
+	obs := &fakeCompletionObserver{}
+	s.SetSequenceCompletionObserver(obs)
+
+	if err := s.SendPending(context.Background()); err != nil {
+		t.Fatalf("SendPending: %v", err)
+	}
+	if len(obs.completed) != 0 {
+		t.Fatalf("expected no completion while steps remain, got %d", len(obs.completed))
+	}
+}
+
+func TestSendPending_NoSequenceCompletedForNonSequenceMessage(t *testing.T) {
+	// A message with no sequence (SequenceID == Nil), e.g. an ad-hoc send, must
+	// never trigger a completion check or event.
+	prospectID := uuid.New()
+	seqRepo := &mockOutboundRepository{
+		pending: []seqdomain.OutboundMessage{{
+			ID:         uuid.New(),
+			ProspectID: prospectID,
+			SequenceID: uuid.Nil,
+			Channel:    seqdomain.StepChannelTelegram,
+			Status:     seqdomain.OutboundStatusApproved,
+			Body:       "ad-hoc",
+		}},
+		pendingDispatch: 0,
+	}
+	prospectRepo := &mockProspectLookup{
+		prospects: map[uuid.UUID]*prospectsdomain.Prospect{
+			prospectID: {ID: prospectID, UserID: uuid.New(), Name: "C", TelegramUsername: "c_tg", Phone: "+700"},
+		},
+	}
+	tgRepo := &mockTelegramSessionStore{phone: "+70001234567", sessionData: []byte("s")}
+	s := NewSender(&mockConfigStore{cfg: &settingsdomain.UserConfig{}}, uuid.New(), "", "", "", "", "", "", "", seqRepo, prospectRepo, tgRepo, &mockTelegramMessenger{}, nil, nil)
+	obs := &fakeCompletionObserver{}
+	s.SetSequenceCompletionObserver(obs)
+
+	if err := s.SendPending(context.Background()); err != nil {
+		t.Fatalf("SendPending: %v", err)
+	}
+	if len(seqRepo.countCalls) != 0 {
+		t.Fatalf("a non-sequence message must not trigger a completion count, got %d", len(seqRepo.countCalls))
+	}
+	if len(obs.completed) != 0 {
+		t.Fatalf("a non-sequence message must not complete a run, got %d", len(obs.completed))
+	}
+}
+
+func TestSendPending_CompletionCountErrorIsSilent(t *testing.T) {
+	// A failing completion count must not block or fail the send (best-effort).
+	prospectID := uuid.New()
+	msgID := uuid.New()
+	seqRepo := &mockOutboundRepository{
+		pending: []seqdomain.OutboundMessage{{
+			ID:         msgID,
+			ProspectID: prospectID,
+			SequenceID: uuid.New(),
+			Channel:    seqdomain.StepChannelTelegram,
+			Status:     seqdomain.OutboundStatusApproved,
+			Body:       "step",
+		}},
+		pendingDispatchErr: errors.New("db down"),
+	}
+	prospectRepo := &mockProspectLookup{
+		prospects: map[uuid.UUID]*prospectsdomain.Prospect{
+			prospectID: {ID: prospectID, UserID: uuid.New(), Name: "C", TelegramUsername: "c_tg", Phone: "+700"},
+		},
+	}
+	tgRepo := &mockTelegramSessionStore{phone: "+70001234567", sessionData: []byte("s")}
+	s := NewSender(&mockConfigStore{cfg: &settingsdomain.UserConfig{}}, uuid.New(), "", "", "", "", "", "", "", seqRepo, prospectRepo, tgRepo, &mockTelegramMessenger{}, nil, nil)
+	s.SetSequenceCompletionObserver(&fakeCompletionObserver{})
+
+	if err := s.SendPending(context.Background()); err != nil {
+		t.Fatalf("a completion-count error must not surface as a send error, got %v", err)
+	}
+	if len(seqRepo.sentIDs) != 1 || seqRepo.sentIDs[0] != msgID {
+		t.Fatalf("the message must still be marked sent despite the count error, got %v", seqRepo.sentIDs)
 	}
 }
 
