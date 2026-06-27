@@ -150,3 +150,13 @@ func normalizeEvents(events []EventType) ([]EventType, error) {
 func (e *WebhookEndpoint) Subscribes(et EventType) bool {
 	return slices.Contains(e.Events, et)
 }
+
+// SetActive enables or disables delivery to this endpoint. A deactivated
+// endpoint is skipped by the publisher (Publish fans out only to active
+// endpoints), so disabling pauses delivery without deleting the subscription —
+// its URL, events, and secret are preserved for re-enabling. There is no
+// invariant to enforce, but the mutation lives on the aggregate so callers never
+// poke the field directly.
+func (e *WebhookEndpoint) SetActive(active bool) {
+	e.Active = active
+}

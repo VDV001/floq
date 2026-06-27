@@ -11,10 +11,16 @@ import (
 
 // --- fakes ---
 
+type activeUpdate struct {
+	id     uuid.UUID
+	active bool
+}
+
 type fakeStore struct {
-	endpoints  map[uuid.UUID]*domain.WebhookEndpoint
-	deliveries []*domain.WebhookDelivery
-	saveErr    error
+	endpoints     map[uuid.UUID]*domain.WebhookEndpoint
+	deliveries    []*domain.WebhookDelivery
+	activeUpdates []activeUpdate
+	saveErr       error
 }
 
 func newFakeStore() *fakeStore {
@@ -40,6 +46,13 @@ func (f *fakeStore) GetEndpoint(_ context.Context, id uuid.UUID) (*domain.Webhoo
 }
 func (f *fakeStore) DeleteEndpoint(_ context.Context, id uuid.UUID) error {
 	delete(f.endpoints, id)
+	return nil
+}
+func (f *fakeStore) SetEndpointActive(_ context.Context, id uuid.UUID, active bool) error {
+	f.activeUpdates = append(f.activeUpdates, activeUpdate{id: id, active: active})
+	if e, ok := f.endpoints[id]; ok {
+		e.Active = active
+	}
 	return nil
 }
 func (f *fakeStore) EnqueueDelivery(_ context.Context, d *domain.WebhookDelivery) error {

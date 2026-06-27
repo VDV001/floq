@@ -20,6 +20,9 @@ type Store interface {
 	GetEndpoint(ctx context.Context, id uuid.UUID) (*domain.WebhookEndpoint, bool, error)
 	// DeleteEndpoint removes an endpoint by ID.
 	DeleteEndpoint(ctx context.Context, id uuid.UUID) error
+	// SetEndpointActive persists an endpoint's active flag (enable/disable
+	// delivery). Ownership is checked by the usecase before this is called.
+	SetEndpointActive(ctx context.Context, id uuid.UUID, active bool) error
 
 	// EnqueueDelivery appends a pending delivery to the outbox.
 	EnqueueDelivery(ctx context.Context, d *domain.WebhookDelivery) error

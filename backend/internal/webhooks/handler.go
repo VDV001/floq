@@ -23,6 +23,7 @@ func RegisterRoutes(r chi.Router, uc *UseCase) {
 	r.Post("/api/webhooks", h.create())
 	r.Get("/api/webhooks", h.list())
 	r.Get("/api/webhooks/event-types", h.eventTypes())
+	r.Patch("/api/webhooks/{id}", h.setActive())
 	r.Delete("/api/webhooks/{id}", h.delete())
 	r.Post("/api/webhooks/{id}/test", h.test())
 }
@@ -119,6 +120,31 @@ func (h *Handler) delete() http.HandlerFunc {
 			return
 		}
 		w.WriteHeader(http.StatusNoContent)
+	}
+}
+
+// setActiveRequest is the toggle payload for PATCH /api/webhooks/{id}.
+type setActiveRequest struct {
+	Active bool `json:"active"`
+}
+
+func (h *Handler) setActive() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		userID, id, ok := h.authAndID(w, r)
+		if !ok {
+			return
+		}
+		var body setActiveRequest
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			httputil.WriteError(w, http.StatusBadRequest, "invalid request body")
+			return
+		}
+		ep, err := h.uc.SetEndpointActive(r.Context(), userID, id, body.Active)
+		if err != nil {
+			h.writeMutationError(w, err)
+			return
+		}
+		httputil.WriteJSON(w, http.StatusOK, toResponse(ep))
 	}
 }
 

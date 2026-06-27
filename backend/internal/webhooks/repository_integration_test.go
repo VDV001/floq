@@ -178,6 +178,27 @@ func TestRepository_ClaimDue_RespectsBackoff(t *testing.T) {
 		"a delivery whose backoff has not elapsed must not be claimed")
 }
 
+func TestRepository_SetEndpointActive_RoundTrip(t *testing.T) {
+	ctx := context.Background()
+	pool := testutil.TestDB(t)
+	userID := testutil.SeedUser(t, pool)
+	repo := webhooks.NewRepository(pool, testutil.NewSecretCipher(t))
+
+	ep := mustEndpoint(t, userID, domain.EventLeadCreated)
+	require.NoError(t, repo.CreateEndpoint(ctx, ep))
+
+	require.NoError(t, repo.SetEndpointActive(ctx, ep.ID, false))
+	got, found, err := repo.GetEndpoint(ctx, ep.ID)
+	require.NoError(t, err)
+	require.True(t, found)
+	assert.False(t, got.Active, "endpoint must be persisted as inactive")
+
+	require.NoError(t, repo.SetEndpointActive(ctx, ep.ID, true))
+	got, _, err = repo.GetEndpoint(ctx, ep.ID)
+	require.NoError(t, err)
+	assert.True(t, got.Active, "endpoint must be persisted as active again")
+}
+
 func TestRepository_ClaimDue_OrdersByEffectiveDueTime(t *testing.T) {
 	ctx := context.Background()
 	pool := testutil.TestDB(t)

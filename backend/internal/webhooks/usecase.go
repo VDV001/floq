@@ -92,6 +92,22 @@ func (uc *UseCase) DeleteEndpoint(ctx context.Context, userID, id uuid.UUID) err
 	return uc.store.DeleteEndpoint(ctx, id)
 }
 
+// SetEndpointActive enables or disables delivery to the caller's endpoint after
+// verifying ownership, and returns the updated endpoint. Disabling pauses
+// delivery (the publisher skips inactive endpoints) without losing the
+// subscription. Not-found / not-owned collapse to ErrEndpointNotFound (404).
+func (uc *UseCase) SetEndpointActive(ctx context.Context, userID, id uuid.UUID, active bool) (*domain.WebhookEndpoint, error) {
+	ep, err := uc.ownedEndpoint(ctx, userID, id)
+	if err != nil {
+		return nil, err
+	}
+	ep.SetActive(active)
+	if err := uc.store.SetEndpointActive(ctx, id, active); err != nil {
+		return nil, fmt.Errorf("webhooks: set endpoint active: %w", err)
+	}
+	return ep, nil
+}
+
 // TestEndpoint enqueues a synthetic ping delivery to the caller's endpoint,
 // exercising the full delivery path (sign → guarded POST → mark) without
 // waiting for a real domain event. Used by the "Test delivery" UI action.
