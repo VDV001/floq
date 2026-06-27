@@ -129,26 +129,96 @@ func (t *TelegramBot) SetLeadQualifiedEmitter(e LeadQualifiedEmitter) { t.leadQu
 // update on the next poll instead of losing the lead.
 func (t *TelegramBot) SetTxManager(tx TxManager) { t.tx = tx }
 
+// updateFetcher is the slice of the Telegram client the receive loop depends on
+// (satisfied by *tgbotapi.BotAPI). Depending on the port rather than the
+// concrete client keeps the offset-advancement logic unit-testable (#206 Part B).
+type updateFetcher interface {
+	GetUpdates(tgbotapi.UpdateConfig) ([]tgbotapi.Update, error)
+}
+
+// telegramLongPollTimeout is the long-poll wait per GetUpdates call. It also
+// bounds how long an idle loop takes to notice ctx cancellation in the worst
+// case (an in-flight long poll is abandoned immediately via getUpdatesCtx, so
+// shutdown stays responsive regardless).
+const telegramLongPollTimeout = 50
+
+// telegramErrBackoff is the pause after a transient GetUpdates error before
+// re-polling, so a Telegram outage does not spin the loop.
+const telegramErrBackoff = 5 * time.Second
+
 // Start begins listening for Telegram updates and processing them.
 // It blocks until ctx is cancelled.
 func (t *TelegramBot) Start(ctx context.Context) {
-	u := tgbotapi.NewUpdate(0)
-	u.Timeout = 60
-	updates := t.bot.GetUpdatesChan(u)
-
 	log.Println("Telegram inbox bot started")
+	t.receiveLoop(ctx, t.bot, t.handleMessage)
+	log.Println("Telegram inbox bot shutting down")
+}
 
+// receiveLoop long-polls Telegram and dispatches each update to handle. Unlike
+// the SDK's GetUpdatesChan (which advances the offset as soon as it buffers an
+// update), this loop advances the offset only AFTER handle returns nil, so a
+// failed intake leaves the update unconfirmed and the next poll re-delivers it
+// (#206 Part B fail-closed). A handler error halts the rest of the batch and
+// re-polls from the failed update's id; non-message updates advance without
+// dispatch.
+func (t *TelegramBot) receiveLoop(ctx context.Context, fetcher updateFetcher, handle func(context.Context, *tgbotapi.Message) error) {
+	offset := 0
 	for {
-		select {
-		case <-ctx.Done():
-			log.Println("Telegram inbox bot shutting down")
+		if ctx.Err() != nil {
 			return
-		case update := <-updates:
+		}
+		cfg := tgbotapi.NewUpdate(offset)
+		cfg.Timeout = telegramLongPollTimeout
+		updates, err := getUpdatesCtx(ctx, fetcher, cfg)
+		if err != nil {
+			if ctx.Err() != nil {
+				return
+			}
+			log.Printf("telegram inbox: get updates error: %v", err)
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(telegramErrBackoff):
+			}
+			continue
+		}
+		for _, update := range updates {
 			if update.Message == nil {
+				offset = update.UpdateID + 1
 				continue
 			}
-			t.handleMessage(ctx, update.Message)
+			if err := handle(ctx, update.Message); err != nil {
+				// Transient: do NOT advance past this update. Break the batch so
+				// the next poll re-requests from this id and re-delivers it.
+				log.Printf("telegram inbox: intake failed for update %d, will retry: %v", update.UpdateID, err)
+				break
+			}
+			offset = update.UpdateID + 1
 		}
+	}
+}
+
+// getUpdatesCtx runs the blocking GetUpdates long poll in a goroutine and
+// returns as soon as ctx is cancelled, so shutdown is not stalled for up to the
+// long-poll timeout. An abandoned in-flight poll completes harmlessly in the
+// background (its result is discarded via the buffered channel) and, because its
+// updates were never confirmed by a higher offset, they are re-delivered on the
+// next process start.
+func getUpdatesCtx(ctx context.Context, fetcher updateFetcher, cfg tgbotapi.UpdateConfig) ([]tgbotapi.Update, error) {
+	type result struct {
+		updates []tgbotapi.Update
+		err     error
+	}
+	ch := make(chan result, 1)
+	go func() {
+		up, err := fetcher.GetUpdates(cfg)
+		ch <- result{up, err}
+	}()
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	case r := <-ch:
+		return r.updates, r.err
 	}
 }
 
