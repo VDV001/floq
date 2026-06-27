@@ -393,6 +393,106 @@ func TestArchiveLead_ObserverNotCalledOnFailure(t *testing.T) {
 	assert.Equal(t, 0, obs.calls)
 }
 
+// --- #199 transactional outbox: qualify/archive emit inside the domain tx ---
+
+type fakeQualEmitter struct {
+	calls      int
+	calledWith *domain.Lead
+	err        error
+}
+
+func (f *fakeQualEmitter) EmitLeadQualified(_ context.Context, lead *domain.Lead) error {
+	f.calls++
+	f.calledWith = lead
+	return f.err
+}
+
+type fakeArchivedEmitter struct {
+	calls      int
+	calledWith *domain.Lead
+	err        error
+}
+
+func (f *fakeArchivedEmitter) EmitLeadArchived(_ context.Context, lead *domain.Lead) error {
+	f.calls++
+	f.calledWith = lead
+	return f.err
+}
+
+// inlineTx models db.TxManager.WithTx for unit tests: it runs fn immediately and
+// propagates its error. A real rollback needs a database — that is proven in the
+// integration tests; here we only assert orchestration (the write + emit run
+// under one WithTx, and an emit error propagates out instead of being swallowed).
+type inlineTx struct{ entered int }
+
+func (t *inlineTx) WithTx(ctx context.Context, fn func(context.Context) error) error {
+	t.entered++
+	return fn(ctx)
+}
+
+func TestQualifyLead_EmitsInsideTransaction(t *testing.T) {
+	repo := newMockRepo()
+	leadID := uuid.New()
+	repo.leads[leadID] = &domain.Lead{ID: leadID, UserID: uuid.New(), ContactName: "Ivan", Channel: domain.ChannelTelegram, Status: domain.StatusNew}
+	aiSvc := &mockAI{qualifyResult: &domain.Qualification{Score: 90, ProviderUsed: "test"}}
+	emit := &fakeQualEmitter{}
+	obs := &fakeQualObserver{}
+	tx := &inlineTx{}
+
+	uc := NewUseCase(repo, aiSvc, nil, WithTxManager(tx), WithQualificationEmitter(emit), WithQualificationObserver(obs))
+
+	_, err := uc.QualifyLead(context.Background(), leadID)
+	require.NoError(t, err)
+
+	assert.Equal(t, 1, tx.entered, "qualification writes + emit must run inside one transaction")
+	require.Equal(t, 1, emit.calls, "the lead.qualified outbox row must be emitted in-tx")
+	assert.Equal(t, domain.StatusQualified, emit.calledWith.Status, "emitter sees the qualified lead")
+	assert.Equal(t, 1, obs.calls, "the 1C observer still fires post-commit (best-effort, unchanged)")
+}
+
+func TestQualifyLead_EmitterErrorAbortsQualification(t *testing.T) {
+	repo := newMockRepo()
+	leadID := uuid.New()
+	repo.leads[leadID] = &domain.Lead{ID: leadID, UserID: uuid.New(), ContactName: "Ivan", Channel: domain.ChannelTelegram, Status: domain.StatusNew}
+	aiSvc := &mockAI{qualifyResult: &domain.Qualification{Score: 90, ProviderUsed: "test"}}
+	emit := &fakeQualEmitter{err: fmt.Errorf("outbox down")}
+	obs := &fakeQualObserver{}
+	tx := &inlineTx{}
+
+	uc := NewUseCase(repo, aiSvc, nil, WithTxManager(tx), WithQualificationEmitter(emit), WithQualificationObserver(obs))
+
+	_, err := uc.QualifyLead(context.Background(), leadID)
+	require.Error(t, err, "a failed outbox emit must abort qualification (fail-closed transactional outbox)")
+	assert.Equal(t, 0, obs.calls, "aborted qualification must not fire the post-commit observer")
+}
+
+func TestArchiveLead_EmitsInsideTransaction(t *testing.T) {
+	repo := newMockRepo()
+	leadID := uuid.New()
+	repo.leads[leadID] = &domain.Lead{ID: leadID, UserID: uuid.New(), ContactName: "Ivan", Channel: domain.ChannelTelegram, Status: domain.StatusNew}
+	emit := &fakeArchivedEmitter{}
+	tx := &inlineTx{}
+	uc := NewUseCase(repo, &mockAI{}, nil, WithTxManager(tx), WithLeadArchivedEmitter(emit))
+
+	require.NoError(t, uc.ArchiveLead(context.Background(), leadID))
+
+	assert.Equal(t, 1, tx.entered, "archive write + emit must run inside one transaction")
+	require.Equal(t, 1, emit.calls)
+	assert.NotNil(t, emit.calledWith.ArchivedAt, "emitter sees the archived timestamp")
+}
+
+func TestArchiveLead_EmitterErrorAbortsArchive(t *testing.T) {
+	repo := newMockRepo()
+	leadID := uuid.New()
+	repo.leads[leadID] = &domain.Lead{ID: leadID, UserID: uuid.New(), Status: domain.StatusNew}
+	emit := &fakeArchivedEmitter{err: fmt.Errorf("outbox down")}
+	tx := &inlineTx{}
+	uc := NewUseCase(repo, &mockAI{}, nil, WithTxManager(tx), WithLeadArchivedEmitter(emit))
+
+	err := uc.ArchiveLead(context.Background(), leadID)
+	require.Error(t, err, "a failed outbox emit must abort the archive (fail-closed)")
+}
+
 func TestQualifyLead_NotFound(t *testing.T) {
 	repo := newMockRepo()
 	uc := NewUseCase(repo, &mockAI{}, nil)
