@@ -34,6 +34,7 @@ type TelegramBot struct {
 	bookingLink           string
 	leadCreatedEmitter   LeadCreatedEmitter
 	leadQualifiedEmitter LeadQualifiedEmitter
+	tx                   TxManager
 }
 
 // TelegramBotOption configures a *TelegramBot at construction. Used for
@@ -121,6 +122,13 @@ func (t *TelegramBot) SetLeadCreatedEmitter(e LeadCreatedEmitter) { t.leadCreate
 // with no retry, so it is post-commit best-effort, not transactional.
 func (t *TelegramBot) SetLeadQualifiedEmitter(e LeadQualifiedEmitter) { t.leadQualifiedEmitter = e }
 
+// SetTxManager wires the transaction manager that makes new-lead intake
+// fail-closed (#206 Part B): CreateLead and the lead.created enqueue commit or
+// roll back together. Safe because the receive loop advances the Telegram update
+// offset only after handleMessage returns nil, so a rollback re-delivers the
+// update on the next poll instead of losing the lead.
+func (t *TelegramBot) SetTxManager(tx TxManager) { t.tx = tx }
+
 // Start begins listening for Telegram updates and processing them.
 // It blocks until ctx is cancelled.
 func (t *TelegramBot) Start(ctx context.Context) {
@@ -144,11 +152,17 @@ func (t *TelegramBot) Start(ctx context.Context) {
 	}
 }
 
-func (t *TelegramBot) handleMessage(ctx context.Context, msg *tgbotapi.Message) {
+// handleMessage processes one inbound Telegram message. It returns a non-nil
+// error only for transient failures where the caller must NOT advance the update
+// offset, so the next poll re-delivers the update (#206 Part B fail-closed).
+// Permanent/skip conditions (non-text, invalid entity, swallowed best-effort
+// side-effects) return nil so the offset advances and the update is not
+// re-processed forever.
+func (t *TelegramBot) handleMessage(ctx context.Context, msg *tgbotapi.Message) error {
 	chatID := msg.Chat.ID
 	text := msg.Text
 	if text == "" {
-		return
+		return nil
 	}
 
 	// Build contact name from the sender.
@@ -161,7 +175,7 @@ func (t *TelegramBot) handleMessage(ctx context.Context, msg *tgbotapi.Message) 
 	existing, err := t.repo.GetLeadByTelegramChatID(ctx, t.ownerID, chatID)
 	if err != nil {
 		log.Printf("telegram inbox: error looking up lead for chat %d: %v", chatID, err)
-		return
+		return nil
 	}
 
 	isNewLead := existing == nil
@@ -185,7 +199,7 @@ func (t *TelegramBot) handleMessage(ctx context.Context, msg *tgbotapi.Message) 
 		newLead, err := NewInboxLead(t.ownerID, ChannelTelegram, contactName, company, text, &chatID, nil)
 		if err != nil {
 			log.Printf("telegram inbox: error creating lead entity: %v", err)
-			return
+			return nil
 		}
 		lead = newLead
 		if prospect != nil {
@@ -193,7 +207,7 @@ func (t *TelegramBot) handleMessage(ctx context.Context, msg *tgbotapi.Message) 
 		}
 		if err := t.repo.CreateLead(ctx, lead); err != nil {
 			log.Printf("telegram inbox: error creating lead: %v", err)
-			return
+			return nil
 		}
 		log.Printf("telegram inbox: new lead created for chat %d (%s)", chatID, contactName)
 		// lead.created is emitted best-effort post-commit, NOT in a transaction:
@@ -243,7 +257,7 @@ func (t *TelegramBot) handleMessage(ctx context.Context, msg *tgbotapi.Message) 
 	message := NewInboxMessage(lead.ID, DirectionInbound, text)
 	if err := t.repo.CreateMessage(ctx, message); err != nil {
 		log.Printf("telegram inbox: error creating message: %v", err)
-		return
+		return nil
 	}
 
 	// HITL gate for booking link: when DetectCallAgreement triggers,
@@ -324,4 +338,5 @@ func (t *TelegramBot) handleMessage(ctx context.Context, msg *tgbotapi.Message) 
 			}
 		}()
 	}
+	return nil
 }
