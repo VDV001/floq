@@ -11,10 +11,16 @@ import (
 
 // --- fakes ---
 
+type activeUpdate struct {
+	id     uuid.UUID
+	active bool
+}
+
 type fakeStore struct {
-	endpoints  map[uuid.UUID]*domain.WebhookEndpoint
-	deliveries []*domain.WebhookDelivery
-	saveErr    error
+	endpoints     map[uuid.UUID]*domain.WebhookEndpoint
+	deliveries    []*domain.WebhookDelivery
+	activeUpdates []activeUpdate
+	saveErr       error
 }
 
 func newFakeStore() *fakeStore {
@@ -40,6 +46,13 @@ func (f *fakeStore) GetEndpoint(_ context.Context, id uuid.UUID) (*domain.Webhoo
 }
 func (f *fakeStore) DeleteEndpoint(_ context.Context, id uuid.UUID) error {
 	delete(f.endpoints, id)
+	return nil
+}
+func (f *fakeStore) SetEndpointActive(_ context.Context, id uuid.UUID, active bool) error {
+	f.activeUpdates = append(f.activeUpdates, activeUpdate{id: id, active: active})
+	if e, ok := f.endpoints[id]; ok {
+		e.Active = active
+	}
 	return nil
 }
 func (f *fakeStore) EnqueueDelivery(_ context.Context, d *domain.WebhookDelivery) error {
@@ -147,6 +160,56 @@ func TestDeleteEndpoint_OwnershipEnforced(t *testing.T) {
 	}
 	if _, ok := store.endpoints[ep.ID]; ok {
 		t.Fatal("endpoint must be gone after owner delete")
+	}
+}
+
+func TestSetEndpointActive_TogglesPersistsAndReturns(t *testing.T) {
+	store := newFakeStore()
+	uc := NewUseCase(store, &fakeClient{}, cfg(), nil)
+	owner := uuid.New()
+	ep := mustEndpoint(t, owner, domain.EventLeadCreated)
+	store.endpoints[ep.ID] = ep
+
+	got, err := uc.SetEndpointActive(context.Background(), owner, ep.ID, false)
+	if err != nil {
+		t.Fatalf("SetEndpointActive(false): %v", err)
+	}
+	if got.Active {
+		t.Fatal("returned endpoint must be inactive")
+	}
+	// The new state must be persisted through the store, with the right args.
+	if len(store.activeUpdates) != 1 || store.activeUpdates[0].id != ep.ID || store.activeUpdates[0].active {
+		t.Fatalf("expected one persist of (id=%s, active=false), got %+v", ep.ID, store.activeUpdates)
+	}
+
+	got, err = uc.SetEndpointActive(context.Background(), owner, ep.ID, true)
+	if err != nil {
+		t.Fatalf("SetEndpointActive(true): %v", err)
+	}
+	if !got.Active {
+		t.Fatal("returned endpoint must be active again")
+	}
+	if len(store.activeUpdates) != 2 || !store.activeUpdates[1].active {
+		t.Fatalf("expected reactivation persisted, got %+v", store.activeUpdates)
+	}
+}
+
+func TestSetEndpointActive_OwnershipEnforced(t *testing.T) {
+	store := newFakeStore()
+	uc := NewUseCase(store, &fakeClient{}, cfg(), nil)
+	owner := uuid.New()
+	ep := mustEndpoint(t, owner, domain.EventLeadCreated)
+	store.endpoints[ep.ID] = ep
+
+	_, err := uc.SetEndpointActive(context.Background(), uuid.New(), ep.ID, false)
+	if !errors.Is(err, ErrEndpointNotFound) {
+		t.Fatalf("cross-tenant toggle: want ErrEndpointNotFound, got %v", err)
+	}
+	if !store.endpoints[ep.ID].Active {
+		t.Fatal("a non-owner toggle must not mutate the endpoint")
+	}
+	if len(store.activeUpdates) != 0 {
+		t.Fatalf("a non-owner toggle must not persist anything, got %+v", store.activeUpdates)
 	}
 }
 
@@ -272,5 +335,32 @@ func TestProcessPending_EndpointGoneFailsDelivery(t *testing.T) {
 	}
 	if d.Status != domain.DeliveryFailed {
 		t.Fatalf("status = %q, want failed (endpoint gone, terminal)", d.Status)
+	}
+}
+
+func TestProcessPending_InactiveEndpointDropsDelivery(t *testing.T) {
+	store := newFakeStore()
+	userID := uuid.New()
+	ep := mustEndpoint(t, userID, domain.EventLeadCreated)
+	ep.SetActive(false) // disabled after the delivery was enqueued
+	store.endpoints[ep.ID] = ep
+	d, _ := domain.NewDelivery(userID, ep.ID, domain.EventLeadCreated, []byte(`{}`))
+	store.deliveries = append(store.deliveries, d)
+
+	client := &fakeClient{status: 200}
+	uc := NewUseCase(store, client, cfg(), nil)
+
+	delivered, err := uc.ProcessPending(context.Background())
+	if err != nil {
+		t.Fatalf("ProcessPending: %v", err)
+	}
+	if delivered != 0 {
+		t.Fatalf("delivered = %d, want 0 for an inactive endpoint", delivered)
+	}
+	if client.calls != 0 {
+		t.Fatal("must not POST to a disabled endpoint")
+	}
+	if d.Status != domain.DeliveryFailed {
+		t.Fatalf("status = %q, want failed (endpoint inactive, terminal — not left pending to busy-loop)", d.Status)
 	}
 }

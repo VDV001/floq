@@ -116,3 +116,22 @@ func TestNewWebhookEndpoint_Invariants(t *testing.T) {
 		})
 	}
 }
+
+func TestWebhookEndpoint_SetActive(t *testing.T) {
+	ep, err := NewWebhookEndpoint(uuid.New(), "https://example.com/h",
+		[]EventType{EventLeadCreated}, "supersecretvalue123")
+	if err != nil {
+		t.Fatalf("NewWebhookEndpoint: %v", err)
+	}
+	if !ep.Active {
+		t.Fatal("a freshly constructed endpoint must start active")
+	}
+	ep.SetActive(false)
+	if ep.Active {
+		t.Fatal("SetActive(false) must deactivate the endpoint")
+	}
+	ep.SetActive(true)
+	if !ep.Active {
+		t.Fatal("SetActive(true) must reactivate the endpoint")
+	}
+}

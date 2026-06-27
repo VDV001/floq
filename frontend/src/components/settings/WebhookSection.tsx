@@ -1,4 +1,4 @@
-import { Webhook, Loader2, Trash2, Send } from "lucide-react";
+import { Webhook, Loader2, Trash2, Send, Power, PowerOff } from "lucide-react";
 import type { WebhookEndpoint } from "@/lib/api";
 import { ConnectionBadge } from "./ConnectionBadge";
 import { HintIcon } from "./HintIcon";
@@ -20,6 +20,8 @@ interface WebhookSectionProps {
   onCreate: () => void;
   onDelete: (id: string) => void;
   onTest: (id: string) => void;
+  onToggleActive: (id: string, active: boolean) => void;
+  togglingId: string | null;
   testingId: string | null;
   notice: WebhookNotice;
 }
@@ -27,7 +29,7 @@ interface WebhookSectionProps {
 export function WebhookSection({
   endpoints, eventTypes, loading,
   url, setUrl, secret, setSecret, selectedEvents, toggleEvent,
-  creating, createError, onCreate, onDelete, onTest, testingId, notice,
+  creating, createError, onCreate, onDelete, onTest, onToggleActive, togglingId, testingId, notice,
 }: WebhookSectionProps) {
   const canCreate = url.trim() !== "" && secret.trim().length >= 16 && selectedEvents.length > 0 && !creating;
 
@@ -66,7 +68,18 @@ export function WebhookSection({
             <li key={ep.id} className="rounded-xl bg-[#f7f9ff] p-4 ring-1 ring-[#c3c6d7]/10">
               <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0">
-                  <p className="truncate font-mono text-sm font-bold text-[#0d1c2e]">{ep.url}</p>
+                  <div className="flex items-center gap-2">
+                    <p className="truncate font-mono text-sm font-bold text-[#0d1c2e]">{ep.url}</p>
+                    {ep.active ? (
+                      <span className="shrink-0 rounded-full bg-green-100 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-green-700">
+                        Активен
+                      </span>
+                    ) : (
+                      <span className="shrink-0 rounded-full bg-[#434655]/10 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-[#434655]/70">
+                        Отключён
+                      </span>
+                    )}
+                  </div>
                   <div className="mt-2 flex flex-wrap gap-1.5">
                     {ep.events.map((e) => (
                       <span key={e} className="rounded-full bg-[#dbe1ff] px-2.5 py-0.5 text-[11px] font-bold text-[#004ac6]">
@@ -76,6 +89,21 @@ export function WebhookSection({
                   </div>
                 </div>
                 <div className="flex shrink-0 gap-2">
+                  <button
+                    onClick={() => onToggleActive(ep.id, !ep.active)}
+                    disabled={togglingId === ep.id}
+                    aria-label={`${ep.active ? "Отключить" : "Включить"} ${ep.url}`}
+                    className="flex items-center gap-1.5 rounded-lg bg-[#eff4ff] px-3 py-2 text-xs font-bold text-[#434655] transition-colors hover:bg-[#dbe1ff] disabled:opacity-50"
+                  >
+                    {togglingId === ep.id ? (
+                      <Loader2 className="size-3.5 animate-spin" />
+                    ) : ep.active ? (
+                      <PowerOff className="size-3.5" />
+                    ) : (
+                      <Power className="size-3.5" />
+                    )}
+                    {ep.active ? "Отключить" : "Включить"}
+                  </button>
                   <button
                     onClick={() => onTest(ep.id)}
                     disabled={testingId === ep.id}

@@ -137,6 +137,66 @@ func TestHandler_DeleteEndpoint_Ownership(t *testing.T) {
 	}
 }
 
+func TestHandler_SetActive(t *testing.T) {
+	store := newFakeStore()
+	owner := uuid.New()
+	ep := mustEndpoint(t, owner, domain.EventLeadCreated)
+	store.endpoints[ep.ID] = ep
+	uc := NewUseCase(store, &fakeClient{}, cfg(), nil)
+
+	// Owner deactivates → 200, response reflects the new state, store updated.
+	own := setupWebhookRouter(uc, owner)
+	rr := doReq(own, "PATCH", "/api/webhooks/"+ep.ID.String(), map[string]any{"active": false})
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", rr.Code, rr.Body.String())
+	}
+	if store.endpoints[ep.ID].Active {
+		t.Fatal("endpoint should be deactivated")
+	}
+	if !strings.Contains(rr.Body.String(), `"active":false`) {
+		t.Fatalf("response should report active=false; body=%s", rr.Body.String())
+	}
+	// Non-owner cannot toggle → 404 (anti-enumeration), endpoint unchanged.
+	other := setupWebhookRouter(uc, uuid.New())
+	if rr := doReq(other, "PATCH", "/api/webhooks/"+ep.ID.String(), map[string]any{"active": true}); rr.Code != http.StatusNotFound {
+		t.Fatalf("non-owner toggle: status = %d, want 404", rr.Code)
+	}
+	if store.endpoints[ep.ID].Active {
+		t.Fatal("non-owner toggle must not reactivate the endpoint")
+	}
+}
+
+func TestHandler_SetActive_MissingActiveField(t *testing.T) {
+	store := newFakeStore()
+	owner := uuid.New()
+	ep := mustEndpoint(t, owner, domain.EventLeadCreated)
+	store.endpoints[ep.ID] = ep
+	uc := NewUseCase(store, &fakeClient{}, cfg(), nil)
+
+	own := setupWebhookRouter(uc, owner)
+	// A PATCH body without "active" must be rejected (no omit/false ambiguity),
+	// not silently disable the endpoint.
+	rr := doReq(own, "PATCH", "/api/webhooks/"+ep.ID.String(), map[string]any{})
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("missing active: status = %d, want 400; body=%s", rr.Code, rr.Body.String())
+	}
+	if !store.endpoints[ep.ID].Active {
+		t.Fatal("a body without active must not change the endpoint")
+	}
+}
+
+func TestHandler_SetActive_Unauthenticated(t *testing.T) {
+	store := newFakeStore()
+	ep := mustEndpoint(t, uuid.New(), domain.EventLeadCreated)
+	store.endpoints[ep.ID] = ep
+	uc := NewUseCase(store, &fakeClient{}, cfg(), nil)
+	router := setupWebhookRouterNoAuth(uc)
+	rr := doReq(router, "PATCH", "/api/webhooks/"+ep.ID.String(), map[string]any{"active": false})
+	if rr.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want 401", rr.Code)
+	}
+}
+
 func TestHandler_EventTypes(t *testing.T) {
 	uc := NewUseCase(newFakeStore(), &fakeClient{}, cfg(), nil)
 	router := setupWebhookRouter(uc, uuid.New())

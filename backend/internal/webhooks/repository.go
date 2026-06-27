@@ -89,6 +89,17 @@ func (r *Repository) DeleteEndpoint(ctx context.Context, id uuid.UUID) error {
 	return nil
 }
 
+// SetEndpointActive flips an endpoint's active flag. Ownership is verified by the
+// usecase; this is a blind UPDATE by ID.
+func (r *Repository) SetEndpointActive(ctx context.Context, id uuid.UUID, active bool) error {
+	_, err := r.pool.Exec(ctx,
+		`UPDATE webhook_endpoints SET active = $2, updated_at = now() WHERE id = $1`, id, active)
+	if err != nil {
+		return fmt.Errorf("webhooks: set endpoint active: %w", err)
+	}
+	return nil
+}
+
 // EnqueueDelivery appends a pending delivery to the outbox.
 func (r *Repository) EnqueueDelivery(ctx context.Context, d *domain.WebhookDelivery) error {
 	_, err := r.pool.Exec(ctx, `

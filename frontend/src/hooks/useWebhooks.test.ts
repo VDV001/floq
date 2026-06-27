@@ -9,6 +9,7 @@ vi.mock("@/lib/api", () => ({
     createWebhook: vi.fn(),
     deleteWebhook: vi.fn(),
     testWebhook: vi.fn(),
+    setWebhookActive: vi.fn(),
   },
   ApiError: class ApiError extends Error {
     status: number;
@@ -32,6 +33,7 @@ describe("useWebhooks", () => {
     vi.mocked(api.createWebhook).mockResolvedValue({ ...ep, id: "ep-2" });
     vi.mocked(api.deleteWebhook).mockResolvedValue(undefined);
     vi.mocked(api.testWebhook).mockResolvedValue(undefined);
+    vi.mocked(api.setWebhookActive).mockResolvedValue({ ...ep, active: false });
   });
 
   it("loads endpoints and event types on mount", async () => {
@@ -92,6 +94,23 @@ describe("useWebhooks", () => {
     await act(async () => { await result.current.remove("ep-1"); });
     expect(api.deleteWebhook).toHaveBeenCalledWith("ep-1");
     expect(api.getWebhooks).toHaveBeenCalledTimes(2);
+  });
+
+  it("toggles an endpoint's active state and reloads", async () => {
+    const { result } = renderHook(() => useWebhooks());
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    await act(async () => { await result.current.toggleActive("ep-1", false); });
+    expect(api.setWebhookActive).toHaveBeenCalledWith("ep-1", false);
+    expect(api.getWebhooks).toHaveBeenCalledTimes(2); // initial + reload
+    expect(result.current.notice?.ok).toBe(true);
+  });
+
+  it("surfaces a failure notice when toggling active fails", async () => {
+    vi.mocked(api.setWebhookActive).mockRejectedValue(new ApiError("boom", 500));
+    const { result } = renderHook(() => useWebhooks());
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    await act(async () => { await result.current.toggleActive("ep-1", false); });
+    expect(result.current.notice?.ok).toBe(false);
   });
 
   it("tests an endpoint and sets a success notice", async () => {

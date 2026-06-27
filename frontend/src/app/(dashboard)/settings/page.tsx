@@ -148,6 +148,8 @@ export default function SettingsPage() {
                 onCreate={webhooks.create}
                 onDelete={webhooks.remove}
                 onTest={webhooks.test}
+                onToggleActive={webhooks.toggleActive}
+                togglingId={webhooks.togglingId}
                 testingId={webhooks.testingId}
                 notice={webhooks.notice}
               />

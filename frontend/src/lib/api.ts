@@ -448,6 +448,8 @@ export const api = {
     apiFetch<WebhookEndpoint>("/api/webhooks", { method: "POST", body: JSON.stringify(data) }),
   deleteWebhook: (id: string) =>
     apiFetch<void>(`/api/webhooks/${id}`, { method: "DELETE" }),
+  setWebhookActive: (id: string, active: boolean) =>
+    apiFetch<WebhookEndpoint>(`/api/webhooks/${id}`, { method: "PATCH", body: JSON.stringify({ active }) }),
   testWebhook: (id: string) =>
     apiFetch<void>(`/api/webhooks/${id}/test`, { method: "POST" }),
 };
