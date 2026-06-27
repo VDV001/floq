@@ -42,6 +42,10 @@ type WebhookDelivery struct {
 	HTTPStatus  int
 	Error       string
 	DeliveredAt *time.Time
+	// NextRetryAt is when this delivery is next eligible for a retry (nil = due
+	// now, i.e. never attempted or terminal). The worker claims rows where it is
+	// null or in the past; this is the domain-authoritative backoff schedule.
+	NextRetryAt *time.Time
 }
 
 // NewDelivery builds a pending delivery for (endpoint, event). It generates both
@@ -63,34 +67,40 @@ func NewDelivery(userID, endpointID uuid.UUID, eventType EventType, payload []by
 	}, nil
 }
 
-// MarkDelivered records a successful 2xx delivery (terminal).
-func (d *WebhookDelivery) MarkDelivered(httpStatus int) {
+// MarkDelivered records a successful 2xx delivery (terminal). now is passed in
+// (not time.Now) so the transition is deterministic and testable.
+func (d *WebhookDelivery) MarkDelivered(httpStatus int, now time.Time) {
 	d.Attempts++
 	d.Status = DeliverySucceeded
 	d.HTTPStatus = httpStatus
 	d.Error = ""
-	now := time.Now().UTC()
-	d.DeliveredAt = &now
+	t := now.UTC()
+	d.DeliveredAt = &t
+	d.NextRetryAt = nil
 }
 
 // MarkFailed records a failed attempt. The delivery stays pending (retryable)
 // until attempts reach maxAttempts, at which point it becomes terminally failed
 // (dead-letter). httpStatus is 0 for transport-level failures (dial/timeout).
-func (d *WebhookDelivery) MarkFailed(reason string, httpStatus, maxAttempts int) {
+// While retryable, NextRetryAt is set to the exponential-backoff schedule off
+// now (domain-authoritative); on terminal failure it is cleared.
+func (d *WebhookDelivery) MarkFailed(reason string, httpStatus, maxAttempts int, now time.Time) {
 	d.Attempts++
 	d.HTTPStatus = httpStatus
 	d.Error = reason
 	if d.Attempts >= maxAttempts {
 		d.Status = DeliveryFailed
+		d.NextRetryAt = nil
 	} else {
 		d.Status = DeliveryPending
+		next := d.NextRetryAfter(now)
+		d.NextRetryAt = &next
 	}
 }
 
 // NextRetryAfter returns when this delivery is next eligible, computed as an
 // exponential backoff from base by the current attempt count. base is passed in
-// (not time.Now) so it is deterministic and testable; callers pass the row's
-// updated_at.
+// (not time.Now) so it is deterministic and testable.
 func (d *WebhookDelivery) NextRetryAfter(base time.Time) time.Time {
 	backoff := RetryBaseBackoff
 	for i := 1; i < d.Attempts; i++ {

@@ -93,21 +93,21 @@ func (r *Repository) EnqueueDelivery(ctx context.Context, d *domain.WebhookDeliv
 	return nil
 }
 
-// ClaimDueDeliveries returns up to limit pending deliveries whose exponential
-// backoff (off updated_at) has elapsed and whose attempts are below maxAttempts,
-// oldest first. The backoff interval mirrors domain.RetryBaseBackoff (30s, ×2);
-// attempts=0 rows are due immediately.
+// ClaimDueDeliveries returns up to limit pending deliveries that are due — their
+// domain-computed next_retry_at is null (never attempted) or in the past — with
+// attempts below maxAttempts, oldest first. The backoff schedule is authored by
+// domain.WebhookDelivery (NextRetryAfter); this query only compares the
+// persisted next_retry_at to now.
 //
 // Phase 1 runs a single worker, so this plain SELECT needs no cross-instance
 // lease; multi-instance exclusivity is a later hardening.
 func (r *Repository) ClaimDueDeliveries(ctx context.Context, limit, maxAttempts int) ([]*domain.WebhookDelivery, error) {
 	rows, err := r.pool.Query(ctx, `
 		SELECT id, event_id, user_id, endpoint_id, event_type, payload,
-		       status, attempts, http_status, error, delivered_at
+		       status, attempts, http_status, error, delivered_at, next_retry_at
 		FROM webhook_deliveries
 		WHERE status = 'pending' AND attempts < $2
-		  AND (attempts = 0
-		       OR updated_at + (interval '30 seconds' * power(2, attempts - 1)) <= now())
+		  AND (next_retry_at IS NULL OR next_retry_at <= now())
 		ORDER BY updated_at
 		LIMIT $1`, limit, maxAttempts)
 	if err != nil {
@@ -131,9 +131,9 @@ func (r *Repository) SaveDelivery(ctx context.Context, d *domain.WebhookDelivery
 	_, err := r.pool.Exec(ctx, `
 		UPDATE webhook_deliveries
 		SET status = $2, attempts = $3, http_status = $4, error = $5,
-		    delivered_at = $6, updated_at = now()
+		    delivered_at = $6, next_retry_at = $7, updated_at = now()
 		WHERE id = $1`,
-		d.ID, string(d.Status), d.Attempts, d.HTTPStatus, d.Error, d.DeliveredAt)
+		d.ID, string(d.Status), d.Attempts, d.HTTPStatus, d.Error, d.DeliveredAt, d.NextRetryAt)
 	if err != nil {
 		return fmt.Errorf("webhooks: save delivery: %w", err)
 	}
@@ -166,7 +166,7 @@ func scanDelivery(s scanner) (*domain.WebhookDelivery, error) {
 		status    string
 	)
 	if err := s.Scan(&d.ID, &d.EventID, &d.UserID, &d.EndpointID, &eventType, &d.Payload,
-		&status, &d.Attempts, &d.HTTPStatus, &d.Error, &d.DeliveredAt); err != nil {
+		&status, &d.Attempts, &d.HTTPStatus, &d.Error, &d.DeliveredAt, &d.NextRetryAt); err != nil {
 		return nil, err
 	}
 	d.EventType = domain.EventType(eventType)

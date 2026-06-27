@@ -34,7 +34,7 @@ func TestNewDelivery_RejectsEmptyPayload(t *testing.T) {
 
 func TestDelivery_MarkDelivered(t *testing.T) {
 	d, _ := NewDelivery(uuid.New(), uuid.New(), EventLeadCreated, []byte(`{}`))
-	d.MarkDelivered(200)
+	d.MarkDelivered(200, time.Now())
 	if d.Status != DeliverySucceeded {
 		t.Errorf("status = %q, want succeeded", d.Status)
 	}
@@ -54,26 +54,33 @@ func TestDelivery_MarkDelivered(t *testing.T) {
 func TestDelivery_MarkFailed_RetryThenExhaust(t *testing.T) {
 	d, _ := NewDelivery(uuid.New(), uuid.New(), EventLeadCreated, []byte(`{}`))
 	const maxAttempts = 3
+	now := time.Unix(1_700_000_000, 0).UTC()
 
-	d.MarkFailed("dial timeout", 0, maxAttempts)
+	d.MarkFailed("dial timeout", 0, maxAttempts, now)
 	if d.Status != DeliveryPending {
 		t.Errorf("after attempt 1 status = %q, want pending (retryable)", d.Status)
 	}
 	if d.Attempts != 1 {
 		t.Errorf("attempts = %d, want 1", d.Attempts)
 	}
+	if d.NextRetryAt == nil || !d.NextRetryAt.After(now) {
+		t.Error("retryable failure must schedule NextRetryAt in the future")
+	}
 
-	d.MarkFailed("503", 503, maxAttempts)
+	d.MarkFailed("503", 503, maxAttempts, now)
 	if d.Status != DeliveryPending {
 		t.Errorf("after attempt 2 status = %q, want pending", d.Status)
 	}
 
-	d.MarkFailed("503", 503, maxAttempts)
+	d.MarkFailed("503", 503, maxAttempts, now)
 	if d.Status != DeliveryFailed {
 		t.Errorf("after attempt 3 status = %q, want failed (exhausted)", d.Status)
 	}
 	if d.Error == "" {
 		t.Error("terminal failure must record the last error")
+	}
+	if d.NextRetryAt != nil {
+		t.Error("terminal failure must clear NextRetryAt")
 	}
 }
 
@@ -81,9 +88,9 @@ func TestDelivery_NextRetryBackoff(t *testing.T) {
 	d, _ := NewDelivery(uuid.New(), uuid.New(), EventLeadCreated, []byte(`{}`))
 	base := time.Unix(1_700_000_000, 0).UTC()
 
-	d.MarkFailed("err", 500, 5)
+	d.MarkFailed("err", 500, 5, base)
 	first := d.NextRetryAfter(base)
-	d.MarkFailed("err", 500, 5)
+	d.MarkFailed("err", 500, 5, base)
 	second := d.NextRetryAfter(base)
 
 	if !first.After(base) {

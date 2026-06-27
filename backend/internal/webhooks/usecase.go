@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"time"
 
 	"github.com/daniil/floq/internal/webhooks/domain"
 	"github.com/google/uuid"
@@ -161,9 +162,10 @@ func (uc *UseCase) deliverOne(ctx context.Context, d *domain.WebhookDelivery) (o
 		uc.logger.ErrorContext(ctx, "webhooks: load endpoint", "endpoint", d.EndpointID, "err", err)
 		return false
 	}
+	now := time.Now().UTC()
 	if !found {
 		// Endpoint deleted after enqueue: drop the delivery terminally.
-		d.MarkFailed("endpoint deleted", 0, d.Attempts+1)
+		d.MarkFailed("endpoint deleted", 0, d.Attempts+1, now)
 		uc.saveDelivery(ctx, d)
 		uc.observe(d.EventType, false)
 		return false
@@ -172,12 +174,12 @@ func (uc *UseCase) deliverOne(ctx context.Context, d *domain.WebhookDelivery) (o
 	sig := domain.SignPayload(d.Payload, ep.Secret)
 	status, err := uc.client.Deliver(ctx, ep.URL.String(), d.Payload, sig, d.EventID.String())
 	if err != nil {
-		d.MarkFailed(err.Error(), status, uc.cfg.MaxAttempts)
+		d.MarkFailed(err.Error(), status, uc.cfg.MaxAttempts, now)
 		uc.saveDelivery(ctx, d)
 		uc.observe(d.EventType, false)
 		return false
 	}
-	d.MarkDelivered(status)
+	d.MarkDelivered(status, now)
 	uc.saveDelivery(ctx, d)
 	uc.observe(d.EventType, true)
 	return true

@@ -5,6 +5,7 @@ package webhooks_test
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/daniil/floq/internal/testutil"
 	"github.com/daniil/floq/internal/webhooks"
@@ -98,7 +99,7 @@ func TestRepository_Delivery_EnqueueClaimSave(t *testing.T) {
 
 	// Mark delivered and persist; it must no longer be claimable.
 	claimed := findDelivery(due, d.ID)
-	claimed.MarkDelivered(200)
+	claimed.MarkDelivered(200, time.Now())
 	require.NoError(t, repo.SaveDelivery(ctx, claimed))
 
 	due, err = repo.ClaimDueDeliveries(ctx, 10, 3)
@@ -118,14 +119,38 @@ func TestRepository_ClaimDue_RespectsMaxAttempts(t *testing.T) {
 	require.NoError(t, repo.EnqueueDelivery(ctx, d))
 
 	// Exhaust attempts: 3 failures at maxAttempts=3 → terminal failed.
+	now := time.Now()
 	for i := 0; i < 3; i++ {
-		d.MarkFailed("boom", 500, 3)
+		d.MarkFailed("boom", 500, 3, now)
 	}
 	require.NoError(t, repo.SaveDelivery(ctx, d))
 
 	due, err := repo.ClaimDueDeliveries(ctx, 10, 3)
 	require.NoError(t, err)
 	assert.False(t, containsDelivery(due, d.ID), "exhausted/failed delivery must not be claimed")
+}
+
+func TestRepository_ClaimDue_RespectsBackoff(t *testing.T) {
+	ctx := context.Background()
+	pool := testutil.TestDB(t)
+	userID := testutil.SeedUser(t, pool)
+	repo := webhooks.NewRepository(pool)
+
+	ep := mustEndpoint(t, userID, domain.EventLeadCreated)
+	require.NoError(t, repo.CreateEndpoint(ctx, ep))
+	d, _ := domain.NewDelivery(userID, ep.ID, domain.EventLeadCreated, []byte(`{}`))
+	require.NoError(t, repo.EnqueueDelivery(ctx, d))
+
+	// One retryable failure → next_retry_at ~30s in the future (still pending,
+	// attempts<max) → must NOT be claimable yet.
+	d.MarkFailed("503", 503, 5, time.Now())
+	require.NoError(t, repo.SaveDelivery(ctx, d))
+	require.NotNil(t, d.NextRetryAt)
+
+	due, err := repo.ClaimDueDeliveries(ctx, 10, 5)
+	require.NoError(t, err)
+	assert.False(t, containsDelivery(due, d.ID),
+		"a delivery whose backoff has not elapsed must not be claimed")
 }
 
 func containsDelivery(ds []*domain.WebhookDelivery, id uuid.UUID) bool {

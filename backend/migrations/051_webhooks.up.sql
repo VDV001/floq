@@ -29,11 +29,13 @@ CREATE TABLE webhook_deliveries (
     http_status  int NOT NULL DEFAULT 0,
     error        text NOT NULL DEFAULT '',
     delivered_at timestamptz,
+    -- next_retry_at is the domain-authored backoff schedule (NULL = due now).
+    -- The worker claims pending rows where it is NULL or in the past.
+    next_retry_at timestamptz,
     created_at   timestamptz NOT NULL DEFAULT now(),
     updated_at   timestamptz NOT NULL DEFAULT now()
 );
 
--- Partial index for the worker's claim scan: it only looks at pending rows,
--- ordered by updated_at so backoff (exponential off updated_at) is respected.
+-- Partial index for the worker's claim scan over due pending rows.
 CREATE INDEX idx_webhook_deliveries_pending ON webhook_deliveries (updated_at)
     WHERE status = 'pending';
