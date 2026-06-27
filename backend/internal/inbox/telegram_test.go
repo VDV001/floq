@@ -1189,3 +1189,50 @@ func TestHandleMessage_GetLeadByChatIDError_SignalsRetry(t *testing.T) {
 
 	require.Error(t, err, "a transient lookup error must signal retry")
 }
+
+// repeatFetcher returns the same batch on every call and counts calls — models a
+// stuck/poison update or a sustained outage where the handler keeps failing.
+type repeatFetcher struct {
+	mu    sync.Mutex
+	batch []tgbotapi.Update
+	calls int
+}
+
+func (f *repeatFetcher) GetUpdates(tgbotapi.UpdateConfig) ([]tgbotapi.Update, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.calls++
+	return f.batch, nil
+}
+
+func (f *repeatFetcher) count() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.calls
+}
+
+// A handler that keeps failing must NOT busy-loop re-polling: the receive loop
+// must back off (a ctx-aware wait) between re-deliveries, and exit promptly when
+// ctx is cancelled mid-backoff. Without the backoff this spins thousands of
+// GetUpdates calls (and BEGIN/INSERT/ROLLBACK attempts) before cancellation.
+func TestReceiveLoop_HandlerError_BacksOffInsteadOfBusyLooping(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	time.AfterFunc(40*time.Millisecond, cancel)
+
+	fetcher := &repeatFetcher{batch: []tgbotapi.Update{
+		{UpdateID: 100, Message: makeTgMessage(1, "A", "", "hi")},
+	}}
+	handle := func(_ context.Context, _ *tgbotapi.Message) error {
+		return errors.New("persistent failure")
+	}
+
+	bot := &TelegramBot{logger: slog.Default(), errBackoff: 1 * time.Second}
+	start := time.Now()
+	bot.receiveLoop(ctx, fetcher, handle)
+
+	assert.Less(t, time.Since(start), 500*time.Millisecond,
+		"must exit promptly when ctx is cancelled during the handler-error backoff")
+	assert.LessOrEqual(t, fetcher.count(), 2,
+		"handler-error re-poll must back off, not busy-loop")
+}
