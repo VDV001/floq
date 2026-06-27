@@ -23,6 +23,7 @@ export function useWebhooks() {
 
   // Per-endpoint action state.
   const [testingId, setTestingId] = useState<string | null>(null);
+  const [togglingId, setTogglingId] = useState<string | null>(null);
   const [notice, setNotice] = useState<WebhookNoticeState>(null);
 
   const reload = useCallback(async () => {
@@ -86,6 +87,23 @@ export function useWebhooks() {
     [reload],
   );
 
+  const toggleActive = useCallback(
+    async (id: string, active: boolean) => {
+      setTogglingId(id);
+      setNotice(null);
+      try {
+        await api.setWebhookActive(id, active);
+        await reload();
+        setNotice({ ok: true, message: active ? "Вебхук включён" : "Вебхук отключён" });
+      } catch {
+        setNotice({ ok: false, message: "Не удалось изменить статус вебхука" });
+      } finally {
+        setTogglingId(null);
+      }
+    },
+    [reload],
+  );
+
   const test = useCallback(async (id: string) => {
     setTestingId(id);
     setNotice(null);
@@ -115,6 +133,8 @@ export function useWebhooks() {
     remove,
     test,
     testingId,
+    toggleActive,
+    togglingId,
     notice,
     setNotice,
   };
