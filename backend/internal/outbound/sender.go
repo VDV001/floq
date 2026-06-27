@@ -157,7 +157,9 @@ func (s *Sender) commitDispatch(ctx context.Context, msg seqdomain.OutboundMessa
 // emitIfRunComplete enqueues sequence.completed when msg was the run's last
 // pending dispatch. It runs inside the dispatch transaction so the count
 // reflects the just-persisted mark. A message with no sequence (ad-hoc send) is
-// a no-op.
+// a no-op. Because the count runs in-tx on EVERY dispatch (not only run-final
+// ones), a CountPendingDispatch error aborts that dispatch and re-sends it next
+// tick — wider than a completion-only failure, but bounded by Resend idempotency.
 //
 // Completion means "the last dispatch emptied the run's queue", not "the queue
 // is empty": a step that can never be dispatched (permanently suppressed,
