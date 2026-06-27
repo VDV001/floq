@@ -148,14 +148,14 @@ func newCompositeQualificationObserver(logger *slog.Logger, observers ...leadsdo
 func (c *compositeQualificationObserver) OnLeadQualified(ctx context.Context, lead *leadsdomain.Lead) {
 	for _, o := range c.observers {
 		if o != nil {
-			c.safeNotify(o, ctx, lead)
+			c.safeNotify(ctx, o, lead)
 		}
 	}
 }
 
 // safeNotify isolates one observer: a panic in it (e.g. the 1C adapter) must not
 // crash the qualification request or skip the remaining observers.
-func (c *compositeQualificationObserver) safeNotify(o leadsdomain.QualificationObserver, ctx context.Context, lead *leadsdomain.Lead) {
+func (c *compositeQualificationObserver) safeNotify(ctx context.Context, o leadsdomain.QualificationObserver, lead *leadsdomain.Lead) {
 	defer func() {
 		if r := recover(); r != nil {
 			c.logger.ErrorContext(ctx, "qualification observer panicked", "lead", lead.ID, "panic", r)
