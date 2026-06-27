@@ -60,17 +60,18 @@ func (f *fakeStore) SaveDelivery(_ context.Context, _ *domain.WebhookDelivery) e
 }
 
 type fakeClient struct {
-	status   int
-	err      error
-	gotURL   string
-	gotSig   string
-	gotBody  []byte
-	calls    int
+	status     int
+	err        error
+	gotURL     string
+	gotSig     string
+	gotBody    []byte
+	gotEventID string
+	calls      int
 }
 
-func (c *fakeClient) Deliver(_ context.Context, url string, payload []byte, sig string) (int, error) {
+func (c *fakeClient) Deliver(_ context.Context, url string, payload []byte, sig, eventID string) (int, error) {
 	c.calls++
-	c.gotURL, c.gotBody, c.gotSig = url, payload, sig
+	c.gotURL, c.gotBody, c.gotSig, c.gotEventID = url, payload, sig, eventID
 	return c.status, c.err
 }
 
@@ -216,6 +217,9 @@ func TestProcessPending_DeliversAndSigns(t *testing.T) {
 	}
 	if client.gotSig != domain.SignPayload(d.Payload, ep.Secret) {
 		t.Fatal("payload must be signed with the endpoint secret")
+	}
+	if client.gotEventID != d.EventID.String() {
+		t.Fatal("delivery must carry its EventID as the idempotency key")
 	}
 	if d.Status != domain.DeliverySucceeded {
 		t.Fatalf("delivery status = %q, want succeeded", d.Status)

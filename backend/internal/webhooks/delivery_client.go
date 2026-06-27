@@ -81,10 +81,13 @@ func isBlockedIP(ip net.IP) bool {
 		ip.IsLinkLocalMulticast() || ip.IsUnspecified() || ip.IsMulticast()
 }
 
-// Deliver POSTs payload to url with the signature header. It returns the HTTP
-// status (0 on transport failure) and a non-nil error for any transport problem
-// or non-2xx response, so the worker records it and retries.
-func (c *HTTPDeliveryClient) Deliver(ctx context.Context, url string, payload []byte, signature string) (int, error) {
+// Deliver POSTs payload to url with the signature and delivery-id headers. It
+// returns the HTTP status (0 on transport failure) and a non-nil error for any
+// transport problem or non-2xx response, so the worker records it and retries.
+// eventID is the receiver's idempotency key: retries of the same delivery carry
+// the same value (unsigned, like GitHub's X-GitHub-Delivery — authenticity is
+// proven by the signature over the body, the id is only for dedup).
+func (c *HTTPDeliveryClient) Deliver(ctx context.Context, url string, payload []byte, signature, eventID string) (int, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(payload))
 	if err != nil {
 		return 0, fmt.Errorf("webhooks: build request: %w", err)
@@ -92,6 +95,7 @@ func (c *HTTPDeliveryClient) Deliver(ctx context.Context, url string, payload []
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("User-Agent", deliveryUserAgent)
 	req.Header.Set(domain.SignatureHeader, signature)
+	req.Header.Set(domain.EventIDHeader, eventID)
 
 	resp, err := c.client.Do(req)
 	if err != nil {

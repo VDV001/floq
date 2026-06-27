@@ -170,7 +170,7 @@ func (uc *UseCase) deliverOne(ctx context.Context, d *domain.WebhookDelivery) (o
 	}
 
 	sig := domain.SignPayload(d.Payload, ep.Secret)
-	status, err := uc.client.Deliver(ctx, ep.URL.String(), d.Payload, sig)
+	status, err := uc.client.Deliver(ctx, ep.URL.String(), d.Payload, sig, d.EventID.String())
 	if err != nil {
 		d.MarkFailed(err.Error(), status, uc.cfg.MaxAttempts)
 		uc.saveDelivery(ctx, d)

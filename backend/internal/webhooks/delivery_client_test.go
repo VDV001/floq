@@ -18,9 +18,10 @@ import (
 func allowAll(net.IP) bool { return false }
 
 func TestDeliver_PostsSignedPayload(t *testing.T) {
-	var gotSig, gotCT, gotBody string
+	var gotSig, gotCT, gotBody, gotEventID string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotSig = r.Header.Get(domain.SignatureHeader)
+		gotEventID = r.Header.Get(domain.EventIDHeader)
 		gotCT = r.Header.Get("Content-Type")
 		b, _ := io.ReadAll(r.Body)
 		gotBody = string(b)
@@ -29,7 +30,7 @@ func TestDeliver_PostsSignedPayload(t *testing.T) {
 	defer srv.Close()
 
 	c := newHTTPDeliveryClientWithGuard(allowAll, 5*time.Second)
-	status, err := c.Deliver(context.Background(), srv.URL, []byte(`{"event":"lead.created"}`), "sha256=deadbeef")
+	status, err := c.Deliver(context.Background(), srv.URL, []byte(`{"event":"lead.created"}`), "sha256=deadbeef", "evt-123")
 	if err != nil {
 		t.Fatalf("Deliver: %v", err)
 	}
@@ -38,6 +39,9 @@ func TestDeliver_PostsSignedPayload(t *testing.T) {
 	}
 	if gotSig != "sha256=deadbeef" {
 		t.Errorf("signature header = %q, want sha256=deadbeef", gotSig)
+	}
+	if gotEventID != "evt-123" {
+		t.Errorf("idempotency header = %q, want evt-123", gotEventID)
 	}
 	if gotCT != "application/json" {
 		t.Errorf("content-type = %q, want application/json", gotCT)
@@ -54,7 +58,7 @@ func TestDeliver_Non2xxIsError(t *testing.T) {
 	defer srv.Close()
 
 	c := newHTTPDeliveryClientWithGuard(allowAll, 5*time.Second)
-	status, err := c.Deliver(context.Background(), srv.URL, []byte(`{}`), "sig")
+	status, err := c.Deliver(context.Background(), srv.URL, []byte(`{}`), "sig", "evt-x")
 	if err == nil {
 		t.Fatal("non-2xx must be an error so the worker retries")
 	}
@@ -73,7 +77,7 @@ func TestDeliver_SSRFGuardBlocksLoopback(t *testing.T) {
 
 	// Real guard (isBlockedIP) — srv.URL is on 127.0.0.1, which must be blocked.
 	c := newHTTPDeliveryClientWithGuard(isBlockedIP, 5*time.Second)
-	if _, err := c.Deliver(context.Background(), srv.URL, []byte(`{}`), "sig"); err == nil {
+	if _, err := c.Deliver(context.Background(), srv.URL, []byte(`{}`), "sig", "evt-x"); err == nil {
 		t.Fatal("delivery to a loopback address must be blocked by the dial guard")
 	}
 }
@@ -103,7 +107,7 @@ func TestDeliver_RejectsHugeResponseBody(t *testing.T) {
 	defer srv.Close()
 
 	c := newHTTPDeliveryClientWithGuard(allowAll, 5*time.Second)
-	status, err := c.Deliver(context.Background(), srv.URL, []byte(`{}`), "sig")
+	status, err := c.Deliver(context.Background(), srv.URL, []byte(`{}`), "sig", "evt-x")
 	if err != nil || status != 200 {
 		t.Fatalf("Deliver: status=%d err=%v", status, err)
 	}

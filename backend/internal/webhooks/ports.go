@@ -35,7 +35,7 @@ type Store interface {
 // It returns the HTTP status (0 on transport failure) and an error for any
 // non-2xx or transport problem so the usecase can record and retry.
 type DeliveryClient interface {
-	Deliver(ctx context.Context, url string, payload []byte, signature string) (httpStatus int, err error)
+	Deliver(ctx context.Context, url string, payload []byte, signature, eventID string) (httpStatus int, err error)
 }
 
 // DeliveryObserver is the metrics seam: the composition root injects an adapter

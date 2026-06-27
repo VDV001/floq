@@ -32,7 +32,7 @@ const RetryBaseBackoff = 30 * time.Second
 // (EventID) for receivers.
 type WebhookDelivery struct {
 	ID          uuid.UUID
-	EventID     uuid.UUID // stable per event; receivers dedup on it
+	EventID     uuid.UUID // idempotency key sent as X-Floq-Event-Id; stable across retries of this delivery so receivers dedup
 	UserID      uuid.UUID
 	EndpointID  uuid.UUID
 	EventType   EventType
@@ -45,8 +45,8 @@ type WebhookDelivery struct {
 }
 
 // NewDelivery builds a pending delivery for (endpoint, event). It generates both
-// a row ID and an EventID — the latter travels in the payload header so a
-// receiver can dedup retries of the same logical event.
+// a row ID and an EventID — the latter is sent as the X-Floq-Event-Id header so
+// a receiver can dedup retries of this delivery.
 func NewDelivery(userID, endpointID uuid.UUID, eventType EventType, payload []byte) (*WebhookDelivery, error) {
 	if len(payload) == 0 {
 		return nil, ErrEmptyPayload

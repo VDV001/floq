@@ -16,6 +16,12 @@ const signatureContext = "floq-webhook-v1"
 // authenticity — the same scheme GitHub/Stripe webhooks use.
 const SignatureHeader = "X-Floq-Signature"
 
+// EventIDHeader carries the delivery's stable id so a receiver can dedup retries
+// of the same delivery (at-least-once → effectively-once on the receiver side).
+// Unsigned by design: authenticity is the signature's job; this is only an
+// idempotency key, mirroring GitHub's X-GitHub-Delivery.
+const EventIDHeader = "X-Floq-Event-Id"
+
 // computeMAC returns the raw HMAC-SHA256 of payload under secret, domain-
 // separated by signatureContext (mirrors the unsubscribe-token signing in the
 // prospects context).
