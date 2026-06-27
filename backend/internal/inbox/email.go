@@ -37,6 +37,7 @@ type EmailPoller struct {
 	pendingProposer       PendingReplyProposer
 	leadCreatedEmitter   LeadCreatedEmitter
 	leadQualifiedEmitter LeadQualifiedEmitter
+	tx                   TxManager
 	bookingLink          string
 	logger               *slog.Logger
 	ownerID               uuid.UUID
@@ -149,6 +150,13 @@ func (e *EmailPoller) SetLeadCreatedEmitter(em LeadCreatedEmitter) { e.leadCreat
 // emitter for the inbox auto-qualification path (#199 / #206). One-shot goroutine
 // with no retry, so it is post-commit best-effort, not transactional.
 func (e *EmailPoller) SetLeadQualifiedEmitter(em LeadQualifiedEmitter) { e.leadQualifiedEmitter = em }
+
+// SetTxManager wires the transaction manager that makes new-lead intake
+// fail-closed (#206): the lead row and the lead.created enqueue commit together
+// or roll back together. Safe for the email poller because \Seen is marked only
+// after a successful intake, so a rollback leaves the source email unseen and the
+// next poll re-processes it.
+func (e *EmailPoller) SetTxManager(tx TxManager) { e.tx = tx }
 
 func (e *EmailPoller) Start(ctx context.Context) {
 	log.Println("email poller started (every 60s)")
@@ -291,7 +299,13 @@ func (e *EmailPoller) poll(ctx context.Context) {
 		}
 
 		if fromEmail != "" && bodyText != "" {
-			e.processEmail(ctx, fromName, fromEmail, bodyText, atts)
+			if err := e.processEmail(ctx, fromName, fromEmail, bodyText, atts); err != nil {
+				// Transient intake failure: leave the email unseen so the next
+				// poll re-processes it (#206 fail-closed). Marking it \Seen here
+				// would lose the lead with no retry.
+				log.Printf("[email-poller] intake failed for %s, will retry next poll: %v", fromEmail, err)
+				continue
+			}
 			processedUIDs = append(processedUIDs, buf.UID)
 		}
 	}
@@ -407,12 +421,17 @@ func extractTextBody(raw []byte) string {
 	return textBody
 }
 
-func (e *EmailPoller) processEmail(ctx context.Context, fromName, fromEmail, body string, atts []attachments.Attachment) {
+// processEmail handles one inbound email. It returns a non-nil error only for
+// transient failures where the caller must leave the source email unseen so the
+// next poll retries it (#206 fail-closed). Permanent/skip conditions (invalid
+// entity, swallowed best-effort side-effects) return nil so the email is marked
+// \Seen and not re-processed forever.
+func (e *EmailPoller) processEmail(ctx context.Context, fromName, fromEmail, body string, atts []attachments.Attachment) error {
 	fromEmail = normalize.Email(fromEmail)
 	existing, err := e.repo.GetLeadByEmailAddress(ctx, e.ownerID, fromEmail)
 	if err != nil {
-		log.Printf("[email-poller] error looking up lead for %s: %v", fromEmail, err)
-		return
+		// Transient: signal retry rather than dropping the email (#206).
+		return fmt.Errorf("look up lead for %s: %w", fromEmail, err)
 	}
 
 	isNewLead := existing == nil
@@ -438,25 +457,21 @@ func (e *EmailPoller) processEmail(ctx context.Context, fromName, fromEmail, bod
 		newLead, err := NewInboxLead(e.ownerID, ChannelEmail, contactName, company, body, nil, &emailAddr)
 		if err != nil {
 			log.Printf("[email-poller] error creating lead entity: %v", err)
-			return
+			return nil
 		}
 		lead = newLead
 		if hasProspectMatch {
 			lead.SourceID = prospect.SourceID
 		}
-		if err := e.repo.CreateLead(ctx, lead); err != nil {
-			log.Printf("[email-poller] error creating lead: %v", err)
-			return
+		// #206: persist the lead and enqueue lead.created atomically. A failed
+		// enqueue rolls the lead back and the error propagates so the poll loop
+		// leaves the email unseen for retry (fail-closed). Safe because \Seen is
+		// marked only after processEmail returns nil.
+		if err := e.commitLeadIntake(ctx, lead); err != nil {
+			log.Printf("[email-poller] error creating lead for %s, will retry next poll: %v", fromEmail, err)
+			return err
 		}
 		log.Printf("[email-poller] new lead created for %s (%s)", fromEmail, contactName)
-		// lead.created is emitted best-effort post-commit, NOT in a transaction:
-		// the source email is already marked \Seen, so a fail-closed rollback
-		// would lose the lead with no retry (#206). At-most-once, as before #199.
-		if e.leadCreatedEmitter != nil {
-			if err := e.leadCreatedEmitter.EmitLeadCreated(ctx, lead); err != nil {
-				log.Printf("[email-poller] lead.created emit failed (best-effort): %v", err)
-			}
-		}
 
 		if e.identityLinker != nil {
 			if err := e.identityLinker.LinkLeadToIdentity(ctx, e.ownerID, lead.ID, fromEmail, "", ""); err != nil {
@@ -501,7 +516,7 @@ func (e *EmailPoller) processEmail(ctx context.Context, fromName, fromEmail, bod
 	message := NewInboxMessage(lead.ID, DirectionInbound, body)
 	if err := e.repo.CreateMessage(ctx, message); err != nil {
 		log.Printf("[email-poller] error creating message: %v", err)
-		return
+		return nil
 	}
 
 	// HITL gate for the email booking-link branch — symmetric with the
@@ -602,4 +617,31 @@ func (e *EmailPoller) processEmail(ctx context.Context, fromName, fromEmail, bod
 			}
 		}()
 	}
+	return nil
+}
+
+// commitLeadIntake persists a new inbound lead and enqueues its lead.created
+// event. When a transaction manager and emitter are both wired (webhooks
+// enabled), the two run inside one WithTx so they commit or roll back together
+// — a failed enqueue undoes the lead and returns an error (fail-closed, #206).
+// Otherwise it falls back to a plain create with a best-effort post-commit emit,
+// preserving the zero-overhead path when webhooks are disabled.
+func (e *EmailPoller) commitLeadIntake(ctx context.Context, lead *InboxLead) error {
+	if e.tx != nil && e.leadCreatedEmitter != nil {
+		return e.tx.WithTx(ctx, func(txCtx context.Context) error {
+			if err := e.repo.CreateLead(txCtx, lead); err != nil {
+				return err
+			}
+			return e.leadCreatedEmitter.EmitLeadCreated(txCtx, lead)
+		})
+	}
+	if err := e.repo.CreateLead(ctx, lead); err != nil {
+		return err
+	}
+	if e.leadCreatedEmitter != nil {
+		if err := e.leadCreatedEmitter.EmitLeadCreated(ctx, lead); err != nil {
+			log.Printf("[email-poller] lead.created emit failed (best-effort): %v", err)
+		}
+	}
+	return nil
 }
