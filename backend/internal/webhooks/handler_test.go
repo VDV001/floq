@@ -137,6 +137,22 @@ func TestHandler_DeleteEndpoint_Ownership(t *testing.T) {
 	}
 }
 
+func TestHandler_EventTypes(t *testing.T) {
+	uc := NewUseCase(newFakeStore(), &fakeClient{}, cfg(), nil)
+	router := setupWebhookRouter(uc, uuid.New())
+
+	rr := doReq(router, "GET", "/api/webhooks/event-types", nil)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rr.Code)
+	}
+	// Every known event must be advertised so the UI can build its picker.
+	for _, et := range domain.KnownEventTypes() {
+		if !strings.Contains(rr.Body.String(), string(et)) {
+			t.Errorf("event-types response missing %q", et)
+		}
+	}
+}
+
 func TestHandler_TestEndpoint(t *testing.T) {
 	store := newFakeStore()
 	owner := uuid.New()
