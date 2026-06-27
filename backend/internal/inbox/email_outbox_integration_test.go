@@ -30,16 +30,17 @@ type leadsRepoForIntake struct {
 
 func (a *leadsRepoForIntake) CreateLead(ctx context.Context, l *InboxLead) error {
 	return a.real.CreateLead(ctx, &leadsdomain.Lead{
-		ID:           l.ID,
-		UserID:       l.UserID,
-		Channel:      leadsdomain.Channel(l.Channel),
-		ContactName:  l.ContactName,
-		Company:      l.Company,
-		FirstMessage: l.FirstMessage,
-		Status:       leadsdomain.LeadStatus(l.Status),
-		EmailAddress: l.EmailAddress,
-		CreatedAt:    l.CreatedAt,
-		UpdatedAt:    l.UpdatedAt,
+		ID:             l.ID,
+		UserID:         l.UserID,
+		Channel:        leadsdomain.Channel(l.Channel),
+		ContactName:    l.ContactName,
+		Company:        l.Company,
+		FirstMessage:   l.FirstMessage,
+		Status:         leadsdomain.LeadStatus(l.Status),
+		EmailAddress:   l.EmailAddress,
+		TelegramChatID: l.TelegramChatID,
+		CreatedAt:      l.CreatedAt,
+		UpdatedAt:      l.UpdatedAt,
 	})
 }
 
