@@ -103,11 +103,22 @@ func (r *Repository) EnqueueDelivery(ctx context.Context, d *domain.WebhookDeliv
 	return nil
 }
 
-// ClaimDueDeliveries returns up to limit pending deliveries that are due — their
-// domain-computed next_retry_at is null (never attempted) or in the past — with
-// attempts below maxAttempts, oldest first. The backoff schedule is authored by
-// domain.WebhookDelivery (NextRetryAfter); this query only compares the
-// persisted next_retry_at to now.
+// ClaimDueDeliveries returns up to limit pending deliveries that are due,
+// earliest-due first, with attempts below maxAttempts. A delivery's effective
+// due-time is COALESCE(next_retry_at, created_at): the domain-computed backoff
+// schedule, or — when next_retry_at is null (never attempted) — its enqueue
+// time. The backoff schedule is authored by domain.WebhookDelivery
+// (NextRetryAfter); this query only compares the persisted due-time to now.
+//
+// This is equivalent to the older "next_retry_at IS NULL OR next_retry_at <=
+// now()" predicate: created_at is always insert-time (DB DEFAULT now(), never set
+// by EnqueueDelivery), so a null-next_retry_at row always satisfies created_at <=
+// now() and is due immediately — exactly as before.
+//
+// Both the WHERE and ORDER BY key on COALESCE(next_retry_at, created_at) so the
+// query rides idx_webhook_deliveries_due (migration 052): a forward index scan
+// that stops at the first not-due row instead of scanning the whole pending
+// partition. The id tiebreak makes the order total and stable.
 //
 // Phase 1 runs a single worker, so this plain SELECT needs no cross-instance
 // lease; multi-instance exclusivity is a later hardening.
@@ -117,8 +128,8 @@ func (r *Repository) ClaimDueDeliveries(ctx context.Context, limit, maxAttempts 
 		       status, attempts, http_status, error, delivered_at, next_retry_at
 		FROM webhook_deliveries
 		WHERE status = 'pending' AND attempts < $2
-		  AND (next_retry_at IS NULL OR next_retry_at <= now())
-		ORDER BY updated_at
+		  AND COALESCE(next_retry_at, created_at) <= now()
+		ORDER BY COALESCE(next_retry_at, created_at), id
 		LIMIT $1`, limit, maxAttempts)
 	if err != nil {
 		return nil, fmt.Errorf("webhooks: claim due: %w", err)
