@@ -53,12 +53,11 @@ var (
 // rows after Save — handlers parse input, call into the usecase, and
 // map the response/error to HTTP.
 type PendingReplyUseCase struct {
-	repo             PendingReplyRepository
-	dispatcher       ReplyDispatcher
-	classifier       InputClassifier
-	approvedObserver PendingReplyApprovedObserver
-	tx               TxManager
-	approvedEmitter  PendingReplyApprovedEmitter
+	repo            PendingReplyRepository
+	dispatcher      ReplyDispatcher
+	classifier      InputClassifier
+	tx              TxManager
+	approvedEmitter PendingReplyApprovedEmitter
 }
 
 // NewPendingReplyUseCase wires the usecase with its persistence port.
@@ -78,27 +77,10 @@ func (uc *PendingReplyUseCase) SetDispatcher(d ReplyDispatcher) {
 	uc.dispatcher = d
 }
 
-// PendingReplyApprovedObserver is notified after a pending reply is durably
-// approved, so cross-context side-effects (e.g. emitting a
-// pending_reply.approved webhook, #181) can fire without the inbox context
-// importing those modules. Implemented in the composition root; nil disables
-// the hook; the method returns nothing — a failing side-effect must never fail
-// the approval.
-type PendingReplyApprovedObserver interface {
-	OnPendingReplyApproved(ctx context.Context, pr *PendingReply)
-}
-
-// SetApprovedObserver wires the post-approval hook after construction (the
-// webhooks usecase it bridges to is built later in the composition root).
-func (uc *PendingReplyUseCase) SetApprovedObserver(o PendingReplyApprovedObserver) {
-	uc.approvedObserver = o
-}
-
 // PendingReplyApprovedEmitter writes the pending_reply.approved event
-// transactionally, inside the approval transaction (#199) — unlike
-// PendingReplyApprovedObserver which fires post-commit, best-effort. A non-nil
-// error aborts the approval (fail-closed), so the approval write and its event
-// row commit together or not at all. Implemented in the composition root.
+// transactionally, inside the approval transaction (#199): a non-nil error
+// aborts the approval (fail-closed), so the approval write and its event row
+// commit together or not at all. Implemented in the composition root.
 type PendingReplyApprovedEmitter interface {
 	EmitPendingReplyApproved(ctx context.Context, pr *PendingReply) error
 }
@@ -267,16 +249,9 @@ func (uc *PendingReplyUseCase) Approve(ctx context.Context, userID, id uuid.UUID
 		}); err != nil {
 			return err
 		}
-	} else {
-		if err := doUpdate(ctx); err != nil {
-			return err
-		}
-		// Legacy post-approve side-effect (best-effort) — used only until the
-		// composition root wires the transactional emitter. The observer owns
-		// its errors: it must not fail the approval.
-		if uc.approvedObserver != nil {
-			uc.approvedObserver.OnPendingReplyApproved(ctx, pr)
-		}
+	} else if err := doUpdate(ctx); err != nil {
+		// Webhooks disabled (no emitter wired): a plain approval with no event.
+		return err
 	}
 	// Approval is durably committed here (independent of dispatch outcome).
 	if uc.dispatcher == nil {

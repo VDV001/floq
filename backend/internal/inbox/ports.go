@@ -34,25 +34,6 @@ const (
 	DirectionOutbound MessageDirection = "outbound"
 )
 
-// LeadCreatedObserver is notified after a new inbound lead is created (Telegram
-// or Email), so cross-context side-effects (e.g. emitting a lead.created
-// webhook, #181) can fire without the inbox context importing those modules.
-// Implemented in the composition root; nil disables the hook; the method
-// returns nothing — a failing side-effect must never fail lead intake.
-type LeadCreatedObserver interface {
-	OnLeadCreated(ctx context.Context, lead *InboxLead)
-}
-
-// LeadQualifiedObserver is notified after the inbox auto-qualification path
-// scores an inbound lead and persists status=qualified. Without this, a
-// lead.qualified webhook would only fire on the manual /qualify API path (which
-// goes through leads.UseCase) and miss the dominant automatic flow. Same
-// contract as the other inbox observers: composition-root impl, nil disables,
-// returns nothing (a failing side-effect must not fail qualification).
-type LeadQualifiedObserver interface {
-	OnLeadQualified(ctx context.Context, lead *InboxLead)
-}
-
 // TxManager runs fn within a database transaction, exposing it through the
 // context so transaction-aware repositories (and the inbox outbox emitters) join
 // it via db.ConnFromCtx. Satisfied by *db.TxManager. Drives the #199

@@ -53,13 +53,6 @@ type SequenceCompletion struct {
 	SequenceID uuid.UUID
 }
 
-// SequenceCompletionObserver is notified once when a prospect's sequence run
-// reaches its end. Declared in the consumer (DIP); the composition root wires
-// the webhook bridge. A nil observer disables the notification.
-type SequenceCompletionObserver interface {
-	OnSequenceCompleted(ctx context.Context, ev SequenceCompletion)
-}
-
 // TxManager runs fn within a database transaction, exposing it through the
 // context so transaction-aware repositories (and the sequence-completion
 // emitter) join it via db.ConnFromCtx. Satisfied by *db.TxManager. Drives the

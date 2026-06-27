@@ -104,14 +104,10 @@ type Sender struct {
 	// gates still apply). Production always wires it.
 	guard SendGuard
 
-	// seqObserver is notified when a prospect's sequence run finishes sending.
-	// Set via SetSequenceCompletionObserver at wiring time; nil disables the
-	// sequence.completed notification (e.g. when webhooks are off).
-	seqObserver SequenceCompletionObserver
-
 	// tx + seqEmitter drive the #199 transactional outbox: when both are set,
 	// the dispatch's sent/bounced mark and the sequence.completed enqueue commit
-	// in one transaction. nil falls back to the post-commit seqObserver path.
+	// in one transaction. nil (webhooks disabled) marks the dispatch only, with
+	// no completion event.
 	tx         TxManager
 	seqEmitter SequenceCompletionEmitter
 
@@ -128,59 +124,24 @@ func (s *Sender) SetUnsubscribeSecret(secret string) { s.unsubscribeSecret = sec
 // SetSendGuard injects the layer-3 outbound send guard.
 func (s *Sender) SetSendGuard(guard SendGuard) { s.guard = guard }
 
-// SetSequenceCompletionObserver wires the observer notified when a prospect's
-// sequence run finishes sending. nil disables the notification.
-func (s *Sender) SetSequenceCompletionObserver(o SequenceCompletionObserver) { s.seqObserver = o }
-
 // SetTxManager wires the transaction manager (#199) so the dispatch mark and the
 // sequence.completed enqueue commit together.
 func (s *Sender) SetTxManager(tx TxManager) { s.tx = tx }
 
 // SetSequenceCompletionEmitter wires the in-transaction sequence.completed outbox
-// emitter (#199). When set together with a TxManager it supersedes the
-// post-commit observer.
+// emitter (#199). With no emitter (or TxManager) a dispatch is marked with no
+// completion event — the webhooks-disabled path.
 func (s *Sender) SetSequenceCompletionEmitter(e SequenceCompletionEmitter) { s.seqEmitter = e }
 
-// noteRunProgress fires the sequence-completion observer if the just-dispatched
-// message was the last pending one for its (prospect, sequence) run. Best-effort
-// and non-blocking: a nil observer, a message with no sequence, or a count error
-// is a silent no-op — it must never fail or hold up a send. Emission only
-// happens on a dispatch (send/bounce), so a run cut short by a user rejecting
-// its final draft does not produce a completion event.
-//
-// Completion means "the last dispatch emptied the run's queue", not "the queue
-// is empty": a step that can never be dispatched (permanently suppressed,
-// consent-blocked, or failing non-bounce every tick) stays approved, so the
-// count never reaches zero and the run never completes. That matches the
-// "finished sending" definition and mirrors the existing infinite-retry
-// behaviour of GetPendingSends.
-func (s *Sender) noteRunProgress(ctx context.Context, msg seqdomain.OutboundMessage, userID uuid.UUID) {
-	if s.seqObserver == nil || msg.SequenceID == uuid.Nil {
-		return
-	}
-	remaining, err := s.seqRepo.CountPendingDispatch(ctx, msg.ProspectID, msg.SequenceID)
-	if err != nil {
-		log.Printf("[outbound] sequence-completion check failed for prospect %s seq %s: %v", msg.ProspectID, msg.SequenceID, err)
-		return
-	}
-	if remaining == 0 {
-		s.seqObserver.OnSequenceCompleted(ctx, SequenceCompletion{
-			UserID:     userID,
-			ProspectID: msg.ProspectID,
-			SequenceID: msg.SequenceID,
-		})
-	}
-}
-
-// commitDispatch persists a dispatch outcome (markFn = MarkSent or MarkBounced)
-// and fires sequence-completion. When a transactional emitter is wired (#199),
-// the mark and the sequence.completed enqueue run in ONE db.WithTx so they
-// commit together (fail-closed). A rollback leaves the message un-marked and it
-// is re-sent on the next tick — safe on the idempotent Resend path, and within
-// the pre-existing accepted SMTP duplicate window (see sendViaSMTPWith). With no
-// emitter/TxManager it persists the mark then fires the post-commit observer,
-// best-effort — the legacy behaviour. Returns the mark/emit error so the caller
-// logs and skips this message's remaining post-send steps.
+// commitDispatch persists a dispatch outcome (markFn = MarkSent or MarkBounced).
+// When a transactional emitter is wired (#199), the mark and the
+// sequence.completed enqueue run in ONE db.WithTx so they commit together
+// (fail-closed). A rollback leaves the message un-marked and it is re-sent on the
+// next tick — safe on the idempotent Resend path, and within the pre-existing
+// accepted SMTP duplicate window (see sendViaSMTPWith). With no emitter/TxManager
+// (webhooks disabled) it persists the mark only, with no completion event.
+// Returns the mark/emit error so the caller logs and skips this message's
+// remaining post-send steps.
 func (s *Sender) commitDispatch(ctx context.Context, msg seqdomain.OutboundMessage, userID uuid.UUID, markFn func(context.Context) error) error {
 	if s.seqEmitter != nil && s.tx != nil {
 		return s.tx.WithTx(ctx, func(txCtx context.Context) error {
@@ -190,17 +151,20 @@ func (s *Sender) commitDispatch(ctx context.Context, msg seqdomain.OutboundMessa
 			return s.emitIfRunComplete(txCtx, msg, userID)
 		})
 	}
-	if err := markFn(ctx); err != nil {
-		return err
-	}
-	s.noteRunProgress(ctx, msg, userID)
-	return nil
+	return markFn(ctx)
 }
 
 // emitIfRunComplete enqueues sequence.completed when msg was the run's last
 // pending dispatch. It runs inside the dispatch transaction so the count
 // reflects the just-persisted mark. A message with no sequence (ad-hoc send) is
-// a no-op — mirroring noteRunProgress.
+// a no-op.
+//
+// Completion means "the last dispatch emptied the run's queue", not "the queue
+// is empty": a step that can never be dispatched (permanently suppressed,
+// consent-blocked, or failing non-bounce every tick) stays approved, so the
+// count never reaches zero and the run never completes. That matches the
+// "finished sending" definition and mirrors the infinite-retry behaviour of
+// GetPendingSends.
 func (s *Sender) emitIfRunComplete(ctx context.Context, msg seqdomain.OutboundMessage, userID uuid.UUID) error {
 	if msg.SequenceID == uuid.Nil {
 		return nil

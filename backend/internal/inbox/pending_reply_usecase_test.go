@@ -492,39 +492,6 @@ func TestPendingReplyUseCase_Approve_TransitionsThenDispatchesThenMarksSent(t *t
 	}
 }
 
-type spyApprovedObserver struct {
-	calls []*PendingReply
-}
-
-func (s *spyApprovedObserver) OnPendingReplyApproved(_ context.Context, pr *PendingReply) {
-	s.calls = append(s.calls, pr)
-}
-
-func TestPendingReplyUseCase_Approve_NotifiesObserver(t *testing.T) {
-	repo := newFakeRepo()
-	uc := NewPendingReplyUseCase(repo, &spyDispatcher{})
-	obs := &spyApprovedObserver{}
-	uc.SetApprovedObserver(obs)
-	ctx := context.Background()
-	userID := uuid.New()
-	leadID := uuid.New()
-
-	pr, err := uc.Propose(ctx, userID, leadID, ChannelTelegram, PendingReplyKindBookingLink, "ok", "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := uc.Approve(ctx, userID, pr.ID); err != nil {
-		t.Fatalf("Approve error: %v", err)
-	}
-
-	if len(obs.calls) != 1 {
-		t.Fatalf("observer calls = %d, want 1", len(obs.calls))
-	}
-	if obs.calls[0].ID != pr.ID || obs.calls[0].LeadID != leadID || obs.calls[0].UserID != userID {
-		t.Errorf("observer saw wrong reply: %+v", obs.calls[0])
-	}
-}
-
 // --- #199 transactional outbox ---
 
 type spyApprovedEmitter struct {

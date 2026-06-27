@@ -24,7 +24,6 @@ type UseCase struct {
 	identityReader   IdentityReader
 	pendingCounter   PendingReplyCounter
 	qualObserver     domain.QualificationObserver
-	archivedObserver domain.LeadArchivedObserver
 	tx               domain.TxManager
 	qualEmitter      domain.QualificationEmitter
 	archivedEmitter  domain.LeadArchivedEmitter
@@ -47,13 +46,6 @@ func WithSuggestionFinder(f domain.ProspectSuggestionFinder) Option {
 // context. nil leaves the hook disabled.
 func WithQualificationObserver(o domain.QualificationObserver) Option {
 	return func(uc *UseCase) { uc.qualObserver = o }
-}
-
-// WithLeadArchivedObserver wires the post-archive hook (#181). Supplied from the
-// composition root via an adapter that bridges to the webhooks context. nil
-// leaves the hook disabled.
-func WithLeadArchivedObserver(o domain.LeadArchivedObserver) Option {
-	return func(uc *UseCase) { uc.archivedObserver = o }
 }
 
 // WithTxManager wires the transaction manager used to make qualification and
@@ -106,13 +98,6 @@ func (uc *UseCase) SetSender(sender domain.MessageSender) {
 // built later in the composition root than the leads use case.
 func (uc *UseCase) SetQualificationObserver(o domain.QualificationObserver) {
 	uc.qualObserver = o
-}
-
-// SetLeadArchivedObserver wires the post-archive hook after construction, needed
-// because the webhooks usecase the observer bridges to is built later in the
-// composition root than the leads use case.
-func (uc *UseCase) SetLeadArchivedObserver(o domain.LeadArchivedObserver) {
-	uc.archivedObserver = o
 }
 
 // SetTxManager wires the transaction manager after construction (#199), needed
@@ -189,16 +174,8 @@ func (uc *UseCase) ArchiveLead(ctx context.Context, id uuid.UUID) error {
 			return uc.archivedEmitter.EmitLeadArchived(txCtx, lead)
 		})
 	}
-	if err := uc.repo.SetLeadArchived(ctx, id, lead.ArchivedAt); err != nil {
-		return err
-	}
-	// Legacy post-archive side-effect (best-effort) — used only until the
-	// composition root wires the transactional emitter. The observer owns its
-	// errors: a failure here must not fail the archive.
-	if uc.archivedObserver != nil {
-		uc.archivedObserver.OnLeadArchived(ctx, lead)
-	}
-	return nil
+	// Webhooks disabled (no emitter wired): a plain archive with no event.
+	return uc.repo.SetLeadArchived(ctx, id, lead.ArchivedAt)
 }
 
 // UnarchiveLead restores an archived lead to feeds and analytics. Returns

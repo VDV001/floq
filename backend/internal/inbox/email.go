@@ -35,13 +35,11 @@ type EmailPoller struct {
 	identityLinker        IdentityLinker
 	enricher              EnrichmentEnqueuer
 	pendingProposer       PendingReplyProposer
-	leadCreatedObserver   LeadCreatedObserver
-	leadQualifiedObserver LeadQualifiedObserver
-	tx                    TxManager
-	leadCreatedEmitter    LeadCreatedEmitter
-	leadQualifiedEmitter  LeadQualifiedEmitter
-	bookingLink           string
-	logger                *slog.Logger
+	tx                   TxManager
+	leadCreatedEmitter   LeadCreatedEmitter
+	leadQualifiedEmitter LeadQualifiedEmitter
+	bookingLink          string
+	logger               *slog.Logger
 	ownerID               uuid.UUID
 	dialer                proxy.ContextDialer
 
@@ -140,19 +138,6 @@ func WithEmailBookingLink(link string) EmailPollerOption {
 // own collaborators.
 func (e *EmailPoller) SetPendingProposer(p PendingReplyProposer) {
 	e.pendingProposer = p
-}
-
-// SetLeadCreatedObserver wires the post-lead-creation hook after construction
-// (the webhooks usecase it bridges to is built later in the composition root).
-func (e *EmailPoller) SetLeadCreatedObserver(o LeadCreatedObserver) {
-	e.leadCreatedObserver = o
-}
-
-// SetLeadQualifiedObserver wires the post-auto-qualification hook after
-// construction (the webhooks usecase it bridges to is built later in the
-// composition root).
-func (e *EmailPoller) SetLeadQualifiedObserver(o LeadQualifiedObserver) {
-	e.leadQualifiedObserver = o
 }
 
 // SetTxManager wires the transaction manager (#199) so lead.created and
@@ -470,9 +455,6 @@ func (e *EmailPoller) processEmail(ctx context.Context, fromName, fromEmail, bod
 			return
 		}
 		log.Printf("[email-poller] new lead created for %s (%s)", fromEmail, contactName)
-		if e.leadCreatedEmitter == nil && e.leadCreatedObserver != nil {
-			e.leadCreatedObserver.OnLeadCreated(ctx, lead)
-		}
 
 		if e.identityLinker != nil {
 			if err := e.identityLinker.LinkLeadToIdentity(ctx, e.ownerID, lead.ID, fromEmail, "", ""); err != nil {
@@ -598,10 +580,10 @@ func (e *EmailPoller) processEmail(ctx context.Context, fromName, fromEmail, bod
 				ProviderUsed:      e.aiClient.ProviderName(),
 				GeneratedAt:       time.Now().UTC(),
 			}
-			// Reflect the qualified status on the in-memory entity only when a
-			// sink will read it (emitter or observer) — keeps the no-sink path
-			// behaviourally identical to before #199.
-			if e.leadQualifiedEmitter != nil || e.leadQualifiedObserver != nil {
+			// Reflect the qualified status on the in-memory entity only when the
+			// emitter will read it — keeps the webhooks-disabled path behaviourally
+			// identical to before #199.
+			if e.leadQualifiedEmitter != nil {
 				lead.Status = StatusQualified
 			}
 			// Transactional outbox (#199): the qualification writes and the
@@ -619,9 +601,6 @@ func (e *EmailPoller) processEmail(ctx context.Context, fromName, fromEmail, bod
 				return
 			}
 			log.Printf("[email-poller] lead %s qualified (score=%d)", lead.ID, result.Score)
-			if e.leadQualifiedEmitter == nil && e.leadQualifiedObserver != nil {
-				e.leadQualifiedObserver.OnLeadQualified(qCtx, lead)
-			}
 		}()
 	}
 }

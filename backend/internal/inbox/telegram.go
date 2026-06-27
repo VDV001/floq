@@ -32,11 +32,9 @@ type TelegramBot struct {
 	logger                *slog.Logger
 	ownerID               uuid.UUID
 	bookingLink           string
-	leadCreatedObserver   LeadCreatedObserver
-	leadQualifiedObserver LeadQualifiedObserver
-	tx                    TxManager
-	leadCreatedEmitter    LeadCreatedEmitter
-	leadQualifiedEmitter  LeadQualifiedEmitter
+	tx                   TxManager
+	leadCreatedEmitter   LeadCreatedEmitter
+	leadQualifiedEmitter LeadQualifiedEmitter
 }
 
 // TelegramBotOption configures a *TelegramBot at construction. Used for
@@ -111,19 +109,6 @@ func (t *TelegramBot) Bot() *tgbotapi.BotAPI {
 // .SetSender pattern in main.go.
 func (t *TelegramBot) SetPendingProposer(p PendingReplyProposer) {
 	t.pendingProposer = p
-}
-
-// SetLeadCreatedObserver wires the post-lead-creation hook after construction
-// (the webhooks usecase it bridges to is built later in the composition root).
-func (t *TelegramBot) SetLeadCreatedObserver(o LeadCreatedObserver) {
-	t.leadCreatedObserver = o
-}
-
-// SetLeadQualifiedObserver wires the post-auto-qualification hook after
-// construction (the webhooks usecase it bridges to is built later in the
-// composition root).
-func (t *TelegramBot) SetLeadQualifiedObserver(o LeadQualifiedObserver) {
-	t.leadQualifiedObserver = o
 }
 
 // SetTxManager wires the transaction manager (#199) so lead.created and
@@ -217,9 +202,6 @@ func (t *TelegramBot) handleMessage(ctx context.Context, msg *tgbotapi.Message) 
 			return
 		}
 		log.Printf("telegram inbox: new lead created for chat %d (%s)", chatID, contactName)
-		if t.leadCreatedEmitter == nil && t.leadCreatedObserver != nil {
-			t.leadCreatedObserver.OnLeadCreated(ctx, lead)
-		}
 
 		if t.identityLinker != nil && username != "" {
 			if err := t.identityLinker.LinkLeadToIdentity(ctx, t.ownerID, lead.ID, "", "", username); err != nil {
@@ -319,10 +301,10 @@ func (t *TelegramBot) handleMessage(ctx context.Context, msg *tgbotapi.Message) 
 				ProviderUsed:      t.aiClient.ProviderName(),
 				GeneratedAt:       time.Now().UTC(),
 			}
-			// Reflect the qualified status on the in-memory entity only when a
-			// sink will read it (emitter or observer) — keeps the no-sink path
-			// behaviourally identical to before #199.
-			if t.leadQualifiedEmitter != nil || t.leadQualifiedObserver != nil {
+			// Reflect the qualified status on the in-memory entity only when the
+			// emitter will read it — keeps the webhooks-disabled path behaviourally
+			// identical to before #199.
+			if t.leadQualifiedEmitter != nil {
 				lead.Status = StatusQualified
 			}
 			// Transactional outbox (#199): the qualification writes and the
@@ -340,9 +322,6 @@ func (t *TelegramBot) handleMessage(ctx context.Context, msg *tgbotapi.Message) 
 				return
 			}
 			log.Printf("telegram inbox: lead %s qualified (score=%d)", lead.ID, result.Score)
-			if t.leadQualifiedEmitter == nil && t.leadQualifiedObserver != nil {
-				t.leadQualifiedObserver.OnLeadQualified(qCtx, lead)
-			}
 		}()
 	}
 }

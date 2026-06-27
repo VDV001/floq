@@ -351,17 +351,9 @@ func TestQualifyLead_ObserverNotCalledOnFailure(t *testing.T) {
 	assert.Equal(t, 0, obs.calls, "no qualification → no notification")
 }
 
-type fakeArchivedObserver struct {
-	calls      int
-	calledWith *domain.Lead
-}
-
-func (f *fakeArchivedObserver) OnLeadArchived(_ context.Context, lead *domain.Lead) {
-	f.calls++
-	f.calledWith = lead
-}
-
-func TestArchiveLead_NotifiesObserver(t *testing.T) {
+func TestArchiveLead_NoEmitter_StillArchives(t *testing.T) {
+	// Webhooks disabled (no emitter/TxManager): archive persists with no event
+	// and no transaction.
 	repo := newMockRepo()
 	leadID := uuid.New()
 	repo.leads[leadID] = &domain.Lead{
@@ -371,26 +363,22 @@ func TestArchiveLead_NotifiesObserver(t *testing.T) {
 		Channel:     domain.ChannelTelegram,
 		Status:      domain.StatusNew,
 	}
-	obs := &fakeArchivedObserver{}
-	uc := NewUseCase(repo, &mockAI{}, nil, WithLeadArchivedObserver(obs))
+	uc := NewUseCase(repo, &mockAI{}, nil)
 
 	require.NoError(t, uc.ArchiveLead(context.Background(), leadID))
-
-	require.Equal(t, 1, obs.calls, "observer must be notified after a successful archive")
-	require.NotNil(t, obs.calledWith)
-	assert.Equal(t, leadID, obs.calledWith.ID)
-	assert.NotNil(t, obs.calledWith.ArchivedAt, "observer sees the archived timestamp")
+	assert.NotNil(t, repo.leads[leadID].ArchivedAt, "lead must be archived on the legacy path")
 }
 
-func TestArchiveLead_ObserverNotCalledOnFailure(t *testing.T) {
+func TestArchiveLead_UnknownLeadReturnsError(t *testing.T) {
 	repo := newMockRepo()
-	obs := &fakeArchivedObserver{}
-	uc := NewUseCase(repo, &mockAI{}, nil, WithLeadArchivedObserver(obs))
+	emit := &fakeArchivedEmitter{}
+	tx := &inlineTx{}
+	uc := NewUseCase(repo, &mockAI{}, nil, WithTxManager(tx), WithLeadArchivedEmitter(emit))
 
-	// Unknown lead → error, no notification.
 	err := uc.ArchiveLead(context.Background(), uuid.New())
 	require.Error(t, err)
-	assert.Equal(t, 0, obs.calls)
+	assert.Equal(t, 0, emit.calls, "an unknown lead must not emit (or open a tx)")
+	assert.Equal(t, 0, tx.entered)
 }
 
 // --- #199 transactional outbox: qualify/archive emit inside the domain tx ---
