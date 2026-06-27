@@ -86,12 +86,12 @@ func TestNewWebhookEndpoint_Invariants(t *testing.T) {
 		secret string
 		want   error
 	}{
-		{"nil user", "https://x.com/h", []EventType{EventLeadCreated}, "secret12345678", ErrEmptyOwner},
-		{"bad url", "ftp://x.com", []EventType{EventLeadCreated}, "secret12345678", ErrInvalidWebhookURL},
-		{"no events", "https://x.com/h", nil, "secret12345678", ErrNoEvents},
-		{"unknown event", "https://x.com/h", []EventType{EventType("lead.boom")}, "secret12345678", ErrUnknownEventType},
+		{"nil user", "https://x.com/h", []EventType{EventLeadCreated}, "secret1234567890", ErrEmptyOwner},
+		{"bad url", "ftp://x.com", []EventType{EventLeadCreated}, "secret1234567890", ErrInvalidWebhookURL},
+		{"no events", "https://x.com/h", nil, "secret1234567890", ErrNoEvents},
+		{"unknown event", "https://x.com/h", []EventType{EventType("lead.boom")}, "secret1234567890", ErrUnknownEventType},
 		{"short secret", "https://x.com/h", []EventType{EventLeadCreated}, "short", ErrWeakSecret},
-		{"dup events ok dedups", "https://x.com/h", []EventType{EventLeadCreated, EventLeadCreated}, "secret12345678", nil},
+		{"dup events ok dedups", "https://x.com/h", []EventType{EventLeadCreated, EventLeadCreated}, "secret1234567890", nil},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
