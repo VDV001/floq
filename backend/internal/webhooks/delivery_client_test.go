@@ -6,7 +6,6 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"testing"
 	"time"
 
@@ -118,5 +117,3 @@ func (neverEnding) Read(p []byte) (int, error) {
 	}
 	return len(p), nil
 }
-
-var _ = strings.TrimSpace
