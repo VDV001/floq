@@ -105,3 +105,25 @@ func (b *webhookEventPublisher) OnPendingReplyApproved(ctx context.Context, pr *
 
 // Compile-time checks that the bridge satisfies the leads qualification port.
 var _ leadsdomain.QualificationObserver = (*webhookEventPublisher)(nil)
+
+// compositeQualificationObserver fans a qualification event out to several
+// observers (e.g. the 1C counterparty push AND the lead.qualified webhook). The
+// leads usecase holds a single QualificationObserver, so the composition root
+// wraps the multiple sinks in this composite. Each observer owns its errors.
+type compositeQualificationObserver struct {
+	observers []leadsdomain.QualificationObserver
+}
+
+func newCompositeQualificationObserver(observers ...leadsdomain.QualificationObserver) *compositeQualificationObserver {
+	return &compositeQualificationObserver{observers: observers}
+}
+
+func (c *compositeQualificationObserver) OnLeadQualified(ctx context.Context, lead *leadsdomain.Lead) {
+	for _, o := range c.observers {
+		if o != nil {
+			o.OnLeadQualified(ctx, lead)
+		}
+	}
+}
+
+var _ leadsdomain.QualificationObserver = (*compositeQualificationObserver)(nil)

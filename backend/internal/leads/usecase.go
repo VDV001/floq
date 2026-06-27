@@ -85,6 +85,13 @@ func (uc *UseCase) SetQualificationObserver(o domain.QualificationObserver) {
 	uc.qualObserver = o
 }
 
+// SetLeadArchivedObserver wires the post-archive hook after construction, needed
+// because the webhooks usecase the observer bridges to is built later in the
+// composition root than the leads use case.
+func (uc *UseCase) SetLeadArchivedObserver(o domain.LeadArchivedObserver) {
+	uc.archivedObserver = o
+}
+
 func (uc *UseCase) ListLeads(ctx context.Context, userID uuid.UUID) ([]domain.LeadWithSource, error) {
 	return uc.repo.ListLeads(ctx, userID)
 }

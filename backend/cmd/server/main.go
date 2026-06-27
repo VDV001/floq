@@ -415,6 +415,14 @@ func main() {
 			slog.Default(),
 		)
 	}
+	// Bridge domain side-effects (lead/inbox events) to outgoing webhooks. Built
+	// unconditionally with a nil-safe publisher: when webhooks are disabled the
+	// bridge no-ops, so the observer wiring below stays the same either way.
+	var webhookPub eventPublisher
+	if webhooksUC != nil {
+		webhookPub = webhooksUC
+	}
+	webhookBridge := newWebhookEventPublisher(webhookPub, slog.Default())
 	migrateOrphanProspects(pool, ownerID)
 	emailConfigChecker := emailConfigCheckerAdapter{
 		store:           settingsStore,
@@ -491,7 +499,14 @@ func main() {
 	// write path and the reconciliation read path.
 	onecClient := onec.NewHTTPClient(httpClient)
 	onecOutboundUC := onec.NewOutboundUseCase(onecRepo, onecClient, slog.Default())
-	leadsUC.SetQualificationObserver(newOnecQualificationAdapter(onecOutboundUC, slog.Default()))
+	// Qualification fans out to BOTH the 1C counterparty push and the
+	// lead.qualified webhook; archive fires the lead.archived webhook.
+	leadsUC.SetQualificationObserver(newCompositeQualificationObserver(
+		newOnecQualificationAdapter(onecOutboundUC, slog.Default()),
+		webhookBridge,
+	))
+	leadsUC.SetLeadArchivedObserver(webhookBridge)
+	pendingReplyUC.SetApprovedObserver(webhookBridge)
 
 	// Reconciliation safety net (#109): re-feed recent 1C events through the
 	// inbound use case to recover any webhook that was lost. Cron started below
@@ -642,6 +657,7 @@ func main() {
 			telegramDispatcher = inbox.NewTelegramReplyDispatcher(tgBot.Bot(), leadReplyTargets, inboxLeadAdapter)
 			pendingReplyUC.SetDispatcher(guardReply(inbox.NewChannelReplyDispatcher(telegramDispatcher, emailDispatcher)))
 			tgBot.SetPendingProposer(pendingReplyUC)
+			tgBot.SetLeadCreatedObserver(webhookBridge)
 			go tgBot.Start(ctx)
 			// Set the telegram sender on the leads use case
 			leadsUC.SetSender(leads.NewTelegramSender(tgBot.Bot()))
@@ -677,6 +693,7 @@ func main() {
 	// is constructed but before Start so no inbound email is processed
 	// without the HITL gate wired.
 	emailPoller.SetPendingProposer(pendingReplyUC)
+	emailPoller.SetLeadCreatedObserver(webhookBridge)
 	go emailPoller.Start(ctx)
 
 	// Identity backfill: walk existing leads + prospects once on

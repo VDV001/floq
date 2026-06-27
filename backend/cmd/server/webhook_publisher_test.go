@@ -93,6 +93,19 @@ func TestWebhookPublisher_OnPendingReplyApproved(t *testing.T) {
 	assert.Contains(t, string(pub.calls[0].data), pr.LeadID.String())
 }
 
+type countingQualObserver struct{ calls int }
+
+func (c *countingQualObserver) OnLeadQualified(context.Context, *leadsdomain.Lead) { c.calls++ }
+
+func TestCompositeQualificationObserver_FansOut(t *testing.T) {
+	a, b := &countingQualObserver{}, &countingQualObserver{}
+	// A nil member must be skipped without panicking.
+	comp := newCompositeQualificationObserver(a, nil, b)
+	comp.OnLeadQualified(context.Background(), &leadsdomain.Lead{ID: uuid.New()})
+	assert.Equal(t, 1, a.calls)
+	assert.Equal(t, 1, b.calls)
+}
+
 // When webhooks are disabled (nil publisher) the bridge must be a safe no-op,
 // never panicking — the observer is always wired, behavior gated by the flag.
 func TestWebhookPublisher_NilPublisherIsNoOp(t *testing.T) {
