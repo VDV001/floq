@@ -1021,3 +1021,115 @@ func TestBot_Getter(t *testing.T) {
 func ptrInt64(v int64) *int64 {
 	return &v
 }
+
+// --- #206 Part B: offset-gating receive loop ---
+
+// scriptedFetcher returns pre-scripted update batches and records the offset it
+// was asked for on each call, so a test can assert the offset advances only past
+// successfully-handled updates. After the scripted batches are exhausted it
+// cancels the context to terminate receiveLoop.
+type scriptedFetcher struct {
+	mu      sync.Mutex
+	batches [][]tgbotapi.Update
+	offsets []int
+	cancel  context.CancelFunc
+}
+
+func (f *scriptedFetcher) GetUpdates(cfg tgbotapi.UpdateConfig) ([]tgbotapi.Update, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	call := len(f.offsets)
+	f.offsets = append(f.offsets, cfg.Offset)
+	if call < len(f.batches) {
+		return f.batches[call], nil
+	}
+	f.cancel()
+	return nil, nil
+}
+
+func (f *scriptedFetcher) requestedOffsets() []int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]int(nil), f.offsets...)
+}
+
+// A failed handler must NOT advance the offset past its update: the next poll
+// re-requests from the failed update's id, so it is re-delivered (#206 Part B).
+// A successful handler advances past its update so it is confirmed and never
+// re-processed.
+func TestReceiveLoop_AdvancesOffsetOnlyPastHandledUpdates(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	up1 := tgbotapi.Update{UpdateID: 100, Message: makeTgMessage(1, "A", "", "hi")}
+	up2 := tgbotapi.Update{UpdateID: 101, Message: makeTgMessage(2, "B", "", "hi")}
+	fetcher := &scriptedFetcher{
+		batches: [][]tgbotapi.Update{{up1, up2}},
+		cancel:  cancel,
+	}
+
+	var handled []int64
+	var hmu sync.Mutex
+	handle := func(_ context.Context, msg *tgbotapi.Message) error {
+		hmu.Lock()
+		handled = append(handled, msg.Chat.ID)
+		hmu.Unlock()
+		if msg.Chat.ID == 2 {
+			return errors.New("transient intake failure")
+		}
+		return nil
+	}
+
+	bot := &TelegramBot{logger: slog.Default()}
+	bot.receiveLoop(ctx, fetcher, handle)
+
+	offsets := fetcher.requestedOffsets()
+	require.GreaterOrEqual(t, len(offsets), 2, "loop must poll at least twice")
+	assert.Equal(t, 0, offsets[0], "first poll starts at offset 0")
+	assert.Equal(t, 101, offsets[1],
+		"second poll must request offset 101 (past the committed update 100, NOT past the failed 101)")
+
+	hmu.Lock()
+	defer hmu.Unlock()
+	assert.Equal(t, []int64{1, 2}, handled, "both updates in the batch are attempted in order")
+}
+
+// All-success advances the offset past every update in the batch.
+func TestReceiveLoop_AllSuccess_AdvancesPastBatch(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	up1 := tgbotapi.Update{UpdateID: 100, Message: makeTgMessage(1, "A", "", "hi")}
+	up2 := tgbotapi.Update{UpdateID: 105, Message: makeTgMessage(2, "B", "", "hi")}
+	fetcher := &scriptedFetcher{batches: [][]tgbotapi.Update{{up1, up2}}, cancel: cancel}
+
+	handle := func(_ context.Context, _ *tgbotapi.Message) error { return nil }
+
+	bot := &TelegramBot{logger: slog.Default()}
+	bot.receiveLoop(ctx, fetcher, handle)
+
+	offsets := fetcher.requestedOffsets()
+	require.GreaterOrEqual(t, len(offsets), 2)
+	assert.Equal(t, 106, offsets[1], "second poll must request offset past the last update (105+1)")
+}
+
+// Non-message updates (no Message payload) still advance the offset so the loop
+// does not stall on them.
+func TestReceiveLoop_NonMessageUpdate_AdvancesOffset(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	up := tgbotapi.Update{UpdateID: 200} // no Message
+	fetcher := &scriptedFetcher{batches: [][]tgbotapi.Update{{up}}, cancel: cancel}
+
+	called := false
+	handle := func(_ context.Context, _ *tgbotapi.Message) error { called = true; return nil }
+
+	bot := &TelegramBot{logger: slog.Default()}
+	bot.receiveLoop(ctx, fetcher, handle)
+
+	assert.False(t, called, "non-message updates must not reach the handler")
+	offsets := fetcher.requestedOffsets()
+	require.GreaterOrEqual(t, len(offsets), 2)
+	assert.Equal(t, 201, offsets[1], "a non-message update still advances the offset")
+}
