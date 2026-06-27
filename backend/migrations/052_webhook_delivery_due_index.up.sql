@@ -18,6 +18,22 @@
 -- both filters and orders by COALESCE(next_retry_at, created_at), so this becomes
 -- a forward index scan that stops at the first not-due row (~0.04ms / ~50 buffers
 -- for the same backlog), and is equally fast for a dense burst of due rows.
+--
+-- COALESCE(next_retry_at, created_at) is the effective due-time: the backoff
+-- schedule, or — when next_retry_at is null (never attempted) — the enqueue time.
+-- This equals the worker's old "next_retry_at IS NULL OR next_retry_at <= now()"
+-- predicate because created_at is always insert-time (DEFAULT now(), never set by
+-- EnqueueDelivery) and therefore always <= now() — so a null-next_retry_at row is
+-- always due, exactly as before.
+--
+-- Locking: CREATE INDEX (non-CONCURRENTLY) takes a SHARE lock that blocks writes
+-- to webhook_deliveries for the build. That is acceptable here: webhook delivery
+-- ships dark behind WEBHOOKS_ENABLED (v0.63.0), so this table is effectively
+-- empty when the migration runs and the build is sub-millisecond. The index
+-- exists for FUTURE volume — by the time the table is large this migration is
+-- long applied. (golang-migrate runs each file as one multi-statement Exec, i.e.
+-- an implicit transaction, so CREATE INDEX CONCURRENTLY is not an option without
+-- a separate no-transaction migration path; not warranted for an empty table.)
 DROP INDEX idx_webhook_deliveries_pending;
 
 CREATE INDEX idx_webhook_deliveries_due ON webhook_deliveries (COALESCE(next_retry_at, created_at))

@@ -110,6 +110,11 @@ func (r *Repository) EnqueueDelivery(ctx context.Context, d *domain.WebhookDeliv
 // time. The backoff schedule is authored by domain.WebhookDelivery
 // (NextRetryAfter); this query only compares the persisted due-time to now.
 //
+// This is equivalent to the older "next_retry_at IS NULL OR next_retry_at <=
+// now()" predicate: created_at is always insert-time (DB DEFAULT now(), never set
+// by EnqueueDelivery), so a null-next_retry_at row always satisfies created_at <=
+// now() and is due immediately — exactly as before.
+//
 // Both the WHERE and ORDER BY key on COALESCE(next_retry_at, created_at) so the
 // query rides idx_webhook_deliveries_due (migration 052): a forward index scan
 // that stops at the first not-due row instead of scanning the whole pending
