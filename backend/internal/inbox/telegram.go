@@ -35,6 +35,7 @@ type TelegramBot struct {
 	leadCreatedEmitter   LeadCreatedEmitter
 	leadQualifiedEmitter LeadQualifiedEmitter
 	tx                   TxManager
+	errBackoff           time.Duration
 }
 
 // TelegramBotOption configures a *TelegramBot at construction. Used for
@@ -89,7 +90,7 @@ func NewTelegramBot(token string, repo LeadRepository, prospectRepo ProspectRepo
 	if err != nil {
 		return nil, err
 	}
-	b := &TelegramBot{bot: bot, repo: repo, prospectRepo: prospectRepo, aiClient: aiClient, ownerID: ownerID, bookingLink: bookingLink, logger: slog.Default()}
+	b := &TelegramBot{bot: bot, repo: repo, prospectRepo: prospectRepo, aiClient: aiClient, ownerID: ownerID, bookingLink: bookingLink, logger: slog.Default(), errBackoff: telegramErrBackoff}
 	for _, opt := range opts {
 		opt(b)
 	}
@@ -175,10 +176,8 @@ func (t *TelegramBot) receiveLoop(ctx context.Context, fetcher updateFetcher, ha
 				return
 			}
 			log.Printf("telegram inbox: get updates error: %v", err)
-			select {
-			case <-ctx.Done():
+			if !t.backoff(ctx) {
 				return
-			case <-time.After(telegramErrBackoff):
 			}
 			continue
 		}
@@ -188,9 +187,14 @@ func (t *TelegramBot) receiveLoop(ctx context.Context, fetcher updateFetcher, ha
 				continue
 			}
 			if err := handle(ctx, update.Message); err != nil {
-				// Transient: do NOT advance past this update. Break the batch so
-				// the next poll re-requests from this id and re-delivers it.
+				// Transient: do NOT advance past this update. Back off (a stuck
+				// update would otherwise be re-delivered instantly, busy-looping
+				// the DB and Telegram API), then break so the next poll
+				// re-requests from this id and re-delivers it.
 				log.Printf("telegram inbox: intake failed for update %d, will retry: %v", update.UpdateID, err)
+				if !t.backoff(ctx) {
+					return
+				}
 				break
 			}
 			offset = update.UpdateID + 1
@@ -219,6 +223,21 @@ func getUpdatesCtx(ctx context.Context, fetcher updateFetcher, cfg tgbotapi.Upda
 		return nil, ctx.Err()
 	case r := <-ch:
 		return r.updates, r.err
+	}
+}
+
+// backoff pauses for t.errBackoff, returning false if ctx is cancelled during
+// the wait (the caller should then exit). A zero errBackoff returns immediately
+// — used by unit tests to keep the loop fast.
+func (t *TelegramBot) backoff(ctx context.Context) bool {
+	if t.errBackoff <= 0 {
+		return ctx.Err() == nil
+	}
+	select {
+	case <-ctx.Done():
+		return false
+	case <-time.After(t.errBackoff):
+		return true
 	}
 }
 
