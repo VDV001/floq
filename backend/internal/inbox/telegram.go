@@ -23,15 +23,17 @@ const bookingLinkReplyTemplate = "Отлично! Вот ссылка для в�
 
 // TelegramBot listens for incoming Telegram messages and creates leads.
 type TelegramBot struct {
-	bot             *tgbotapi.BotAPI
-	repo            LeadRepository
-	prospectRepo    ProspectRepository
-	aiClient        AIQualifier
-	identityLinker  IdentityLinker
-	pendingProposer PendingReplyProposer
-	logger          *slog.Logger
-	ownerID         uuid.UUID
-	bookingLink     string
+	bot                   *tgbotapi.BotAPI
+	repo                  LeadRepository
+	prospectRepo          ProspectRepository
+	aiClient              AIQualifier
+	identityLinker        IdentityLinker
+	pendingProposer       PendingReplyProposer
+	logger                *slog.Logger
+	ownerID               uuid.UUID
+	bookingLink           string
+	leadCreatedObserver   LeadCreatedObserver
+	leadQualifiedObserver LeadQualifiedObserver
 }
 
 // TelegramBotOption configures a *TelegramBot at construction. Used for
@@ -106,6 +108,19 @@ func (t *TelegramBot) Bot() *tgbotapi.BotAPI {
 // .SetSender pattern in main.go.
 func (t *TelegramBot) SetPendingProposer(p PendingReplyProposer) {
 	t.pendingProposer = p
+}
+
+// SetLeadCreatedObserver wires the post-lead-creation hook after construction
+// (the webhooks usecase it bridges to is built later in the composition root).
+func (t *TelegramBot) SetLeadCreatedObserver(o LeadCreatedObserver) {
+	t.leadCreatedObserver = o
+}
+
+// SetLeadQualifiedObserver wires the post-auto-qualification hook after
+// construction (the webhooks usecase it bridges to is built later in the
+// composition root).
+func (t *TelegramBot) SetLeadQualifiedObserver(o LeadQualifiedObserver) {
+	t.leadQualifiedObserver = o
 }
 
 // Start begins listening for Telegram updates and processing them.
@@ -183,6 +198,9 @@ func (t *TelegramBot) handleMessage(ctx context.Context, msg *tgbotapi.Message) 
 			return
 		}
 		log.Printf("telegram inbox: new lead created for chat %d (%s)", chatID, contactName)
+		if t.leadCreatedObserver != nil {
+			t.leadCreatedObserver.OnLeadCreated(ctx, lead)
+		}
 
 		if t.identityLinker != nil && username != "" {
 			if err := t.identityLinker.LinkLeadToIdentity(ctx, t.ownerID, lead.ID, "", "", username); err != nil {
@@ -291,6 +309,10 @@ func (t *TelegramBot) handleMessage(ctx context.Context, msg *tgbotapi.Message) 
 				return
 			}
 			log.Printf("telegram inbox: lead %s qualified (score=%d)", lead.ID, result.Score)
+			if t.leadQualifiedObserver != nil {
+				lead.Status = StatusQualified
+				t.leadQualifiedObserver.OnLeadQualified(qCtx, lead)
+			}
 		}()
 	}
 }

@@ -351,6 +351,48 @@ func TestQualifyLead_ObserverNotCalledOnFailure(t *testing.T) {
 	assert.Equal(t, 0, obs.calls, "no qualification → no notification")
 }
 
+type fakeArchivedObserver struct {
+	calls      int
+	calledWith *domain.Lead
+}
+
+func (f *fakeArchivedObserver) OnLeadArchived(_ context.Context, lead *domain.Lead) {
+	f.calls++
+	f.calledWith = lead
+}
+
+func TestArchiveLead_NotifiesObserver(t *testing.T) {
+	repo := newMockRepo()
+	leadID := uuid.New()
+	repo.leads[leadID] = &domain.Lead{
+		ID:          leadID,
+		UserID:      uuid.New(),
+		ContactName: "Ivan",
+		Channel:     domain.ChannelTelegram,
+		Status:      domain.StatusNew,
+	}
+	obs := &fakeArchivedObserver{}
+	uc := NewUseCase(repo, &mockAI{}, nil, WithLeadArchivedObserver(obs))
+
+	require.NoError(t, uc.ArchiveLead(context.Background(), leadID))
+
+	require.Equal(t, 1, obs.calls, "observer must be notified after a successful archive")
+	require.NotNil(t, obs.calledWith)
+	assert.Equal(t, leadID, obs.calledWith.ID)
+	assert.NotNil(t, obs.calledWith.ArchivedAt, "observer sees the archived timestamp")
+}
+
+func TestArchiveLead_ObserverNotCalledOnFailure(t *testing.T) {
+	repo := newMockRepo()
+	obs := &fakeArchivedObserver{}
+	uc := NewUseCase(repo, &mockAI{}, nil, WithLeadArchivedObserver(obs))
+
+	// Unknown lead → error, no notification.
+	err := uc.ArchiveLead(context.Background(), uuid.New())
+	require.Error(t, err)
+	assert.Equal(t, 0, obs.calls)
+}
+
 func TestQualifyLead_NotFound(t *testing.T) {
 	repo := newMockRepo()
 	uc := NewUseCase(repo, &mockAI{}, nil)

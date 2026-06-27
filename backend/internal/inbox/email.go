@@ -26,19 +26,21 @@ import (
 // extracted and their text content is appended to the qualification
 // context. A nil analyzer keeps the legacy text-only behaviour.
 type EmailPoller struct {
-	store           ConfigStore
-	repo            LeadRepository
-	prospectRepo    ProspectRepository
-	seqRepo         SequenceRepository
-	aiClient        AIQualifier
-	analyzer        *attachments.Analyzer
-	identityLinker  IdentityLinker
-	enricher        EnrichmentEnqueuer
-	pendingProposer PendingReplyProposer
-	bookingLink     string
-	logger          *slog.Logger
-	ownerID         uuid.UUID
-	dialer          proxy.ContextDialer
+	store                 ConfigStore
+	repo                  LeadRepository
+	prospectRepo          ProspectRepository
+	seqRepo               SequenceRepository
+	aiClient              AIQualifier
+	analyzer              *attachments.Analyzer
+	identityLinker        IdentityLinker
+	enricher              EnrichmentEnqueuer
+	pendingProposer       PendingReplyProposer
+	leadCreatedObserver   LeadCreatedObserver
+	leadQualifiedObserver LeadQualifiedObserver
+	bookingLink           string
+	logger                *slog.Logger
+	ownerID               uuid.UUID
+	dialer                proxy.ContextDialer
 
 	fallbackHost     string
 	fallbackPort     string
@@ -135,6 +137,19 @@ func WithEmailBookingLink(link string) EmailPollerOption {
 // own collaborators.
 func (e *EmailPoller) SetPendingProposer(p PendingReplyProposer) {
 	e.pendingProposer = p
+}
+
+// SetLeadCreatedObserver wires the post-lead-creation hook after construction
+// (the webhooks usecase it bridges to is built later in the composition root).
+func (e *EmailPoller) SetLeadCreatedObserver(o LeadCreatedObserver) {
+	e.leadCreatedObserver = o
+}
+
+// SetLeadQualifiedObserver wires the post-auto-qualification hook after
+// construction (the webhooks usecase it bridges to is built later in the
+// composition root).
+func (e *EmailPoller) SetLeadQualifiedObserver(o LeadQualifiedObserver) {
+	e.leadQualifiedObserver = o
 }
 
 func (e *EmailPoller) Start(ctx context.Context) {
@@ -436,6 +451,9 @@ func (e *EmailPoller) processEmail(ctx context.Context, fromName, fromEmail, bod
 			return
 		}
 		log.Printf("[email-poller] new lead created for %s (%s)", fromEmail, contactName)
+		if e.leadCreatedObserver != nil {
+			e.leadCreatedObserver.OnLeadCreated(ctx, lead)
+		}
 
 		if e.identityLinker != nil {
 			if err := e.identityLinker.LinkLeadToIdentity(ctx, e.ownerID, lead.ID, fromEmail, "", ""); err != nil {
@@ -570,6 +588,10 @@ func (e *EmailPoller) processEmail(ctx context.Context, fromName, fromEmail, bod
 				return
 			}
 			log.Printf("[email-poller] lead %s qualified (score=%d)", lead.ID, result.Score)
+			if e.leadQualifiedObserver != nil {
+				lead.Status = StatusQualified
+				e.leadQualifiedObserver.OnLeadQualified(qCtx, lead)
+			}
 		}()
 	}
 }

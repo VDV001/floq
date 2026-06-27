@@ -95,6 +95,16 @@ type QualificationObserver interface {
 	OnLeadQualified(ctx context.Context, lead *Lead)
 }
 
+// LeadArchivedObserver is notified after a lead is archived, so cross-context
+// side-effects (e.g. emitting a lead.archived webhook, #181) can fire without
+// the leads context importing those modules. Same contract as
+// QualificationObserver: implemented in the composition root, nil disables the
+// hook, and the method returns nothing — a failing side-effect must never fail
+// the archive.
+type LeadArchivedObserver interface {
+	OnLeadArchived(ctx context.Context, lead *Lead)
+}
+
 // --- Prospect suggestion (cross-channel dedup) ---
 
 // SuggestionConfidence classifies how strong the cross-channel match signal is.

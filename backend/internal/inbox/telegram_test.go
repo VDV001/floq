@@ -276,6 +276,72 @@ func TestHandleMessage_NewLead(t *testing.T) {
 	assert.Equal(t, StatusQualified, repo.updatedStatuses[lead.ID])
 }
 
+type spyLeadCreatedObserver struct {
+	mu    sync.Mutex
+	leads []*InboxLead
+}
+
+func (s *spyLeadCreatedObserver) OnLeadCreated(_ context.Context, lead *InboxLead) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.leads = append(s.leads, lead)
+}
+
+func (s *spyLeadCreatedObserver) count() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return len(s.leads)
+}
+
+func TestHandleMessage_NewLead_NotifiesLeadCreatedObserver(t *testing.T) {
+	repo := newMockLeadRepo()
+	aiClient := &mockAIQualifier{result: &QualificationResult{Score: 5}}
+	ownerID := uuid.New()
+	bot := newTestBot(repo, aiClient, ownerID, "https://cal.com/test")
+	obs := &spyLeadCreatedObserver{}
+	bot.SetLeadCreatedObserver(obs)
+
+	bot.handleMessage(context.Background(), makeTgMessage(12345, "Ivan", "Petrov", "Hello"))
+	waitQualifyDone(t, repo)
+
+	require.Equal(t, 1, obs.count(), "a new telegram lead must notify the observer")
+	assert.Equal(t, ChannelTelegram, obs.leads[0].Channel)
+	assert.Equal(t, ownerID, obs.leads[0].UserID)
+}
+
+type spyLeadQualifiedObserver struct {
+	mu    sync.Mutex
+	leads []*InboxLead
+}
+
+func (s *spyLeadQualifiedObserver) OnLeadQualified(_ context.Context, lead *InboxLead) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.leads = append(s.leads, lead)
+}
+
+func (s *spyLeadQualifiedObserver) count() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return len(s.leads)
+}
+
+func TestHandleMessage_AutoQualify_NotifiesLeadQualifiedObserver(t *testing.T) {
+	repo := newMockLeadRepo()
+	aiClient := &mockAIQualifier{result: &QualificationResult{Score: 8}}
+	ownerID := uuid.New()
+	bot := newTestBot(repo, aiClient, ownerID, "https://cal.com/test")
+	obs := &spyLeadQualifiedObserver{}
+	bot.SetLeadQualifiedObserver(obs)
+
+	bot.handleMessage(context.Background(), makeTgMessage(12345, "Ivan", "Petrov", "Hello"))
+	waitQualifyDone(t, repo)
+
+	require.Eventually(t, func() bool { return obs.count() == 1 }, 2*time.Second, 10*time.Millisecond,
+		"auto-qualification must notify the lead-qualified observer")
+	assert.Equal(t, ownerID, obs.leads[0].UserID)
+}
+
 func TestHandleMessage_ExistingLead(t *testing.T) {
 	repo := newMockLeadRepo()
 	aiClient := &mockAIQualifier{
