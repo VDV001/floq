@@ -29,18 +29,21 @@ func TestSignPayload_SecretAndPayloadSensitive(t *testing.T) {
 	}
 }
 
-func TestVerifyPayloadSignature(t *testing.T) {
+// A receiver verifies by recomputing the HMAC over the raw body under the shared
+// secret and comparing to X-Floq-Signature. Mirror that here: the signature only
+// matches for the exact (payload, secret) pair.
+func TestSignPayload_VerifiableByRecompute(t *testing.T) {
 	payload := []byte(`{"event":"lead.qualified"}`)
 	secret := "supersecretvalue123"
 	sig := SignPayload(payload, secret)
 
-	if !VerifyPayloadSignature(payload, secret, sig) {
-		t.Error("a freshly produced signature must verify")
+	if sig != SignPayload(payload, secret) {
+		t.Error("a freshly produced signature must match a recompute")
 	}
-	if VerifyPayloadSignature(payload, "wrongsecret123", sig) {
-		t.Error("a signature must not verify under the wrong secret")
+	if sig == SignPayload(payload, "wrongsecret123") {
+		t.Error("a signature must not match under the wrong secret")
 	}
-	if VerifyPayloadSignature([]byte(`{"event":"tampered"}`), secret, sig) {
-		t.Error("a tampered payload must not verify")
+	if sig == SignPayload([]byte(`{"event":"tampered"}`), secret) {
+		t.Error("a tampered payload must not match")
 	}
 }

@@ -39,10 +39,3 @@ func computeMAC(payload []byte, secret string) []byte {
 func SignPayload(payload []byte, secret string) string {
 	return "sha256=" + hex.EncodeToString(computeMAC(payload, secret))
 }
-
-// VerifyPayloadSignature reports whether sig is a valid signature for payload
-// under secret. The comparison is constant-time. Provided for tests and any
-// future inbound verification; the delivery path only signs.
-func VerifyPayloadSignature(payload []byte, secret, sig string) bool {
-	return hmac.Equal([]byte(sig), []byte(SignPayload(payload, secret)))
-}
