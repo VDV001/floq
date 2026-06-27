@@ -15,7 +15,9 @@ import { AiProviderSection } from "@/components/settings/AiProviderSection";
 import { InboxViewSection } from "@/components/settings/InboxViewSection";
 import { OnecSection } from "@/components/settings/OnecSection";
 import { OnecMappingEditor } from "@/components/settings/OnecMappingEditor";
+import { WebhookSection } from "@/components/settings/WebhookSection";
 import { useOnecSettings } from "@/hooks/useOnecSettings";
+import { useWebhooks } from "@/hooks/useWebhooks";
 
 export default function SettingsPage() {
   const core = useSettingsCore();
@@ -26,6 +28,7 @@ export default function SettingsPage() {
   const smtp = useSmtpSettings(core.settings, core.setSettings);
   const ai = useAiSettings(core.settings, core.setSettings);
   const onec = useOnecSettings();
+  const webhooks = useWebhooks();
 
   const [notifyTg, setNotifyTg] = useState(true);
   const [notifyEmail, setNotifyEmail] = useState(false);
@@ -129,6 +132,26 @@ export default function SettingsPage() {
                 />
               </>
             )}
+            <section className="rounded-xl bg-white p-8 shadow-sm ring-1 ring-[#c3c6d7]/10">
+              <WebhookSection
+                endpoints={webhooks.endpoints}
+                eventTypes={webhooks.eventTypes}
+                loading={webhooks.loading}
+                url={webhooks.url}
+                setUrl={webhooks.setUrl}
+                secret={webhooks.secret}
+                setSecret={webhooks.setSecret}
+                selectedEvents={webhooks.selectedEvents}
+                toggleEvent={webhooks.toggleEvent}
+                creating={webhooks.creating}
+                createError={webhooks.createError}
+                onCreate={webhooks.create}
+                onDelete={webhooks.remove}
+                onTest={webhooks.test}
+                testingId={webhooks.testingId}
+                notice={webhooks.notice}
+              />
+            </section>
           </div>
         </div>
       </div>

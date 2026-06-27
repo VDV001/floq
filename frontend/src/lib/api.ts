@@ -80,11 +80,11 @@ async function apiFetch<T>(path: string, options?: RequestInit): Promise<T> {
     throw new ApiError(message, res.status, body?.code, body?.remedy);
   }
 
-  // 204 No Content has an empty body — calling .json() throws
-  // SyntaxError. The HITL approve/reject endpoints answer 204 on
-  // success; callers expect undefined (the generic T is typically
-  // void at the call site).
-  if (res.status === 204) return undefined as T;
+  // 204 No Content / 202 Accepted have empty bodies — calling .json()
+  // throws SyntaxError. The HITL approve/reject endpoints answer 204, and
+  // the webhook test-delivery endpoint answers 202; callers expect
+  // undefined (the generic T is typically void at the call site).
+  if (res.status === 204 || res.status === 202) return undefined as T;
   return res.json();
 }
 
@@ -440,6 +440,16 @@ export const api = {
     apiFetch<{ saved: boolean }>("/api/onec/mapping", { method: "PUT", body: JSON.stringify({ rules }) }),
   getCostSummary: (from: string, to: string) =>
     apiFetch<CostSummaryResponse>(`/api/audit/cost-summary?from=${from}&to=${to}`),
+
+  // Outgoing webhooks (#181)
+  getWebhooks: () => apiFetch<WebhookEndpoint[]>("/api/webhooks"),
+  getWebhookEventTypes: () => apiFetch<string[]>("/api/webhooks/event-types"),
+  createWebhook: (data: { url: string; events: string[]; secret: string }) =>
+    apiFetch<WebhookEndpoint>("/api/webhooks", { method: "POST", body: JSON.stringify(data) }),
+  deleteWebhook: (id: string) =>
+    apiFetch<void>(`/api/webhooks/${id}`, { method: "DELETE" }),
+  testWebhook: (id: string) =>
+    apiFetch<void>(`/api/webhooks/${id}/test`, { method: "POST" }),
 };
 
 // Types
@@ -838,6 +848,15 @@ export interface ScoreBucket {
 // API — never the raw value. Send a new auth_secret only when replacing it; an
 // empty or masked value tells the backend to keep the stored one.
 export type OnecAuthType = "basic" | "token";
+
+// WebhookEndpoint mirrors the backend endpointResponse (#181): the signing
+// secret is deliberately never returned by the API, so it is absent here.
+export interface WebhookEndpoint {
+  id: string;
+  url: string;
+  events: string[];
+  active: boolean;
+}
 
 export interface OnecConfig {
   base_url: string;
