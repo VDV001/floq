@@ -309,6 +309,65 @@ func TestHandleMessage_NewLead_NotifiesLeadCreatedObserver(t *testing.T) {
 	assert.Equal(t, ownerID, obs.leads[0].UserID)
 }
 
+// --- #199 transactional outbox emitter spies (shared with email_test.go) ---
+
+type spyLeadCreatedEmitter struct {
+	mu    sync.Mutex
+	leads []*InboxLead
+	err   error
+}
+
+func (s *spyLeadCreatedEmitter) EmitLeadCreated(_ context.Context, lead *InboxLead) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.leads = append(s.leads, lead)
+	return s.err
+}
+
+func (s *spyLeadCreatedEmitter) count() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return len(s.leads)
+}
+
+type spyLeadQualifiedEmitter struct {
+	mu    sync.Mutex
+	leads []*InboxLead
+	err   error
+}
+
+func (s *spyLeadQualifiedEmitter) EmitLeadQualified(_ context.Context, lead *InboxLead) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.leads = append(s.leads, lead)
+	return s.err
+}
+
+func (s *spyLeadQualifiedEmitter) count() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return len(s.leads)
+}
+
+func TestHandleMessage_NewLead_EmitsLeadCreatedInTransaction(t *testing.T) {
+	repo := newMockLeadRepo()
+	aiClient := &mockAIQualifier{result: &QualificationResult{Score: 5}}
+	ownerID := uuid.New()
+	bot := newTestBot(repo, aiClient, ownerID, "https://cal.com/test")
+	emit := &spyLeadCreatedEmitter{}
+	tx := &inlineTx{}
+	bot.SetTxManager(tx)
+	bot.SetLeadCreatedEmitter(emit)
+
+	bot.handleMessage(context.Background(), makeTgMessage(12345, "Ivan", "Petrov", "Hello"))
+	waitQualifyDone(t, repo)
+
+	require.Equal(t, 1, emit.count(), "a new telegram lead must emit lead.created")
+	assert.GreaterOrEqual(t, tx.count(), 1, "lead.created must be emitted inside a transaction")
+	assert.Equal(t, ChannelTelegram, emit.leads[0].Channel)
+	assert.Equal(t, ownerID, emit.leads[0].UserID)
+}
+
 type spyLeadQualifiedObserver struct {
 	mu    sync.Mutex
 	leads []*InboxLead

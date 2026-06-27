@@ -539,13 +539,25 @@ func (s *spyApprovedEmitter) EmitPendingReplyApproved(_ context.Context, pr *Pen
 
 // inlineTx models db.TxManager.WithTx for inbox unit tests: it runs fn inline and
 // propagates its error. Real rollback is covered by integration tests; here we
-// only assert orchestration (the approval write + emit run under one WithTx and
-// an emit error propagates out instead of being swallowed).
-type inlineTx struct{ entered int }
+// only assert orchestration (the write + emit run under one WithTx and an emit
+// error propagates out instead of being swallowed). Thread-safe because some
+// inbox emit paths run in background goroutines (auto-qualification).
+type inlineTx struct {
+	mu      sync.Mutex
+	entered int
+}
 
 func (t *inlineTx) WithTx(ctx context.Context, fn func(context.Context) error) error {
+	t.mu.Lock()
 	t.entered++
+	t.mu.Unlock()
 	return fn(ctx)
+}
+
+func (t *inlineTx) count() int {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.entered
 }
 
 func TestPendingReplyUseCase_Approve_EmitsInsideTransaction(t *testing.T) {
@@ -567,8 +579,8 @@ func TestPendingReplyUseCase_Approve_EmitsInsideTransaction(t *testing.T) {
 		t.Fatalf("Approve error: %v", err)
 	}
 
-	if tx.entered != 1 {
-		t.Errorf("tx entered = %d, want 1 (approval write + emit must share one transaction)", tx.entered)
+	if n := tx.count(); n != 1 {
+		t.Errorf("tx entered = %d, want 1 (approval write + emit must share one transaction)", n)
 	}
 	if len(emit.calls) != 1 {
 		t.Fatalf("emitter calls = %d, want 1", len(emit.calls))

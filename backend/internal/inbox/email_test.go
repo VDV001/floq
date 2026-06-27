@@ -421,6 +421,48 @@ func TestProcessEmail_AutoQualify_NotifiesLeadQualifiedObserver(t *testing.T) {
 	assert.Equal(t, ownerID, obs.leads[0].UserID)
 }
 
+func TestProcessEmail_NewLead_EmitsLeadCreatedInTransaction(t *testing.T) {
+	repo := newEmailMockLeadRepo()
+	prospectRepo := newEmailMockProspectRepo()
+	seqRepo := newMockSequenceRepo()
+	aiClient := &mockAIQualifier{result: &QualificationResult{Score: 5}}
+	ownerID := uuid.New()
+	poller := newTestEmailPoller(repo, prospectRepo, seqRepo, aiClient, ownerID)
+	emit := &spyLeadCreatedEmitter{}
+	tx := &inlineTx{}
+	poller.SetTxManager(tx)
+	poller.SetLeadCreatedEmitter(emit)
+
+	poller.processEmail(context.Background(), "John Doe", "john@example.com", "I need a website", nil)
+	waitQualifyDone(t, &repo.mockLeadRepo)
+
+	require.Equal(t, 1, emit.count(), "a new email lead must emit lead.created")
+	assert.GreaterOrEqual(t, tx.count(), 1, "lead.created must be emitted inside a transaction")
+	assert.Equal(t, ChannelEmail, emit.leads[0].Channel)
+	assert.Equal(t, ownerID, emit.leads[0].UserID)
+}
+
+func TestProcessEmail_AutoQualify_EmitsLeadQualifiedInTransaction(t *testing.T) {
+	repo := newEmailMockLeadRepo()
+	prospectRepo := newEmailMockProspectRepo()
+	seqRepo := newMockSequenceRepo()
+	aiClient := &mockAIQualifier{result: &QualificationResult{Score: 7}}
+	ownerID := uuid.New()
+	poller := newTestEmailPoller(repo, prospectRepo, seqRepo, aiClient, ownerID)
+	emit := &spyLeadQualifiedEmitter{}
+	tx := &inlineTx{}
+	poller.SetTxManager(tx)
+	poller.SetLeadQualifiedEmitter(emit)
+
+	poller.processEmail(context.Background(), "John Doe", "john@example.com", "I need a website", nil)
+	waitQualifyDone(t, &repo.mockLeadRepo)
+
+	require.Eventually(t, func() bool { return emit.count() == 1 }, 2*time.Second, 10*time.Millisecond,
+		"auto-qualification must emit lead.qualified")
+	assert.GreaterOrEqual(t, tx.count(), 1, "lead.qualified must be emitted inside a transaction")
+	assert.Equal(t, ownerID, emit.leads[0].UserID)
+}
+
 func TestProcessEmail_NewLead_WithProspectMatch(t *testing.T) {
 	repo := newEmailMockLeadRepo()
 	prospectRepo := newEmailMockProspectRepo()
