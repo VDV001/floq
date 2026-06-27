@@ -34,6 +34,9 @@ type TelegramBot struct {
 	bookingLink           string
 	leadCreatedObserver   LeadCreatedObserver
 	leadQualifiedObserver LeadQualifiedObserver
+	tx                    TxManager
+	leadCreatedEmitter    LeadCreatedEmitter
+	leadQualifiedEmitter  LeadQualifiedEmitter
 }
 
 // TelegramBotOption configures a *TelegramBot at construction. Used for
@@ -123,6 +126,16 @@ func (t *TelegramBot) SetLeadQualifiedObserver(o LeadQualifiedObserver) {
 	t.leadQualifiedObserver = o
 }
 
+// SetTxManager wires the transaction manager (#199) so lead.created and
+// lead.qualified emit inside the same transaction as their domain write.
+func (t *TelegramBot) SetTxManager(tx TxManager) { t.tx = tx }
+
+// SetLeadCreatedEmitter wires the in-transaction lead.created outbox emitter (#199).
+func (t *TelegramBot) SetLeadCreatedEmitter(e LeadCreatedEmitter) { t.leadCreatedEmitter = e }
+
+// SetLeadQualifiedEmitter wires the in-transaction lead.qualified outbox emitter (#199).
+func (t *TelegramBot) SetLeadQualifiedEmitter(e LeadQualifiedEmitter) { t.leadQualifiedEmitter = e }
+
 // Start begins listening for Telegram updates and processing them.
 // It blocks until ctx is cancelled.
 func (t *TelegramBot) Start(ctx context.Context) {
@@ -193,12 +206,18 @@ func (t *TelegramBot) handleMessage(ctx context.Context, msg *tgbotapi.Message) 
 		if prospect != nil {
 			lead.SourceID = prospect.SourceID
 		}
-		if err := t.repo.CreateLead(ctx, lead); err != nil {
+		// Transactional outbox (#199): CreateLead and the lead.created
+		// enqueue commit together. Identity-linking and enrichment below stay
+		// outside — they are best-effort post-intake side-effects.
+		if err := writeThenEmit(ctx, t.tx, t.leadCreatedEmitter != nil,
+			func(c context.Context) error { return t.repo.CreateLead(c, lead) },
+			func(c context.Context) error { return t.leadCreatedEmitter.EmitLeadCreated(c, lead) },
+		); err != nil {
 			log.Printf("telegram inbox: error creating lead: %v", err)
 			return
 		}
 		log.Printf("telegram inbox: new lead created for chat %d (%s)", chatID, contactName)
-		if t.leadCreatedObserver != nil {
+		if t.leadCreatedEmitter == nil && t.leadCreatedObserver != nil {
 			t.leadCreatedObserver.OnLeadCreated(ctx, lead)
 		}
 
@@ -300,17 +319,28 @@ func (t *TelegramBot) handleMessage(ctx context.Context, msg *tgbotapi.Message) 
 				ProviderUsed:      t.aiClient.ProviderName(),
 				GeneratedAt:       time.Now().UTC(),
 			}
-			if err := t.repo.UpsertQualification(qCtx, q); err != nil {
-				log.Printf("telegram inbox: error saving qualification for lead %s: %v", lead.ID, err)
-				return
+			// Reflect the qualified status on the in-memory entity only when a
+			// sink will read it (emitter or observer) — keeps the no-sink path
+			// behaviourally identical to before #199.
+			if t.leadQualifiedEmitter != nil || t.leadQualifiedObserver != nil {
+				lead.Status = StatusQualified
 			}
-			if err := t.repo.UpdateLeadStatus(qCtx, lead.ID, StatusQualified); err != nil {
-				log.Printf("telegram inbox: error updating lead status for %s: %v", lead.ID, err)
+			// Transactional outbox (#199): the qualification writes and the
+			// lead.qualified enqueue commit together or not at all.
+			if err := writeThenEmit(qCtx, t.tx, t.leadQualifiedEmitter != nil,
+				func(c context.Context) error {
+					if err := t.repo.UpsertQualification(c, q); err != nil {
+						return err
+					}
+					return t.repo.UpdateLeadStatus(c, lead.ID, StatusQualified)
+				},
+				func(c context.Context) error { return t.leadQualifiedEmitter.EmitLeadQualified(c, lead) },
+			); err != nil {
+				log.Printf("telegram inbox: error persisting qualification for lead %s: %v", lead.ID, err)
 				return
 			}
 			log.Printf("telegram inbox: lead %s qualified (score=%d)", lead.ID, result.Score)
-			if t.leadQualifiedObserver != nil {
-				lead.Status = StatusQualified
+			if t.leadQualifiedEmitter == nil && t.leadQualifiedObserver != nil {
 				t.leadQualifiedObserver.OnLeadQualified(qCtx, lead)
 			}
 		}()

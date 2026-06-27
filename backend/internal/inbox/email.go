@@ -37,6 +37,9 @@ type EmailPoller struct {
 	pendingProposer       PendingReplyProposer
 	leadCreatedObserver   LeadCreatedObserver
 	leadQualifiedObserver LeadQualifiedObserver
+	tx                    TxManager
+	leadCreatedEmitter    LeadCreatedEmitter
+	leadQualifiedEmitter  LeadQualifiedEmitter
 	bookingLink           string
 	logger                *slog.Logger
 	ownerID               uuid.UUID
@@ -151,6 +154,16 @@ func (e *EmailPoller) SetLeadCreatedObserver(o LeadCreatedObserver) {
 func (e *EmailPoller) SetLeadQualifiedObserver(o LeadQualifiedObserver) {
 	e.leadQualifiedObserver = o
 }
+
+// SetTxManager wires the transaction manager (#199) so lead.created and
+// lead.qualified emit inside the same transaction as their domain write.
+func (e *EmailPoller) SetTxManager(tx TxManager) { e.tx = tx }
+
+// SetLeadCreatedEmitter wires the in-transaction lead.created outbox emitter (#199).
+func (e *EmailPoller) SetLeadCreatedEmitter(em LeadCreatedEmitter) { e.leadCreatedEmitter = em }
+
+// SetLeadQualifiedEmitter wires the in-transaction lead.qualified outbox emitter (#199).
+func (e *EmailPoller) SetLeadQualifiedEmitter(em LeadQualifiedEmitter) { e.leadQualifiedEmitter = em }
 
 func (e *EmailPoller) Start(ctx context.Context) {
 	log.Println("email poller started (every 60s)")
@@ -446,12 +459,18 @@ func (e *EmailPoller) processEmail(ctx context.Context, fromName, fromEmail, bod
 		if hasProspectMatch {
 			lead.SourceID = prospect.SourceID
 		}
-		if err := e.repo.CreateLead(ctx, lead); err != nil {
+		// Transactional outbox (#199): CreateLead and the lead.created enqueue
+		// commit together. Identity-linking and enrichment below stay outside —
+		// they are best-effort post-intake side-effects.
+		if err := writeThenEmit(ctx, e.tx, e.leadCreatedEmitter != nil,
+			func(c context.Context) error { return e.repo.CreateLead(c, lead) },
+			func(c context.Context) error { return e.leadCreatedEmitter.EmitLeadCreated(c, lead) },
+		); err != nil {
 			log.Printf("[email-poller] error creating lead: %v", err)
 			return
 		}
 		log.Printf("[email-poller] new lead created for %s (%s)", fromEmail, contactName)
-		if e.leadCreatedObserver != nil {
+		if e.leadCreatedEmitter == nil && e.leadCreatedObserver != nil {
 			e.leadCreatedObserver.OnLeadCreated(ctx, lead)
 		}
 
@@ -579,17 +598,28 @@ func (e *EmailPoller) processEmail(ctx context.Context, fromName, fromEmail, bod
 				ProviderUsed:      e.aiClient.ProviderName(),
 				GeneratedAt:       time.Now().UTC(),
 			}
-			if err := e.repo.UpsertQualification(qCtx, q); err != nil {
-				log.Printf("[email-poller] error saving qualification for lead %s: %v", lead.ID, err)
-				return
+			// Reflect the qualified status on the in-memory entity only when a
+			// sink will read it (emitter or observer) — keeps the no-sink path
+			// behaviourally identical to before #199.
+			if e.leadQualifiedEmitter != nil || e.leadQualifiedObserver != nil {
+				lead.Status = StatusQualified
 			}
-			if err := e.repo.UpdateLeadStatus(qCtx, lead.ID, StatusQualified); err != nil {
-				log.Printf("[email-poller] error updating lead status for %s: %v", lead.ID, err)
+			// Transactional outbox (#199): the qualification writes and the
+			// lead.qualified enqueue commit together or not at all.
+			if err := writeThenEmit(qCtx, e.tx, e.leadQualifiedEmitter != nil,
+				func(c context.Context) error {
+					if err := e.repo.UpsertQualification(c, q); err != nil {
+						return err
+					}
+					return e.repo.UpdateLeadStatus(c, lead.ID, StatusQualified)
+				},
+				func(c context.Context) error { return e.leadQualifiedEmitter.EmitLeadQualified(c, lead) },
+			); err != nil {
+				log.Printf("[email-poller] error persisting qualification for lead %s: %v", lead.ID, err)
 				return
 			}
 			log.Printf("[email-poller] lead %s qualified (score=%d)", lead.ID, result.Score)
-			if e.leadQualifiedObserver != nil {
-				lead.Status = StatusQualified
+			if e.leadQualifiedEmitter == nil && e.leadQualifiedObserver != nil {
 				e.leadQualifiedObserver.OnLeadQualified(qCtx, lead)
 			}
 		}()
