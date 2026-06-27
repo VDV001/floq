@@ -60,6 +60,27 @@ type SequenceCompletionObserver interface {
 	OnSequenceCompleted(ctx context.Context, ev SequenceCompletion)
 }
 
+// TxManager runs fn within a database transaction, exposing it through the
+// context so transaction-aware repositories (and the sequence-completion
+// emitter) join it via db.ConnFromCtx. Satisfied by *db.TxManager. Drives the
+// #199 transactional outbox for sequence.completed: the dispatch's sent/bounced
+// mark and the completion enqueue commit together. A nil TxManager (or emitter)
+// falls back to the legacy post-commit observer path.
+type TxManager interface {
+	WithTx(ctx context.Context, fn func(ctx context.Context) error) error
+}
+
+// SequenceCompletionEmitter writes sequence.completed transactionally, inside
+// the dispatch transaction that marked the run's last message sent/bounced
+// (#199) — unlike SequenceCompletionObserver which fires post-commit. A non-nil
+// error aborts that transaction (fail-closed); the un-marked message is re-sent
+// on the next tick, which is safe on the idempotent Resend path and within the
+// pre-existing accepted duplicate window on the SMTP path. Implemented in the
+// composition root.
+type SequenceCompletionEmitter interface {
+	EmitSequenceCompleted(ctx context.Context, ev SequenceCompletion) error
+}
+
 // ProspectLookup reads prospect data and the suppression list — everything the
 // outbound context needs from the prospects context to make a send decision.
 type ProspectLookup interface {

@@ -109,6 +109,12 @@ type Sender struct {
 	// sequence.completed notification (e.g. when webhooks are off).
 	seqObserver SequenceCompletionObserver
 
+	// tx + seqEmitter drive the #199 transactional outbox: when both are set,
+	// the dispatch's sent/bounced mark and the sequence.completed enqueue commit
+	// in one transaction. nil falls back to the post-commit seqObserver path.
+	tx         TxManager
+	seqEmitter SequenceCompletionEmitter
+
 	tgLastSent time.Time
 	tgRateMu   sync.Mutex
 }
@@ -125,6 +131,15 @@ func (s *Sender) SetSendGuard(guard SendGuard) { s.guard = guard }
 // SetSequenceCompletionObserver wires the observer notified when a prospect's
 // sequence run finishes sending. nil disables the notification.
 func (s *Sender) SetSequenceCompletionObserver(o SequenceCompletionObserver) { s.seqObserver = o }
+
+// SetTxManager wires the transaction manager (#199) so the dispatch mark and the
+// sequence.completed enqueue commit together.
+func (s *Sender) SetTxManager(tx TxManager) { s.tx = tx }
+
+// SetSequenceCompletionEmitter wires the in-transaction sequence.completed outbox
+// emitter (#199). When set together with a TxManager it supersedes the
+// post-commit observer.
+func (s *Sender) SetSequenceCompletionEmitter(e SequenceCompletionEmitter) { s.seqEmitter = e }
 
 // noteRunProgress fires the sequence-completion observer if the just-dispatched
 // message was the last pending one for its (prospect, sequence) run. Best-effort
@@ -155,6 +170,53 @@ func (s *Sender) noteRunProgress(ctx context.Context, msg seqdomain.OutboundMess
 			SequenceID: msg.SequenceID,
 		})
 	}
+}
+
+// commitDispatch persists a dispatch outcome (markFn = MarkSent or MarkBounced)
+// and fires sequence-completion. When a transactional emitter is wired (#199),
+// the mark and the sequence.completed enqueue run in ONE db.WithTx so they
+// commit together (fail-closed). A rollback leaves the message un-marked and it
+// is re-sent on the next tick — safe on the idempotent Resend path, and within
+// the pre-existing accepted SMTP duplicate window (see sendViaSMTPWith). With no
+// emitter/TxManager it persists the mark then fires the post-commit observer,
+// best-effort — the legacy behaviour. Returns the mark/emit error so the caller
+// logs and skips this message's remaining post-send steps.
+func (s *Sender) commitDispatch(ctx context.Context, msg seqdomain.OutboundMessage, userID uuid.UUID, markFn func(context.Context) error) error {
+	if s.seqEmitter != nil && s.tx != nil {
+		return s.tx.WithTx(ctx, func(txCtx context.Context) error {
+			if err := markFn(txCtx); err != nil {
+				return err
+			}
+			return s.emitIfRunComplete(txCtx, msg, userID)
+		})
+	}
+	if err := markFn(ctx); err != nil {
+		return err
+	}
+	s.noteRunProgress(ctx, msg, userID)
+	return nil
+}
+
+// emitIfRunComplete enqueues sequence.completed when msg was the run's last
+// pending dispatch. It runs inside the dispatch transaction so the count
+// reflects the just-persisted mark. A message with no sequence (ad-hoc send) is
+// a no-op — mirroring noteRunProgress.
+func (s *Sender) emitIfRunComplete(ctx context.Context, msg seqdomain.OutboundMessage, userID uuid.UUID) error {
+	if msg.SequenceID == uuid.Nil {
+		return nil
+	}
+	remaining, err := s.seqRepo.CountPendingDispatch(ctx, msg.ProspectID, msg.SequenceID)
+	if err != nil {
+		return fmt.Errorf("outbound: sequence-completion count for prospect %s seq %s: %w", msg.ProspectID, msg.SequenceID, err)
+	}
+	if remaining == 0 {
+		return s.seqEmitter.EmitSequenceCompleted(ctx, SequenceCompletion{
+			UserID:     userID,
+			ProspectID: msg.ProspectID,
+			SequenceID: msg.SequenceID,
+		})
+	}
+	return nil
 }
 
 // recipientAllowed applies the send guard's per-recipient check, failing
@@ -385,9 +447,12 @@ func (s *Sender) SendPending(ctx context.Context) error {
 					log.Printf("[outbound] refusing to mark %s bounced: %v", msg.ID, err)
 					continue
 				}
-				_ = s.seqRepo.MarkBounced(ctx, msg.ID, *msg.BouncedAt)
+				if err := s.commitDispatch(ctx, msg, prospect.UserID, func(c context.Context) error {
+					return s.seqRepo.MarkBounced(c, msg.ID, *msg.BouncedAt)
+				}); err != nil {
+					log.Printf("[outbound] failed to persist %s as bounced: %v", msg.ID, err)
+				}
 				_ = s.prospectRepo.UpdateVerification(ctx, msg.ProspectID, prospectsdomain.VerifyStatusInvalid, 0, `{"bounce":true}`, time.Now().UTC())
-				s.noteRunProgress(ctx, msg, prospect.UserID)
 				continue
 			}
 			log.Printf("[outbound] send failed to %s (msg %s): %v", prospect.Email, msg.ID, sendErr)
@@ -400,11 +465,12 @@ func (s *Sender) SendPending(ctx context.Context) error {
 			log.Printf("[outbound] refusing to mark %s sent: %v", msg.ID, err)
 			continue
 		}
-		if err := s.seqRepo.MarkSent(ctx, msg.ID, *msg.SentAt); err != nil {
+		if err := s.commitDispatch(ctx, msg, prospect.UserID, func(c context.Context) error {
+			return s.seqRepo.MarkSent(c, msg.ID, *msg.SentAt)
+		}); err != nil {
 			log.Printf("[outbound] failed to persist %s as sent: %v", msg.ID, err)
 			continue
 		}
-		s.noteRunProgress(ctx, msg, prospect.UserID)
 
 		log.Printf("[outbound] sent email to %s (msg %s)", prospect.Email, msg.ID)
 	}
@@ -623,11 +689,12 @@ func (s *Sender) handleTelegramMessage(ctx context.Context, msg seqdomain.Outbou
 		log.Printf("[outbound] refusing to mark telegram %s sent: %v", msg.ID, err)
 		return
 	}
-	if err := s.seqRepo.MarkSent(ctx, msg.ID, *msg.SentAt); err != nil {
+	if err := s.commitDispatch(ctx, msg, prospect.UserID, func(c context.Context) error {
+		return s.seqRepo.MarkSent(c, msg.ID, *msg.SentAt)
+	}); err != nil {
 		log.Printf("[outbound] failed to persist telegram %s as sent: %v", msg.ID, err)
 		return
 	}
-	s.noteRunProgress(ctx, msg, prospect.UserID)
 
 	log.Printf("[outbound] sent telegram message to %s (msg %s)", prospect.Phone, msg.ID)
 }
