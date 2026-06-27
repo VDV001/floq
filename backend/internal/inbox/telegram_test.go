@@ -1133,3 +1133,59 @@ func TestReceiveLoop_NonMessageUpdate_AdvancesOffset(t *testing.T) {
 	require.GreaterOrEqual(t, len(offsets), 2)
 	assert.Equal(t, 201, offsets[1], "a non-message update still advances the offset")
 }
+
+// --- #206 Part B: transactional lead.created intake ---
+
+// With a TxManager wired, new-lead intake is fail-closed — CreateLead and the
+// lead.created enqueue run inside one WithTx. A failed emit must propagate out of
+// handleMessage so the receive loop leaves the update offset un-advanced for
+// re-delivery, instead of being swallowed.
+func TestHandleMessage_NewLead_EmitFailureSignalsRetry(t *testing.T) {
+	repo := newErrorMockLeadRepo()
+	aiClient := &mockAIQualifier{result: &QualificationResult{Score: 5}}
+	bot := newTestBot(repo, aiClient, uuid.New(), "")
+	emit := &spyLeadCreatedEmitter{err: errors.New("enqueue failed")}
+	bot.SetLeadCreatedEmitter(emit)
+	tx := &inlineTx{}
+	bot.SetTxManager(tx)
+
+	err := bot.handleMessage(context.Background(), makeTgMessage(22222, "Ivan", "Petrov", "Hello"))
+
+	require.Error(t, err, "a failed lead.created enqueue must signal retry, not be swallowed")
+	assert.Equal(t, 1, tx.count(), "intake must run inside exactly one WithTx")
+}
+
+// Happy path with a TxManager wired commits the lead and emits the event,
+// returning nil so the receive loop advances the offset.
+func TestHandleMessage_NewLead_TransactionalIntake_Success(t *testing.T) {
+	repo := newErrorMockLeadRepo()
+	aiClient := &mockAIQualifier{result: &QualificationResult{Score: 5}}
+	bot := newTestBot(repo, aiClient, uuid.New(), "")
+	emit := &spyLeadCreatedEmitter{}
+	bot.SetLeadCreatedEmitter(emit)
+	tx := &inlineTx{}
+	bot.SetTxManager(tx)
+
+	err := bot.handleMessage(context.Background(), makeTgMessage(33333, "Ivan", "Petrov", "Hello"))
+	waitQualifyDone(t, &repo.mockLeadRepo)
+
+	require.NoError(t, err)
+	assert.Equal(t, 1, tx.count(), "intake must run inside exactly one WithTx")
+	require.Equal(t, 1, emit.count(), "a new telegram lead must emit lead.created")
+	repo.mu.Lock()
+	defer repo.mu.Unlock()
+	assert.Len(t, repo.leads, 1, "lead must be created")
+}
+
+// A transient lookup failure (before any durable write) must signal retry so the
+// update is re-delivered, instead of being silently dropped.
+func TestHandleMessage_GetLeadByChatIDError_SignalsRetry(t *testing.T) {
+	repo := newErrorMockLeadRepo()
+	repo.getLeadByChatIDErr = errors.New("db unavailable")
+	aiClient := &mockAIQualifier{result: &QualificationResult{Score: 5}}
+	bot := newTestBot(repo, aiClient, uuid.New(), "")
+
+	err := bot.handleMessage(context.Background(), makeTgMessage(44444, "Test", "", "Hello"))
+
+	require.Error(t, err, "a transient lookup error must signal retry")
+}
