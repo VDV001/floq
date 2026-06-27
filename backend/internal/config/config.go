@@ -124,6 +124,13 @@ type Config struct {
 	EnrichmentRegistryEnabled         bool   // enable the registry Enricher; default false
 	DaDataAPIKey                      string // DaData API token; empty disables registry
 	EnrichmentRegistryRateLimitPerMin int    // global DaData egress cap/min; default 30
+	// Outgoing webhooks (#181): per-user subscriptions delivered by a background
+	// worker over an SSRF-hardened client. Shipped dark — default off — until
+	// the delivery path is validated end-to-end.
+	WebhooksEnabled         bool          // enable the webhook delivery worker + API; default false
+	WebhooksRefreshInterval time.Duration // delivery worker tick; default 30s
+	WebhooksMaxAttempts     int           // give up after this many failed deliveries; default 5
+	WebhooksBatchLimit      int           // deliveries claimed per tick; default 50
 }
 
 // Load reads configuration from environment variables and returns a Config.
@@ -149,6 +156,10 @@ func Load() *Config {
 		EnrichmentRegistryEnabled:         getEnvBool("ENRICHMENT_REGISTRY_ENABLED", false),
 		DaDataAPIKey:                      os.Getenv("DADATA_API_KEY"),
 		EnrichmentRegistryRateLimitPerMin: getEnvInt("ENRICHMENT_REGISTRY_RATE_LIMIT_PER_MIN", 30),
+		WebhooksEnabled:                   getEnvBool("WEBHOOKS_ENABLED", false),
+		WebhooksRefreshInterval:           getEnvDuration("WEBHOOKS_REFRESH_INTERVAL", 30*time.Second),
+		WebhooksMaxAttempts:               getEnvInt("WEBHOOKS_MAX_ATTEMPTS", 5),
+		WebhooksBatchLimit:                getEnvInt("WEBHOOKS_BATCH_LIMIT", 50),
 		AIProvider:                        getEnv("AI_PROVIDER", "anthropic"),
 		AnthropicAPIKey:                   os.Getenv("ANTHROPIC_API_KEY"),
 		OpenAIAPIKey:                      os.Getenv("OPENAI_API_KEY"),
