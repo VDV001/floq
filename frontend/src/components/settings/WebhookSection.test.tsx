@@ -25,6 +25,8 @@ function setup(over: Partial<Props> = {}) {
     onCreate: vi.fn(),
     onDelete: vi.fn(),
     onTest: vi.fn(),
+    onToggleActive: vi.fn(),
+    togglingId: null,
     testingId: null,
     notice: null,
     ...over,
@@ -82,6 +84,32 @@ describe("WebhookSection", () => {
     expect(props.onTest).toHaveBeenCalledWith("ep-1");
     fireEvent.click(screen.getByRole("button", { name: /удалить/i }));
     expect(props.onDelete).toHaveBeenCalledWith("ep-1");
+  });
+
+  it("shows an active/inactive badge per endpoint", () => {
+    setup({
+      endpoints: [
+        { id: "ep-1", url: "https://a.com/h", events: ["lead.created"], active: true },
+        { id: "ep-2", url: "https://b.com/h", events: ["lead.created"], active: false },
+      ],
+    });
+    const items = screen.getAllByRole("listitem");
+    expect(within(items[0]).getByText(/активен/i)).toBeInTheDocument();
+    expect(within(items[1]).getByText(/отключён/i)).toBeInTheDocument();
+  });
+
+  it("fires onToggleActive to disable an active endpoint", () => {
+    const props = setup(); // ep-1 is active
+    fireEvent.click(screen.getByRole("button", { name: /отключить/i }));
+    expect(props.onToggleActive).toHaveBeenCalledWith("ep-1", false);
+  });
+
+  it("fires onToggleActive to enable an inactive endpoint", () => {
+    const props = setup({
+      endpoints: [{ id: "ep-9", url: "https://c.com/h", events: ["lead.created"], active: false }],
+    });
+    fireEvent.click(screen.getByRole("button", { name: /включить/i }));
+    expect(props.onToggleActive).toHaveBeenCalledWith("ep-9", true);
   });
 
   it("surfaces a create error", () => {
