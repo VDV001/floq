@@ -35,7 +35,6 @@ type EmailPoller struct {
 	identityLinker        IdentityLinker
 	enricher              EnrichmentEnqueuer
 	pendingProposer       PendingReplyProposer
-	tx                   TxManager
 	leadCreatedEmitter   LeadCreatedEmitter
 	leadQualifiedEmitter LeadQualifiedEmitter
 	bookingLink          string
@@ -140,14 +139,15 @@ func (e *EmailPoller) SetPendingProposer(p PendingReplyProposer) {
 	e.pendingProposer = p
 }
 
-// SetTxManager wires the transaction manager (#199) so lead.created and
-// lead.qualified emit inside the same transaction as their domain write.
-func (e *EmailPoller) SetTxManager(tx TxManager) { e.tx = tx }
-
-// SetLeadCreatedEmitter wires the in-transaction lead.created outbox emitter (#199).
+// SetLeadCreatedEmitter wires the best-effort post-commit lead.created emitter
+// (#199 / #206). The source email is already marked \Seen by the time a lead is
+// written, so intake cannot be fail-closed without losing the lead — the event
+// is emitted post-commit, at-most-once, NOT inside a transaction.
 func (e *EmailPoller) SetLeadCreatedEmitter(em LeadCreatedEmitter) { e.leadCreatedEmitter = em }
 
-// SetLeadQualifiedEmitter wires the in-transaction lead.qualified outbox emitter (#199).
+// SetLeadQualifiedEmitter wires the best-effort post-commit lead.qualified
+// emitter for the inbox auto-qualification path (#199 / #206). One-shot goroutine
+// with no retry, so it is post-commit best-effort, not transactional.
 func (e *EmailPoller) SetLeadQualifiedEmitter(em LeadQualifiedEmitter) { e.leadQualifiedEmitter = em }
 
 func (e *EmailPoller) Start(ctx context.Context) {
@@ -444,17 +444,19 @@ func (e *EmailPoller) processEmail(ctx context.Context, fromName, fromEmail, bod
 		if hasProspectMatch {
 			lead.SourceID = prospect.SourceID
 		}
-		// Transactional outbox (#199): CreateLead and the lead.created enqueue
-		// commit together. Identity-linking and enrichment below stay outside —
-		// they are best-effort post-intake side-effects.
-		if err := writeThenEmit(ctx, e.tx, e.leadCreatedEmitter != nil,
-			func(c context.Context) error { return e.repo.CreateLead(c, lead) },
-			func(c context.Context) error { return e.leadCreatedEmitter.EmitLeadCreated(c, lead) },
-		); err != nil {
+		if err := e.repo.CreateLead(ctx, lead); err != nil {
 			log.Printf("[email-poller] error creating lead: %v", err)
 			return
 		}
 		log.Printf("[email-poller] new lead created for %s (%s)", fromEmail, contactName)
+		// lead.created is emitted best-effort post-commit, NOT in a transaction:
+		// the source email is already marked \Seen, so a fail-closed rollback
+		// would lose the lead with no retry (#206). At-most-once, as before #199.
+		if e.leadCreatedEmitter != nil {
+			if err := e.leadCreatedEmitter.EmitLeadCreated(ctx, lead); err != nil {
+				log.Printf("[email-poller] lead.created emit failed (best-effort): %v", err)
+			}
+		}
 
 		if e.identityLinker != nil {
 			if err := e.identityLinker.LinkLeadToIdentity(ctx, e.ownerID, lead.ID, fromEmail, "", ""); err != nil {
@@ -580,27 +582,24 @@ func (e *EmailPoller) processEmail(ctx context.Context, fromName, fromEmail, bod
 				ProviderUsed:      e.aiClient.ProviderName(),
 				GeneratedAt:       time.Now().UTC(),
 			}
-			// Reflect the qualified status on the in-memory entity only when the
-			// emitter will read it — keeps the webhooks-disabled path behaviourally
-			// identical to before #199.
-			if e.leadQualifiedEmitter != nil {
-				lead.Status = StatusQualified
+			if err := e.repo.UpsertQualification(qCtx, q); err != nil {
+				log.Printf("[email-poller] error saving qualification for lead %s: %v", lead.ID, err)
+				return
 			}
-			// Transactional outbox (#199): the qualification writes and the
-			// lead.qualified enqueue commit together or not at all.
-			if err := writeThenEmit(qCtx, e.tx, e.leadQualifiedEmitter != nil,
-				func(c context.Context) error {
-					if err := e.repo.UpsertQualification(c, q); err != nil {
-						return err
-					}
-					return e.repo.UpdateLeadStatus(c, lead.ID, StatusQualified)
-				},
-				func(c context.Context) error { return e.leadQualifiedEmitter.EmitLeadQualified(c, lead) },
-			); err != nil {
-				log.Printf("[email-poller] error persisting qualification for lead %s: %v", lead.ID, err)
+			if err := e.repo.UpdateLeadStatus(qCtx, lead.ID, StatusQualified); err != nil {
+				log.Printf("[email-poller] error updating lead status for %s: %v", lead.ID, err)
 				return
 			}
 			log.Printf("[email-poller] lead %s qualified (score=%d)", lead.ID, result.Score)
+			// lead.qualified is emitted best-effort post-commit, NOT in a
+			// transaction: this is a one-shot goroutine with no retry, so a
+			// fail-closed rollback would silently drop the qualification (#206).
+			if e.leadQualifiedEmitter != nil {
+				lead.Status = StatusQualified
+				if err := e.leadQualifiedEmitter.EmitLeadQualified(qCtx, lead); err != nil {
+					log.Printf("[email-poller] lead.qualified emit failed (best-effort): %v", err)
+				}
+			}
 		}()
 	}
 }

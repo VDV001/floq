@@ -32,7 +32,6 @@ type TelegramBot struct {
 	logger                *slog.Logger
 	ownerID               uuid.UUID
 	bookingLink           string
-	tx                   TxManager
 	leadCreatedEmitter   LeadCreatedEmitter
 	leadQualifiedEmitter LeadQualifiedEmitter
 }
@@ -111,14 +110,15 @@ func (t *TelegramBot) SetPendingProposer(p PendingReplyProposer) {
 	t.pendingProposer = p
 }
 
-// SetTxManager wires the transaction manager (#199) so lead.created and
-// lead.qualified emit inside the same transaction as their domain write.
-func (t *TelegramBot) SetTxManager(tx TxManager) { t.tx = tx }
-
-// SetLeadCreatedEmitter wires the in-transaction lead.created outbox emitter (#199).
+// SetLeadCreatedEmitter wires the best-effort post-commit lead.created emitter
+// (#199 / #206). The Telegram update offset is already advanced by the time a
+// lead is written, so intake cannot be fail-closed without losing the lead — the
+// event is emitted post-commit, at-most-once, NOT inside a transaction.
 func (t *TelegramBot) SetLeadCreatedEmitter(e LeadCreatedEmitter) { t.leadCreatedEmitter = e }
 
-// SetLeadQualifiedEmitter wires the in-transaction lead.qualified outbox emitter (#199).
+// SetLeadQualifiedEmitter wires the best-effort post-commit lead.qualified
+// emitter for the inbox auto-qualification path (#199 / #206). One-shot goroutine
+// with no retry, so it is post-commit best-effort, not transactional.
 func (t *TelegramBot) SetLeadQualifiedEmitter(e LeadQualifiedEmitter) { t.leadQualifiedEmitter = e }
 
 // Start begins listening for Telegram updates and processing them.
@@ -191,17 +191,20 @@ func (t *TelegramBot) handleMessage(ctx context.Context, msg *tgbotapi.Message) 
 		if prospect != nil {
 			lead.SourceID = prospect.SourceID
 		}
-		// Transactional outbox (#199): CreateLead and the lead.created
-		// enqueue commit together. Identity-linking and enrichment below stay
-		// outside — they are best-effort post-intake side-effects.
-		if err := writeThenEmit(ctx, t.tx, t.leadCreatedEmitter != nil,
-			func(c context.Context) error { return t.repo.CreateLead(c, lead) },
-			func(c context.Context) error { return t.leadCreatedEmitter.EmitLeadCreated(c, lead) },
-		); err != nil {
+		if err := t.repo.CreateLead(ctx, lead); err != nil {
 			log.Printf("telegram inbox: error creating lead: %v", err)
 			return
 		}
 		log.Printf("telegram inbox: new lead created for chat %d (%s)", chatID, contactName)
+		// lead.created is emitted best-effort post-commit, NOT in a transaction:
+		// the Telegram update offset is already advanced, so a fail-closed
+		// rollback would lose the lead with no retry (#206). At-most-once, as
+		// before #199.
+		if t.leadCreatedEmitter != nil {
+			if err := t.leadCreatedEmitter.EmitLeadCreated(ctx, lead); err != nil {
+				log.Printf("telegram inbox: lead.created emit failed (best-effort): %v", err)
+			}
+		}
 
 		if t.identityLinker != nil && username != "" {
 			if err := t.identityLinker.LinkLeadToIdentity(ctx, t.ownerID, lead.ID, "", "", username); err != nil {
@@ -301,27 +304,24 @@ func (t *TelegramBot) handleMessage(ctx context.Context, msg *tgbotapi.Message) 
 				ProviderUsed:      t.aiClient.ProviderName(),
 				GeneratedAt:       time.Now().UTC(),
 			}
-			// Reflect the qualified status on the in-memory entity only when the
-			// emitter will read it — keeps the webhooks-disabled path behaviourally
-			// identical to before #199.
-			if t.leadQualifiedEmitter != nil {
-				lead.Status = StatusQualified
+			if err := t.repo.UpsertQualification(qCtx, q); err != nil {
+				log.Printf("telegram inbox: error saving qualification for lead %s: %v", lead.ID, err)
+				return
 			}
-			// Transactional outbox (#199): the qualification writes and the
-			// lead.qualified enqueue commit together or not at all.
-			if err := writeThenEmit(qCtx, t.tx, t.leadQualifiedEmitter != nil,
-				func(c context.Context) error {
-					if err := t.repo.UpsertQualification(c, q); err != nil {
-						return err
-					}
-					return t.repo.UpdateLeadStatus(c, lead.ID, StatusQualified)
-				},
-				func(c context.Context) error { return t.leadQualifiedEmitter.EmitLeadQualified(c, lead) },
-			); err != nil {
-				log.Printf("telegram inbox: error persisting qualification for lead %s: %v", lead.ID, err)
+			if err := t.repo.UpdateLeadStatus(qCtx, lead.ID, StatusQualified); err != nil {
+				log.Printf("telegram inbox: error updating lead status for %s: %v", lead.ID, err)
 				return
 			}
 			log.Printf("telegram inbox: lead %s qualified (score=%d)", lead.ID, result.Score)
+			// lead.qualified is emitted best-effort post-commit, NOT in a
+			// transaction: this is a one-shot goroutine with no retry, so a
+			// fail-closed rollback would silently drop the qualification (#206).
+			if t.leadQualifiedEmitter != nil {
+				lead.Status = StatusQualified
+				if err := t.leadQualifiedEmitter.EmitLeadQualified(qCtx, lead); err != nil {
+					log.Printf("telegram inbox: lead.qualified emit failed (best-effort): %v", err)
+				}
+			}
 		}()
 	}
 }

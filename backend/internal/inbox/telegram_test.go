@@ -316,41 +316,37 @@ func (s *spyLeadQualifiedEmitter) count() int {
 	return len(s.leads)
 }
 
-func TestHandleMessage_NewLead_EmitsLeadCreatedInTransaction(t *testing.T) {
+func TestHandleMessage_NewLead_EmitsLeadCreated(t *testing.T) {
 	repo := newMockLeadRepo()
 	aiClient := &mockAIQualifier{result: &QualificationResult{Score: 5}}
 	ownerID := uuid.New()
 	bot := newTestBot(repo, aiClient, ownerID, "https://cal.com/test")
 	emit := &spyLeadCreatedEmitter{}
-	tx := &inlineTx{}
-	bot.SetTxManager(tx)
 	bot.SetLeadCreatedEmitter(emit)
 
 	bot.handleMessage(context.Background(), makeTgMessage(12345, "Ivan", "Petrov", "Hello"))
 	waitQualifyDone(t, repo)
 
+	// Best-effort post-commit (#206): emitted after CreateLead, not in a tx.
 	require.Equal(t, 1, emit.count(), "a new telegram lead must emit lead.created")
-	assert.GreaterOrEqual(t, tx.count(), 1, "lead.created must be emitted inside a transaction")
 	assert.Equal(t, ChannelTelegram, emit.leads[0].Channel)
 	assert.Equal(t, ownerID, emit.leads[0].UserID)
 }
 
-func TestHandleMessage_AutoQualify_EmitsLeadQualifiedInTransaction(t *testing.T) {
+func TestHandleMessage_AutoQualify_EmitsLeadQualified(t *testing.T) {
 	repo := newMockLeadRepo()
 	aiClient := &mockAIQualifier{result: &QualificationResult{Score: 8}}
 	ownerID := uuid.New()
 	bot := newTestBot(repo, aiClient, ownerID, "https://cal.com/test")
 	emit := &spyLeadQualifiedEmitter{}
-	tx := &inlineTx{}
-	bot.SetTxManager(tx)
 	bot.SetLeadQualifiedEmitter(emit)
 
 	bot.handleMessage(context.Background(), makeTgMessage(12345, "Ivan", "Petrov", "Hello"))
 	waitQualifyDone(t, repo)
 
+	// Best-effort post-commit (#206): emitted after the qualification writes.
 	require.Eventually(t, func() bool { return emit.count() == 1 }, 2*time.Second, 10*time.Millisecond,
 		"auto-qualification must emit lead.qualified")
-	assert.GreaterOrEqual(t, tx.count(), 1, "lead.qualified must be emitted inside a transaction")
 	assert.Equal(t, ownerID, emit.leads[0].UserID)
 }
 

@@ -674,7 +674,7 @@ func main() {
 			pendingReplyUC.SetDispatcher(guardReply(inbox.NewChannelReplyDispatcher(telegramDispatcher, emailDispatcher)))
 			tgBot.SetPendingProposer(pendingReplyUC)
 			if webhookPub != nil {
-				tgBot.SetTxManager(txManager)
+				// Poller intake events are best-effort post-commit (#206): no tx.
 				tgBot.SetLeadCreatedEmitter(webhookBridge)
 				tgBot.SetLeadQualifiedEmitter(inboxLeadQualifiedEmitterFunc(webhookBridge.emitInboxLeadQualified))
 			}
@@ -714,7 +714,7 @@ func main() {
 	// without the HITL gate wired.
 	emailPoller.SetPendingProposer(pendingReplyUC)
 	if webhookPub != nil {
-		emailPoller.SetTxManager(txManager)
+		// Poller intake events are best-effort post-commit (#206): no tx.
 		emailPoller.SetLeadCreatedEmitter(webhookBridge)
 		emailPoller.SetLeadQualifiedEmitter(inboxLeadQualifiedEmitterFunc(webhookBridge.emitInboxLeadQualified))
 	}

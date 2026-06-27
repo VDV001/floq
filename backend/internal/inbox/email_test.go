@@ -385,7 +385,7 @@ func TestProcessEmail_NewLead_NoProspect(t *testing.T) {
 	assert.Empty(t, seqRepo.markReplied)
 }
 
-func TestProcessEmail_NewLead_EmitsLeadCreatedInTransaction(t *testing.T) {
+func TestProcessEmail_NewLead_EmitsLeadCreated(t *testing.T) {
 	repo := newEmailMockLeadRepo()
 	prospectRepo := newEmailMockProspectRepo()
 	seqRepo := newMockSequenceRepo()
@@ -393,20 +393,18 @@ func TestProcessEmail_NewLead_EmitsLeadCreatedInTransaction(t *testing.T) {
 	ownerID := uuid.New()
 	poller := newTestEmailPoller(repo, prospectRepo, seqRepo, aiClient, ownerID)
 	emit := &spyLeadCreatedEmitter{}
-	tx := &inlineTx{}
-	poller.SetTxManager(tx)
 	poller.SetLeadCreatedEmitter(emit)
 
 	poller.processEmail(context.Background(), "John Doe", "john@example.com", "I need a website", nil)
 	waitQualifyDone(t, &repo.mockLeadRepo)
 
+	// Best-effort post-commit (#206): emitted after CreateLead, not in a tx.
 	require.Equal(t, 1, emit.count(), "a new email lead must emit lead.created")
-	assert.GreaterOrEqual(t, tx.count(), 1, "lead.created must be emitted inside a transaction")
 	assert.Equal(t, ChannelEmail, emit.leads[0].Channel)
 	assert.Equal(t, ownerID, emit.leads[0].UserID)
 }
 
-func TestProcessEmail_AutoQualify_EmitsLeadQualifiedInTransaction(t *testing.T) {
+func TestProcessEmail_AutoQualify_EmitsLeadQualified(t *testing.T) {
 	repo := newEmailMockLeadRepo()
 	prospectRepo := newEmailMockProspectRepo()
 	seqRepo := newMockSequenceRepo()
@@ -414,16 +412,14 @@ func TestProcessEmail_AutoQualify_EmitsLeadQualifiedInTransaction(t *testing.T) 
 	ownerID := uuid.New()
 	poller := newTestEmailPoller(repo, prospectRepo, seqRepo, aiClient, ownerID)
 	emit := &spyLeadQualifiedEmitter{}
-	tx := &inlineTx{}
-	poller.SetTxManager(tx)
 	poller.SetLeadQualifiedEmitter(emit)
 
 	poller.processEmail(context.Background(), "John Doe", "john@example.com", "I need a website", nil)
 	waitQualifyDone(t, &repo.mockLeadRepo)
 
+	// Best-effort post-commit (#206): emitted after the qualification writes.
 	require.Eventually(t, func() bool { return emit.count() == 1 }, 2*time.Second, 10*time.Millisecond,
 		"auto-qualification must emit lead.qualified")
-	assert.GreaterOrEqual(t, tx.count(), 1, "lead.qualified must be emitted inside a transaction")
 	assert.Equal(t, ownerID, emit.leads[0].UserID)
 }
 
