@@ -24,6 +24,7 @@ type UseCase struct {
 	identityReader   IdentityReader
 	pendingCounter   PendingReplyCounter
 	qualObserver     domain.QualificationObserver
+	archivedObserver domain.LeadArchivedObserver
 	logger           *slog.Logger
 }
 
@@ -43,6 +44,13 @@ func WithSuggestionFinder(f domain.ProspectSuggestionFinder) Option {
 // context. nil leaves the hook disabled.
 func WithQualificationObserver(o domain.QualificationObserver) Option {
 	return func(uc *UseCase) { uc.qualObserver = o }
+}
+
+// WithLeadArchivedObserver wires the post-archive hook (#181). Supplied from the
+// composition root via an adapter that bridges to the webhooks context. nil
+// leaves the hook disabled.
+func WithLeadArchivedObserver(o domain.LeadArchivedObserver) Option {
+	return func(uc *UseCase) { uc.archivedObserver = o }
 }
 
 // WithLogger overrides the default slog.Logger so the use case emits
@@ -128,7 +136,15 @@ func (uc *UseCase) ArchiveLead(ctx context.Context, id uuid.UUID) error {
 	if err := lead.Archive(); err != nil {
 		return err
 	}
-	return uc.repo.SetLeadArchived(ctx, id, lead.ArchivedAt)
+	if err := uc.repo.SetLeadArchived(ctx, id, lead.ArchivedAt); err != nil {
+		return err
+	}
+	// Fire the post-archive side-effect (e.g. emit a lead.archived webhook).
+	// The observer owns its errors — a failure here must not fail the archive.
+	if uc.archivedObserver != nil {
+		uc.archivedObserver.OnLeadArchived(ctx, lead)
+	}
+	return nil
 }
 
 // UnarchiveLead restores an archived lead to feeds and analytics. Returns
