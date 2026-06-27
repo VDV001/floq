@@ -21,6 +21,7 @@ type fakeStore struct {
 	deliveries    []*domain.WebhookDelivery
 	activeUpdates []activeUpdate
 	saveErr       error
+	enqueueErr    error
 }
 
 func newFakeStore() *fakeStore {
@@ -56,6 +57,9 @@ func (f *fakeStore) SetEndpointActive(_ context.Context, id uuid.UUID, active bo
 	return nil
 }
 func (f *fakeStore) EnqueueDelivery(_ context.Context, d *domain.WebhookDelivery) error {
+	if f.enqueueErr != nil {
+		return f.enqueueErr
+	}
 	f.deliveries = append(f.deliveries, d)
 	return nil
 }
@@ -234,6 +238,22 @@ func TestPublish_FansOutToSubscribedActiveEndpoints(t *testing.T) {
 	}
 	if len(store.deliveries) != 1 || store.deliveries[0].EndpointID != subscribed.ID {
 		t.Fatal("delivery must target the subscribed active endpoint")
+	}
+}
+
+// Publish must fail-fast on an enqueue error so a transactional caller's
+// transaction aborts (#199): the error must surface explicitly, not be swallowed.
+func TestPublish_ReturnsEnqueueError(t *testing.T) {
+	store := newFakeStore()
+	userID := uuid.New()
+	ep := mustEndpoint(t, userID, domain.EventLeadCreated)
+	store.endpoints[ep.ID] = ep
+	store.enqueueErr = errors.New("outbox insert failed")
+
+	uc := NewUseCase(store, &fakeClient{}, cfg(), nil)
+	_, err := uc.Publish(context.Background(), userID, domain.EventLeadCreated, []byte(`{"id":"x"}`))
+	if err == nil {
+		t.Fatal("Publish must return the enqueue error so the caller's transaction can roll back")
 	}
 }
 
