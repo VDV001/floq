@@ -244,8 +244,8 @@ func (t *TelegramBot) handleMessage(ctx context.Context, msg *tgbotapi.Message) 
 	// Check if a lead with this telegram_chat_id already exists.
 	existing, err := t.repo.GetLeadByTelegramChatID(ctx, t.ownerID, chatID)
 	if err != nil {
-		log.Printf("telegram inbox: error looking up lead for chat %d: %v", chatID, err)
-		return nil
+		// Transient: signal retry rather than dropping the update (#206 Part B).
+		return fmt.Errorf("look up lead for chat %d: %w", chatID, err)
 	}
 
 	isNewLead := existing == nil
@@ -275,20 +275,15 @@ func (t *TelegramBot) handleMessage(ctx context.Context, msg *tgbotapi.Message) 
 		if prospect != nil {
 			lead.SourceID = prospect.SourceID
 		}
-		if err := t.repo.CreateLead(ctx, lead); err != nil {
-			log.Printf("telegram inbox: error creating lead: %v", err)
-			return nil
+		// #206 Part B: persist the lead and enqueue lead.created atomically. A
+		// failed enqueue rolls the lead back and the error propagates so the
+		// receive loop leaves the update offset un-advanced for re-delivery
+		// (fail-closed). Safe because the offset advances only after a nil return.
+		if err := t.commitLeadIntake(ctx, lead); err != nil {
+			log.Printf("telegram inbox: error creating lead for chat %d, will retry: %v", chatID, err)
+			return err
 		}
 		log.Printf("telegram inbox: new lead created for chat %d (%s)", chatID, contactName)
-		// lead.created is emitted best-effort post-commit, NOT in a transaction:
-		// the Telegram update offset is already advanced, so a fail-closed
-		// rollback would lose the lead with no retry (#206). At-most-once, as
-		// before #199.
-		if t.leadCreatedEmitter != nil {
-			if err := t.leadCreatedEmitter.EmitLeadCreated(ctx, lead); err != nil {
-				log.Printf("telegram inbox: lead.created emit failed (best-effort): %v", err)
-			}
-		}
 
 		if t.identityLinker != nil && username != "" {
 			if err := t.identityLinker.LinkLeadToIdentity(ctx, t.ownerID, lead.ID, "", "", username); err != nil {
@@ -407,6 +402,32 @@ func (t *TelegramBot) handleMessage(ctx context.Context, msg *tgbotapi.Message) 
 				}
 			}
 		}()
+	}
+	return nil
+}
+
+// commitLeadIntake persists a new inbound lead and enqueues its lead.created
+// event. When a transaction manager and emitter are both wired (webhooks
+// enabled), the two run inside one WithTx so they commit or roll back together —
+// a failed enqueue undoes the lead and returns an error (fail-closed, #206 Part
+// B). Otherwise it falls back to a plain create with a best-effort post-commit
+// emit, preserving the zero-overhead path when webhooks are disabled.
+func (t *TelegramBot) commitLeadIntake(ctx context.Context, lead *InboxLead) error {
+	if t.tx != nil && t.leadCreatedEmitter != nil {
+		return t.tx.WithTx(ctx, func(txCtx context.Context) error {
+			if err := t.repo.CreateLead(txCtx, lead); err != nil {
+				return err
+			}
+			return t.leadCreatedEmitter.EmitLeadCreated(txCtx, lead)
+		})
+	}
+	if err := t.repo.CreateLead(ctx, lead); err != nil {
+		return err
+	}
+	if t.leadCreatedEmitter != nil {
+		if err := t.leadCreatedEmitter.EmitLeadCreated(ctx, lead); err != nil {
+			log.Printf("telegram inbox: lead.created emit failed (best-effort): %v", err)
+		}
 	}
 	return nil
 }
