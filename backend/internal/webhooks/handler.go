@@ -22,8 +22,23 @@ func RegisterRoutes(r chi.Router, uc *UseCase) {
 	h := &Handler{uc: uc}
 	r.Post("/api/webhooks", h.create())
 	r.Get("/api/webhooks", h.list())
+	r.Get("/api/webhooks/event-types", h.eventTypes())
 	r.Delete("/api/webhooks/{id}", h.delete())
 	r.Post("/api/webhooks/{id}/test", h.test())
+}
+
+// eventTypes advertises the events a subscription may listen for, so the UI can
+// build its picker from the authoritative domain registry rather than a
+// hardcoded copy.
+func (h *Handler) eventTypes() http.HandlerFunc {
+	return func(w http.ResponseWriter, _ *http.Request) {
+		known := domain.KnownEventTypes()
+		out := make([]string, len(known))
+		for i, et := range known {
+			out[i] = string(et)
+		}
+		httputil.WriteJSON(w, http.StatusOK, out)
+	}
 }
 
 // createRequest is the create-endpoint payload. The secret is supplied by the
