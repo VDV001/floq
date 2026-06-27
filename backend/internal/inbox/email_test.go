@@ -403,6 +403,24 @@ func TestProcessEmail_NewLead_NotifiesLeadCreatedObserver(t *testing.T) {
 	assert.Equal(t, ownerID, obs.leads[0].UserID)
 }
 
+func TestProcessEmail_AutoQualify_NotifiesLeadQualifiedObserver(t *testing.T) {
+	repo := newEmailMockLeadRepo()
+	prospectRepo := newEmailMockProspectRepo()
+	seqRepo := newMockSequenceRepo()
+	aiClient := &mockAIQualifier{result: &QualificationResult{Score: 7}}
+	ownerID := uuid.New()
+	poller := newTestEmailPoller(repo, prospectRepo, seqRepo, aiClient, ownerID)
+	obs := &spyLeadQualifiedObserver{}
+	poller.SetLeadQualifiedObserver(obs)
+
+	poller.processEmail(context.Background(), "John Doe", "john@example.com", "I need a website", nil)
+	waitQualifyDone(t, &repo.mockLeadRepo)
+
+	require.Eventually(t, func() bool { return obs.count() == 1 }, 2*time.Second, 10*time.Millisecond,
+		"auto-qualification must notify the lead-qualified observer")
+	assert.Equal(t, ownerID, obs.leads[0].UserID)
+}
+
 func TestProcessEmail_NewLead_WithProspectMatch(t *testing.T) {
 	repo := newEmailMockLeadRepo()
 	prospectRepo := newEmailMockProspectRepo()
