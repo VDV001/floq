@@ -8,6 +8,7 @@ import { HowItWorks } from "@/components/onboarding/HowItWorks";
 import { StepTimeline } from "@/components/onboarding/StepTimeline";
 import { SectionsMap } from "@/components/onboarding/SectionsMap";
 import { Glossary } from "@/components/onboarding/Glossary";
+import { Faq } from "@/components/onboarding/Faq";
 import { TipsSection } from "@/components/onboarding/TipsSection";
 import { FooterBanner } from "@/components/onboarding/FooterBanner";
 import { ONBOARDING_BANNER_HIDDEN_KEY } from "@/components/onboarding/OnboardingBanner";
@@ -86,6 +87,7 @@ export default function OnboardingPage() {
 
         <SectionsMap />
         <Glossary />
+        <Faq />
         <TipsSection />
         <FooterBanner />
       </div>

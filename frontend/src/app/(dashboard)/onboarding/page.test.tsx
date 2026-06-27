@@ -125,6 +125,24 @@ describe("OnboardingPage", () => {
     });
   });
 
+  it("renders a troubleshooting FAQ for when setup does not work", async () => {
+    render(<OnboardingPage />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Если что-то не работает")).toBeInTheDocument();
+      // The single most common newbie failure: the bot token saved but no leads.
+      expect(
+        screen.getByText("Подключил бота, но входящие не появляются")
+      ).toBeInTheDocument();
+      // Each FAQ entry is an expandable disclosure.
+      expect(screen.getAllByText("Решение").length).toBeGreaterThan(0);
+      // Solutions carry a CTA to the relevant section (the bot question → settings).
+      expect(
+        screen.getByRole("link", { name: /Открыть настройки/ })
+      ).toHaveAttribute("href", "/settings");
+    });
+  });
+
   it("shows all-done state when all steps complete", async () => {
     vi.mocked(api.getSettings).mockResolvedValue({
       ...mockSettings,
