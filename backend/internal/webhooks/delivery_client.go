@@ -102,7 +102,8 @@ func (c *HTTPDeliveryClient) Deliver(ctx context.Context, url string, payload []
 		return 0, fmt.Errorf("webhooks: deliver: %w", err)
 	}
 	defer resp.Body.Close()
-	// Drain a bounded amount so the connection can be reused; ignore the body.
+	// Read a bounded amount and discard it: we only need the status code, and a
+	// misbehaving receiver must not be able to make us buffer an unbounded body.
 	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, respReadCap))
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
