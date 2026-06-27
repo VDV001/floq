@@ -4,9 +4,11 @@ package webhooks_test
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
+	"github.com/daniil/floq/internal/db"
 	"github.com/daniil/floq/internal/testutil"
 	"github.com/daniil/floq/internal/webhooks"
 	"github.com/daniil/floq/internal/webhooks/domain"
@@ -246,6 +248,50 @@ func TestRepository_ClaimDue_OrdersByEffectiveDueTime(t *testing.T) {
 	want := []uuid.UUID{b.ID, a.ID, c.ID}
 	assert.Equal(t, want, got,
 		"claim must return due deliveries earliest-due first (next_retry_at asc, NULL treated as created_at)")
+}
+
+// EnqueueDelivery must participate in an ambient transaction (transactional
+// outbox, #199): when the caller wraps it in db.WithTx, the delivery row shares
+// that transaction's fate — rolled back with the domain write, or committed with
+// it. This is the core atomicity guarantee that closes the at-most-once gap
+// (domain commit succeeds, separate enqueue fails → event lost).
+func TestRepository_EnqueueDelivery_ParticipatesInAmbientTx(t *testing.T) {
+	ctx := context.Background()
+	pool := testutil.TestDB(t)
+	userID := testutil.SeedUser(t, pool)
+	repo := webhooks.NewRepository(pool, testutil.NewSecretCipher(t))
+	tm := db.NewTxManager(pool)
+
+	ep := mustEndpoint(t, userID, domain.EventLeadCreated)
+	require.NoError(t, repo.CreateEndpoint(ctx, ep))
+
+	countByID := func(id uuid.UUID) int {
+		var n int
+		require.NoError(t, pool.QueryRow(ctx,
+			`SELECT count(*) FROM webhook_deliveries WHERE id = $1`, id).Scan(&n))
+		return n
+	}
+
+	// Rollback path: an enqueue inside a tx that fails must leave NO row.
+	rolled, _ := domain.NewDelivery(userID, ep.ID, domain.EventLeadCreated, []byte(`{"k":"rollback"}`))
+	boom := errors.New("boom")
+	err := tm.WithTx(ctx, func(txCtx context.Context) error {
+		if e := repo.EnqueueDelivery(txCtx, rolled); e != nil {
+			return e
+		}
+		return boom // force rollback after a successful enqueue
+	})
+	require.ErrorIs(t, err, boom)
+	assert.Equal(t, 0, countByID(rolled.ID),
+		"enqueue in a rolled-back tx must not persist — the outbox row shares the domain tx")
+
+	// Commit path: an enqueue inside a tx that succeeds must persist exactly one row.
+	committed, _ := domain.NewDelivery(userID, ep.ID, domain.EventLeadCreated, []byte(`{"k":"commit"}`))
+	require.NoError(t, tm.WithTx(ctx, func(txCtx context.Context) error {
+		return repo.EnqueueDelivery(txCtx, committed)
+	}))
+	assert.Equal(t, 1, countByID(committed.ID),
+		"enqueue in a committed tx must persist exactly one row")
 }
 
 func containsDelivery(ds []*domain.WebhookDelivery, id uuid.UUID) bool {
