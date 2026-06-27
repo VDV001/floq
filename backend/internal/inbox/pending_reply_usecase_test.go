@@ -525,6 +525,84 @@ func TestPendingReplyUseCase_Approve_NotifiesObserver(t *testing.T) {
 	}
 }
 
+// --- #199 transactional outbox ---
+
+type spyApprovedEmitter struct {
+	calls []*PendingReply
+	err   error
+}
+
+func (s *spyApprovedEmitter) EmitPendingReplyApproved(_ context.Context, pr *PendingReply) error {
+	s.calls = append(s.calls, pr)
+	return s.err
+}
+
+// inlineTx models db.TxManager.WithTx for inbox unit tests: it runs fn inline and
+// propagates its error. Real rollback is covered by integration tests; here we
+// only assert orchestration (the approval write + emit run under one WithTx and
+// an emit error propagates out instead of being swallowed).
+type inlineTx struct{ entered int }
+
+func (t *inlineTx) WithTx(ctx context.Context, fn func(context.Context) error) error {
+	t.entered++
+	return fn(ctx)
+}
+
+func TestPendingReplyUseCase_Approve_EmitsInsideTransaction(t *testing.T) {
+	repo := newFakeRepo()
+	uc := NewPendingReplyUseCase(repo, &spyDispatcher{})
+	emit := &spyApprovedEmitter{}
+	tx := &inlineTx{}
+	uc.SetTxManager(tx)
+	uc.SetApprovedEmitter(emit)
+	ctx := context.Background()
+	userID := uuid.New()
+	leadID := uuid.New()
+
+	pr, err := uc.Propose(ctx, userID, leadID, ChannelTelegram, PendingReplyKindBookingLink, "ok", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := uc.Approve(ctx, userID, pr.ID); err != nil {
+		t.Fatalf("Approve error: %v", err)
+	}
+
+	if tx.entered != 1 {
+		t.Errorf("tx entered = %d, want 1 (approval write + emit must share one transaction)", tx.entered)
+	}
+	if len(emit.calls) != 1 {
+		t.Fatalf("emitter calls = %d, want 1", len(emit.calls))
+	}
+	if emit.calls[0].ID != pr.ID {
+		t.Errorf("emitter saw wrong reply: %+v", emit.calls[0])
+	}
+}
+
+func TestPendingReplyUseCase_Approve_EmitterErrorAbortsApproval(t *testing.T) {
+	repo := newFakeRepo()
+	disp := &spyDispatcher{}
+	uc := NewPendingReplyUseCase(repo, disp)
+	emit := &spyApprovedEmitter{err: errors.New("outbox down")}
+	tx := &inlineTx{}
+	uc.SetTxManager(tx)
+	uc.SetApprovedEmitter(emit)
+	ctx := context.Background()
+	userID := uuid.New()
+	leadID := uuid.New()
+
+	pr, err := uc.Propose(ctx, userID, leadID, ChannelTelegram, PendingReplyKindBookingLink, "ok", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := uc.Approve(ctx, userID, pr.ID); err == nil {
+		t.Fatal("want error: a failed outbox emit must abort the approval (fail-closed)")
+	}
+	if got := disp.Calls(); len(got) != 0 {
+		t.Errorf("dispatcher calls = %d, want 0 — an aborted approval must not dispatch", len(got))
+	}
+}
+
 func TestPendingReplyUseCase_Approve_NotFoundReturnsSentinel(t *testing.T) {
 	repo := newFakeRepo()
 	uc := NewPendingReplyUseCase(repo, &spyDispatcher{})
