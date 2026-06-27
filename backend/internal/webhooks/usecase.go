@@ -186,6 +186,17 @@ func (uc *UseCase) deliverOne(ctx context.Context, d *domain.WebhookDelivery) (o
 		uc.observe(d.EventType, false)
 		return false
 	}
+	if !ep.Active {
+		// Endpoint disabled after this delivery was enqueued: drop it terminally
+		// so a disabled endpoint receives nothing — not just newly-published
+		// events (which Publish already skips), but in-flight/retrying ones too.
+		// Terminal (not left pending) avoids the worker re-claiming it every tick
+		// and starving the batch. Re-enabling resumes future events, not this one.
+		d.MarkFailed("endpoint inactive", 0, d.Attempts+1, now)
+		uc.saveDelivery(ctx, d)
+		uc.observe(d.EventType, false)
+		return false
+	}
 
 	sig := domain.SignPayload(d.Payload, ep.Secret)
 	status, err := uc.client.Deliver(ctx, ep.URL.String(), d.Payload, sig, d.EventID.String())

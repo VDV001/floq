@@ -123,9 +123,11 @@ func (h *Handler) delete() http.HandlerFunc {
 	}
 }
 
-// setActiveRequest is the toggle payload for PATCH /api/webhooks/{id}.
+// setActiveRequest is the toggle payload for PATCH /api/webhooks/{id}. active is
+// a pointer so an omitted field is distinguishable from an explicit false: a
+// body without "active" is rejected rather than silently disabling the endpoint.
 type setActiveRequest struct {
-	Active bool `json:"active"`
+	Active *bool `json:"active"`
 }
 
 func (h *Handler) setActive() http.HandlerFunc {
@@ -135,11 +137,11 @@ func (h *Handler) setActive() http.HandlerFunc {
 			return
 		}
 		var body setActiveRequest
-		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-			httputil.WriteError(w, http.StatusBadRequest, "invalid request body")
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.Active == nil {
+			httputil.WriteError(w, http.StatusBadRequest, "invalid request body: \"active\" is required")
 			return
 		}
-		ep, err := h.uc.SetEndpointActive(r.Context(), userID, id, body.Active)
+		ep, err := h.uc.SetEndpointActive(r.Context(), userID, id, *body.Active)
 		if err != nil {
 			h.writeMutationError(w, err)
 			return

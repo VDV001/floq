@@ -153,10 +153,12 @@ func (e *WebhookEndpoint) Subscribes(et EventType) bool {
 
 // SetActive enables or disables delivery to this endpoint. A deactivated
 // endpoint is skipped by the publisher (Publish fans out only to active
-// endpoints), so disabling pauses delivery without deleting the subscription —
-// its URL, events, and secret are preserved for re-enabling. There is no
-// invariant to enforce, but the mutation lives on the aggregate so callers never
-// poke the field directly.
+// endpoints) and its in-flight deliveries are dropped, so disabling stops
+// delivery without losing the subscription — its URL, events, and secret are
+// preserved for re-enabling. There is no invariant to enforce today; this is the
+// canonical write path for the flag (consistent with the aggregate's other
+// state transitions), the single place to grow audit/rules later. The fields
+// are exported because the repository hydrates them directly from storage.
 func (e *WebhookEndpoint) SetActive(active bool) {
 	e.Active = active
 }
