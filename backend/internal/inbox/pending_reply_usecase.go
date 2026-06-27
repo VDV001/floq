@@ -57,6 +57,8 @@ type PendingReplyUseCase struct {
 	dispatcher       ReplyDispatcher
 	classifier       InputClassifier
 	approvedObserver PendingReplyApprovedObserver
+	tx               TxManager
+	approvedEmitter  PendingReplyApprovedEmitter
 }
 
 // NewPendingReplyUseCase wires the usecase with its persistence port.
@@ -90,6 +92,24 @@ type PendingReplyApprovedObserver interface {
 // webhooks usecase it bridges to is built later in the composition root).
 func (uc *PendingReplyUseCase) SetApprovedObserver(o PendingReplyApprovedObserver) {
 	uc.approvedObserver = o
+}
+
+// PendingReplyApprovedEmitter writes the pending_reply.approved event
+// transactionally, inside the approval transaction (#199) — unlike
+// PendingReplyApprovedObserver which fires post-commit, best-effort. A non-nil
+// error aborts the approval (fail-closed), so the approval write and its event
+// row commit together or not at all. Implemented in the composition root.
+type PendingReplyApprovedEmitter interface {
+	EmitPendingReplyApproved(ctx context.Context, pr *PendingReply) error
+}
+
+// SetTxManager wires the transaction manager after construction (#199).
+func (uc *PendingReplyUseCase) SetTxManager(tx TxManager) { uc.tx = tx }
+
+// SetApprovedEmitter wires the in-transaction pending_reply.approved outbox
+// emitter after construction (#199).
+func (uc *PendingReplyUseCase) SetApprovedEmitter(e PendingReplyApprovedEmitter) {
+	uc.approvedEmitter = e
 }
 
 // SetClassifier injects the InputClassifier at runtime (mirrors
@@ -222,18 +242,43 @@ func (uc *PendingReplyUseCase) Approve(ctx context.Context, userID, id uuid.UUID
 	// Optimistic lock: we just loaded the row at status=pending; if
 	// the Update returns NotFound the row has been decided by
 	// somebody else in the meantime — surface as AlreadyDecided.
-	if err := uc.repo.Update(ctx, pr, PendingReplyStatusPending); err != nil {
-		if errors.Is(err, ErrPendingReplyNotFound) {
-			return ErrPendingReplyAlreadyDecided
+	doUpdate := func(ctx context.Context) error {
+		if err := uc.repo.Update(ctx, pr, PendingReplyStatusPending); err != nil {
+			if errors.Is(err, ErrPendingReplyNotFound) {
+				return ErrPendingReplyAlreadyDecided
+			}
+			return fmt.Errorf("persist approved pending reply: %w", err)
 		}
-		return fmt.Errorf("persist approved pending reply: %w", err)
+		return nil
+	}
+
+	if uc.approvedEmitter != nil && uc.tx != nil {
+		// Transactional outbox (#199): the approval write and the
+		// pending_reply.approved enqueue commit together or not at all. A
+		// failed emit rolls the approval back (fail-closed). The dispatch
+		// stays OUTSIDE this transaction — it is an external send that must
+		// run only after the approval is durably committed, and its failure
+		// must not undo the approval.
+		if err := uc.tx.WithTx(ctx, func(txCtx context.Context) error {
+			if err := doUpdate(txCtx); err != nil {
+				return err
+			}
+			return uc.approvedEmitter.EmitPendingReplyApproved(txCtx, pr)
+		}); err != nil {
+			return err
+		}
+	} else {
+		if err := doUpdate(ctx); err != nil {
+			return err
+		}
+		// Legacy post-approve side-effect (best-effort) — used only until the
+		// composition root wires the transactional emitter. The observer owns
+		// its errors: it must not fail the approval.
+		if uc.approvedObserver != nil {
+			uc.approvedObserver.OnPendingReplyApproved(ctx, pr)
+		}
 	}
 	// Approval is durably committed here (independent of dispatch outcome).
-	// Fire the post-approve side-effect (e.g. emit a pending_reply.approved
-	// webhook). The observer owns its errors — it must not fail the approval.
-	if uc.approvedObserver != nil {
-		uc.approvedObserver.OnPendingReplyApproved(ctx, pr)
-	}
 	if uc.dispatcher == nil {
 		return ErrPendingReplyDispatcherNotConfigured
 	}

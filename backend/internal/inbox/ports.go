@@ -53,6 +53,27 @@ type LeadQualifiedObserver interface {
 	OnLeadQualified(ctx context.Context, lead *InboxLead)
 }
 
+// TxManager runs fn within a database transaction, exposing it through the
+// context so transaction-aware repositories (and the inbox outbox emitters) join
+// it via db.ConnFromCtx. Satisfied by *db.TxManager. Drives the #199
+// transactional outbox: an inbox write and its webhook enqueue commit together.
+// A nil TxManager (or emitter) falls back to the legacy non-transactional path.
+type TxManager interface {
+	WithTx(ctx context.Context, fn func(ctx context.Context) error) error
+}
+
+// LeadCreatedEmitter writes lead.created transactionally, inside the lead-intake
+// transaction (#199). Fail-closed: a non-nil error aborts the intake write too.
+type LeadCreatedEmitter interface {
+	EmitLeadCreated(ctx context.Context, lead *InboxLead) error
+}
+
+// LeadQualifiedEmitter writes lead.qualified transactionally for the inbox
+// auto-qualification path (#199). Same fail-closed contract.
+type LeadQualifiedEmitter interface {
+	EmitLeadQualified(ctx context.Context, lead *InboxLead) error
+}
+
 // --- Read models ---
 
 // InboxLead is the inbox-local read model for a lead.
