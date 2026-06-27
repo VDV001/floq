@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/daniil/floq/internal/db"
 	"github.com/daniil/floq/internal/webhooks/domain"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -25,6 +26,14 @@ func NewRepository(pool *pgxpool.Pool, cipher SecretCipher) *Repository {
 
 var _ Store = (*Repository)(nil)
 
+// conn returns the ambient transaction when one is in the context (so writes
+// like EnqueueDelivery join a domain transaction — the transactional outbox of
+// #199), otherwise the pool. The delivery-relay path (cron) carries no tx, so
+// it transparently resolves to the pool.
+func (r *Repository) conn(ctx context.Context) db.Querier {
+	return db.ConnFromCtx(ctx, r.pool)
+}
+
 // CreateEndpoint inserts a new subscription, sealing the signing secret under
 // the KEK before it ever touches the database.
 func (r *Repository) CreateEndpoint(ctx context.Context, e *domain.WebhookEndpoint) error {
@@ -32,7 +41,7 @@ func (r *Repository) CreateEndpoint(ctx context.Context, e *domain.WebhookEndpoi
 	if err != nil {
 		return fmt.Errorf("webhooks: encrypt secret: %w", err)
 	}
-	_, err = r.pool.Exec(ctx, `
+	_, err = r.conn(ctx).Exec(ctx, `
 		INSERT INTO webhook_endpoints (id, user_id, url, events, secret_ciphertext, secret_nonce, active)
 		VALUES ($1, $2, $3, $4, $5, $6, $7)`,
 		e.ID, e.UserID, e.URL.String(), eventsToStrings(e.Events), ciphertext, nonce, e.Active)
@@ -44,7 +53,7 @@ func (r *Repository) CreateEndpoint(ctx context.Context, e *domain.WebhookEndpoi
 
 // ListEndpoints returns a user's endpoints, newest first.
 func (r *Repository) ListEndpoints(ctx context.Context, userID uuid.UUID) ([]*domain.WebhookEndpoint, error) {
-	rows, err := r.pool.Query(ctx, `
+	rows, err := r.conn(ctx).Query(ctx, `
 		SELECT id, user_id, url, events, secret_ciphertext, secret_nonce, active
 		FROM webhook_endpoints
 		WHERE user_id = $1
@@ -67,7 +76,7 @@ func (r *Repository) ListEndpoints(ctx context.Context, userID uuid.UUID) ([]*do
 
 // GetEndpoint loads one endpoint by ID (ownership checked by the usecase).
 func (r *Repository) GetEndpoint(ctx context.Context, id uuid.UUID) (*domain.WebhookEndpoint, bool, error) {
-	row := r.pool.QueryRow(ctx, `
+	row := r.conn(ctx).QueryRow(ctx, `
 		SELECT id, user_id, url, events, secret_ciphertext, secret_nonce, active
 		FROM webhook_endpoints WHERE id = $1`, id)
 	e, err := r.scanEndpoint(row)
@@ -82,7 +91,7 @@ func (r *Repository) GetEndpoint(ctx context.Context, id uuid.UUID) (*domain.Web
 
 // DeleteEndpoint removes an endpoint (and its deliveries, via ON DELETE CASCADE).
 func (r *Repository) DeleteEndpoint(ctx context.Context, id uuid.UUID) error {
-	_, err := r.pool.Exec(ctx, `DELETE FROM webhook_endpoints WHERE id = $1`, id)
+	_, err := r.conn(ctx).Exec(ctx, `DELETE FROM webhook_endpoints WHERE id = $1`, id)
 	if err != nil {
 		return fmt.Errorf("webhooks: delete endpoint: %w", err)
 	}
@@ -92,7 +101,7 @@ func (r *Repository) DeleteEndpoint(ctx context.Context, id uuid.UUID) error {
 // SetEndpointActive flips an endpoint's active flag. Ownership is verified by the
 // usecase; this is a blind UPDATE by ID.
 func (r *Repository) SetEndpointActive(ctx context.Context, id uuid.UUID, active bool) error {
-	_, err := r.pool.Exec(ctx,
+	_, err := r.conn(ctx).Exec(ctx,
 		`UPDATE webhook_endpoints SET active = $2, updated_at = now() WHERE id = $1`, id, active)
 	if err != nil {
 		return fmt.Errorf("webhooks: set endpoint active: %w", err)
@@ -102,7 +111,7 @@ func (r *Repository) SetEndpointActive(ctx context.Context, id uuid.UUID, active
 
 // EnqueueDelivery appends a pending delivery to the outbox.
 func (r *Repository) EnqueueDelivery(ctx context.Context, d *domain.WebhookDelivery) error {
-	_, err := r.pool.Exec(ctx, `
+	_, err := r.conn(ctx).Exec(ctx, `
 		INSERT INTO webhook_deliveries
 			(id, event_id, user_id, endpoint_id, event_type, payload, status, attempts)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
@@ -134,7 +143,7 @@ func (r *Repository) EnqueueDelivery(ctx context.Context, d *domain.WebhookDeliv
 // Phase 1 runs a single worker, so this plain SELECT needs no cross-instance
 // lease; multi-instance exclusivity is a later hardening.
 func (r *Repository) ClaimDueDeliveries(ctx context.Context, limit, maxAttempts int) ([]*domain.WebhookDelivery, error) {
-	rows, err := r.pool.Query(ctx, `
+	rows, err := r.conn(ctx).Query(ctx, `
 		SELECT id, event_id, user_id, endpoint_id, event_type, payload,
 		       status, attempts, http_status, error, delivered_at, next_retry_at
 		FROM webhook_deliveries
@@ -160,7 +169,7 @@ func (r *Repository) ClaimDueDeliveries(ctx context.Context, limit, maxAttempts 
 
 // SaveDelivery persists the outcome of a delivery attempt.
 func (r *Repository) SaveDelivery(ctx context.Context, d *domain.WebhookDelivery) error {
-	_, err := r.pool.Exec(ctx, `
+	_, err := r.conn(ctx).Exec(ctx, `
 		UPDATE webhook_deliveries
 		SET status = $2, attempts = $3, http_status = $4, error = $5,
 		    delivered_at = $6, next_retry_at = $7, updated_at = now()

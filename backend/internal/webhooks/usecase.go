@@ -134,9 +134,12 @@ func (uc *UseCase) Publish(ctx context.Context, userID uuid.UUID, event domain.E
 		if !ep.Active || !ep.Subscribes(event) {
 			continue
 		}
+		// Fail-fast (#199): Publish runs inside the caller's domain transaction
+		// (transactional outbox), so a single enqueue failure must surface as an
+		// error to roll the whole transaction back — never logged-and-skipped,
+		// which would leave the domain write committed with the event lost.
 		if err := uc.enqueue(ctx, ep, event, payload); err != nil {
-			uc.logger.ErrorContext(ctx, "webhooks: enqueue failed", "endpoint", ep.ID, "err", err)
-			continue
+			return enqueued, fmt.Errorf("webhooks: enqueue for endpoint %s: %w", ep.ID, err)
 		}
 		enqueued++
 	}

@@ -35,10 +35,10 @@ type EmailPoller struct {
 	identityLinker        IdentityLinker
 	enricher              EnrichmentEnqueuer
 	pendingProposer       PendingReplyProposer
-	leadCreatedObserver   LeadCreatedObserver
-	leadQualifiedObserver LeadQualifiedObserver
-	bookingLink           string
-	logger                *slog.Logger
+	leadCreatedEmitter   LeadCreatedEmitter
+	leadQualifiedEmitter LeadQualifiedEmitter
+	bookingLink          string
+	logger               *slog.Logger
 	ownerID               uuid.UUID
 	dialer                proxy.ContextDialer
 
@@ -139,18 +139,16 @@ func (e *EmailPoller) SetPendingProposer(p PendingReplyProposer) {
 	e.pendingProposer = p
 }
 
-// SetLeadCreatedObserver wires the post-lead-creation hook after construction
-// (the webhooks usecase it bridges to is built later in the composition root).
-func (e *EmailPoller) SetLeadCreatedObserver(o LeadCreatedObserver) {
-	e.leadCreatedObserver = o
-}
+// SetLeadCreatedEmitter wires the best-effort post-commit lead.created emitter
+// (#199 / #206). The source email is already marked \Seen by the time a lead is
+// written, so intake cannot be fail-closed without losing the lead — the event
+// is emitted post-commit, at-most-once, NOT inside a transaction.
+func (e *EmailPoller) SetLeadCreatedEmitter(em LeadCreatedEmitter) { e.leadCreatedEmitter = em }
 
-// SetLeadQualifiedObserver wires the post-auto-qualification hook after
-// construction (the webhooks usecase it bridges to is built later in the
-// composition root).
-func (e *EmailPoller) SetLeadQualifiedObserver(o LeadQualifiedObserver) {
-	e.leadQualifiedObserver = o
-}
+// SetLeadQualifiedEmitter wires the best-effort post-commit lead.qualified
+// emitter for the inbox auto-qualification path (#199 / #206). One-shot goroutine
+// with no retry, so it is post-commit best-effort, not transactional.
+func (e *EmailPoller) SetLeadQualifiedEmitter(em LeadQualifiedEmitter) { e.leadQualifiedEmitter = em }
 
 func (e *EmailPoller) Start(ctx context.Context) {
 	log.Println("email poller started (every 60s)")
@@ -451,8 +449,13 @@ func (e *EmailPoller) processEmail(ctx context.Context, fromName, fromEmail, bod
 			return
 		}
 		log.Printf("[email-poller] new lead created for %s (%s)", fromEmail, contactName)
-		if e.leadCreatedObserver != nil {
-			e.leadCreatedObserver.OnLeadCreated(ctx, lead)
+		// lead.created is emitted best-effort post-commit, NOT in a transaction:
+		// the source email is already marked \Seen, so a fail-closed rollback
+		// would lose the lead with no retry (#206). At-most-once, as before #199.
+		if e.leadCreatedEmitter != nil {
+			if err := e.leadCreatedEmitter.EmitLeadCreated(ctx, lead); err != nil {
+				log.Printf("[email-poller] lead.created emit failed (best-effort): %v", err)
+			}
 		}
 
 		if e.identityLinker != nil {
@@ -588,9 +591,14 @@ func (e *EmailPoller) processEmail(ctx context.Context, fromName, fromEmail, bod
 				return
 			}
 			log.Printf("[email-poller] lead %s qualified (score=%d)", lead.ID, result.Score)
-			if e.leadQualifiedObserver != nil {
+			// lead.qualified is emitted best-effort post-commit, NOT in a
+			// transaction: this is a one-shot goroutine with no retry, so a
+			// fail-closed rollback would silently drop the qualification (#206).
+			if e.leadQualifiedEmitter != nil {
 				lead.Status = StatusQualified
-				e.leadQualifiedObserver.OnLeadQualified(qCtx, lead)
+				if err := e.leadQualifiedEmitter.EmitLeadQualified(qCtx, lead); err != nil {
+					log.Printf("[email-poller] lead.qualified emit failed (best-effort): %v", err)
+				}
 			}
 		}()
 	}

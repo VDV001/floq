@@ -415,9 +415,10 @@ func main() {
 			slog.Default(),
 		)
 	}
-	// Bridge domain side-effects (lead/inbox events) to outgoing webhooks. Built
-	// unconditionally with a nil-safe publisher: when webhooks are disabled the
-	// bridge no-ops, so the observer wiring below stays the same either way.
+	// Bridge domain state changes (lead/inbox/outbound events) to the outgoing-
+	// webhooks outbox as transactional emitters (#199). The emitter wiring below
+	// is gated on webhooks being enabled (webhookPub != nil) so a disabled feature
+	// keeps the legacy non-transactional write paths.
 	var webhookPub eventPublisher
 	if webhooksUC != nil {
 		webhookPub = webhooksUC
@@ -499,15 +500,21 @@ func main() {
 	// write path and the reconciliation read path.
 	onecClient := onec.NewHTTPClient(httpClient)
 	onecOutboundUC := onec.NewOutboundUseCase(onecRepo, onecClient, slog.Default())
-	// Qualification fans out to BOTH the 1C counterparty push and the
-	// lead.qualified webhook; archive fires the lead.archived webhook.
-	leadsUC.SetQualificationObserver(newCompositeQualificationObserver(
-		slog.Default(),
-		newOnecQualificationAdapter(onecOutboundUC, slog.Default()),
-		webhookBridge,
-	))
-	leadsUC.SetLeadArchivedObserver(webhookBridge)
-	pendingReplyUC.SetApprovedObserver(webhookBridge)
+	// Qualification notifies the 1C counterparty push post-commit (best-effort,
+	// #108): it detaches into its own goroutine and must never fail or roll back
+	// qualification, so it stays a post-commit observer.
+	leadsUC.SetQualificationObserver(newOnecQualificationAdapter(onecOutboundUC, slog.Default()))
+	// Webhook emission is transactional (#199): the lead.qualified / lead.archived
+	// / pending_reply.approved rows are enqueued in the same transaction as their
+	// domain write. Wired only when webhooks are enabled, so a disabled feature
+	// keeps the legacy non-transactional write path (no extra transaction).
+	if webhookPub != nil {
+		leadsUC.SetTxManager(txManager)
+		leadsUC.SetQualificationEmitter(webhookBridge)
+		leadsUC.SetLeadArchivedEmitter(webhookBridge)
+		pendingReplyUC.SetTxManager(txManager)
+		pendingReplyUC.SetApprovedEmitter(webhookBridge)
+	}
 
 	// Reconciliation safety net (#109): re-feed recent 1C events through the
 	// inbound use case to recover any webhook that was lost. Cron started below
@@ -565,11 +572,12 @@ func main() {
 		MassSendConfirmed: cfg.OutboundMassSendConfirmed,
 	})))
 	// Emit sequence.completed to outgoing webhooks when a prospect's sequence run
-	// finishes sending. Only wired when webhooks are enabled so a disabled
-	// feature adds no per-send completion-count query (the bridge struct is
-	// non-nil even when its publisher is nil, so guard on webhookPub).
+	// finishes sending — transactionally with the dispatch's sent/bounced mark
+	// (#199). Only wired when webhooks are enabled so a disabled feature adds no
+	// per-send completion-count query or transaction.
 	if webhookPub != nil {
-		emailSender.SetSequenceCompletionObserver(webhookBridge)
+		emailSender.SetTxManager(txManager)
+		emailSender.SetSequenceCompletionEmitter(webhookBridge)
 	}
 	go func() {
 		ticker := time.NewTicker(30 * time.Second)
@@ -665,8 +673,11 @@ func main() {
 			telegramDispatcher = inbox.NewTelegramReplyDispatcher(tgBot.Bot(), leadReplyTargets, inboxLeadAdapter)
 			pendingReplyUC.SetDispatcher(guardReply(inbox.NewChannelReplyDispatcher(telegramDispatcher, emailDispatcher)))
 			tgBot.SetPendingProposer(pendingReplyUC)
-			tgBot.SetLeadCreatedObserver(webhookBridge)
-			tgBot.SetLeadQualifiedObserver(inboxLeadQualifiedObserverFunc(webhookBridge.emitInboxLeadQualified))
+			if webhookPub != nil {
+				// Poller intake events are best-effort post-commit (#206): no tx.
+				tgBot.SetLeadCreatedEmitter(webhookBridge)
+				tgBot.SetLeadQualifiedEmitter(inboxLeadQualifiedEmitterFunc(webhookBridge.emitInboxLeadQualified))
+			}
 			go tgBot.Start(ctx)
 			// Set the telegram sender on the leads use case
 			leadsUC.SetSender(leads.NewTelegramSender(tgBot.Bot()))
@@ -702,8 +713,11 @@ func main() {
 	// is constructed but before Start so no inbound email is processed
 	// without the HITL gate wired.
 	emailPoller.SetPendingProposer(pendingReplyUC)
-	emailPoller.SetLeadCreatedObserver(webhookBridge)
-	emailPoller.SetLeadQualifiedObserver(inboxLeadQualifiedObserverFunc(webhookBridge.emitInboxLeadQualified))
+	if webhookPub != nil {
+		// Poller intake events are best-effort post-commit (#206): no tx.
+		emailPoller.SetLeadCreatedEmitter(webhookBridge)
+		emailPoller.SetLeadQualifiedEmitter(inboxLeadQualifiedEmitterFunc(webhookBridge.emitInboxLeadQualified))
+	}
 	go emailPoller.Start(ctx)
 
 	// Identity backfill: walk existing leads + prospects once on

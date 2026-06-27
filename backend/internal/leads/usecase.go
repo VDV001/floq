@@ -24,7 +24,9 @@ type UseCase struct {
 	identityReader   IdentityReader
 	pendingCounter   PendingReplyCounter
 	qualObserver     domain.QualificationObserver
-	archivedObserver domain.LeadArchivedObserver
+	tx               domain.TxManager
+	qualEmitter      domain.QualificationEmitter
+	archivedEmitter  domain.LeadArchivedEmitter
 	logger           *slog.Logger
 }
 
@@ -46,11 +48,24 @@ func WithQualificationObserver(o domain.QualificationObserver) Option {
 	return func(uc *UseCase) { uc.qualObserver = o }
 }
 
-// WithLeadArchivedObserver wires the post-archive hook (#181). Supplied from the
-// composition root via an adapter that bridges to the webhooks context. nil
-// leaves the hook disabled.
-func WithLeadArchivedObserver(o domain.LeadArchivedObserver) Option {
-	return func(uc *UseCase) { uc.archivedObserver = o }
+// WithTxManager wires the transaction manager used to make qualification and
+// archive emit their webhook event in the same transaction as the domain write
+// (#199 transactional outbox). nil leaves the usecase on the legacy path.
+func WithTxManager(tx domain.TxManager) Option {
+	return func(uc *UseCase) { uc.tx = tx }
+}
+
+// WithQualificationEmitter wires the in-transaction lead.qualified outbox emitter
+// (#199). Supplied from the composition root, bridging to the webhooks context.
+// nil disables transactional emission.
+func WithQualificationEmitter(e domain.QualificationEmitter) Option {
+	return func(uc *UseCase) { uc.qualEmitter = e }
+}
+
+// WithLeadArchivedEmitter wires the in-transaction lead.archived outbox emitter
+// (#199). nil disables transactional emission.
+func WithLeadArchivedEmitter(e domain.LeadArchivedEmitter) Option {
+	return func(uc *UseCase) { uc.archivedEmitter = e }
 }
 
 // WithLogger overrides the default slog.Logger so the use case emits
@@ -85,12 +100,18 @@ func (uc *UseCase) SetQualificationObserver(o domain.QualificationObserver) {
 	uc.qualObserver = o
 }
 
-// SetLeadArchivedObserver wires the post-archive hook after construction, needed
-// because the webhooks usecase the observer bridges to is built later in the
-// composition root than the leads use case.
-func (uc *UseCase) SetLeadArchivedObserver(o domain.LeadArchivedObserver) {
-	uc.archivedObserver = o
-}
+// SetTxManager wires the transaction manager after construction (#199), needed
+// because the composition root builds the shared TxManager alongside the pool.
+func (uc *UseCase) SetTxManager(tx domain.TxManager) { uc.tx = tx }
+
+// SetQualificationEmitter wires the in-transaction lead.qualified outbox emitter
+// after construction (#199), as the webhooks usecase it bridges to is built
+// later in the composition root than the leads use case.
+func (uc *UseCase) SetQualificationEmitter(e domain.QualificationEmitter) { uc.qualEmitter = e }
+
+// SetLeadArchivedEmitter wires the in-transaction lead.archived outbox emitter
+// after construction (#199).
+func (uc *UseCase) SetLeadArchivedEmitter(e domain.LeadArchivedEmitter) { uc.archivedEmitter = e }
 
 func (uc *UseCase) ListLeads(ctx context.Context, userID uuid.UUID) ([]domain.LeadWithSource, error) {
 	return uc.repo.ListLeads(ctx, userID)
@@ -143,15 +164,18 @@ func (uc *UseCase) ArchiveLead(ctx context.Context, id uuid.UUID) error {
 	if err := lead.Archive(); err != nil {
 		return err
 	}
-	if err := uc.repo.SetLeadArchived(ctx, id, lead.ArchivedAt); err != nil {
-		return err
+	if uc.archivedEmitter != nil && uc.tx != nil {
+		// Transactional outbox (#199): the archive write and the lead.archived
+		// enqueue commit together or not at all (fail-closed).
+		return uc.tx.WithTx(ctx, func(txCtx context.Context) error {
+			if err := uc.repo.SetLeadArchived(txCtx, id, lead.ArchivedAt); err != nil {
+				return err
+			}
+			return uc.archivedEmitter.EmitLeadArchived(txCtx, lead)
+		})
 	}
-	// Fire the post-archive side-effect (e.g. emit a lead.archived webhook).
-	// The observer owns its errors — a failure here must not fail the archive.
-	if uc.archivedObserver != nil {
-		uc.archivedObserver.OnLeadArchived(ctx, lead)
-	}
-	return nil
+	// Webhooks disabled (no emitter wired): a plain archive with no event.
+	return uc.repo.SetLeadArchived(ctx, id, lead.ArchivedAt)
 }
 
 // UnarchiveLead restores an archived lead to feeds and analytics. Returns
@@ -241,20 +265,42 @@ func (uc *UseCase) QualifyLead(ctx context.Context, leadID uuid.UUID) (*domain.Q
 	}
 
 	q := domain.NewQualification(lead.ID, aiResult.IdentifiedNeed, aiResult.EstimatedBudget, aiResult.Deadline, aiResult.Score, aiResult.ScoreReason, aiResult.RecommendedAction, aiResult.ProviderUsed)
-	if err := uc.repo.UpsertQualification(ctx, q); err != nil {
+
+	// persist runs the qualification writes; the AI call above is deliberately
+	// outside it so no slow external call ever runs inside a DB transaction.
+	persist := func(ctx context.Context) error {
+		if err := uc.repo.UpsertQualification(ctx, q); err != nil {
+			return err
+		}
+		if err := lead.TransitionTo(domain.StatusQualified); err != nil {
+			return err
+		}
+		if err := uc.repo.UpdateLeadStatus(ctx, leadID, domain.StatusQualified); err != nil {
+			return err
+		}
+		lead.Status = domain.StatusQualified
+		return nil
+	}
+
+	if uc.qualEmitter != nil && uc.tx != nil {
+		// Transactional outbox (#199): the qualification writes and the
+		// lead.qualified enqueue commit together or not at all. A failed emit
+		// rolls the whole qualification back (fail-closed).
+		if err := uc.tx.WithTx(ctx, func(txCtx context.Context) error {
+			if err := persist(txCtx); err != nil {
+				return err
+			}
+			return uc.qualEmitter.EmitLeadQualified(txCtx, lead)
+		}); err != nil {
+			return nil, err
+		}
+	} else if err := persist(ctx); err != nil {
 		return nil, err
 	}
 
-	if err := lead.TransitionTo(domain.StatusQualified); err != nil {
-		return nil, err
-	}
-	if err := uc.repo.UpdateLeadStatus(ctx, leadID, domain.StatusQualified); err != nil {
-		return nil, err
-	}
-	lead.Status = domain.StatusQualified
-
-	// Fire the post-qualification side-effect (e.g. push a counterparty to 1C).
-	// The observer owns its errors — a failure here must not fail qualification.
+	// Post-commit, best-effort: the 1C counterparty push (#108). It detaches
+	// into its own goroutine and owns its errors — a failure here must never
+	// fail or roll back qualification.
 	if uc.qualObserver != nil {
 		uc.qualObserver.OnLeadQualified(ctx, lead)
 	}

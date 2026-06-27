@@ -32,8 +32,8 @@ type TelegramBot struct {
 	logger                *slog.Logger
 	ownerID               uuid.UUID
 	bookingLink           string
-	leadCreatedObserver   LeadCreatedObserver
-	leadQualifiedObserver LeadQualifiedObserver
+	leadCreatedEmitter   LeadCreatedEmitter
+	leadQualifiedEmitter LeadQualifiedEmitter
 }
 
 // TelegramBotOption configures a *TelegramBot at construction. Used for
@@ -110,18 +110,16 @@ func (t *TelegramBot) SetPendingProposer(p PendingReplyProposer) {
 	t.pendingProposer = p
 }
 
-// SetLeadCreatedObserver wires the post-lead-creation hook after construction
-// (the webhooks usecase it bridges to is built later in the composition root).
-func (t *TelegramBot) SetLeadCreatedObserver(o LeadCreatedObserver) {
-	t.leadCreatedObserver = o
-}
+// SetLeadCreatedEmitter wires the best-effort post-commit lead.created emitter
+// (#199 / #206). The Telegram update offset is already advanced by the time a
+// lead is written, so intake cannot be fail-closed without losing the lead — the
+// event is emitted post-commit, at-most-once, NOT inside a transaction.
+func (t *TelegramBot) SetLeadCreatedEmitter(e LeadCreatedEmitter) { t.leadCreatedEmitter = e }
 
-// SetLeadQualifiedObserver wires the post-auto-qualification hook after
-// construction (the webhooks usecase it bridges to is built later in the
-// composition root).
-func (t *TelegramBot) SetLeadQualifiedObserver(o LeadQualifiedObserver) {
-	t.leadQualifiedObserver = o
-}
+// SetLeadQualifiedEmitter wires the best-effort post-commit lead.qualified
+// emitter for the inbox auto-qualification path (#199 / #206). One-shot goroutine
+// with no retry, so it is post-commit best-effort, not transactional.
+func (t *TelegramBot) SetLeadQualifiedEmitter(e LeadQualifiedEmitter) { t.leadQualifiedEmitter = e }
 
 // Start begins listening for Telegram updates and processing them.
 // It blocks until ctx is cancelled.
@@ -198,8 +196,14 @@ func (t *TelegramBot) handleMessage(ctx context.Context, msg *tgbotapi.Message) 
 			return
 		}
 		log.Printf("telegram inbox: new lead created for chat %d (%s)", chatID, contactName)
-		if t.leadCreatedObserver != nil {
-			t.leadCreatedObserver.OnLeadCreated(ctx, lead)
+		// lead.created is emitted best-effort post-commit, NOT in a transaction:
+		// the Telegram update offset is already advanced, so a fail-closed
+		// rollback would lose the lead with no retry (#206). At-most-once, as
+		// before #199.
+		if t.leadCreatedEmitter != nil {
+			if err := t.leadCreatedEmitter.EmitLeadCreated(ctx, lead); err != nil {
+				log.Printf("telegram inbox: lead.created emit failed (best-effort): %v", err)
+			}
 		}
 
 		if t.identityLinker != nil && username != "" {
@@ -309,9 +313,14 @@ func (t *TelegramBot) handleMessage(ctx context.Context, msg *tgbotapi.Message) 
 				return
 			}
 			log.Printf("telegram inbox: lead %s qualified (score=%d)", lead.ID, result.Score)
-			if t.leadQualifiedObserver != nil {
+			// lead.qualified is emitted best-effort post-commit, NOT in a
+			// transaction: this is a one-shot goroutine with no retry, so a
+			// fail-closed rollback would silently drop the qualification (#206).
+			if t.leadQualifiedEmitter != nil {
 				lead.Status = StatusQualified
-				t.leadQualifiedObserver.OnLeadQualified(qCtx, lead)
+				if err := t.leadQualifiedEmitter.EmitLeadQualified(qCtx, lead); err != nil {
+					log.Printf("telegram inbox: lead.qualified emit failed (best-effort): %v", err)
+				}
 			}
 		}()
 	}

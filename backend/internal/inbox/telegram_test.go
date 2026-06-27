@@ -276,70 +276,78 @@ func TestHandleMessage_NewLead(t *testing.T) {
 	assert.Equal(t, StatusQualified, repo.updatedStatuses[lead.ID])
 }
 
-type spyLeadCreatedObserver struct {
+// --- #199 transactional outbox emitter spies (shared with email_test.go) ---
+
+type spyLeadCreatedEmitter struct {
 	mu    sync.Mutex
 	leads []*InboxLead
+	err   error
 }
 
-func (s *spyLeadCreatedObserver) OnLeadCreated(_ context.Context, lead *InboxLead) {
+func (s *spyLeadCreatedEmitter) EmitLeadCreated(_ context.Context, lead *InboxLead) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.leads = append(s.leads, lead)
+	return s.err
 }
 
-func (s *spyLeadCreatedObserver) count() int {
+func (s *spyLeadCreatedEmitter) count() int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return len(s.leads)
 }
 
-func TestHandleMessage_NewLead_NotifiesLeadCreatedObserver(t *testing.T) {
+type spyLeadQualifiedEmitter struct {
+	mu    sync.Mutex
+	leads []*InboxLead
+	err   error
+}
+
+func (s *spyLeadQualifiedEmitter) EmitLeadQualified(_ context.Context, lead *InboxLead) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.leads = append(s.leads, lead)
+	return s.err
+}
+
+func (s *spyLeadQualifiedEmitter) count() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return len(s.leads)
+}
+
+func TestHandleMessage_NewLead_EmitsLeadCreated(t *testing.T) {
 	repo := newMockLeadRepo()
 	aiClient := &mockAIQualifier{result: &QualificationResult{Score: 5}}
 	ownerID := uuid.New()
 	bot := newTestBot(repo, aiClient, ownerID, "https://cal.com/test")
-	obs := &spyLeadCreatedObserver{}
-	bot.SetLeadCreatedObserver(obs)
+	emit := &spyLeadCreatedEmitter{}
+	bot.SetLeadCreatedEmitter(emit)
 
 	bot.handleMessage(context.Background(), makeTgMessage(12345, "Ivan", "Petrov", "Hello"))
 	waitQualifyDone(t, repo)
 
-	require.Equal(t, 1, obs.count(), "a new telegram lead must notify the observer")
-	assert.Equal(t, ChannelTelegram, obs.leads[0].Channel)
-	assert.Equal(t, ownerID, obs.leads[0].UserID)
+	// Best-effort post-commit (#206): emitted after CreateLead, not in a tx.
+	require.Equal(t, 1, emit.count(), "a new telegram lead must emit lead.created")
+	assert.Equal(t, ChannelTelegram, emit.leads[0].Channel)
+	assert.Equal(t, ownerID, emit.leads[0].UserID)
 }
 
-type spyLeadQualifiedObserver struct {
-	mu    sync.Mutex
-	leads []*InboxLead
-}
-
-func (s *spyLeadQualifiedObserver) OnLeadQualified(_ context.Context, lead *InboxLead) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.leads = append(s.leads, lead)
-}
-
-func (s *spyLeadQualifiedObserver) count() int {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return len(s.leads)
-}
-
-func TestHandleMessage_AutoQualify_NotifiesLeadQualifiedObserver(t *testing.T) {
+func TestHandleMessage_AutoQualify_EmitsLeadQualified(t *testing.T) {
 	repo := newMockLeadRepo()
 	aiClient := &mockAIQualifier{result: &QualificationResult{Score: 8}}
 	ownerID := uuid.New()
 	bot := newTestBot(repo, aiClient, ownerID, "https://cal.com/test")
-	obs := &spyLeadQualifiedObserver{}
-	bot.SetLeadQualifiedObserver(obs)
+	emit := &spyLeadQualifiedEmitter{}
+	bot.SetLeadQualifiedEmitter(emit)
 
 	bot.handleMessage(context.Background(), makeTgMessage(12345, "Ivan", "Petrov", "Hello"))
 	waitQualifyDone(t, repo)
 
-	require.Eventually(t, func() bool { return obs.count() == 1 }, 2*time.Second, 10*time.Millisecond,
-		"auto-qualification must notify the lead-qualified observer")
-	assert.Equal(t, ownerID, obs.leads[0].UserID)
+	// Best-effort post-commit (#206): emitted after the qualification writes.
+	require.Eventually(t, func() bool { return emit.count() == 1 }, 2*time.Second, 10*time.Millisecond,
+		"auto-qualification must emit lead.qualified")
+	assert.Equal(t, ownerID, emit.leads[0].UserID)
 }
 
 func TestHandleMessage_ExistingLead(t *testing.T) {
