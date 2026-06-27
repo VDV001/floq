@@ -132,6 +132,13 @@ func (s *Sender) SetSequenceCompletionObserver(o SequenceCompletionObserver) { s
 // is a silent no-op — it must never fail or hold up a send. Emission only
 // happens on a dispatch (send/bounce), so a run cut short by a user rejecting
 // its final draft does not produce a completion event.
+//
+// Completion means "the last dispatch emptied the run's queue", not "the queue
+// is empty": a step that can never be dispatched (permanently suppressed,
+// consent-blocked, or failing non-bounce every tick) stays approved, so the
+// count never reaches zero and the run never completes. That matches the
+// "finished sending" definition and mirrors the existing infinite-retry
+// behaviour of GetPendingSends.
 func (s *Sender) noteRunProgress(ctx context.Context, msg seqdomain.OutboundMessage, userID uuid.UUID) {
 	if s.seqObserver == nil || msg.SequenceID == uuid.Nil {
 		return
