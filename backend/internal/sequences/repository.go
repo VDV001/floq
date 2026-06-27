@@ -284,6 +284,22 @@ func (r *Repository) MarkBounced(ctx context.Context, id uuid.UUID, _ time.Time)
 	return nil
 }
 
+// CountPendingDispatch returns how many outbound messages for the (prospect,
+// sequence) run are still awaiting dispatch — status 'draft' or 'approved'. The
+// status set mirrors domain.OutboundStatus.IsPendingDispatch; zero means the
+// run has finished sending. Used by the outbound sender to detect completion.
+func (r *Repository) CountPendingDispatch(ctx context.Context, prospectID, sequenceID uuid.UUID) (int, error) {
+	var n int
+	err := r.conn(ctx).QueryRow(ctx,
+		`SELECT COUNT(*) FROM outbound_messages
+		 WHERE prospect_id = $1 AND sequence_id = $2 AND status IN ('draft', 'approved')`,
+		prospectID, sequenceID).Scan(&n)
+	if err != nil {
+		return 0, fmt.Errorf("count pending dispatch: %w", err)
+	}
+	return n, nil
+}
+
 func (r *Repository) MarkOpened(ctx context.Context, id uuid.UUID) error {
 	_, err := r.conn(ctx).Exec(ctx,
 		`UPDATE outbound_messages SET opened_at = COALESCE(opened_at, NOW()) WHERE id = $1`, id)

@@ -332,6 +332,46 @@ func TestMarkSentAndOpened(t *testing.T) {
 	require.NoError(t, repo.MarkOpened(ctx, msg.ID))
 }
 
+func TestCountPendingDispatch(t *testing.T) {
+	pool := testutil.TestDB(t)
+	userID := testutil.SeedUser(t, pool)
+	repo := sequences.NewRepository(pool)
+	ctx := context.Background()
+
+	seq, _ := domain.NewSequence(userID, "CountSeq")
+	require.NoError(t, repo.CreateSequence(ctx, seq))
+	prospectID := seedProspect(t, pool, userID)
+	now := time.Now().UTC()
+
+	// m1 draft (pending), m2 approved (pending), m3 sent (not pending).
+	m1 := domain.NewOutboundMessage(prospectID, seq.ID, 1, domain.StepChannelEmail, "s1", now)
+	require.NoError(t, repo.CreateOutboundMessage(ctx, m1)) // stays draft
+	m2 := domain.NewOutboundMessage(prospectID, seq.ID, 2, domain.StepChannelEmail, "s2", now)
+	require.NoError(t, repo.CreateOutboundMessage(ctx, m2))
+	require.NoError(t, repo.UpdateOutboundStatus(ctx, m2.ID, domain.OutboundStatusApproved))
+	m3 := domain.NewOutboundMessage(prospectID, seq.ID, 3, domain.StepChannelEmail, "s3", now)
+	require.NoError(t, repo.CreateOutboundMessage(ctx, m3))
+	require.NoError(t, repo.UpdateOutboundStatus(ctx, m3.ID, domain.OutboundStatusApproved))
+	require.NoError(t, repo.MarkSent(ctx, m3.ID, now))
+
+	// A different sequence for the same prospect must not leak into the count.
+	other, _ := domain.NewSequence(userID, "OtherSeq")
+	require.NoError(t, repo.CreateSequence(ctx, other))
+	mo := domain.NewOutboundMessage(prospectID, other.ID, 1, domain.StepChannelEmail, "x", now)
+	require.NoError(t, repo.CreateOutboundMessage(ctx, mo)) // draft, different run
+
+	n, err := repo.CountPendingDispatch(ctx, prospectID, seq.ID)
+	require.NoError(t, err)
+	assert.Equal(t, 2, n, "draft + approved counted; sent excluded, other sequence excluded")
+
+	// Resolve the two pending messages: the run then has nothing left to dispatch.
+	require.NoError(t, repo.MarkSent(ctx, m2.ID, now))
+	require.NoError(t, repo.UpdateOutboundStatus(ctx, m1.ID, domain.OutboundStatusRejected))
+	n, err = repo.CountPendingDispatch(ctx, prospectID, seq.ID)
+	require.NoError(t, err)
+	assert.Equal(t, 0, n, "all messages terminal → run finished sending")
+}
+
 func TestMarkBounced(t *testing.T) {
 	pool := testutil.TestDB(t)
 	userID := testutil.SeedUser(t, pool)

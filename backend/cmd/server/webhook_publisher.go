@@ -7,6 +7,7 @@ import (
 
 	inbox "github.com/daniil/floq/internal/inbox"
 	leadsdomain "github.com/daniil/floq/internal/leads/domain"
+	"github.com/daniil/floq/internal/outbound"
 	webhooksdomain "github.com/daniil/floq/internal/webhooks/domain"
 	"github.com/google/uuid"
 )
@@ -126,8 +127,19 @@ func (b *webhookEventPublisher) OnPendingReplyApproved(ctx context.Context, pr *
 	})
 }
 
-// Compile-time checks that the bridge satisfies the leads qualification port.
+// OnSequenceCompleted emits sequence.completed when a prospect's sequence run
+// finishes sending its last message. Implements outbound.SequenceCompletionObserver.
+func (b *webhookEventPublisher) OnSequenceCompleted(ctx context.Context, ev outbound.SequenceCompletion) {
+	b.publish(ctx, ev.UserID, webhooksdomain.EventSequenceCompleted, map[string]any{
+		"prospect_id": ev.ProspectID,
+		"sequence_id": ev.SequenceID,
+	})
+}
+
+// Compile-time checks that the bridge satisfies the leads qualification port and
+// the outbound sequence-completion port.
 var _ leadsdomain.QualificationObserver = (*webhookEventPublisher)(nil)
+var _ outbound.SequenceCompletionObserver = (*webhookEventPublisher)(nil)
 
 // compositeQualificationObserver fans a qualification event out to several
 // observers (e.g. the 1C counterparty push AND the lead.qualified webhook). The

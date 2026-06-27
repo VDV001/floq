@@ -38,6 +38,26 @@ type OutboundRepository interface {
 	// by the caller (the domain entity's OutboundMessage.MarkBounced) —
 	// see sequences/domain.Repository contract for the rationale.
 	MarkBounced(ctx context.Context, id uuid.UUID, bouncedAt time.Time) error
+	// CountPendingDispatch returns how many outbound messages for the given
+	// (prospect, sequence) run are still awaiting dispatch — status draft or
+	// approved (see OutboundStatus.IsPendingDispatch). Zero means the run has
+	// finished sending; the sender uses this to detect sequence completion.
+	CountPendingDispatch(ctx context.Context, prospectID, sequenceID uuid.UUID) (int, error)
+}
+
+// SequenceCompletion identifies a prospect's sequence run that has just finished
+// sending — its last message was dispatched and none remain pending.
+type SequenceCompletion struct {
+	UserID     uuid.UUID
+	ProspectID uuid.UUID
+	SequenceID uuid.UUID
+}
+
+// SequenceCompletionObserver is notified once when a prospect's sequence run
+// reaches its end. Declared in the consumer (DIP); the composition root wires
+// the webhook bridge. A nil observer disables the notification.
+type SequenceCompletionObserver interface {
+	OnSequenceCompleted(ctx context.Context, ev SequenceCompletion)
 }
 
 // ProspectLookup reads prospect data and the suppression list — everything the
