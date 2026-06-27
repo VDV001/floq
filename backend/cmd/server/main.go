@@ -714,8 +714,11 @@ func main() {
 	// without the HITL gate wired.
 	emailPoller.SetPendingProposer(pendingReplyUC)
 	if webhookPub != nil {
-		// Poller intake events are best-effort post-commit (#206): no tx.
+		// #206: lead.created is fail-closed — CreateLead + enqueue commit in one
+		// tx; on failure the email is left unseen for retry. lead.qualified
+		// (auto-qualification) stays best-effort post-commit until #206 Part C.
 		emailPoller.SetLeadCreatedEmitter(webhookBridge)
+		emailPoller.SetTxManager(txManager)
 		emailPoller.SetLeadQualifiedEmitter(inboxLeadQualifiedEmitterFunc(webhookBridge.emitInboxLeadQualified))
 	}
 	go emailPoller.Start(ctx)

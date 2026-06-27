@@ -430,8 +430,8 @@ func (e *EmailPoller) processEmail(ctx context.Context, fromName, fromEmail, bod
 	fromEmail = normalize.Email(fromEmail)
 	existing, err := e.repo.GetLeadByEmailAddress(ctx, e.ownerID, fromEmail)
 	if err != nil {
-		log.Printf("[email-poller] error looking up lead for %s: %v", fromEmail, err)
-		return nil
+		// Transient: signal retry rather than dropping the email (#206).
+		return fmt.Errorf("look up lead for %s: %w", fromEmail, err)
 	}
 
 	isNewLead := existing == nil
@@ -463,19 +463,15 @@ func (e *EmailPoller) processEmail(ctx context.Context, fromName, fromEmail, bod
 		if hasProspectMatch {
 			lead.SourceID = prospect.SourceID
 		}
-		if err := e.repo.CreateLead(ctx, lead); err != nil {
-			log.Printf("[email-poller] error creating lead: %v", err)
-			return nil
+		// #206: persist the lead and enqueue lead.created atomically. A failed
+		// enqueue rolls the lead back and the error propagates so the poll loop
+		// leaves the email unseen for retry (fail-closed). Safe because \Seen is
+		// marked only after processEmail returns nil.
+		if err := e.commitLeadIntake(ctx, lead); err != nil {
+			log.Printf("[email-poller] error creating lead for %s, will retry next poll: %v", fromEmail, err)
+			return err
 		}
 		log.Printf("[email-poller] new lead created for %s (%s)", fromEmail, contactName)
-		// lead.created is emitted best-effort post-commit, NOT in a transaction:
-		// the source email is already marked \Seen, so a fail-closed rollback
-		// would lose the lead with no retry (#206). At-most-once, as before #199.
-		if e.leadCreatedEmitter != nil {
-			if err := e.leadCreatedEmitter.EmitLeadCreated(ctx, lead); err != nil {
-				log.Printf("[email-poller] lead.created emit failed (best-effort): %v", err)
-			}
-		}
 
 		if e.identityLinker != nil {
 			if err := e.identityLinker.LinkLeadToIdentity(ctx, e.ownerID, lead.ID, fromEmail, "", ""); err != nil {
@@ -620,6 +616,32 @@ func (e *EmailPoller) processEmail(ctx context.Context, fromName, fromEmail, bod
 				}
 			}
 		}()
+	}
+	return nil
+}
+
+// commitLeadIntake persists a new inbound lead and enqueues its lead.created
+// event. When a transaction manager and emitter are both wired (webhooks
+// enabled), the two run inside one WithTx so they commit or roll back together
+// — a failed enqueue undoes the lead and returns an error (fail-closed, #206).
+// Otherwise it falls back to a plain create with a best-effort post-commit emit,
+// preserving the zero-overhead path when webhooks are disabled.
+func (e *EmailPoller) commitLeadIntake(ctx context.Context, lead *InboxLead) error {
+	if e.tx != nil && e.leadCreatedEmitter != nil {
+		return e.tx.WithTx(ctx, func(txCtx context.Context) error {
+			if err := e.repo.CreateLead(txCtx, lead); err != nil {
+				return err
+			}
+			return e.leadCreatedEmitter.EmitLeadCreated(txCtx, lead)
+		})
+	}
+	if err := e.repo.CreateLead(ctx, lead); err != nil {
+		return err
+	}
+	if e.leadCreatedEmitter != nil {
+		if err := e.leadCreatedEmitter.EmitLeadCreated(ctx, lead); err != nil {
+			log.Printf("[email-poller] lead.created emit failed (best-effort): %v", err)
+		}
 	}
 	return nil
 }
