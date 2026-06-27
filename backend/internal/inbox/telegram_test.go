@@ -1021,3 +1021,218 @@ func TestBot_Getter(t *testing.T) {
 func ptrInt64(v int64) *int64 {
 	return &v
 }
+
+// --- #206 Part B: offset-gating receive loop ---
+
+// scriptedFetcher returns pre-scripted update batches and records the offset it
+// was asked for on each call, so a test can assert the offset advances only past
+// successfully-handled updates. After the scripted batches are exhausted it
+// cancels the context to terminate receiveLoop.
+type scriptedFetcher struct {
+	mu      sync.Mutex
+	batches [][]tgbotapi.Update
+	offsets []int
+	cancel  context.CancelFunc
+}
+
+func (f *scriptedFetcher) GetUpdates(cfg tgbotapi.UpdateConfig) ([]tgbotapi.Update, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	call := len(f.offsets)
+	f.offsets = append(f.offsets, cfg.Offset)
+	if call < len(f.batches) {
+		return f.batches[call], nil
+	}
+	f.cancel()
+	return nil, nil
+}
+
+func (f *scriptedFetcher) requestedOffsets() []int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]int(nil), f.offsets...)
+}
+
+// A failed handler must NOT advance the offset past its update: the next poll
+// re-requests from the failed update's id, so it is re-delivered (#206 Part B).
+// A successful handler advances past its update so it is confirmed and never
+// re-processed.
+func TestReceiveLoop_AdvancesOffsetOnlyPastHandledUpdates(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	up1 := tgbotapi.Update{UpdateID: 100, Message: makeTgMessage(1, "A", "", "hi")}
+	up2 := tgbotapi.Update{UpdateID: 101, Message: makeTgMessage(2, "B", "", "hi")}
+	fetcher := &scriptedFetcher{
+		batches: [][]tgbotapi.Update{{up1, up2}},
+		cancel:  cancel,
+	}
+
+	var handled []int64
+	var hmu sync.Mutex
+	handle := func(_ context.Context, msg *tgbotapi.Message) error {
+		hmu.Lock()
+		handled = append(handled, msg.Chat.ID)
+		hmu.Unlock()
+		if msg.Chat.ID == 2 {
+			return errors.New("transient intake failure")
+		}
+		return nil
+	}
+
+	bot := &TelegramBot{logger: slog.Default()}
+	bot.receiveLoop(ctx, fetcher, handle)
+
+	offsets := fetcher.requestedOffsets()
+	require.GreaterOrEqual(t, len(offsets), 2, "loop must poll at least twice")
+	assert.Equal(t, 0, offsets[0], "first poll starts at offset 0")
+	assert.Equal(t, 101, offsets[1],
+		"second poll must request offset 101 (past the committed update 100, NOT past the failed 101)")
+
+	hmu.Lock()
+	defer hmu.Unlock()
+	assert.Equal(t, []int64{1, 2}, handled, "both updates in the batch are attempted in order")
+}
+
+// All-success advances the offset past every update in the batch.
+func TestReceiveLoop_AllSuccess_AdvancesPastBatch(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	up1 := tgbotapi.Update{UpdateID: 100, Message: makeTgMessage(1, "A", "", "hi")}
+	up2 := tgbotapi.Update{UpdateID: 105, Message: makeTgMessage(2, "B", "", "hi")}
+	fetcher := &scriptedFetcher{batches: [][]tgbotapi.Update{{up1, up2}}, cancel: cancel}
+
+	handle := func(_ context.Context, _ *tgbotapi.Message) error { return nil }
+
+	bot := &TelegramBot{logger: slog.Default()}
+	bot.receiveLoop(ctx, fetcher, handle)
+
+	offsets := fetcher.requestedOffsets()
+	require.GreaterOrEqual(t, len(offsets), 2)
+	assert.Equal(t, 106, offsets[1], "second poll must request offset past the last update (105+1)")
+}
+
+// Non-message updates (no Message payload) still advance the offset so the loop
+// does not stall on them.
+func TestReceiveLoop_NonMessageUpdate_AdvancesOffset(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	up := tgbotapi.Update{UpdateID: 200} // no Message
+	fetcher := &scriptedFetcher{batches: [][]tgbotapi.Update{{up}}, cancel: cancel}
+
+	called := false
+	handle := func(_ context.Context, _ *tgbotapi.Message) error { called = true; return nil }
+
+	bot := &TelegramBot{logger: slog.Default()}
+	bot.receiveLoop(ctx, fetcher, handle)
+
+	assert.False(t, called, "non-message updates must not reach the handler")
+	offsets := fetcher.requestedOffsets()
+	require.GreaterOrEqual(t, len(offsets), 2)
+	assert.Equal(t, 201, offsets[1], "a non-message update still advances the offset")
+}
+
+// --- #206 Part B: transactional lead.created intake ---
+
+// With a TxManager wired, new-lead intake is fail-closed — CreateLead and the
+// lead.created enqueue run inside one WithTx. A failed emit must propagate out of
+// handleMessage so the receive loop leaves the update offset un-advanced for
+// re-delivery, instead of being swallowed.
+func TestHandleMessage_NewLead_EmitFailureSignalsRetry(t *testing.T) {
+	repo := newErrorMockLeadRepo()
+	aiClient := &mockAIQualifier{result: &QualificationResult{Score: 5}}
+	bot := newTestBot(repo, aiClient, uuid.New(), "")
+	emit := &spyLeadCreatedEmitter{err: errors.New("enqueue failed")}
+	bot.SetLeadCreatedEmitter(emit)
+	tx := &inlineTx{}
+	bot.SetTxManager(tx)
+
+	err := bot.handleMessage(context.Background(), makeTgMessage(22222, "Ivan", "Petrov", "Hello"))
+
+	require.Error(t, err, "a failed lead.created enqueue must signal retry, not be swallowed")
+	assert.Equal(t, 1, tx.count(), "intake must run inside exactly one WithTx")
+}
+
+// Happy path with a TxManager wired commits the lead and emits the event,
+// returning nil so the receive loop advances the offset.
+func TestHandleMessage_NewLead_TransactionalIntake_Success(t *testing.T) {
+	repo := newErrorMockLeadRepo()
+	aiClient := &mockAIQualifier{result: &QualificationResult{Score: 5}}
+	bot := newTestBot(repo, aiClient, uuid.New(), "")
+	emit := &spyLeadCreatedEmitter{}
+	bot.SetLeadCreatedEmitter(emit)
+	tx := &inlineTx{}
+	bot.SetTxManager(tx)
+
+	err := bot.handleMessage(context.Background(), makeTgMessage(33333, "Ivan", "Petrov", "Hello"))
+	waitQualifyDone(t, &repo.mockLeadRepo)
+
+	require.NoError(t, err)
+	assert.Equal(t, 1, tx.count(), "intake must run inside exactly one WithTx")
+	require.Equal(t, 1, emit.count(), "a new telegram lead must emit lead.created")
+	repo.mu.Lock()
+	defer repo.mu.Unlock()
+	assert.Len(t, repo.leads, 1, "lead must be created")
+}
+
+// A transient lookup failure (before any durable write) must signal retry so the
+// update is re-delivered, instead of being silently dropped.
+func TestHandleMessage_GetLeadByChatIDError_SignalsRetry(t *testing.T) {
+	repo := newErrorMockLeadRepo()
+	repo.getLeadByChatIDErr = errors.New("db unavailable")
+	aiClient := &mockAIQualifier{result: &QualificationResult{Score: 5}}
+	bot := newTestBot(repo, aiClient, uuid.New(), "")
+
+	err := bot.handleMessage(context.Background(), makeTgMessage(44444, "Test", "", "Hello"))
+
+	require.Error(t, err, "a transient lookup error must signal retry")
+}
+
+// repeatFetcher returns the same batch on every call and counts calls — models a
+// stuck/poison update or a sustained outage where the handler keeps failing.
+type repeatFetcher struct {
+	mu    sync.Mutex
+	batch []tgbotapi.Update
+	calls int
+}
+
+func (f *repeatFetcher) GetUpdates(tgbotapi.UpdateConfig) ([]tgbotapi.Update, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.calls++
+	return f.batch, nil
+}
+
+func (f *repeatFetcher) count() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.calls
+}
+
+// A handler that keeps failing must NOT busy-loop re-polling: the receive loop
+// must back off (a ctx-aware wait) between re-deliveries, and exit promptly when
+// ctx is cancelled mid-backoff. Without the backoff this spins thousands of
+// GetUpdates calls (and BEGIN/INSERT/ROLLBACK attempts) before cancellation.
+func TestReceiveLoop_HandlerError_BacksOffInsteadOfBusyLooping(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	time.AfterFunc(40*time.Millisecond, cancel)
+
+	fetcher := &repeatFetcher{batch: []tgbotapi.Update{
+		{UpdateID: 100, Message: makeTgMessage(1, "A", "", "hi")},
+	}}
+	handle := func(_ context.Context, _ *tgbotapi.Message) error {
+		return errors.New("persistent failure")
+	}
+
+	bot := &TelegramBot{logger: slog.Default(), errBackoff: 1 * time.Second}
+	start := time.Now()
+	bot.receiveLoop(ctx, fetcher, handle)
+
+	assert.Less(t, time.Since(start), 500*time.Millisecond,
+		"must exit promptly when ctx is cancelled during the handler-error backoff")
+	assert.LessOrEqual(t, fetcher.count(), 2,
+		"handler-error re-poll must back off, not busy-loop")
+}

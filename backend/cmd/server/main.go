@@ -674,8 +674,12 @@ func main() {
 			pendingReplyUC.SetDispatcher(guardReply(inbox.NewChannelReplyDispatcher(telegramDispatcher, emailDispatcher)))
 			tgBot.SetPendingProposer(pendingReplyUC)
 			if webhookPub != nil {
-				// Poller intake events are best-effort post-commit (#206): no tx.
+				// #206 Part B: lead.created is fail-closed — CreateLead + enqueue
+				// commit in one tx; the receive loop advances the update offset
+				// only after a successful intake. lead.qualified (auto-qualify)
+				// stays best-effort post-commit until #206 Part C.
 				tgBot.SetLeadCreatedEmitter(webhookBridge)
+				tgBot.SetTxManager(txManager)
 				tgBot.SetLeadQualifiedEmitter(inboxLeadQualifiedEmitterFunc(webhookBridge.emitInboxLeadQualified))
 			}
 			go tgBot.Start(ctx)
