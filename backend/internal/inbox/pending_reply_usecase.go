@@ -53,9 +53,10 @@ var (
 // rows after Save — handlers parse input, call into the usecase, and
 // map the response/error to HTTP.
 type PendingReplyUseCase struct {
-	repo       PendingReplyRepository
-	dispatcher ReplyDispatcher
-	classifier InputClassifier
+	repo             PendingReplyRepository
+	dispatcher       ReplyDispatcher
+	classifier       InputClassifier
+	approvedObserver PendingReplyApprovedObserver
 }
 
 // NewPendingReplyUseCase wires the usecase with its persistence port.
@@ -73,6 +74,22 @@ func NewPendingReplyUseCase(repo PendingReplyRepository, dispatcher ReplyDispatc
 // bot -> usecase -> dispatcher -> bot cycle in the composition root.
 func (uc *PendingReplyUseCase) SetDispatcher(d ReplyDispatcher) {
 	uc.dispatcher = d
+}
+
+// PendingReplyApprovedObserver is notified after a pending reply is durably
+// approved, so cross-context side-effects (e.g. emitting a
+// pending_reply.approved webhook, #181) can fire without the inbox context
+// importing those modules. Implemented in the composition root; nil disables
+// the hook; the method returns nothing — a failing side-effect must never fail
+// the approval.
+type PendingReplyApprovedObserver interface {
+	OnPendingReplyApproved(ctx context.Context, pr *PendingReply)
+}
+
+// SetApprovedObserver wires the post-approval hook after construction (the
+// webhooks usecase it bridges to is built later in the composition root).
+func (uc *PendingReplyUseCase) SetApprovedObserver(o PendingReplyApprovedObserver) {
+	uc.approvedObserver = o
 }
 
 // SetClassifier injects the InputClassifier at runtime (mirrors
@@ -210,6 +227,12 @@ func (uc *PendingReplyUseCase) Approve(ctx context.Context, userID, id uuid.UUID
 			return ErrPendingReplyAlreadyDecided
 		}
 		return fmt.Errorf("persist approved pending reply: %w", err)
+	}
+	// Approval is durably committed here (independent of dispatch outcome).
+	// Fire the post-approve side-effect (e.g. emit a pending_reply.approved
+	// webhook). The observer owns its errors — it must not fail the approval.
+	if uc.approvedObserver != nil {
+		uc.approvedObserver.OnPendingReplyApproved(ctx, pr)
 	}
 	if uc.dispatcher == nil {
 		return ErrPendingReplyDispatcherNotConfigured
