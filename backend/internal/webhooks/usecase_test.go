@@ -150,6 +150,56 @@ func TestDeleteEndpoint_OwnershipEnforced(t *testing.T) {
 	}
 }
 
+func TestSetEndpointActive_TogglesPersistsAndReturns(t *testing.T) {
+	store := newFakeStore()
+	uc := NewUseCase(store, &fakeClient{}, cfg(), nil)
+	owner := uuid.New()
+	ep := mustEndpoint(t, owner, domain.EventLeadCreated)
+	store.endpoints[ep.ID] = ep
+
+	got, err := uc.SetEndpointActive(context.Background(), owner, ep.ID, false)
+	if err != nil {
+		t.Fatalf("SetEndpointActive(false): %v", err)
+	}
+	if got.Active {
+		t.Fatal("returned endpoint must be inactive")
+	}
+	// The new state must be persisted through the store, with the right args.
+	if len(store.activeUpdates) != 1 || store.activeUpdates[0].id != ep.ID || store.activeUpdates[0].active {
+		t.Fatalf("expected one persist of (id=%s, active=false), got %+v", ep.ID, store.activeUpdates)
+	}
+
+	got, err = uc.SetEndpointActive(context.Background(), owner, ep.ID, true)
+	if err != nil {
+		t.Fatalf("SetEndpointActive(true): %v", err)
+	}
+	if !got.Active {
+		t.Fatal("returned endpoint must be active again")
+	}
+	if len(store.activeUpdates) != 2 || !store.activeUpdates[1].active {
+		t.Fatalf("expected reactivation persisted, got %+v", store.activeUpdates)
+	}
+}
+
+func TestSetEndpointActive_OwnershipEnforced(t *testing.T) {
+	store := newFakeStore()
+	uc := NewUseCase(store, &fakeClient{}, cfg(), nil)
+	owner := uuid.New()
+	ep := mustEndpoint(t, owner, domain.EventLeadCreated)
+	store.endpoints[ep.ID] = ep
+
+	_, err := uc.SetEndpointActive(context.Background(), uuid.New(), ep.ID, false)
+	if !errors.Is(err, ErrEndpointNotFound) {
+		t.Fatalf("cross-tenant toggle: want ErrEndpointNotFound, got %v", err)
+	}
+	if !store.endpoints[ep.ID].Active {
+		t.Fatal("a non-owner toggle must not mutate the endpoint")
+	}
+	if len(store.activeUpdates) != 0 {
+		t.Fatalf("a non-owner toggle must not persist anything, got %+v", store.activeUpdates)
+	}
+}
+
 func TestPublish_FansOutToSubscribedActiveEndpoints(t *testing.T) {
 	store := newFakeStore()
 	userID := uuid.New()
