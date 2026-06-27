@@ -32,6 +32,26 @@ func TestOutboundStatus_IsValid(t *testing.T) {
 	}
 }
 
+func TestOutboundStatus_IsPendingDispatch(t *testing.T) {
+	tests := []struct {
+		name   string
+		status OutboundStatus
+		want   bool
+	}{
+		{"draft awaits approval → pending", OutboundStatusDraft, true},
+		{"approved awaits the send tick → pending", OutboundStatusApproved, true},
+		{"sent will not be dispatched again", OutboundStatusSent, false},
+		{"rejected will not be dispatched", OutboundStatusRejected, false},
+		{"bounced will not be dispatched", OutboundStatusBounced, false},
+		{"unknown is not pending", OutboundStatus("unknown"), false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, tt.status.IsPendingDispatch())
+		})
+	}
+}
+
 func TestOutboundStatus_String(t *testing.T) {
 	assert.Equal(t, "draft", OutboundStatusDraft.String())
 	assert.Equal(t, "approved", OutboundStatusApproved.String())
