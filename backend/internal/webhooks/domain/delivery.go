@@ -22,9 +22,10 @@ const (
 // ErrEmptyPayload guards against enqueuing a delivery with no body.
 var ErrEmptyPayload = errors.New("webhooks: delivery payload is empty")
 
-// retryBaseBackoff is the first retry delay; it doubles per attempt. Mirrors the
-// outbound Resend retry (200ms base, ×2) but on the worker timescale.
-const retryBaseBackoff = 30 * time.Second
+// RetryBaseBackoff is the first retry delay; it doubles per attempt. Mirrors the
+// outbound Resend retry (200ms base, ×2) but on the worker timescale. Exported
+// so the repository's SQL due-ness predicate stays in sync with NextRetryAfter.
+const RetryBaseBackoff = 30 * time.Second
 
 // WebhookDelivery is the outbox record for delivering one event to one endpoint.
 // It is the unit of work for the delivery worker and the at-least-once dedup key
@@ -91,7 +92,7 @@ func (d *WebhookDelivery) MarkFailed(reason string, httpStatus, maxAttempts int)
 // (not time.Now) so it is deterministic and testable; callers pass the row's
 // updated_at.
 func (d *WebhookDelivery) NextRetryAfter(base time.Time) time.Time {
-	backoff := retryBaseBackoff
+	backoff := RetryBaseBackoff
 	for i := 1; i < d.Attempts; i++ {
 		backoff *= 2
 	}

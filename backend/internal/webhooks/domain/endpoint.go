@@ -81,6 +81,11 @@ func isBlockedHostname(host string) bool {
 // String returns the normalized URL.
 func (u WebhookURL) String() string { return u.raw }
 
+// WebhookURLFromStorage reconstructs a URL from a trusted, previously-validated
+// stored value without re-running validation (mirrors DomainFromStorage in the
+// enrichment context). Use only for hydration from the database.
+func WebhookURLFromStorage(raw string) WebhookURL { return WebhookURL{raw: raw} }
+
 // WebhookEndpoint is an aggregate: a subscription owned by a user, targeting a
 // safe URL, listening for a non-empty set of known events, signed with a secret.
 type WebhookEndpoint struct {
