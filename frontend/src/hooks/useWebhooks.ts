@@ -56,6 +56,7 @@ export function useWebhooks() {
   const create = useCallback(async () => {
     setCreating(true);
     setCreateError(null);
+    setNotice(null);
     try {
       await api.createWebhook({ url: url.trim(), events: selectedEvents, secret });
       // Reset the form (secret is write-only) and reload the list.
@@ -73,6 +74,7 @@ export function useWebhooks() {
 
   const remove = useCallback(
     async (id: string) => {
+      setNotice(null);
       try {
         await api.deleteWebhook(id);
         await reload();

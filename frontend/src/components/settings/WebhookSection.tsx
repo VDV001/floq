@@ -44,7 +44,7 @@ export function WebhookSection({
 
       {notice && (
         <div
-          role="status"
+          role={notice.ok ? "status" : "alert"}
           className={`mb-4 rounded-lg px-4 py-2.5 text-sm font-medium ${
             notice.ok ? "bg-green-50 text-green-700" : "bg-red-50 text-red-600"
           }`}
