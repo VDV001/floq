@@ -34,6 +34,15 @@ const (
 	DirectionOutbound MessageDirection = "outbound"
 )
 
+// LeadCreatedObserver is notified after a new inbound lead is created (Telegram
+// or Email), so cross-context side-effects (e.g. emitting a lead.created
+// webhook, #181) can fire without the inbox context importing those modules.
+// Implemented in the composition root; nil disables the hook; the method
+// returns nothing — a failing side-effect must never fail lead intake.
+type LeadCreatedObserver interface {
+	OnLeadCreated(ctx context.Context, lead *InboxLead)
+}
+
 // --- Read models ---
 
 // InboxLead is the inbox-local read model for a lead.

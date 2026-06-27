@@ -35,6 +35,7 @@ type EmailPoller struct {
 	identityLinker  IdentityLinker
 	enricher        EnrichmentEnqueuer
 	pendingProposer PendingReplyProposer
+	leadCreatedObserver LeadCreatedObserver
 	bookingLink     string
 	logger          *slog.Logger
 	ownerID         uuid.UUID
@@ -135,6 +136,12 @@ func WithEmailBookingLink(link string) EmailPollerOption {
 // own collaborators.
 func (e *EmailPoller) SetPendingProposer(p PendingReplyProposer) {
 	e.pendingProposer = p
+}
+
+// SetLeadCreatedObserver wires the post-lead-creation hook after construction
+// (the webhooks usecase it bridges to is built later in the composition root).
+func (e *EmailPoller) SetLeadCreatedObserver(o LeadCreatedObserver) {
+	e.leadCreatedObserver = o
 }
 
 func (e *EmailPoller) Start(ctx context.Context) {
@@ -436,6 +443,9 @@ func (e *EmailPoller) processEmail(ctx context.Context, fromName, fromEmail, bod
 			return
 		}
 		log.Printf("[email-poller] new lead created for %s (%s)", fromEmail, contactName)
+		if e.leadCreatedObserver != nil {
+			e.leadCreatedObserver.OnLeadCreated(ctx, lead)
+		}
 
 		if e.identityLinker != nil {
 			if err := e.identityLinker.LinkLeadToIdentity(ctx, e.ownerID, lead.ID, fromEmail, "", ""); err != nil {
