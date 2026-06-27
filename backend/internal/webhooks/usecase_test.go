@@ -337,3 +337,30 @@ func TestProcessPending_EndpointGoneFailsDelivery(t *testing.T) {
 		t.Fatalf("status = %q, want failed (endpoint gone, terminal)", d.Status)
 	}
 }
+
+func TestProcessPending_InactiveEndpointDropsDelivery(t *testing.T) {
+	store := newFakeStore()
+	userID := uuid.New()
+	ep := mustEndpoint(t, userID, domain.EventLeadCreated)
+	ep.SetActive(false) // disabled after the delivery was enqueued
+	store.endpoints[ep.ID] = ep
+	d, _ := domain.NewDelivery(userID, ep.ID, domain.EventLeadCreated, []byte(`{}`))
+	store.deliveries = append(store.deliveries, d)
+
+	client := &fakeClient{status: 200}
+	uc := NewUseCase(store, client, cfg(), nil)
+
+	delivered, err := uc.ProcessPending(context.Background())
+	if err != nil {
+		t.Fatalf("ProcessPending: %v", err)
+	}
+	if delivered != 0 {
+		t.Fatalf("delivered = %d, want 0 for an inactive endpoint", delivered)
+	}
+	if client.calls != 0 {
+		t.Fatal("must not POST to a disabled endpoint")
+	}
+	if d.Status != domain.DeliveryFailed {
+		t.Fatalf("status = %q, want failed (endpoint inactive, terminal — not left pending to busy-loop)", d.Status)
+	}
+}

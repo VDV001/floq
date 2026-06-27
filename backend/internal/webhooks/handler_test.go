@@ -166,6 +166,25 @@ func TestHandler_SetActive(t *testing.T) {
 	}
 }
 
+func TestHandler_SetActive_MissingActiveField(t *testing.T) {
+	store := newFakeStore()
+	owner := uuid.New()
+	ep := mustEndpoint(t, owner, domain.EventLeadCreated)
+	store.endpoints[ep.ID] = ep
+	uc := NewUseCase(store, &fakeClient{}, cfg(), nil)
+
+	own := setupWebhookRouter(uc, owner)
+	// A PATCH body without "active" must be rejected (no omit/false ambiguity),
+	// not silently disable the endpoint.
+	rr := doReq(own, "PATCH", "/api/webhooks/"+ep.ID.String(), map[string]any{})
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("missing active: status = %d, want 400; body=%s", rr.Code, rr.Body.String())
+	}
+	if !store.endpoints[ep.ID].Active {
+		t.Fatal("a body without active must not change the endpoint")
+	}
+}
+
 func TestHandler_SetActive_Unauthenticated(t *testing.T) {
 	store := newFakeStore()
 	ep := mustEndpoint(t, uuid.New(), domain.EventLeadCreated)
