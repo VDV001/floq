@@ -46,6 +46,7 @@ import (
 	"github.com/daniil/floq/internal/sources"
 	"github.com/daniil/floq/internal/tgclient"
 	"github.com/daniil/floq/internal/verify"
+	"github.com/daniil/floq/internal/webhooks"
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/google/uuid"
@@ -400,6 +401,20 @@ func main() {
 		prospects.WithIdentityLinker(identityLinker),
 		prospects.WithEnricher(enrichmentUC))
 	sourcesUC := sources.NewUseCase(sourcesRepo, sources.WithStatsReader(sourcesRepo))
+
+	// Outgoing webhooks (#181). Shipped dark — built and mounted only when
+	// WEBHOOKS_ENABLED. The delivery worker POSTs signed payloads over an
+	// SSRF-hardened client; appMetrics satisfies the DeliveryObserver seam.
+	var webhooksUC *webhooks.UseCase
+	if cfg.WebhooksEnabled {
+		webhooksUC = webhooks.NewUseCase(
+			webhooks.NewRepository(pool),
+			webhooks.NewHTTPDeliveryClient(),
+			webhooks.Config{MaxAttempts: cfg.WebhooksMaxAttempts, BatchLimit: cfg.WebhooksBatchLimit},
+			appMetrics,
+			slog.Default(),
+		)
+	}
 	migrateOrphanProspects(pool, ownerID)
 	emailConfigChecker := emailConfigCheckerAdapter{
 		store:           settingsStore,
@@ -489,6 +504,9 @@ func main() {
 		leads.RegisterRoutes(r, leadsUC)
 		prospects.RegisterRoutes(r, prospectsUC)
 		enrichment.RegisterRoutes(r, enrichmentUC)
+		if webhooksUC != nil {
+			webhooks.RegisterRoutes(r, webhooksUC)
+		}
 		sequences.RegisterRoutes(r, sequencesUC)
 		sources.RegisterRoutes(r, sourcesUC)
 		verify.RegisterRoutes(r, verify.NewUseCase(prospectsRepo, verify.NewBotTelegramVerifier(nil), proxyDialer)) // TG bot passed as nil for now
@@ -557,6 +575,9 @@ func main() {
 
 	// Auto-enrichment worker (#182): scrapes due company domains each tick.
 	go enrichment.NewEnrichmentCron(enrichmentUC, cfg.EnrichmentRefreshInterval, slog.Default()).Start(ctx)
+	if webhooksUC != nil {
+		go webhooks.NewDeliveryCron(webhooksUC, cfg.WebhooksRefreshInterval, slog.Default()).Start(ctx)
+	}
 
 	// Analytics matview refresh cron — rebuilds the funnel materialized views
 	// CONCURRENTLY off the OLTP path so the dashboard serves fresh aggregates

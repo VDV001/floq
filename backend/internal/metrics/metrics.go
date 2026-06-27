@@ -30,6 +30,7 @@ type Metrics struct {
 	queueDepth   *prometheus.GaugeVec
 	matviewRefresh prometheus.Histogram
 	registryEnrichments *prometheus.CounterVec
+	webhookDeliveries   *prometheus.CounterVec
 
 	mu        sync.Mutex          // guards prevKinds
 	prevKinds map[string]struct{} // queue-depth kinds published last scan
@@ -83,6 +84,10 @@ func New() *Metrics {
 			Name: "enrichment_registry_attempts_total",
 			Help: "Total company-registry (DaData) enrichment attempts by result: hit (confident match), miss (no/ambiguous match), error (DaData API/transport failure), rate_limited (skipped: daily quota exhausted), limiter_error (skipped: rate-limiter backend unavailable). Only hit/miss/error reach the API, so actual DaData calls = hit+miss+error; rate_limited and limiter_error send no request. hit-rate = hit / (hit+miss).",
 		}, []string{"result"}),
+		webhookDeliveries: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "webhook_deliveries_total",
+			Help: "Total outgoing webhook delivery attempts by event type and result: delivered (2xx) or failed (transport error / non-2xx). Each attempt is one HTTP request; a delivery retried N times counts N attempts.",
+		}, []string{"event_type", "result"}),
 	}
 	reg.MustRegister(
 		m.httpRequests,
@@ -93,6 +98,7 @@ func New() *Metrics {
 		m.queueDepth,
 		m.matviewRefresh,
 		m.registryEnrichments,
+		m.webhookDeliveries,
 		collectors.NewGoCollector(),
 		collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}),
 	)
@@ -149,6 +155,18 @@ func (m *Metrics) ObserveMatviewRefresh(d time.Duration) {
 // lookup was attempted, so they are not registry requests.
 func (m *Metrics) OnRegistryEnrichment(result string) {
 	m.registryEnrichments.WithLabelValues(result).Inc()
+}
+
+// OnWebhookDelivery records the outcome of one outgoing webhook delivery
+// attempt (#181), wired as the delivery worker's observer. Labels are the event
+// type and a bounded result enum (delivered / failed) — no URL or tenant
+// dimension, so /metrics stays public-safe and low cardinality.
+func (m *Metrics) OnWebhookDelivery(eventType string, success bool) {
+	result := "failed"
+	if success {
+		result = "delivered"
+	}
+	m.webhookDeliveries.WithLabelValues(eventType, result).Inc()
 }
 
 // Handler serves the registry in the Prometheus text exposition format.
