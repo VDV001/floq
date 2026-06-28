@@ -6,6 +6,9 @@
 
 Формат основан на [Keep a Changelog](https://keepachangelog.com/); версии — SemVer-подобные.
 
+## [0.76.0] — 2026-06-28
+Domain-owned retention GC terminal set (#212)
+
 ## [0.75.0] — 2026-06-28
 Multi-worker leased claim (#212 part 2)
 
