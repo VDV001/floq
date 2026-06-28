@@ -413,7 +413,7 @@ func main() {
 		webhooksUC = webhooks.NewUseCase(
 			webhookRepo,
 			webhooks.NewHTTPDeliveryClient(),
-			webhooks.Config{MaxAttempts: cfg.WebhooksMaxAttempts, BatchLimit: cfg.WebhooksBatchLimit},
+			webhooks.Config{MaxAttempts: cfg.WebhooksMaxAttempts, BatchLimit: cfg.WebhooksBatchLimit, Lease: cfg.WebhooksLease},
 			appMetrics,
 			slog.Default(),
 		)
@@ -645,6 +645,7 @@ func main() {
 	qualWorker := inbox.NewQualificationWorker(qualJobRepo, inboxAI, inboxLeadAdapter, inbox.QualificationWorkerConfig{
 		BatchLimit:  cfg.QualificationBatchLimit,
 		MaxAttempts: cfg.QualificationMaxAttempts,
+		Lease:       cfg.QualificationLease,
 	})
 	qualWorker.SetTxManager(txManager)
 	if webhookPub != nil {
