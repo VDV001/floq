@@ -50,6 +50,11 @@ func NewQualificationWorker(store QualificationJobStore, ai AIQualifier, writer 
 	if cfg.MaxAttempts <= 0 {
 		cfg.MaxAttempts = 5
 	}
+	if cfg.Lease <= 0 {
+		// A zero lease would set locked_until = now() and void multi-worker
+		// protection; floor it like the other knobs (#212).
+		cfg.Lease = 5 * time.Minute
+	}
 	return &QualificationWorker{store: store, ai: ai, writer: writer, cfg: cfg, logger: slog.Default()}
 }
 

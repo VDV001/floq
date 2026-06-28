@@ -50,6 +50,11 @@ func NewUseCase(store Store, client DeliveryClient, cfg Config, obs DeliveryObse
 	if len(logger) > 0 && logger[0] != nil {
 		l = logger[0]
 	}
+	if cfg.Lease <= 0 {
+		// A zero lease would set locked_until = now() and void multi-worker
+		// protection; floor it to a safe default (#212).
+		cfg.Lease = 5 * time.Minute
+	}
 	return &UseCase{store: store, client: client, obs: obs, cfg: cfg, logger: l}
 }
 
