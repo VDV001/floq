@@ -20,6 +20,14 @@ const (
 	JobFailed JobStatus = "failed"
 )
 
+// TerminalJobStatuses are the states a job can no longer leave — the worker never
+// re-claims them. Kept next to the enum as the single source of truth so the
+// retention GC sweeps exactly these, and a newly-added terminal status cannot
+// silently escape the sweep (#212).
+func TerminalJobStatuses() []JobStatus {
+	return []JobStatus{JobDone, JobFailed}
+}
+
 // Enqueue-time invariants. Domain errors (not bare errors.New in a function) so
 // callers can errors.Is them.
 var (

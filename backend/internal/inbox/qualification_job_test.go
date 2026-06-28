@@ -84,3 +84,12 @@ func TestQualificationJob_NextRetryAfter_ExponentialBackoff(t *testing.T) {
 	j.Attempts = 3
 	assert.Equal(t, base.Add(4*QualRetryBaseBackoff), j.NextRetryAfter(base), "doubles per attempt")
 }
+
+// The terminal-status set is the single source the retention GC sweeps; pin it so
+// a new terminal status can't be added to the enum without joining the set (#212).
+func TestTerminalJobStatuses_IsTheTerminalSet(t *testing.T) {
+	got := TerminalJobStatuses()
+	assert.ElementsMatch(t, []JobStatus{JobDone, JobFailed}, got,
+		"terminal set must be exactly done+failed")
+	assert.NotContains(t, got, JobPending, "pending is never terminal")
+}

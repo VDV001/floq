@@ -19,6 +19,14 @@ const (
 	DeliveryFailed DeliveryStatus = "failed"
 )
 
+// TerminalDeliveryStatuses are the states a delivery can no longer leave — the
+// worker never re-claims them. Kept next to the enum as the single source of
+// truth so the retention GC sweeps exactly these, and a newly-added terminal
+// status cannot silently escape the sweep (#212).
+func TerminalDeliveryStatuses() []DeliveryStatus {
+	return []DeliveryStatus{DeliverySucceeded, DeliveryFailed}
+}
+
 // ErrEmptyPayload guards against enqueuing a delivery with no body.
 var ErrEmptyPayload = errors.New("webhooks: delivery payload is empty")
 
