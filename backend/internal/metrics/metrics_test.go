@@ -145,6 +145,21 @@ func TestOnRegistryEnrichment_RecordsByResult(t *testing.T) {
 	assert.Contains(t, body, `enrichment_registry_attempts_total{result="rate_limited"} 1`)
 }
 
+func TestOnIntakeQuarantine_RecordsByChannel(t *testing.T) {
+	m := metrics.New()
+	m.OnIntakeQuarantine("email")
+	m.OnIntakeQuarantine("email")
+	m.OnIntakeQuarantine("telegram")
+
+	body := scrape(t, m)
+	// One series per intake channel so ops can alert on a poison-source spike
+	// (a deterministic intake failure that exhausted its retry cap, #208) and
+	// see which channel is affected. No tenant/source dimension keeps /metrics
+	// public-safe and low cardinality.
+	assert.Contains(t, body, `inbox_intake_quarantined_total{channel="email"} 2`)
+	assert.Contains(t, body, `inbox_intake_quarantined_total{channel="telegram"} 1`)
+}
+
 func TestObserveMatviewRefresh_RecordsDuration(t *testing.T) {
 	m := metrics.New()
 	m.ObserveMatviewRefresh(2 * time.Second)
