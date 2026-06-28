@@ -17,7 +17,9 @@ import (
 type fakeQualJobStore struct {
 	mu            sync.Mutex
 	due           []*QualificationJob
+	claimIdx      int
 	claimErr      error
+	lastLeaseSecs int // lease argument seen by the most recent claim
 	saved         []*QualificationJob
 	failFirstSave bool // fail the first SaveQualificationJob (the in-tx MarkDone save)
 	saveCalls     int
@@ -27,8 +29,22 @@ func (f *fakeQualJobStore) EnqueueQualificationJob(context.Context, *Qualificati
 	return nil
 }
 
-func (f *fakeQualJobStore) ClaimDueQualificationJobs(context.Context, int, int) ([]*QualificationJob, error) {
-	return f.due, f.claimErr
+// ClaimDueQualificationJob dispenses the queued `due` jobs one per call (the
+// worker now claims one at a time), then nil — mirroring the leased single-row
+// claim of the real store (#212).
+func (f *fakeQualJobStore) ClaimDueQualificationJob(_ context.Context, _, leaseSeconds int) (*QualificationJob, error) {
+	if f.claimErr != nil {
+		return nil, f.claimErr
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.lastLeaseSecs = leaseSeconds
+	if f.claimIdx >= len(f.due) {
+		return nil, nil
+	}
+	j := f.due[f.claimIdx]
+	f.claimIdx++
+	return j, nil
 }
 
 func (f *fakeQualJobStore) SaveQualificationJob(_ context.Context, j *QualificationJob) error {
@@ -267,4 +283,15 @@ func TestQualificationWorker_CommitFailure_CountsOneAttempt(t *testing.T) {
 	require.NotNil(t, store.lastSaved())
 	assert.Equal(t, JobPending, store.lastSaved().Status, "still retryable")
 	assert.Equal(t, 1, store.lastSaved().Attempts, "exactly one failed attempt, not two")
+}
+
+// A zero/negative Lease must be clamped to a safe default, not passed through as
+// 0 seconds (which would set locked_until = now() and void multi-worker
+// protection). The clamp mirrors BatchLimit/MaxAttempts (#212).
+func TestQualificationWorker_ClampsNonPositiveLease(t *testing.T) {
+	store := &fakeQualJobStore{} // no due jobs: claim is called once, then nil
+	w := NewQualificationWorker(store, nil, nil, QualificationWorkerConfig{}) // Lease zero
+	_, err := w.ProcessPending(context.Background())
+	require.NoError(t, err)
+	assert.Equal(t, 300, store.lastLeaseSecs, "zero Lease must clamp to the 5m default (300s)")
 }

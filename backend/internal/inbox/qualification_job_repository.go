@@ -63,49 +63,74 @@ func (r *QualificationJobRepo) EnqueueQualificationJob(ctx context.Context, j *Q
 	return nil
 }
 
-// ClaimDueQualificationJobs returns up to limit due pending jobs, earliest-due
-// first, with attempts below maxAttempts. The effective due-time is
-// COALESCE(next_retry_at, created_at) (the backoff schedule, or — when never
-// attempted — the enqueue time); both the WHERE and ORDER BY key on it so the
-// query rides idx_lead_qualification_jobs_due (migration 053): a forward index
-// scan that stops at the first not-due row. The id tiebreak makes the order
-// total and stable. A single worker runs this, so no cross-instance lease yet.
-func (r *QualificationJobRepo) ClaimDueQualificationJobs(ctx context.Context, limit, maxAttempts int) ([]*QualificationJob, error) {
+// ClaimDueQualificationJob atomically claims and leases the single earliest-due
+// pending job (attempts below maxAttempts), returning nil when none is
+// claimable. The effective due-time is COALESCE(next_retry_at, created_at) (the
+// backoff schedule, or — when never attempted — the enqueue time); both the
+// inner WHERE and ORDER BY key on it so the subselect rides
+// idx_lead_qualification_jobs_due (migration 053). The id tiebreak makes the
+// order total and stable.
+//
+// Multi-worker safety (#212): the inner SELECT takes the row under FOR UPDATE
+// SKIP LOCKED, and the UPDATE marks it locked_until = now()+leaseSeconds. The
+// claim filter skips rows whose lease is still in the future, so a second worker
+// moves to the next row instead of double-processing. Claiming one row at a time
+// and processing it immediately means the lease only has to outlast a single
+// item, independent of batch size; a crashed worker's lease expires and the row
+// becomes reclaimable with no separate recovery sweep.
+func (r *QualificationJobRepo) ClaimDueQualificationJob(ctx context.Context, maxAttempts, leaseSeconds int) (*QualificationJob, error) {
 	rows, err := r.q(ctx).Query(ctx, `
-		SELECT `+qualificationJobColumns+`
-		FROM lead_qualification_jobs
-		WHERE status = 'pending' AND attempts < $2
-		  AND COALESCE(next_retry_at, created_at) <= now()
-		ORDER BY COALESCE(next_retry_at, created_at), id
-		LIMIT $1`, limit, maxAttempts)
+		WITH due AS (
+			SELECT id FROM lead_qualification_jobs
+			WHERE status = 'pending' AND attempts < $1
+			  AND COALESCE(next_retry_at, created_at) <= now()
+			  AND (locked_until IS NULL OR locked_until <= now())
+			ORDER BY COALESCE(next_retry_at, created_at), id
+			LIMIT 1
+			FOR UPDATE SKIP LOCKED
+		)
+		UPDATE lead_qualification_jobs t
+		SET locked_until = now() + make_interval(secs => $2)
+		FROM due
+		WHERE t.id = due.id
+		RETURNING t.id, t.lead_id, t.user_id, t.contact_name, t.channel,
+		          t.qualify_text, t.status, t.attempts, t.last_error, t.next_retry_at`,
+		maxAttempts, leaseSeconds)
 	if err != nil {
-		return nil, fmt.Errorf("inbox: claim due qualification jobs: %w", err)
+		return nil, fmt.Errorf("inbox: claim due qualification job: %w", err)
 	}
 	defer rows.Close()
 
-	var out []*QualificationJob
-	for rows.Next() {
-		var (
-			j       QualificationJob
-			channel string
-			status  string
-		)
-		if err := rows.Scan(&j.ID, &j.LeadID, &j.UserID, &j.ContactName, &channel,
-			&j.QualifyText, &status, &j.Attempts, &j.LastError, &j.NextRetryAt); err != nil {
-			return nil, fmt.Errorf("inbox: scan qualification job: %w", err)
+	if !rows.Next() {
+		if err := rows.Err(); err != nil {
+			return nil, fmt.Errorf("inbox: claim due qualification job: %w", err)
 		}
-		j.Channel = Channel(channel)
-		j.Status = JobStatus(status)
-		out = append(out, &j)
+		return nil, nil
 	}
-	return out, rows.Err()
+	var (
+		j       QualificationJob
+		channel string
+		status  string
+	)
+	if err := rows.Scan(&j.ID, &j.LeadID, &j.UserID, &j.ContactName, &channel,
+		&j.QualifyText, &status, &j.Attempts, &j.LastError, &j.NextRetryAt); err != nil {
+		return nil, fmt.Errorf("inbox: scan qualification job: %w", err)
+	}
+	j.Channel = Channel(channel)
+	j.Status = JobStatus(status)
+	return &j, rows.Err()
 }
 
 // SaveQualificationJob persists the outcome of a processing attempt.
 func (r *QualificationJobRepo) SaveQualificationJob(ctx context.Context, j *QualificationJob) error {
+	// locked_until is cleared: the processing attempt that held the lease is over.
+	// For a terminal outcome the lease is moot; for a retry, clearing it lets
+	// next_retry_at alone govern re-claim instead of stalling until the lease
+	// would have expired (#212).
 	_, err := r.q(ctx).Exec(ctx, `
 		UPDATE lead_qualification_jobs
-		SET status = $2, attempts = $3, last_error = $4, next_retry_at = $5, updated_at = now()
+		SET status = $2, attempts = $3, last_error = $4, next_retry_at = $5,
+		    locked_until = NULL, updated_at = now()
 		WHERE id = $1`,
 		j.ID, string(j.Status), j.Attempts, j.LastError, j.NextRetryAt)
 	if err != nil {

@@ -26,9 +26,10 @@ type Store interface {
 
 	// EnqueueDelivery appends a pending delivery to the outbox.
 	EnqueueDelivery(ctx context.Context, d *domain.WebhookDelivery) error
-	// ClaimDueDeliveries returns up to limit pending deliveries whose backoff
-	// has elapsed and whose attempts are below maxAttempts.
-	ClaimDueDeliveries(ctx context.Context, limit, maxAttempts int) ([]*domain.WebhookDelivery, error)
+	// ClaimDueDelivery claims and leases the single earliest-due pending delivery
+	// (attempts below maxAttempts), or returns nil when none is claimable. Leasing
+	// keeps two worker instances from delivering the same row (#212).
+	ClaimDueDelivery(ctx context.Context, maxAttempts, leaseSeconds int) (*domain.WebhookDelivery, error)
 	// SaveDelivery persists the outcome of a delivery attempt.
 	SaveDelivery(ctx context.Context, d *domain.WebhookDelivery) error
 }

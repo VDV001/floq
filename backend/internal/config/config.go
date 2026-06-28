@@ -131,6 +131,9 @@ type Config struct {
 	WebhooksRefreshInterval time.Duration // delivery worker tick; default 30s
 	WebhooksMaxAttempts     int           // give up after this many failed deliveries; default 5
 	WebhooksBatchLimit      int           // deliveries claimed per tick; default 50
+	// WebhooksLease is the per-row claim lease (#212): how long a claimed
+	// delivery is reserved for one worker. Must exceed a single HTTP attempt.
+	WebhooksLease time.Duration // default 5m
 	// Webhook-delivery retention GC (#212): terminal (succeeded/failed) rows
 	// accumulate forever; a background sweep deletes the aged ones.
 	WebhooksRetentionDays     int           // keep terminal deliveries this long; default 30
@@ -140,6 +143,9 @@ type Config struct {
 	QualificationRefreshInterval time.Duration // qualification worker tick; default 10s
 	QualificationMaxAttempts     int           // give up after this many failed qualifications; default 5
 	QualificationBatchLimit      int           // jobs claimed per tick; default 50
+	// QualificationLease is the per-row claim lease (#212): how long a claimed
+	// job is reserved for one worker. Must exceed a single AI Qualify call.
+	QualificationLease time.Duration // default 5m
 	// Qualification-job retention GC (#212): terminal (done/failed) rows
 	// accumulate forever (chatty Telegram leads enqueue per message); a
 	// background sweep deletes the aged ones.
@@ -178,11 +184,13 @@ func Load() *Config {
 		WebhooksRefreshInterval:           getEnvDuration("WEBHOOKS_REFRESH_INTERVAL", 30*time.Second),
 		WebhooksMaxAttempts:               getEnvInt("WEBHOOKS_MAX_ATTEMPTS", 5),
 		WebhooksBatchLimit:                getEnvInt("WEBHOOKS_BATCH_LIMIT", 50),
+		WebhooksLease:                     getEnvDuration("WEBHOOKS_LEASE", 5*time.Minute),
 		WebhooksRetentionDays:             getEnvInt("WEBHOOKS_RETENTION_DAYS", 30),
 		WebhooksRetentionInterval:         getEnvDuration("WEBHOOKS_RETENTION_INTERVAL", 24*time.Hour),
 		QualificationRefreshInterval:      getEnvDuration("QUALIFICATION_REFRESH_INTERVAL", 10*time.Second),
 		QualificationMaxAttempts:          getEnvInt("QUALIFICATION_MAX_ATTEMPTS", 5),
 		QualificationBatchLimit:           getEnvInt("QUALIFICATION_BATCH_LIMIT", 50),
+		QualificationLease:                getEnvDuration("QUALIFICATION_LEASE", 5*time.Minute),
 		QualificationRetentionDays:        getEnvInt("QUALIFICATION_RETENTION_DAYS", 30),
 		QualificationRetentionInterval:    getEnvDuration("QUALIFICATION_RETENTION_INTERVAL", 24*time.Hour),
 		IntakeMaxAttempts:                 getEnvInt("INBOX_INTAKE_MAX_ATTEMPTS", 10),

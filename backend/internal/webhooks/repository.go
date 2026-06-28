@@ -158,39 +158,58 @@ func (r *Repository) EnqueueDelivery(ctx context.Context, d *domain.WebhookDeliv
 // that stops at the first not-due row instead of scanning the whole pending
 // partition. The id tiebreak makes the order total and stable.
 //
-// Phase 1 runs a single worker, so this plain SELECT needs no cross-instance
-// lease; multi-instance exclusivity is a later hardening.
-func (r *Repository) ClaimDueDeliveries(ctx context.Context, limit, maxAttempts int) ([]*domain.WebhookDelivery, error) {
+// Multi-worker safety (#212): the inner SELECT takes the row under FOR UPDATE
+// SKIP LOCKED, and the UPDATE marks it locked_until = now()+leaseSeconds. The
+// claim filter skips rows whose lease is still in the future, so a second worker
+// moves to the next row instead of double-delivering. Claiming one delivery at a
+// time and POSTing it immediately means the lease only has to outlast a single
+// HTTP attempt, independent of batch size; a crashed worker's lease expires and
+// the row becomes reclaimable with no separate recovery sweep.
+func (r *Repository) ClaimDueDelivery(ctx context.Context, maxAttempts, leaseSeconds int) (*domain.WebhookDelivery, error) {
 	rows, err := r.conn(ctx).Query(ctx, `
-		SELECT id, event_id, user_id, endpoint_id, event_type, payload,
-		       status, attempts, http_status, error, delivered_at, next_retry_at
-		FROM webhook_deliveries
-		WHERE status = 'pending' AND attempts < $2
-		  AND COALESCE(next_retry_at, created_at) <= now()
-		ORDER BY COALESCE(next_retry_at, created_at), id
-		LIMIT $1`, limit, maxAttempts)
+		WITH due AS (
+			SELECT id FROM webhook_deliveries
+			WHERE status = 'pending' AND attempts < $1
+			  AND COALESCE(next_retry_at, created_at) <= now()
+			  AND (locked_until IS NULL OR locked_until <= now())
+			ORDER BY COALESCE(next_retry_at, created_at), id
+			LIMIT 1
+			FOR UPDATE SKIP LOCKED
+		)
+		UPDATE webhook_deliveries t
+		SET locked_until = now() + make_interval(secs => $2)
+		FROM due
+		WHERE t.id = due.id
+		RETURNING t.id, t.event_id, t.user_id, t.endpoint_id, t.event_type, t.payload,
+		          t.status, t.attempts, t.http_status, t.error, t.delivered_at, t.next_retry_at`,
+		maxAttempts, leaseSeconds)
 	if err != nil {
 		return nil, fmt.Errorf("webhooks: claim due: %w", err)
 	}
 	defer rows.Close()
 
-	var out []*domain.WebhookDelivery
-	for rows.Next() {
-		d, err := scanDelivery(rows)
-		if err != nil {
-			return nil, err
+	if !rows.Next() {
+		if err := rows.Err(); err != nil {
+			return nil, fmt.Errorf("webhooks: claim due: %w", err)
 		}
-		out = append(out, d)
+		return nil, nil
 	}
-	return out, rows.Err()
+	d, err := scanDelivery(rows)
+	if err != nil {
+		return nil, err
+	}
+	return d, rows.Err()
 }
 
 // SaveDelivery persists the outcome of a delivery attempt.
 func (r *Repository) SaveDelivery(ctx context.Context, d *domain.WebhookDelivery) error {
+	// locked_until is cleared: the attempt that held the lease is over. For a
+	// terminal outcome it is moot; for a retry, clearing it lets next_retry_at
+	// alone govern re-claim instead of stalling until the lease expires (#212).
 	_, err := r.conn(ctx).Exec(ctx, `
 		UPDATE webhook_deliveries
 		SET status = $2, attempts = $3, http_status = $4, error = $5,
-		    delivered_at = $6, next_retry_at = $7, updated_at = now()
+		    delivered_at = $6, next_retry_at = $7, locked_until = NULL, updated_at = now()
 		WHERE id = $1`,
 		d.ID, string(d.Status), d.Attempts, d.HTTPStatus, d.Error, d.DeliveredAt, d.NextRetryAt)
 	if err != nil {

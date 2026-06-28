@@ -25,7 +25,13 @@ var ErrEndpointNotFound = errors.New("webhooks: endpoint not found")
 // Config tunes the delivery worker.
 type Config struct {
 	MaxAttempts int // give up after this many failed attempts
-	BatchLimit  int // max deliveries claimed per ProcessPending tick
+	BatchLimit  int // max deliveries processed per ProcessPending tick
+	// Lease is how long a claimed delivery is reserved for this worker. It must
+	// exceed a single delivery's HTTP attempt so the row is not reclaimed
+	// mid-flight; a crashed worker's lease expires after it, making the delivery
+	// reclaimable (#212). Independent of BatchLimit — deliveries are claimed and
+	// POSTed one at a time.
+	Lease time.Duration
 }
 
 // UseCase orchestrates webhook subscriptions and delivery.
@@ -43,6 +49,11 @@ func NewUseCase(store Store, client DeliveryClient, cfg Config, obs DeliveryObse
 	l := slog.Default()
 	if len(logger) > 0 && logger[0] != nil {
 		l = logger[0]
+	}
+	if cfg.Lease <= 0 {
+		// A zero lease would set locked_until = now() and void multi-worker
+		// protection; floor it to a safe default (#212).
+		cfg.Lease = 5 * time.Minute
 	}
 	return &UseCase{store: store, client: client, obs: obs, cfg: cfg, logger: l}
 }
@@ -155,15 +166,22 @@ func (uc *UseCase) enqueue(ctx context.Context, ep *domain.WebhookEndpoint, even
 	return uc.store.EnqueueDelivery(ctx, d)
 }
 
-// ProcessPending claims a batch of due deliveries and attempts each. Returns the
-// number successfully delivered. One delivery's failure never aborts the batch.
+// ProcessPending delivers up to BatchLimit due deliveries this tick, claiming and
+// POSTing them one at a time. Each claim leases exactly the row it hands back and
+// delivery follows immediately, so the lease only has to outlast a single HTTP
+// attempt and two instances never deliver the same row (#212). Returns the number
+// successfully delivered; one delivery's failure never aborts the tick.
 func (uc *UseCase) ProcessPending(ctx context.Context) (int, error) {
-	due, err := uc.store.ClaimDueDeliveries(ctx, uc.cfg.BatchLimit, uc.cfg.MaxAttempts)
-	if err != nil {
-		return 0, fmt.Errorf("webhooks: claim due: %w", err)
-	}
+	leaseSecs := int(uc.cfg.Lease.Seconds())
 	delivered := 0
-	for _, d := range due {
+	for i := 0; i < uc.cfg.BatchLimit; i++ {
+		d, err := uc.store.ClaimDueDelivery(ctx, uc.cfg.MaxAttempts, leaseSecs)
+		if err != nil {
+			return delivered, fmt.Errorf("webhooks: claim due: %w", err)
+		}
+		if d == nil {
+			break // no more claimable rows this tick
+		}
 		if uc.deliverOne(ctx, d) {
 			delivered++
 		}

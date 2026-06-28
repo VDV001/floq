@@ -10,10 +10,17 @@ import (
 	"github.com/google/uuid"
 )
 
-// QualificationWorkerConfig tunes the worker's claim batch and dead-letter cap.
+// QualificationWorkerConfig tunes the worker's per-tick claim budget, dead-letter
+// cap, and claim lease.
 type QualificationWorkerConfig struct {
 	BatchLimit  int
 	MaxAttempts int
+	// Lease is how long a claimed job is reserved for this worker. It must exceed
+	// a single job's processing time (the AI Qualify call) so the row is not
+	// reclaimed mid-flight; a crashed worker's lease expires after it, making the
+	// job reclaimable (#212). Independent of BatchLimit — jobs are claimed and
+	// processed one at a time.
+	Lease time.Duration
 }
 
 // QualificationWorker drains the lead_qualification_jobs queue (#206 Part C). It
@@ -43,6 +50,11 @@ func NewQualificationWorker(store QualificationJobStore, ai AIQualifier, writer 
 	if cfg.MaxAttempts <= 0 {
 		cfg.MaxAttempts = 5
 	}
+	if cfg.Lease <= 0 {
+		// A zero lease would set locked_until = now() and void multi-worker
+		// protection; floor it like the other knobs (#212).
+		cfg.Lease = 5 * time.Minute
+	}
 	return &QualificationWorker{store: store, ai: ai, writer: writer, cfg: cfg, logger: slog.Default()}
 }
 
@@ -60,15 +72,22 @@ func (w *QualificationWorker) SetLogger(l *slog.Logger) {
 	}
 }
 
-// ProcessPending claims a batch of due jobs and processes each. Returns the
-// number successfully qualified. One job's failure never aborts the batch.
+// ProcessPending drains up to BatchLimit due jobs this tick, claiming and
+// processing them one at a time. Each claim leases exactly the row it hands back
+// and processing follows immediately, so the lease only has to outlast a single
+// job and two instances never process the same row (#212). Returns the number
+// successfully qualified; one job's failure never aborts the tick.
 func (w *QualificationWorker) ProcessPending(ctx context.Context) (int, error) {
-	due, err := w.store.ClaimDueQualificationJobs(ctx, w.cfg.BatchLimit, w.cfg.MaxAttempts)
-	if err != nil {
-		return 0, fmt.Errorf("inbox: claim qualification jobs: %w", err)
-	}
+	leaseSecs := int(w.cfg.Lease.Seconds())
 	qualified := 0
-	for _, j := range due {
+	for i := 0; i < w.cfg.BatchLimit; i++ {
+		j, err := w.store.ClaimDueQualificationJob(ctx, w.cfg.MaxAttempts, leaseSecs)
+		if err != nil {
+			return qualified, fmt.Errorf("inbox: claim qualification job: %w", err)
+		}
+		if j == nil {
+			break // no more claimable rows this tick
+		}
 		if w.processOne(ctx, j) {
 			qualified++
 		}

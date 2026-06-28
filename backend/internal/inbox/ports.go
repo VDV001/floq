@@ -171,11 +171,12 @@ type QualificationJobEnqueuer interface {
 	EnqueueQualificationJob(ctx context.Context, job *QualificationJob) error
 }
 
-// QualificationJobStore is what the qualification worker needs: claim due jobs
-// and persist each attempt's outcome, plus the enqueue used on intake.
+// QualificationJobStore is what the qualification worker needs: claim the next
+// due job (one at a time, leased for multi-worker safety) and persist each
+// attempt's outcome, plus the enqueue used on intake.
 type QualificationJobStore interface {
 	QualificationJobEnqueuer
-	ClaimDueQualificationJobs(ctx context.Context, limit, maxAttempts int) ([]*QualificationJob, error)
+	ClaimDueQualificationJob(ctx context.Context, maxAttempts, leaseSeconds int) (*QualificationJob, error)
 	SaveQualificationJob(ctx context.Context, job *QualificationJob) error
 }
 

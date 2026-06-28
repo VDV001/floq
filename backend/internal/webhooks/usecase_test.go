@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/daniil/floq/internal/webhooks/domain"
 	"github.com/google/uuid"
@@ -20,12 +21,14 @@ type fakeStore struct {
 	endpoints     map[uuid.UUID]*domain.WebhookEndpoint
 	deliveries    []*domain.WebhookDelivery
 	activeUpdates []activeUpdate
+	leased        map[uuid.UUID]bool // simulates the locked_until claim lease
+	lastLeaseSecs int                // lease argument seen by the most recent claim
 	saveErr       error
 	enqueueErr    error
 }
 
 func newFakeStore() *fakeStore {
-	return &fakeStore{endpoints: map[uuid.UUID]*domain.WebhookEndpoint{}}
+	return &fakeStore{endpoints: map[uuid.UUID]*domain.WebhookEndpoint{}, leased: map[uuid.UUID]bool{}}
 }
 
 func (f *fakeStore) CreateEndpoint(_ context.Context, e *domain.WebhookEndpoint) error {
@@ -63,16 +66,26 @@ func (f *fakeStore) EnqueueDelivery(_ context.Context, d *domain.WebhookDelivery
 	f.deliveries = append(f.deliveries, d)
 	return nil
 }
-func (f *fakeStore) ClaimDueDeliveries(_ context.Context, limit, maxAttempts int) ([]*domain.WebhookDelivery, error) {
-	var out []*domain.WebhookDelivery
+// ClaimDueDelivery returns the first claimable pending delivery (due, under the
+// attempt cap, not already leased) and marks it leased — mirroring the real
+// single-row leased claim so the worker's claim-one loop terminates (#212).
+func (f *fakeStore) ClaimDueDelivery(_ context.Context, maxAttempts, leaseSeconds int) (*domain.WebhookDelivery, error) {
+	f.lastLeaseSecs = leaseSeconds
+	now := time.Now()
 	for _, d := range f.deliveries {
-		if d.Status == domain.DeliveryPending && d.Attempts < maxAttempts && len(out) < limit {
-			out = append(out, d)
+		if d.Status != domain.DeliveryPending || d.Attempts >= maxAttempts || f.leased[d.ID] {
+			continue
 		}
+		if d.NextRetryAt != nil && d.NextRetryAt.After(now) {
+			continue // backed off, not yet due
+		}
+		f.leased[d.ID] = true
+		return d, nil
 	}
-	return out, nil
+	return nil, nil
 }
-func (f *fakeStore) SaveDelivery(_ context.Context, _ *domain.WebhookDelivery) error {
+func (f *fakeStore) SaveDelivery(_ context.Context, d *domain.WebhookDelivery) error {
+	delete(f.leased, d.ID) // Save releases the lease (locked_until = NULL)
 	return f.saveErr
 }
 
@@ -382,5 +395,18 @@ func TestProcessPending_InactiveEndpointDropsDelivery(t *testing.T) {
 	}
 	if d.Status != domain.DeliveryFailed {
 		t.Fatalf("status = %q, want failed (endpoint inactive, terminal — not left pending to busy-loop)", d.Status)
+	}
+}
+
+// A zero/negative Lease must be clamped to a safe default so locked_until is set
+// in the future, not at now() (which would void multi-worker protection) (#212).
+func TestUseCase_ClampsNonPositiveLease(t *testing.T) {
+	store := newFakeStore() // no deliveries: claim is called once, then nil
+	uc := NewUseCase(store, nil, Config{BatchLimit: 1}, nil)
+	if _, err := uc.ProcessPending(context.Background()); err != nil {
+		t.Fatalf("ProcessPending: %v", err)
+	}
+	if store.lastLeaseSecs != 300 {
+		t.Fatalf("zero Lease must clamp to the 5m default (300s), got %d", store.lastLeaseSecs)
 	}
 }

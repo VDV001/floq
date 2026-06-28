@@ -101,11 +101,9 @@ func TestRepository_DeleteEndpoint_CascadesDeliveries(t *testing.T) {
 	require.NoError(t, repo.DeleteEndpoint(ctx, ep.ID))
 
 	// The delivery is gone too (ON DELETE CASCADE), so nothing is claimable.
-	due, err := repo.ClaimDueDeliveries(ctx, 10, 3)
+	got, err := repo.ClaimDueDelivery(ctx, 3, 300)
 	require.NoError(t, err)
-	for _, x := range due {
-		assert.NotEqual(t, d.ID, x.ID, "delivery must cascade-delete with its endpoint")
-	}
+	assert.Nil(t, got, "delivery must cascade-delete with its endpoint")
 }
 
 func TestRepository_Delivery_EnqueueClaimSave(t *testing.T) {
@@ -120,18 +118,18 @@ func TestRepository_Delivery_EnqueueClaimSave(t *testing.T) {
 	require.NoError(t, repo.EnqueueDelivery(ctx, d))
 
 	// attempts=0 → due immediately.
-	due, err := repo.ClaimDueDeliveries(ctx, 10, 3)
+	claimed, err := repo.ClaimDueDelivery(ctx, 3, 300)
 	require.NoError(t, err)
-	require.True(t, containsDelivery(due, d.ID), "fresh pending delivery must be claimable")
+	require.NotNil(t, claimed, "fresh pending delivery must be claimable")
+	require.Equal(t, d.ID, claimed.ID)
 
 	// Mark delivered and persist; it must no longer be claimable.
-	claimed := findDelivery(due, d.ID)
 	claimed.MarkDelivered(200, time.Now())
 	require.NoError(t, repo.SaveDelivery(ctx, claimed))
 
-	due, err = repo.ClaimDueDeliveries(ctx, 10, 3)
+	got, err := repo.ClaimDueDelivery(ctx, 3, 300)
 	require.NoError(t, err)
-	assert.False(t, containsDelivery(due, d.ID), "succeeded delivery must not be re-claimed")
+	assert.Nil(t, got, "succeeded delivery must not be re-claimed")
 }
 
 func TestRepository_ClaimDue_RespectsMaxAttempts(t *testing.T) {
@@ -152,9 +150,9 @@ func TestRepository_ClaimDue_RespectsMaxAttempts(t *testing.T) {
 	}
 	require.NoError(t, repo.SaveDelivery(ctx, d))
 
-	due, err := repo.ClaimDueDeliveries(ctx, 10, 3)
+	got, err := repo.ClaimDueDelivery(ctx, 3, 300)
 	require.NoError(t, err)
-	assert.False(t, containsDelivery(due, d.ID), "exhausted/failed delivery must not be claimed")
+	assert.Nil(t, got, "exhausted/failed delivery must not be claimed")
 }
 
 func TestRepository_ClaimDue_RespectsBackoff(t *testing.T) {
@@ -174,10 +172,9 @@ func TestRepository_ClaimDue_RespectsBackoff(t *testing.T) {
 	require.NoError(t, repo.SaveDelivery(ctx, d))
 	require.NotNil(t, d.NextRetryAt)
 
-	due, err := repo.ClaimDueDeliveries(ctx, 10, 5)
+	got, err := repo.ClaimDueDelivery(ctx, 5, 300)
 	require.NoError(t, err)
-	assert.False(t, containsDelivery(due, d.ID),
-		"a delivery whose backoff has not elapsed must not be claimed")
+	assert.Nil(t, got, "a delivery whose backoff has not elapsed must not be claimed")
 }
 
 func TestRepository_SetEndpointActive_RoundTrip(t *testing.T) {
@@ -240,11 +237,18 @@ func TestRepository_ClaimDue_OrdersByEffectiveDueTime(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, repo.EnqueueDelivery(ctx, c))
 
-	due, err := repo.ClaimDueDeliveries(ctx, 10, 5)
+	// Successive leased claims hand out the due rows earliest-due first.
+	got1, err := repo.ClaimDueDelivery(ctx, 5, 300)
 	require.NoError(t, err)
-	require.Len(t, due, 3)
+	require.NotNil(t, got1)
+	got2, err := repo.ClaimDueDelivery(ctx, 5, 300)
+	require.NoError(t, err)
+	require.NotNil(t, got2)
+	got3, err := repo.ClaimDueDelivery(ctx, 5, 300)
+	require.NoError(t, err)
+	require.NotNil(t, got3)
 
-	got := []uuid.UUID{due[0].ID, due[1].ID, due[2].ID}
+	got := []uuid.UUID{got1.ID, got2.ID, got3.ID}
 	want := []uuid.UUID{b.ID, a.ID, c.ID}
 	assert.Equal(t, want, got,
 		"claim must return due deliveries earliest-due first (next_retry_at asc, NULL treated as created_at)")
@@ -292,17 +296,4 @@ func TestRepository_EnqueueDelivery_ParticipatesInAmbientTx(t *testing.T) {
 	}))
 	assert.Equal(t, 1, countByID(committed.ID),
 		"enqueue in a committed tx must persist exactly one row")
-}
-
-func containsDelivery(ds []*domain.WebhookDelivery, id uuid.UUID) bool {
-	return findDelivery(ds, id) != nil
-}
-
-func findDelivery(ds []*domain.WebhookDelivery, id uuid.UUID) *domain.WebhookDelivery {
-	for _, d := range ds {
-		if d.ID == id {
-			return d
-		}
-	}
-	return nil
 }
