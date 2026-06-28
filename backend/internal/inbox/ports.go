@@ -163,6 +163,33 @@ type AIQualifier interface {
 	ProviderName() string
 }
 
+// QualificationJobEnqueuer is the narrow port the inbox pollers need to queue a
+// durable auto-qualification job (#206 Part C). Transaction-aware: when the
+// caller wraps the enqueue in db.TxManager.WithTx it joins that transaction, so
+// the job commits atomically with the lead it qualifies.
+type QualificationJobEnqueuer interface {
+	EnqueueQualificationJob(ctx context.Context, job *QualificationJob) error
+}
+
+// QualificationJobStore is what the qualification worker needs: claim due jobs
+// and persist each attempt's outcome, plus the enqueue used on intake.
+type QualificationJobStore interface {
+	QualificationJobEnqueuer
+	ClaimDueQualificationJobs(ctx context.Context, limit, maxAttempts int) ([]*QualificationJob, error)
+	SaveQualificationJob(ctx context.Context, job *QualificationJob) error
+}
+
+// QualificationWriter is what the qualification worker needs to persist a
+// scoring result and emit lead.qualified: upsert the qualification, flip the lead
+// to qualified, and load the lead (for the event payload). All three are
+// transaction-aware (ConnFromCtx) so the worker can commit them together with the
+// job-done update in one WithTx.
+type QualificationWriter interface {
+	UpsertQualification(ctx context.Context, q *InboxQualification) error
+	UpdateLeadStatus(ctx context.Context, id uuid.UUID, status LeadStatus) error
+	GetLead(ctx context.Context, id uuid.UUID) (*InboxLead, error)
+}
+
 // ConfigStore reads user configuration.
 type ConfigStore interface {
 	GetConfig(ctx context.Context, userID uuid.UUID) (*InboxConfig, error)

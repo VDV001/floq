@@ -96,7 +96,6 @@ func TestHandleMessage_LookupMatchesProspectWithUppercaseUsername(t *testing.T) 
 
 	msg := makeTgMessageWithUsername(42, "Alice", "Bot", "ALICE_BOT", "Привет")
 	bot.handleMessage(context.Background(), msg)
-	waitQualifyDone(t, repo)
 
 	repo.mu.Lock()
 	defer repo.mu.Unlock()

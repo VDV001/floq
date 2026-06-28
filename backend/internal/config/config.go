@@ -131,6 +131,11 @@ type Config struct {
 	WebhooksRefreshInterval time.Duration // delivery worker tick; default 30s
 	WebhooksMaxAttempts     int           // give up after this many failed deliveries; default 5
 	WebhooksBatchLimit      int           // deliveries claimed per tick; default 50
+
+	// Auto-qualification worker (#206 Part C): drains lead_qualification_jobs.
+	QualificationRefreshInterval time.Duration // qualification worker tick; default 10s
+	QualificationMaxAttempts     int           // give up after this many failed qualifications; default 5
+	QualificationBatchLimit      int           // jobs claimed per tick; default 50
 }
 
 // Load reads configuration from environment variables and returns a Config.
@@ -160,6 +165,9 @@ func Load() *Config {
 		WebhooksRefreshInterval:           getEnvDuration("WEBHOOKS_REFRESH_INTERVAL", 30*time.Second),
 		WebhooksMaxAttempts:               getEnvInt("WEBHOOKS_MAX_ATTEMPTS", 5),
 		WebhooksBatchLimit:                getEnvInt("WEBHOOKS_BATCH_LIMIT", 50),
+		QualificationRefreshInterval:      getEnvDuration("QUALIFICATION_REFRESH_INTERVAL", 10*time.Second),
+		QualificationMaxAttempts:          getEnvInt("QUALIFICATION_MAX_ATTEMPTS", 5),
+		QualificationBatchLimit:           getEnvInt("QUALIFICATION_BATCH_LIMIT", 50),
 		AIProvider:                        getEnv("AI_PROVIDER", "anthropic"),
 		AnthropicAPIKey:                   os.Getenv("ANTHROPIC_API_KEY"),
 		OpenAIAPIKey:                      os.Getenv("OPENAI_API_KEY"),

@@ -628,6 +628,22 @@ func main() {
 	// agent-security-defaults layer 1: the inbound payload passes the input
 	// firewall before it can reach the qualification LLM.
 	inboxAI := newGuardedQualifier(newInboxAIAdapter(aiClient), security.NewInputFirewall(), security.NewPIIScrubber(), security.NewOutputValidator(security.DefaultMinConfidence), security.NewDefaultCostBreaker(), slog.Default())
+
+	// #206 Part C: durable auto-qualification worker. The pollers enqueue a job
+	// per inbound lead (atomically with the lead); this worker scores each and
+	// commits the qualification + lead status + lead.qualified webhook in one
+	// transaction (fail-closed). Replaces the old fire-and-forget goroutine.
+	qualJobRepo := inbox.NewQualificationJobRepository(pool)
+	qualWorker := inbox.NewQualificationWorker(qualJobRepo, inboxAI, inboxLeadAdapter, inbox.QualificationWorkerConfig{
+		BatchLimit:  cfg.QualificationBatchLimit,
+		MaxAttempts: cfg.QualificationMaxAttempts,
+	})
+	qualWorker.SetTxManager(txManager)
+	if webhookPub != nil {
+		qualWorker.SetLeadQualifiedEmitter(inboxLeadQualifiedEmitterFunc(webhookBridge.emitInboxLeadQualified))
+	}
+	go inbox.NewQualificationCron(qualWorker, cfg.QualificationRefreshInterval, slog.Default()).Start(ctx)
+
 	inboxCfg := newInboxConfigAdapter(settingsStore)
 	tgToken := cfg.TelegramBotToken
 	if dbCfg, err := settingsStore.GetConfig(context.Background(), ownerID); err == nil && dbCfg.TelegramBotToken != "" {
@@ -658,7 +674,7 @@ func main() {
 
 	var telegramDispatcher inbox.ReplyDispatcher
 	if tgToken != "" {
-		tgBot, err := inbox.NewTelegramBot(tgToken, inboxLeadAdapter, prospectAdapter, inboxAI, ownerID, cfg.BookingLink, httpClient,
+		tgBot, err := inbox.NewTelegramBot(tgToken, inboxLeadAdapter, prospectAdapter, ownerID, cfg.BookingLink, httpClient,
 			inbox.WithTelegramIdentityLinker(identityLinker))
 		if err != nil {
 			log.Printf("telegram bot init failed: %v", err)
@@ -673,14 +689,16 @@ func main() {
 			telegramDispatcher = inbox.NewTelegramReplyDispatcher(tgBot.Bot(), leadReplyTargets, inboxLeadAdapter)
 			pendingReplyUC.SetDispatcher(guardReply(inbox.NewChannelReplyDispatcher(telegramDispatcher, emailDispatcher)))
 			tgBot.SetPendingProposer(pendingReplyUC)
+			// #206 Part C: enqueue a durable qualification job per inbound message
+			// (atomically with a new lead) — the worker scores it. Independent of
+			// webhooks: qualification runs whether or not events are emitted.
+			tgBot.SetQualificationEnqueuer(qualJobRepo)
 			if webhookPub != nil {
 				// #206 Part B: lead.created is fail-closed — CreateLead + enqueue
 				// commit in one tx; the receive loop advances the update offset
-				// only after a successful intake. lead.qualified (auto-qualify)
-				// stays best-effort post-commit until #206 Part C.
+				// only after a successful intake.
 				tgBot.SetLeadCreatedEmitter(webhookBridge)
 				tgBot.SetTxManager(txManager)
-				tgBot.SetLeadQualifiedEmitter(inboxLeadQualifiedEmitterFunc(webhookBridge.emitInboxLeadQualified))
 			}
 			go tgBot.Start(ctx)
 			// Set the telegram sender on the leads use case
@@ -706,7 +724,7 @@ func main() {
 	// reused for image OCR. Text-only providers degrade gracefully
 	// (analyser returns SkipVisionError, lead is still created).
 	attachmentAnalyzer := attachments.New(aiClient)
-	emailPoller := inbox.NewEmailPoller(inboxCfg, ownerID, cfg.IMAPHost, cfg.IMAPPort, cfg.IMAPUser, cfg.IMAPPassword, inboxLeadAdapter, prospectAdapter, sequencesRepo, inboxAI, proxyDialer,
+	emailPoller := inbox.NewEmailPoller(inboxCfg, ownerID, cfg.IMAPHost, cfg.IMAPPort, cfg.IMAPUser, cfg.IMAPPassword, inboxLeadAdapter, prospectAdapter, sequencesRepo, proxyDialer,
 		inbox.WithAttachmentAnalyzer(attachmentAnalyzer),
 		inbox.WithIdentityLinker(identityLinker),
 		inbox.WithEmailEnricher(enrichmentUC),
@@ -717,13 +735,14 @@ func main() {
 	// is constructed but before Start so no inbound email is processed
 	// without the HITL gate wired.
 	emailPoller.SetPendingProposer(pendingReplyUC)
+	// #206 Part C: enqueue a durable qualification job per new lead (atomically
+	// with the lead) — the worker scores it. Independent of webhooks.
+	emailPoller.SetQualificationEnqueuer(qualJobRepo)
 	if webhookPub != nil {
 		// #206: lead.created is fail-closed — CreateLead + enqueue commit in one
-		// tx; on failure the email is left unseen for retry. lead.qualified
-		// (auto-qualification) stays best-effort post-commit until #206 Part C.
+		// tx; on failure the email is left unseen for retry.
 		emailPoller.SetLeadCreatedEmitter(webhookBridge)
 		emailPoller.SetTxManager(txManager)
-		emailPoller.SetLeadQualifiedEmitter(inboxLeadQualifiedEmitterFunc(webhookBridge.emitInboxLeadQualified))
 	}
 	go emailPoller.Start(ctx)
 

@@ -118,14 +118,73 @@ func TestEmailPoller_CommitLeadIntake_TransactionalOutbox(t *testing.T) {
 
 	// --- Commit path: lead + delivery commit together. ---
 	pCommit, committed := newPoller(false)
-	require.NoError(t, pCommit.commitLeadIntake(ctx, committed))
+	require.NoError(t, pCommit.commitLeadIntake(ctx, committed, nil))
 	require.True(t, leadExists(committed.ID), "lead must persist on the commit path")
 	require.Equal(t, 1, countDeliveries(), "exactly one delivery must be enqueued in the same transaction")
 
 	// --- Rollback path: a failing emit aborts the lead AND the delivery. ---
 	pFail, rolled := newPoller(true)
-	require.Error(t, pFail.commitLeadIntake(ctx, rolled), "a failed emit must abort the intake")
+	require.Error(t, pFail.commitLeadIntake(ctx, rolled, nil), "a failed emit must abort the intake")
 	assert.False(t, leadExists(rolled.ID), "a rolled-back intake must leave no lead row")
 	assert.Equal(t, 1, countDeliveries(),
 		"no delivery may survive the rolled-back transaction (still just the committed one)")
+}
+
+// #206 Part C: the qualification job is enqueued in the SAME transaction as the
+// lead and lead.created — on a failing emit, neither the lead nor the job
+// survives; on success both commit together.
+func TestEmailPoller_CommitLeadIntake_EnqueuesJobAtomically(t *testing.T) {
+	pool := testutil.TestDB(t)
+	userID := testutil.SeedUser(t, pool)
+	leadsRepo := leads.NewRepository(pool)
+	whRepo := webhooks.NewRepository(pool, testutil.NewSecretCipher(t))
+	qualRepo := NewQualificationJobRepository(pool)
+	tm := db.NewTxManager(pool)
+	ctx := context.Background()
+
+	ep, err := webhooksdomain.NewWebhookEndpoint(userID, "https://example.com/hook",
+		[]webhooksdomain.EventType{webhooksdomain.EventLeadCreated}, "supersecretvalue123")
+	require.NoError(t, err)
+	require.NoError(t, whRepo.CreateEndpoint(ctx, ep))
+
+	countJobs := func() int {
+		var n int
+		require.NoError(t, pool.QueryRow(ctx,
+			`SELECT count(*) FROM lead_qualification_jobs WHERE user_id = $1`, userID).Scan(&n))
+		return n
+	}
+	leadExists := func(id uuid.UUID) bool {
+		var n int
+		require.NoError(t, pool.QueryRow(ctx, `SELECT count(*) FROM leads WHERE id = $1`, id).Scan(&n))
+		return n == 1
+	}
+
+	newPollerWithJob := func(fail bool) (*EmailPoller, *InboxLead, *QualificationJob) {
+		addr := "qualjob@example.com"
+		lead, lerr := NewInboxLead(userID, ChannelEmail, "Lead", "", "I need a website", nil, &addr)
+		require.NoError(t, lerr)
+		lead.ID = uuid.New()
+		job, jerr := NewQualificationJob(lead.ID, userID, "Lead", ChannelEmail, "I need a website")
+		require.NoError(t, jerr)
+		p := &EmailPoller{
+			repo:               &leadsRepoForIntake{real: leadsRepo},
+			qualJobs:           qualRepo,
+			ownerID:            userID,
+			tx:                 tm,
+			leadCreatedEmitter: &createdOutboxEmitter{repo: whRepo, userID: userID, endpointID: ep.ID, fail: fail},
+		}
+		return p, lead, job
+	}
+
+	// Commit: lead + job commit together.
+	pc, committed, jobC := newPollerWithJob(false)
+	require.NoError(t, pc.commitLeadIntake(ctx, committed, jobC))
+	require.True(t, leadExists(committed.ID))
+	require.Equal(t, 1, countJobs(), "the qualification job committed with the lead")
+
+	// Rollback: a failing emit aborts the lead AND the job.
+	pf, rolled, jobR := newPollerWithJob(true)
+	require.Error(t, pf.commitLeadIntake(ctx, rolled, jobR))
+	assert.False(t, leadExists(rolled.ID), "rolled-back lead leaves no row")
+	assert.Equal(t, 1, countJobs(), "no qualification job survives the rolled-back transaction")
 }

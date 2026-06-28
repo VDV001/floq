@@ -39,15 +39,13 @@ func TestProcessEmail_CallsEnricher_ForNewLead(t *testing.T) {
 	repo := newEmailMockLeadRepo()
 	prospectRepo := newEmailMockProspectRepo()
 	seqRepo := newMockSequenceRepo()
-	aiClient := &mockAIQualifier{result: &QualificationResult{Score: 5}}
 	enr := &recordingEnricher{}
 	ownerID := uuid.New()
 
-	poller := NewEmailPoller(nil, ownerID, "", "", "", "", repo, prospectRepo, seqRepo, aiClient, nil,
+	poller := NewEmailPoller(nil, ownerID, "", "", "", "", repo, prospectRepo, seqRepo, nil,
 		WithEmailEnricher(enr))
 
 	poller.processEmail(context.Background(), "Alice", "alice@acme.com", "Hi", nil)
-	waitQualifyDone(t, &repo.mockLeadRepo)
 
 	userIDs, emails := enr.snapshot()
 	require.Len(t, emails, 1, "enricher must be enqueued exactly once for a new lead")
@@ -59,14 +57,12 @@ func TestProcessEmail_EnricherError_DoesNotBreakInboundFlow(t *testing.T) {
 	repo := newEmailMockLeadRepo()
 	prospectRepo := newEmailMockProspectRepo()
 	seqRepo := newMockSequenceRepo()
-	aiClient := &mockAIQualifier{result: &QualificationResult{Score: 5}}
 	enr := &recordingEnricher{returnErr: errors.New("enrich queue down")}
 
-	poller := NewEmailPoller(nil, uuid.New(), "", "", "", "", repo, prospectRepo, seqRepo, aiClient, nil,
+	poller := NewEmailPoller(nil, uuid.New(), "", "", "", "", repo, prospectRepo, seqRepo, nil,
 		WithEmailEnricher(enr))
 
 	poller.processEmail(context.Background(), "Alice", "alice@acme.com", "Hi", nil)
-	waitQualifyDone(t, &repo.mockLeadRepo)
 
 	require.Len(t, repo.mockLeadRepo.leads, 1, "lead must be created even when enrichment enqueue fails")
 	require.Len(t, repo.mockLeadRepo.messages, 1, "message must still land")

@@ -8,7 +8,6 @@ import (
 	"net/http"
 	"time"
 
-	auditdomain "github.com/daniil/floq/internal/audit/domain"
 	"github.com/daniil/floq/internal/normalize"
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 	"github.com/google/uuid"
@@ -26,15 +25,14 @@ type TelegramBot struct {
 	bot                   *tgbotapi.BotAPI
 	repo                  LeadRepository
 	prospectRepo          ProspectRepository
-	aiClient              AIQualifier
+	qualJobs              QualificationJobEnqueuer
 	identityLinker        IdentityLinker
 	pendingProposer       PendingReplyProposer
 	logger                *slog.Logger
 	ownerID               uuid.UUID
 	bookingLink           string
-	leadCreatedEmitter   LeadCreatedEmitter
-	leadQualifiedEmitter LeadQualifiedEmitter
-	tx                   TxManager
+	leadCreatedEmitter LeadCreatedEmitter
+	tx                 TxManager
 	errBackoff           time.Duration
 }
 
@@ -82,7 +80,7 @@ func WithTelegramPendingReplyProposer(p PendingReplyProposer) TelegramBotOption 
 }
 
 // NewTelegramBot creates a new TelegramBot with the given token and dependencies.
-func NewTelegramBot(token string, repo LeadRepository, prospectRepo ProspectRepository, aiClient AIQualifier, ownerID uuid.UUID, bookingLink string, httpClient *http.Client, opts ...TelegramBotOption) (*TelegramBot, error) {
+func NewTelegramBot(token string, repo LeadRepository, prospectRepo ProspectRepository, ownerID uuid.UUID, bookingLink string, httpClient *http.Client, opts ...TelegramBotOption) (*TelegramBot, error) {
 	if httpClient == nil {
 		httpClient = http.DefaultClient
 	}
@@ -90,7 +88,7 @@ func NewTelegramBot(token string, repo LeadRepository, prospectRepo ProspectRepo
 	if err != nil {
 		return nil, err
 	}
-	b := &TelegramBot{bot: bot, repo: repo, prospectRepo: prospectRepo, aiClient: aiClient, ownerID: ownerID, bookingLink: bookingLink, logger: slog.Default(), errBackoff: telegramErrBackoff}
+	b := &TelegramBot{bot: bot, repo: repo, prospectRepo: prospectRepo, ownerID: ownerID, bookingLink: bookingLink, logger: slog.Default(), errBackoff: telegramErrBackoff}
 	for _, opt := range opts {
 		opt(b)
 	}
@@ -117,11 +115,6 @@ func (t *TelegramBot) SetPendingProposer(p PendingReplyProposer) {
 // lead is written, so intake cannot be fail-closed without losing the lead — the
 // event is emitted post-commit, at-most-once, NOT inside a transaction.
 func (t *TelegramBot) SetLeadCreatedEmitter(e LeadCreatedEmitter) { t.leadCreatedEmitter = e }
-
-// SetLeadQualifiedEmitter wires the best-effort post-commit lead.qualified
-// emitter for the inbox auto-qualification path (#199 / #206). One-shot goroutine
-// with no retry, so it is post-commit best-effort, not transactional.
-func (t *TelegramBot) SetLeadQualifiedEmitter(e LeadQualifiedEmitter) { t.leadQualifiedEmitter = e }
 
 // SetTxManager wires the transaction manager that makes new-lead intake
 // fail-closed (#206 Part B): CreateLead and the lead.created enqueue commit or
@@ -294,11 +287,14 @@ func (t *TelegramBot) handleMessage(ctx context.Context, msg *tgbotapi.Message) 
 		if prospect != nil {
 			lead.SourceID = prospect.SourceID
 		}
-		// #206 Part B: persist the lead and enqueue lead.created atomically. A
-		// failed enqueue rolls the lead back and the error propagates so the
-		// receive loop leaves the update offset un-advanced for re-delivery
+		// Build the durable auto-qualification job, enqueued atomically with the
+		// lead below so a retry never loses the qualification (#206 Part C).
+		job := t.newQualificationJob(ctx, lead, contactName, text)
+		// #206 Part B/C: persist the lead, enqueue lead.created, and enqueue the
+		// qualification job atomically. A failure rolls all back and propagates so
+		// the receive loop leaves the update offset un-advanced for re-delivery
 		// (fail-closed). Safe because the offset advances only after a nil return.
-		if err := t.commitLeadIntake(ctx, lead); err != nil {
+		if err := t.commitLeadIntake(ctx, lead, job); err != nil {
 			log.Printf("telegram inbox: error creating lead for chat %d, will retry: %v", chatID, err)
 			return err
 		}
@@ -372,72 +368,65 @@ func (t *TelegramBot) handleMessage(ctx context.Context, msg *tgbotapi.Message) 
 		}
 	}
 
-	// Trigger async qualification on every inbound message (re-qualifies with latest context).
-	{
-		qualifyText := text // use latest message for qualification
-		go func() {
-			qCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
-			defer cancel()
-			qLeadID := lead.ID
-			qCtx = auditdomain.ContextWithCallMeta(qCtx, auditdomain.CallMeta{
-				UserID:      lead.UserID,
-				LeadID:      &qLeadID,
-				RequestType: auditdomain.RequestTypeQualification,
-			})
-			result, err := t.aiClient.Qualify(qCtx, contactName, string(lead.Channel), qualifyText)
-			if err != nil {
-				log.Printf("telegram inbox: qualification error for lead %s: %v", lead.ID, err)
-				return
+	// Re-qualify an existing lead on each new message (its score may change with
+	// new context). New leads were already enqueued atomically with the lead in
+	// commitLeadIntake; this re-qualification is best-effort — a failed enqueue
+	// is logged but does not gate the offset (the lead is already durable and
+	// re-running handleMessage would duplicate the inbound message).
+	if !isNewLead {
+		if job := t.newQualificationJob(ctx, lead, contactName, text); job != nil {
+			if err := t.qualJobs.EnqueueQualificationJob(ctx, job); err != nil {
+				log.Printf("telegram inbox: re-qualification enqueue failed (best-effort) for lead %s: %v", lead.ID, err)
 			}
-
-			q := &InboxQualification{
-				ID:                uuid.New(),
-				LeadID:            lead.ID,
-				IdentifiedNeed:    result.IdentifiedNeed,
-				EstimatedBudget:   result.EstimatedBudget,
-				Deadline:          result.Deadline,
-				Score:             result.Score,
-				ScoreReason:       result.ScoreReason,
-				RecommendedAction: result.RecommendedAction,
-				ProviderUsed:      t.aiClient.ProviderName(),
-				GeneratedAt:       time.Now().UTC(),
-			}
-			if err := t.repo.UpsertQualification(qCtx, q); err != nil {
-				log.Printf("telegram inbox: error saving qualification for lead %s: %v", lead.ID, err)
-				return
-			}
-			if err := t.repo.UpdateLeadStatus(qCtx, lead.ID, StatusQualified); err != nil {
-				log.Printf("telegram inbox: error updating lead status for %s: %v", lead.ID, err)
-				return
-			}
-			log.Printf("telegram inbox: lead %s qualified (score=%d)", lead.ID, result.Score)
-			// lead.qualified is emitted best-effort post-commit, NOT in a
-			// transaction: this is a one-shot goroutine with no retry, so a
-			// fail-closed rollback would silently drop the qualification (#206).
-			if t.leadQualifiedEmitter != nil {
-				lead.Status = StatusQualified
-				if err := t.leadQualifiedEmitter.EmitLeadQualified(qCtx, lead); err != nil {
-					log.Printf("telegram inbox: lead.qualified emit failed (best-effort): %v", err)
-				}
-			}
-		}()
+		}
 	}
 	return nil
 }
 
-// commitLeadIntake persists a new inbound lead and enqueues its lead.created
-// event. When a transaction manager and emitter are both wired (webhooks
-// enabled), the two run inside one WithTx so they commit or roll back together —
-// a failed enqueue undoes the lead and returns an error (fail-closed, #206 Part
-// B). Otherwise it falls back to a plain create with a best-effort post-commit
-// emit, preserving the zero-overhead path when webhooks are disabled.
-func (t *TelegramBot) commitLeadIntake(ctx context.Context, lead *InboxLead) error {
-	if t.tx != nil && t.leadCreatedEmitter != nil {
+// newQualificationJob builds the durable auto-qualification job for a Telegram
+// lead, capturing the message text as the qualifier input. Returns nil when no
+// enqueuer is wired or the text is empty — qualification is simply skipped.
+func (t *TelegramBot) newQualificationJob(ctx context.Context, lead *InboxLead, contactName, text string) *QualificationJob {
+	if t.qualJobs == nil {
+		return nil
+	}
+	job, err := NewQualificationJob(lead.ID, lead.UserID, contactName, lead.Channel, text)
+	if err != nil {
+		t.logger.WarnContext(ctx, "inbox: skip qualification job", "lead", lead.ID, "err", err)
+		return nil
+	}
+	return job
+}
+
+// SetQualificationEnqueuer wires the durable qualification queue. When set, every
+// new lead enqueues a job (atomically with the lead) and each subsequent message
+// re-enqueues one (best-effort) for the qualification worker to score.
+func (t *TelegramBot) SetQualificationEnqueuer(q QualificationJobEnqueuer) { t.qualJobs = q }
+
+// commitLeadIntake persists a new inbound lead and, atomically with it, enqueues
+// its lead.created event and the auto-qualification job. When a transaction
+// manager is wired (production), all three run inside one WithTx so they commit
+// or roll back together — a failure undoes the lead and returns an error
+// (fail-closed, #206 Part B/C), and the receive loop leaves the update offset
+// un-advanced for re-delivery. Without a tx (tests), it falls back to a plain
+// create with best-effort post-commit side-effects. job may be nil.
+func (t *TelegramBot) commitLeadIntake(ctx context.Context, lead *InboxLead, job *QualificationJob) error {
+	if t.tx != nil && (t.leadCreatedEmitter != nil || job != nil) {
 		return t.tx.WithTx(ctx, func(txCtx context.Context) error {
 			if err := t.repo.CreateLead(txCtx, lead); err != nil {
 				return err
 			}
-			return t.leadCreatedEmitter.EmitLeadCreated(txCtx, lead)
+			if t.leadCreatedEmitter != nil {
+				if err := t.leadCreatedEmitter.EmitLeadCreated(txCtx, lead); err != nil {
+					return err
+				}
+			}
+			if job != nil {
+				if err := t.qualJobs.EnqueueQualificationJob(txCtx, job); err != nil {
+					return err
+				}
+			}
+			return nil
 		})
 	}
 	if err := t.repo.CreateLead(ctx, lead); err != nil {
@@ -446,6 +435,11 @@ func (t *TelegramBot) commitLeadIntake(ctx context.Context, lead *InboxLead) err
 	if t.leadCreatedEmitter != nil {
 		if err := t.leadCreatedEmitter.EmitLeadCreated(ctx, lead); err != nil {
 			log.Printf("telegram inbox: lead.created emit failed (best-effort): %v", err)
+		}
+	}
+	if job != nil {
+		if err := t.qualJobs.EnqueueQualificationJob(ctx, job); err != nil {
+			log.Printf("telegram inbox: qualification enqueue failed (best-effort): %v", err)
 		}
 	}
 	return nil

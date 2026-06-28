@@ -32,7 +32,6 @@ func newEmailMockLeadRepo() *emailMockLeadRepo {
 			updatedStatuses:      make(map[uuid.UUID]LeadStatus),
 			updatedFirstMessages: make(map[uuid.UUID]string),
 			existingLeadByChatID: make(map[int64]*InboxLead),
-			qualifyDone:          make(chan struct{}, 1),
 		},
 		existingLeadByEmail: make(map[string]*InboxLead),
 	}
@@ -130,10 +129,32 @@ func newTestEmailPoller(repo LeadRepository, prospectRepo ProspectRepository, se
 		repo:         repo,
 		prospectRepo: prospectRepo,
 		seqRepo:      seqRepo,
-		aiClient:     aiClient,
 		ownerID:      ownerID,
 		logger:       slog.Default(),
 	}
+}
+
+// stubQualEnqueuer is a no-op QualificationJobEnqueuer that captures the jobs it
+// was asked to enqueue, so attachment-analysis tests can assert what qualifier
+// input (the email body plus any extracted attachment text) the poller folded
+// into the durable job (#206 Part C). The actual scoring now lives in the
+// qualification worker (qualification_worker_test.go), not the poller.
+type stubQualEnqueuer struct {
+	mu   sync.Mutex
+	jobs []*QualificationJob
+}
+
+func (s *stubQualEnqueuer) EnqueueQualificationJob(_ context.Context, job *QualificationJob) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.jobs = append(s.jobs, job)
+	return nil
+}
+
+func (s *stubQualEnqueuer) captured() []*QualificationJob {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]*QualificationJob(nil), s.jobs...)
 }
 
 // =============================================
@@ -234,21 +255,27 @@ func TestProcessEmail_WithAnalyzer_AppendsAttachmentTextToQualify(t *testing.T) 
 	repo := newEmailMockLeadRepo()
 	prospectRepo := newEmailMockProspectRepo()
 	seqRepo := newMockSequenceRepo()
-	aiClient := &mockAIQualifier{result: &QualificationResult{Score: 5}}
 
 	vc := &stubVisionClient{resp: "OCR: backlog item — fix login"}
 	analyzer := attachments.New(vc)
 
-	poller := NewEmailPoller(nil, uuid.New(), "", "", "", "", repo, prospectRepo, seqRepo, aiClient, nil,
+	// The analyzer now only runs when a qualification enqueuer is wired: the
+	// poller folds the extracted attachment text into the durable job's
+	// QualifyText (which the worker later scores), rather than calling the AI
+	// qualifier inline (#206 Part C).
+	poller := NewEmailPoller(nil, uuid.New(), "", "", "", "", repo, prospectRepo, seqRepo, nil,
 		WithAttachmentAnalyzer(analyzer))
+	enq := &stubQualEnqueuer{}
+	poller.SetQualificationEnqueuer(enq)
 
 	atts := []attachments.Attachment{
 		{Filename: "shot.png", ContentType: "image/png", Data: []byte("png-bytes")},
 	}
 	poller.processEmail(context.Background(), "Alice", "alice@example.com", "Email body text", atts)
-	waitQualifyDone(t, &repo.mockLeadRepo)
 
-	got := aiClient.lastQualifyInput()
+	jobs := enq.captured()
+	require.Len(t, jobs, 1, "a new lead must enqueue exactly one qualification job")
+	got := jobs[0].QualifyText
 	assert.Contains(t, got, "Email body text", "qualifier input must contain the email body")
 	assert.Contains(t, got, "[Вложение: shot.png]", "qualifier input must label the attachment section")
 	assert.Contains(t, got, "OCR: backlog item", "qualifier input must contain the analyser's extracted text")
@@ -262,22 +289,23 @@ func TestProcessEmail_WithAnalyzer_SkippedAttachmentNotAppended(t *testing.T) {
 	repo := newEmailMockLeadRepo()
 	prospectRepo := newEmailMockProspectRepo()
 	seqRepo := newMockSequenceRepo()
-	aiClient := &mockAIQualifier{result: &QualificationResult{Score: 5}}
 
-	// Unsupported MIME type ⇒ analyser skips, qualify-context stays
+	// Unsupported MIME type ⇒ analyser skips, the job's QualifyText stays
 	// equal to the body alone.
 	analyzer := attachments.New(&stubVisionClient{})
-	poller := NewEmailPoller(nil, uuid.New(), "", "", "", "", repo, prospectRepo, seqRepo, aiClient, nil,
+	poller := NewEmailPoller(nil, uuid.New(), "", "", "", "", repo, prospectRepo, seqRepo, nil,
 		WithAttachmentAnalyzer(analyzer))
+	enq := &stubQualEnqueuer{}
+	poller.SetQualificationEnqueuer(enq)
 
 	atts := []attachments.Attachment{
 		{Filename: "weird.docx", ContentType: "application/vnd.openxmlformats", Data: []byte("docx")},
 	}
 	poller.processEmail(context.Background(), "Alice", "alice@example.com", "Body only", atts)
-	waitQualifyDone(t, &repo.mockLeadRepo)
 
-	got := aiClient.lastQualifyInput()
-	assert.Equal(t, "Body only", got, "skipped attachment must not pollute qualify input")
+	jobs := enq.captured()
+	require.Len(t, jobs, 1)
+	assert.Equal(t, "Body only", jobs[0].QualifyText, "skipped attachment must not pollute qualify input")
 }
 
 // =============================================
@@ -345,9 +373,6 @@ func TestProcessEmail_NewLead_NoProspect(t *testing.T) {
 
 	poller.processEmail(context.Background(), "John Doe", "john@example.com", "I need a website built", nil)
 
-	// Wait for async qualification.
-	waitQualifyDone(t, &repo.mockLeadRepo)
-
 	repo.mu.Lock()
 	defer repo.mu.Unlock()
 
@@ -362,17 +387,13 @@ func TestProcessEmail_NewLead_NoProspect(t *testing.T) {
 	assert.Equal(t, "john@example.com", *lead.EmailAddress)
 	assert.Nil(t, lead.SourceID)
 
-	// Inbound message should be created.
+	// Inbound message should be created. Qualification is no longer performed
+	// inline by the poller (#206 Part C — a durable worker scores the lead);
+	// see qualification_worker_test.go.
 	require.Len(t, repo.messages, 1)
 	assert.Equal(t, lead.ID, repo.messages[0].LeadID)
 	assert.Equal(t, DirectionInbound, repo.messages[0].Direction)
 	assert.Equal(t, "I need a website built", repo.messages[0].Body)
-
-	// Qualification should run.
-	require.Len(t, repo.qualifications, 1)
-	assert.Equal(t, lead.ID, repo.qualifications[0].LeadID)
-	assert.Equal(t, 8, repo.qualifications[0].Score)
-	assert.Equal(t, StatusQualified, repo.updatedStatuses[lead.ID])
 
 	// No prospect conversion.
 	prospectRepo.mu.Lock()
@@ -396,7 +417,6 @@ func TestProcessEmail_NewLead_EmitsLeadCreated(t *testing.T) {
 	poller.SetLeadCreatedEmitter(emit)
 
 	poller.processEmail(context.Background(), "John Doe", "john@example.com", "I need a website", nil)
-	waitQualifyDone(t, &repo.mockLeadRepo)
 
 	// Best-effort post-commit (no tx wired): emitted after CreateLead.
 	require.Equal(t, 1, emit.count(), "a new email lead must emit lead.created")
@@ -441,7 +461,6 @@ func TestProcessEmail_NewLead_TransactionalIntake_Success(t *testing.T) {
 	poller.SetTxManager(tx)
 
 	err := poller.processEmail(context.Background(), "John Doe", "john@example.com", "I need a website", nil)
-	waitQualifyDone(t, &repo.mockLeadRepo)
 
 	require.NoError(t, err)
 	assert.Equal(t, 1, tx.count(), "intake must run inside exactly one WithTx")
@@ -465,25 +484,6 @@ func TestProcessEmail_GetLeadByEmailError_SignalsRetry(t *testing.T) {
 	err := poller.processEmail(context.Background(), "Test", "test@example.com", "Hello", nil)
 
 	require.Error(t, err, "a transient lookup error must signal retry")
-}
-
-func TestProcessEmail_AutoQualify_EmitsLeadQualified(t *testing.T) {
-	repo := newEmailMockLeadRepo()
-	prospectRepo := newEmailMockProspectRepo()
-	seqRepo := newMockSequenceRepo()
-	aiClient := &mockAIQualifier{result: &QualificationResult{Score: 7}}
-	ownerID := uuid.New()
-	poller := newTestEmailPoller(repo, prospectRepo, seqRepo, aiClient, ownerID)
-	emit := &spyLeadQualifiedEmitter{}
-	poller.SetLeadQualifiedEmitter(emit)
-
-	poller.processEmail(context.Background(), "John Doe", "john@example.com", "I need a website", nil)
-	waitQualifyDone(t, &repo.mockLeadRepo)
-
-	// Best-effort post-commit (#206): emitted after the qualification writes.
-	require.Eventually(t, func() bool { return emit.count() == 1 }, 2*time.Second, 10*time.Millisecond,
-		"auto-qualification must emit lead.qualified")
-	assert.Equal(t, ownerID, emit.leads[0].UserID)
 }
 
 func TestProcessEmail_NewLead_WithProspectMatch(t *testing.T) {
@@ -510,7 +510,6 @@ func TestProcessEmail_NewLead_WithProspectMatch(t *testing.T) {
 	// Use email as fromName to test name override from prospect.
 	poller.processEmail(context.Background(), "prospect@company.com", "prospect@company.com", "Interested in your service", nil)
 
-	waitQualifyDone(t, &repo.mockLeadRepo)
 
 	repo.mu.Lock()
 	defer repo.mu.Unlock()
@@ -560,9 +559,6 @@ func TestProcessEmail_ExistingLead_AddsMessage(t *testing.T) {
 
 	poller.processEmail(context.Background(), "Existing User", "existing@example.com", "Follow-up message", nil)
 
-	// For existing leads, no async qualification — give a short moment just in case.
-	// Actually processEmail only qualifies new leads, so no waitQualifyDone needed.
-
 	repo.mu.Lock()
 	defer repo.mu.Unlock()
 
@@ -603,7 +599,6 @@ func TestProcessEmail_ProspectAlreadyConverted_SkipsConversion(t *testing.T) {
 
 	poller.processEmail(context.Background(), "Someone", "converted@example.com", "Hello again", nil)
 
-	waitQualifyDone(t, &repo.mockLeadRepo)
 
 	repo.mu.Lock()
 	defer repo.mu.Unlock()
@@ -645,7 +640,6 @@ func TestProcessEmail_NewLead_ProspectNameNotOverriddenWhenFromNameDiffers(t *te
 	// fromName != fromEmail, so prospect name should NOT override.
 	poller.processEmail(context.Background(), "John D.", "john@company.com", "Hello", nil)
 
-	waitQualifyDone(t, &repo.mockLeadRepo)
 
 	repo.mu.Lock()
 	defer repo.mu.Unlock()
@@ -727,29 +721,6 @@ func TestProcessEmail_CreateMessageError(t *testing.T) {
 	assert.Empty(t, repo.qualifications)
 }
 
-func TestProcessEmail_AIQualificationError(t *testing.T) {
-	repo := newEmailMockLeadRepo()
-	prospectRepo := newEmailMockProspectRepo()
-	seqRepo := newMockSequenceRepo()
-	aiClient := &errorAIQualifier{}
-	ownerID := uuid.New()
-
-	poller := newTestEmailPoller(repo, prospectRepo, seqRepo, aiClient, ownerID)
-
-	poller.processEmail(context.Background(), "Test", "test@example.com", "Hello", nil)
-
-	// Give goroutine time to finish (returns early on error).
-	time.Sleep(200 * time.Millisecond)
-
-	repo.mu.Lock()
-	defer repo.mu.Unlock()
-
-	require.Len(t, repo.leads, 1)
-	require.Len(t, repo.messages, 1)
-	assert.Empty(t, repo.qualifications)
-	assert.Empty(t, repo.updatedStatuses)
-}
-
 func TestProcessEmail_ProspectConvertError(t *testing.T) {
 	repo := newEmailMockLeadRepo()
 	prospectRepo := &errorConvertEmailProspectRepo{
@@ -772,7 +743,6 @@ func TestProcessEmail_ProspectConvertError(t *testing.T) {
 
 	poller.processEmail(context.Background(), "conv-err@example.com", "conv-err@example.com", "Hello", nil)
 
-	waitQualifyDone(t, &repo.mockLeadRepo)
 
 	repo.mu.Lock()
 	defer repo.mu.Unlock()
@@ -789,20 +759,6 @@ type errorConvertEmailProspectRepo struct {
 
 func (m *errorConvertEmailProspectRepo) ConvertToLead(_ context.Context, _, _ uuid.UUID) error {
 	return errors.New("convert failed")
-}
-
-// --- Upsert/Status error repos for email ---
-
-type emailUpsertErrorRepo struct {
-	*emailMockLeadRepo
-}
-
-func (m *emailUpsertErrorRepo) UpsertQualification(_ context.Context, _ *InboxQualification) error {
-	select {
-	case m.qualifyDone <- struct{}{}:
-	default:
-	}
-	return errors.New("upsert failed")
 }
 
 func TestProcessEmail_NewLeadError_EmptyName(t *testing.T) {
@@ -823,70 +779,17 @@ func TestProcessEmail_NewLeadError_EmptyName(t *testing.T) {
 	assert.Empty(t, repo.messages)
 }
 
-func TestProcessEmail_UpsertQualificationError(t *testing.T) {
-	inner := newEmailMockLeadRepo()
-	repo := &emailUpsertErrorRepo{emailMockLeadRepo: inner}
-	prospectRepo := newEmailMockProspectRepo()
-	seqRepo := newMockSequenceRepo()
-	aiClient := &mockAIQualifier{result: &QualificationResult{Score: 5}}
-	ownerID := uuid.New()
-
-	poller := newTestEmailPoller(repo, prospectRepo, seqRepo, aiClient, ownerID)
-
-	poller.processEmail(context.Background(), "Test", "test@example.com", "Hello", nil)
-
-	waitQualifyDone(t, &repo.mockLeadRepo)
-
-	repo.mu.Lock()
-	defer repo.mu.Unlock()
-	require.Len(t, repo.leads, 1)
-	assert.Empty(t, repo.updatedStatuses)
-}
-
-type emailStatusErrorRepo struct {
-	*emailMockLeadRepo
-}
-
-func (m *emailStatusErrorRepo) UpdateLeadStatus(_ context.Context, _ uuid.UUID, _ LeadStatus) error {
-	select {
-	case m.qualifyDone <- struct{}{}:
-	default:
-	}
-	return errors.New("status update failed")
-}
-
-func TestProcessEmail_UpdateLeadStatusError(t *testing.T) {
-	inner := newEmailMockLeadRepo()
-	repo := &emailStatusErrorRepo{emailMockLeadRepo: inner}
-	prospectRepo := newEmailMockProspectRepo()
-	seqRepo := newMockSequenceRepo()
-	aiClient := &mockAIQualifier{result: &QualificationResult{Score: 5}}
-	ownerID := uuid.New()
-
-	poller := newTestEmailPoller(repo, prospectRepo, seqRepo, aiClient, ownerID)
-
-	poller.processEmail(context.Background(), "Test", "test@example.com", "Hello", nil)
-
-	waitQualifyDone(t, &repo.mockLeadRepo)
-
-	repo.mu.Lock()
-	defer repo.mu.Unlock()
-	require.Len(t, repo.leads, 1)
-	require.Len(t, repo.qualifications, 1)
-}
-
 func TestNewEmailPoller(t *testing.T) {
 	repo := newEmailMockLeadRepo()
 	prospectRepo := newEmailMockProspectRepo()
 	seqRepo := newMockSequenceRepo()
-	aiClient := &mockAIQualifier{result: &QualificationResult{}}
 	ownerID := uuid.New()
 
 	poller := NewEmailPoller(
 		&mockConfigStore{},
 		ownerID,
 		"imap.example.com", "993", "user@example.com", "pass",
-		repo, prospectRepo, seqRepo, aiClient, nil,
+		repo, prospectRepo, seqRepo, nil,
 	)
 
 	require.NotNil(t, poller)
@@ -918,7 +821,6 @@ func TestResolveConfig_Fallback(t *testing.T) {
 	repo := newEmailMockLeadRepo()
 	prospectRepo := newEmailMockProspectRepo()
 	seqRepo := newMockSequenceRepo()
-	aiClient := &mockAIQualifier{result: &QualificationResult{}}
 
 	store := &mockConfigStore{err: errors.New("no config")}
 	poller := &EmailPoller{
@@ -926,7 +828,6 @@ func TestResolveConfig_Fallback(t *testing.T) {
 		repo:             repo,
 		prospectRepo:     prospectRepo,
 		seqRepo:          seqRepo,
-		aiClient:         aiClient,
 		ownerID:          uuid.New(),
 		fallbackHost:     "fallback.host",
 		fallbackPort:     "993",
@@ -1134,4 +1035,41 @@ func TestEmailPoller_AutoDraft_SuppressedWhenNoProposerWired(t *testing.T) {
 
 	// Should not panic.
 	poller.processEmail(context.Background(), "Alice", "alice@example.com", "Да, давайте созвонимся", nil)
+}
+
+// #206 Part C: a new email lead enqueues exactly one durable qualification job,
+// carrying the qualifier input. (Atomicity with the lead is proven in the
+// integration test.)
+func TestProcessEmail_NewLead_EnqueuesQualificationJob(t *testing.T) {
+	repo := newEmailMockLeadRepo()
+	prospectRepo := newEmailMockProspectRepo()
+	seqRepo := newMockSequenceRepo()
+	ownerID := uuid.New()
+	poller := newTestEmailPoller(repo, prospectRepo, seqRepo, nil, ownerID)
+	enq := &stubQualEnqueuer{}
+	poller.SetQualificationEnqueuer(enq)
+	poller.SetTxManager(&inlineTx{})
+
+	err := poller.processEmail(context.Background(), "Alice", "alice@example.com", "I need a website", nil)
+	require.NoError(t, err)
+
+	jobs := enq.captured()
+	require.Len(t, jobs, 1, "a new email lead enqueues one qualification job")
+	assert.Equal(t, ownerID, jobs[0].UserID)
+	assert.Equal(t, ChannelEmail, jobs[0].Channel)
+	assert.Equal(t, "I need a website", jobs[0].QualifyText)
+	assert.Equal(t, "Alice", jobs[0].ContactName)
+	require.Len(t, repo.leads, 1)
+	assert.Equal(t, repo.leads[0].ID, jobs[0].LeadID, "job targets the created lead")
+}
+
+// No enqueuer wired (e.g. qualification disabled) → intake still succeeds, just
+// no job. Proves the enqueue never blocks the inbound flow.
+func TestProcessEmail_NewLead_NoEnqueuer_StillSucceeds(t *testing.T) {
+	repo := newEmailMockLeadRepo()
+	poller := newTestEmailPoller(repo, newEmailMockProspectRepo(), newMockSequenceRepo(), nil, uuid.New())
+
+	err := poller.processEmail(context.Background(), "Alice", "alice@example.com", "hi there", nil)
+	require.NoError(t, err)
+	assert.Len(t, repo.leads, 1)
 }
