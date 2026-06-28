@@ -136,6 +136,10 @@ type Config struct {
 	QualificationRefreshInterval time.Duration // qualification worker tick; default 10s
 	QualificationMaxAttempts     int           // give up after this many failed qualifications; default 5
 	QualificationBatchLimit      int           // jobs claimed per tick; default 50
+
+	// Intake retry cap (#208): consecutive fail-closed retries per source
+	// (email UID / telegram update_id) before a poison source is quarantined.
+	IntakeMaxAttempts int // default 10
 }
 
 // Load reads configuration from environment variables and returns a Config.
@@ -168,6 +172,7 @@ func Load() *Config {
 		QualificationRefreshInterval:      getEnvDuration("QUALIFICATION_REFRESH_INTERVAL", 10*time.Second),
 		QualificationMaxAttempts:          getEnvInt("QUALIFICATION_MAX_ATTEMPTS", 5),
 		QualificationBatchLimit:           getEnvInt("QUALIFICATION_BATCH_LIMIT", 50),
+		IntakeMaxAttempts:                 getEnvInt("INBOX_INTAKE_MAX_ATTEMPTS", 10),
 		AIProvider:                        getEnv("AI_PROVIDER", "anthropic"),
 		AnthropicAPIKey:                   os.Getenv("ANTHROPIC_API_KEY"),
 		OpenAIAPIKey:                      os.Getenv("OPENAI_API_KEY"),

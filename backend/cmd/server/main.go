@@ -693,6 +693,11 @@ func main() {
 			// (atomically with a new lead) — the worker scores it. Independent of
 			// webhooks: qualification runs whether or not events are emitted.
 			tgBot.SetQualificationEnqueuer(qualJobRepo)
+			// #208: cap fail-closed retries per update_id so a deterministically
+			// failing update is quarantined (offset advanced + metric) instead of
+			// re-delivered forever.
+			tgBot.SetIntakeRetryCap(cfg.IntakeMaxAttempts)
+			tgBot.SetQuarantineObserver(appMetrics.OnIntakeQuarantine)
 			if webhookPub != nil {
 				// #206 Part B: lead.created is fail-closed — CreateLead + enqueue
 				// commit in one tx; the receive loop advances the update offset
@@ -738,6 +743,10 @@ func main() {
 	// #206 Part C: enqueue a durable qualification job per new lead (atomically
 	// with the lead) — the worker scores it. Independent of webhooks.
 	emailPoller.SetQualificationEnqueuer(qualJobRepo)
+	// #208: cap fail-closed retries per source UID so a deterministically failing
+	// email is quarantined (marked \Seen + metric) instead of re-fetched forever.
+	emailPoller.SetIntakeRetryCap(cfg.IntakeMaxAttempts)
+	emailPoller.SetQuarantineObserver(appMetrics.OnIntakeQuarantine)
 	if webhookPub != nil {
 		// #206: lead.created is fail-closed — CreateLead + enqueue commit in one
 		// tx; on failure the email is left unseen for retry.
