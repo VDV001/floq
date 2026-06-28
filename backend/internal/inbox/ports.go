@@ -179,9 +179,14 @@ type QualificationJobStore interface {
 	SaveQualificationJob(ctx context.Context, job *QualificationJob) error
 }
 
-// GetLead loads a lead by id as the inbox read model. The worker uses it to emit
-// lead.qualified with the lead's current fields after scoring.
-type LeadByIDReader interface {
+// QualificationWriter is what the qualification worker needs to persist a
+// scoring result and emit lead.qualified: upsert the qualification, flip the lead
+// to qualified, and load the lead (for the event payload). All three are
+// transaction-aware (ConnFromCtx) so the worker can commit them together with the
+// job-done update in one WithTx.
+type QualificationWriter interface {
+	UpsertQualification(ctx context.Context, q *InboxQualification) error
+	UpdateLeadStatus(ctx context.Context, id uuid.UUID, status LeadStatus) error
 	GetLead(ctx context.Context, id uuid.UUID) (*InboxLead, error)
 }
 
