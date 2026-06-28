@@ -3,6 +3,7 @@ package webhooks
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/daniil/floq/internal/db"
 	"github.com/daniil/floq/internal/webhooks/domain"
@@ -107,6 +108,23 @@ func (r *Repository) SetEndpointActive(ctx context.Context, id uuid.UUID, active
 		return fmt.Errorf("webhooks: set endpoint active: %w", err)
 	}
 	return nil
+}
+
+// PurgeTerminalDeliveriesOlderThan deletes terminal (succeeded/failed) deliveries
+// whose terminal transition (updated_at) predates threshold, returning the row
+// count. Pending rows are never touched — the status filter spares any in-flight
+// or retrying row regardless of age. Runs on the pool; GC needs no transaction
+// (#212). Terminal statuses are passed as a parameter built from the domain enum
+// so the query never drifts from DeliverySucceeded/DeliveryFailed.
+func (r *Repository) PurgeTerminalDeliveriesOlderThan(ctx context.Context, threshold time.Time) (int, error) {
+	tag, err := r.conn(ctx).Exec(ctx, `
+		DELETE FROM webhook_deliveries
+		WHERE status = ANY($1) AND updated_at < $2`,
+		[]string{string(domain.DeliverySucceeded), string(domain.DeliveryFailed)}, threshold)
+	if err != nil {
+		return 0, err
+	}
+	return int(tag.RowsAffected()), nil
 }
 
 // EnqueueDelivery appends a pending delivery to the outbox.

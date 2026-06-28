@@ -40,6 +40,7 @@ import (
 	"github.com/daniil/floq/internal/proxy"
 	"github.com/daniil/floq/internal/ratelimit"
 	"github.com/daniil/floq/internal/reminders"
+	"github.com/daniil/floq/internal/retention"
 	"github.com/daniil/floq/internal/secrets"
 	"github.com/daniil/floq/internal/sequences"
 	"github.com/daniil/floq/internal/settings"
@@ -406,9 +407,11 @@ func main() {
 	// WEBHOOKS_ENABLED. The delivery worker POSTs signed payloads over an
 	// SSRF-hardened client; appMetrics satisfies the DeliveryObserver seam.
 	var webhooksUC *webhooks.UseCase
+	var webhookRepo *webhooks.Repository
 	if cfg.WebhooksEnabled {
+		webhookRepo = webhooks.NewRepository(pool, secretCipher)
 		webhooksUC = webhooks.NewUseCase(
-			webhooks.NewRepository(pool, secretCipher),
+			webhookRepo,
 			webhooks.NewHTTPDeliveryClient(),
 			webhooks.Config{MaxAttempts: cfg.WebhooksMaxAttempts, BatchLimit: cfg.WebhooksBatchLimit},
 			appMetrics,
@@ -608,6 +611,11 @@ func main() {
 	go enrichment.NewEnrichmentCron(enrichmentUC, cfg.EnrichmentRefreshInterval, slog.Default()).Start(ctx)
 	if webhooksUC != nil {
 		go webhooks.NewDeliveryCron(webhooksUC, cfg.WebhooksRefreshInterval, slog.Default()).Start(ctx)
+		// #212: sweep terminal (succeeded/failed) deliveries so the outbox does
+		// not grow unbounded.
+		go retention.NewCron("webhook-deliveries",
+			webhooks.NewDeliveryRetention(webhookRepo, cfg.WebhooksRetentionDays),
+			cfg.WebhooksRetentionInterval, slog.Default()).Start(ctx)
 	}
 
 	// Analytics matview refresh cron — rebuilds the funnel materialized views
@@ -643,6 +651,11 @@ func main() {
 		qualWorker.SetLeadQualifiedEmitter(inboxLeadQualifiedEmitterFunc(webhookBridge.emitInboxLeadQualified))
 	}
 	go inbox.NewQualificationCron(qualWorker, cfg.QualificationRefreshInterval, slog.Default()).Start(ctx)
+	// #212: sweep terminal (done/failed) qualification jobs so the table-as-queue
+	// does not grow unbounded — chatty Telegram leads enqueue a job per message.
+	go retention.NewCron("qualification-jobs",
+		inbox.NewQualificationRetention(qualJobRepo, cfg.QualificationRetentionDays),
+		cfg.QualificationRetentionInterval, slog.Default()).Start(ctx)
 
 	inboxCfg := newInboxConfigAdapter(settingsStore)
 	tgToken := cfg.TelegramBotToken

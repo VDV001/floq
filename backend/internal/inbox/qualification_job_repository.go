@@ -3,6 +3,7 @@ package inbox
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/daniil/floq/internal/db"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -30,6 +31,23 @@ func (r *QualificationJobRepo) q(ctx context.Context) db.Querier {
 }
 
 const qualificationJobColumns = `id, lead_id, user_id, contact_name, channel, qualify_text, status, attempts, last_error, next_retry_at`
+
+// PurgeTerminalJobsOlderThan deletes terminal (done/failed) jobs whose terminal
+// transition (updated_at) predates threshold, returning the row count. Pending
+// jobs are never touched — the status filter spares any in-flight or retrying
+// row regardless of age. Runs on the pool; GC needs no transaction (#212). The
+// terminal statuses are passed as a parameter built from the domain enum so the
+// query never drifts from JobDone/JobFailed.
+func (r *QualificationJobRepo) PurgeTerminalJobsOlderThan(ctx context.Context, threshold time.Time) (int, error) {
+	tag, err := r.q(ctx).Exec(ctx, `
+		DELETE FROM lead_qualification_jobs
+		WHERE status = ANY($1) AND updated_at < $2`,
+		[]string{string(JobDone), string(JobFailed)}, threshold)
+	if err != nil {
+		return 0, err
+	}
+	return int(tag.RowsAffected()), nil
+}
 
 // EnqueueQualificationJob inserts a pending job. created_at/updated_at are
 // DB-managed (DEFAULT now()).
