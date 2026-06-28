@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/daniil/floq/internal/webhooks/domain"
 	"github.com/google/uuid"
@@ -20,12 +21,13 @@ type fakeStore struct {
 	endpoints     map[uuid.UUID]*domain.WebhookEndpoint
 	deliveries    []*domain.WebhookDelivery
 	activeUpdates []activeUpdate
+	leased        map[uuid.UUID]bool // simulates the locked_until claim lease
 	saveErr       error
 	enqueueErr    error
 }
 
 func newFakeStore() *fakeStore {
-	return &fakeStore{endpoints: map[uuid.UUID]*domain.WebhookEndpoint{}}
+	return &fakeStore{endpoints: map[uuid.UUID]*domain.WebhookEndpoint{}, leased: map[uuid.UUID]bool{}}
 }
 
 func (f *fakeStore) CreateEndpoint(_ context.Context, e *domain.WebhookEndpoint) error {
@@ -63,16 +65,25 @@ func (f *fakeStore) EnqueueDelivery(_ context.Context, d *domain.WebhookDelivery
 	f.deliveries = append(f.deliveries, d)
 	return nil
 }
-func (f *fakeStore) ClaimDueDeliveries(_ context.Context, limit, maxAttempts int) ([]*domain.WebhookDelivery, error) {
-	var out []*domain.WebhookDelivery
+// ClaimDueDelivery returns the first claimable pending delivery (due, under the
+// attempt cap, not already leased) and marks it leased — mirroring the real
+// single-row leased claim so the worker's claim-one loop terminates (#212).
+func (f *fakeStore) ClaimDueDelivery(_ context.Context, maxAttempts, leaseSeconds int) (*domain.WebhookDelivery, error) {
+	now := time.Now()
 	for _, d := range f.deliveries {
-		if d.Status == domain.DeliveryPending && d.Attempts < maxAttempts && len(out) < limit {
-			out = append(out, d)
+		if d.Status != domain.DeliveryPending || d.Attempts >= maxAttempts || f.leased[d.ID] {
+			continue
 		}
+		if d.NextRetryAt != nil && d.NextRetryAt.After(now) {
+			continue // backed off, not yet due
+		}
+		f.leased[d.ID] = true
+		return d, nil
 	}
-	return out, nil
+	return nil, nil
 }
-func (f *fakeStore) SaveDelivery(_ context.Context, _ *domain.WebhookDelivery) error {
+func (f *fakeStore) SaveDelivery(_ context.Context, d *domain.WebhookDelivery) error {
+	delete(f.leased, d.ID) // Save releases the lease (locked_until = NULL)
 	return f.saveErr
 }
 
