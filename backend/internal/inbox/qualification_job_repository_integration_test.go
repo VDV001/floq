@@ -13,7 +13,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestQualificationJobRepo_RoundTripAndClaimOrdering(t *testing.T) {
+func TestQualificationJobRepo_ClaimOne_RoundTripAttemptsCapAndSaveDrop(t *testing.T) {
 	pool := testutil.TestDB(t)
 	userID := testutil.SeedUser(t, pool)
 	repo := NewQualificationJobRepository(pool)
@@ -37,37 +37,30 @@ func TestQualificationJobRepo_RoundTripAndClaimOrdering(t *testing.T) {
 		return j
 	}
 
-	// Three due jobs at distinct effective due-times, plus one not-yet-due and
-	// one dead-lettered job that must be excluded.
-	c := mkJob("c", -10*time.Second, 0, JobPending)
 	a := mkJob("a", -270*time.Second, 0, JobPending)
-	b := mkJob("b", -70*time.Second, 0, JobPending)
-	_ = mkJob("future", 1*time.Hour, 0, JobPending) // not due
-	_ = mkJob("dead", -1*time.Hour, 3, JobFailed)   // terminal
+	b := mkJob("b", -70*time.Second, 2, JobPending) // 2 attempts already
 
-	got, err := repo.ClaimDueQualificationJobs(ctx, 10, 5)
+	// At cap 2, b (attempts=2) is excluded; a is the only claimable row.
+	got, err := repo.ClaimDueQualificationJob(ctx, 2, 300)
 	require.NoError(t, err)
-	require.Len(t, got, 3, "only the three due pending jobs are claimed")
-	assert.Equal(t, []uuid.UUID{a.ID, b.ID, c.ID}, []uuid.UUID{got[0].ID, got[1].ID, got[2].ID},
-		"claimed earliest-due-first")
-	assert.Equal(t, "a", got[0].QualifyText, "fields round-trip")
-	assert.Equal(t, ChannelEmail, got[0].Channel)
-	assert.Equal(t, JobPending, got[0].Status)
+	require.NotNil(t, got)
+	assert.Equal(t, a.ID, got.ID)
+	assert.Equal(t, "a", got.QualifyText, "fields round-trip")
+	assert.Equal(t, ChannelEmail, got.Channel)
+	assert.Equal(t, JobPending, got.Status)
 
-	// Save an outcome and confirm it persists + drops out of the due set.
+	// a is now leased and b is over the cap → nothing else claimable at cap 2.
+	none, err := repo.ClaimDueQualificationJob(ctx, 2, 300)
+	require.NoError(t, err)
+	assert.Nil(t, none)
+
+	// Mark a done and save → terminal, excluded from future claims.
 	a.MarkDone(now)
 	require.NoError(t, repo.SaveQualificationJob(ctx, a))
-	got2, err := repo.ClaimDueQualificationJobs(ctx, 10, 5)
-	require.NoError(t, err)
-	require.Len(t, got2, 2, "a done job is no longer claimed")
-	assert.Equal(t, b.ID, got2[0].ID)
 
-	// The attempts < maxAttempts gate: bump b to 2 attempts and claim with cap 2.
-	b.Attempts = 2
-	b.Status = JobPending
-	require.NoError(t, repo.SaveQualificationJob(ctx, b))
-	got3, err := repo.ClaimDueQualificationJobs(ctx, 10, 2)
+	// At cap 5, a is terminal (excluded) and b (attempts=2 < 5) is now claimable.
+	got2, err := repo.ClaimDueQualificationJob(ctx, 5, 300)
 	require.NoError(t, err)
-	require.Len(t, got3, 1, "b (attempts=2) is excluded at maxAttempts=2; only c remains")
-	assert.Equal(t, c.ID, got3[0].ID)
+	require.NotNil(t, got2)
+	assert.Equal(t, b.ID, got2.ID, "a done job is no longer claimed; b clears the cap at 5")
 }

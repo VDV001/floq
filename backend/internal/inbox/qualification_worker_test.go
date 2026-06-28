@@ -17,6 +17,7 @@ import (
 type fakeQualJobStore struct {
 	mu            sync.Mutex
 	due           []*QualificationJob
+	claimIdx      int
 	claimErr      error
 	saved         []*QualificationJob
 	failFirstSave bool // fail the first SaveQualificationJob (the in-tx MarkDone save)
@@ -27,8 +28,21 @@ func (f *fakeQualJobStore) EnqueueQualificationJob(context.Context, *Qualificati
 	return nil
 }
 
-func (f *fakeQualJobStore) ClaimDueQualificationJobs(context.Context, int, int) ([]*QualificationJob, error) {
-	return f.due, f.claimErr
+// ClaimDueQualificationJob dispenses the queued `due` jobs one per call (the
+// worker now claims one at a time), then nil — mirroring the leased single-row
+// claim of the real store (#212).
+func (f *fakeQualJobStore) ClaimDueQualificationJob(context.Context, int, int) (*QualificationJob, error) {
+	if f.claimErr != nil {
+		return nil, f.claimErr
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.claimIdx >= len(f.due) {
+		return nil, nil
+	}
+	j := f.due[f.claimIdx]
+	f.claimIdx++
+	return j, nil
 }
 
 func (f *fakeQualJobStore) SaveQualificationJob(_ context.Context, j *QualificationJob) error {
