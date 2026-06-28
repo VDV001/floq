@@ -135,7 +135,7 @@ type inboxLeadRepoAdapter struct {
 	repo leadsdomain.Repository
 }
 
-func newInboxLeadRepoAdapter(repo leadsdomain.Repository) inbox.LeadRepository {
+func newInboxLeadRepoAdapter(repo leadsdomain.Repository) *inboxLeadRepoAdapter {
 	return &inboxLeadRepoAdapter{repo: repo}
 }
 
@@ -158,6 +158,16 @@ func (a *inboxLeadRepoAdapter) GetLeadByEmailAddress(ctx context.Context, userID
 func (a *inboxLeadRepoAdapter) CreateLead(ctx context.Context, lead *inbox.InboxLead) error {
 	domainLead := fromInboxLead(lead)
 	return a.repo.CreateLead(ctx, domainLead)
+}
+
+// GetLead loads a lead by id (used by the qualification worker to emit
+// lead.qualified with the lead's current fields).
+func (a *inboxLeadRepoAdapter) GetLead(ctx context.Context, id uuid.UUID) (*inbox.InboxLead, error) {
+	lead, err := a.repo.GetLead(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	return toInboxLead(lead), nil
 }
 
 func (a *inboxLeadRepoAdapter) UpdateFirstMessage(ctx context.Context, id uuid.UUID, message string) error {

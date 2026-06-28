@@ -30,14 +30,13 @@ type EmailPoller struct {
 	repo                  LeadRepository
 	prospectRepo          ProspectRepository
 	seqRepo               SequenceRepository
-	aiClient              AIQualifier
+	qualJobs              QualificationJobEnqueuer
 	analyzer              *attachments.Analyzer
 	identityLinker        IdentityLinker
 	enricher              EnrichmentEnqueuer
 	pendingProposer       PendingReplyProposer
-	leadCreatedEmitter   LeadCreatedEmitter
-	leadQualifiedEmitter LeadQualifiedEmitter
-	tx                   TxManager
+	leadCreatedEmitter LeadCreatedEmitter
+	tx                 TxManager
 	bookingLink          string
 	logger               *slog.Logger
 	ownerID               uuid.UUID
@@ -49,13 +48,12 @@ type EmailPoller struct {
 	fallbackPassword string
 }
 
-func NewEmailPoller(store ConfigStore, ownerID uuid.UUID, fallbackHost, fallbackPort, fallbackUser, fallbackPassword string, repo LeadRepository, prospectRepo ProspectRepository, seqRepo SequenceRepository, aiClient AIQualifier, dialer proxy.ContextDialer, opts ...EmailPollerOption) *EmailPoller {
+func NewEmailPoller(store ConfigStore, ownerID uuid.UUID, fallbackHost, fallbackPort, fallbackUser, fallbackPassword string, repo LeadRepository, prospectRepo ProspectRepository, seqRepo SequenceRepository, dialer proxy.ContextDialer, opts ...EmailPollerOption) *EmailPoller {
 	p := &EmailPoller{
 		store:            store,
 		repo:             repo,
 		prospectRepo:     prospectRepo,
 		seqRepo:          seqRepo,
-		aiClient:         aiClient,
 		ownerID:          ownerID,
 		dialer:           dialer,
 		logger:           slog.Default(),
@@ -145,11 +143,6 @@ func (e *EmailPoller) SetPendingProposer(p PendingReplyProposer) {
 // written, so intake cannot be fail-closed without losing the lead — the event
 // is emitted post-commit, at-most-once, NOT inside a transaction.
 func (e *EmailPoller) SetLeadCreatedEmitter(em LeadCreatedEmitter) { e.leadCreatedEmitter = em }
-
-// SetLeadQualifiedEmitter wires the best-effort post-commit lead.qualified
-// emitter for the inbox auto-qualification path (#199 / #206). One-shot goroutine
-// with no retry, so it is post-commit best-effort, not transactional.
-func (e *EmailPoller) SetLeadQualifiedEmitter(em LeadQualifiedEmitter) { e.leadQualifiedEmitter = em }
 
 // SetTxManager wires the transaction manager that makes new-lead intake
 // fail-closed (#206): the lead row and the lead.created enqueue commit together
@@ -463,11 +456,17 @@ func (e *EmailPoller) processEmail(ctx context.Context, fromName, fromEmail, bod
 		if hasProspectMatch {
 			lead.SourceID = prospect.SourceID
 		}
-		// #206: persist the lead and enqueue lead.created atomically. A failed
-		// enqueue rolls the lead back and the error propagates so the poll loop
-		// leaves the email unseen for retry (fail-closed). Safe because \Seen is
-		// marked only after processEmail returns nil.
-		if err := e.commitLeadIntake(ctx, lead); err != nil {
+		// Build the durable auto-qualification job (the AI qualifier sees the
+		// email body plus any extracted attachment text). It is enqueued
+		// atomically with the lead below so a retry never loses the
+		// qualification (#206 Part C); a worker scores it asynchronously and
+		// emits lead.qualified transactionally.
+		job := e.newQualificationJob(ctx, lead, fromName, body, atts)
+		// #206: persist the lead, enqueue lead.created, and enqueue the
+		// qualification job atomically. A failure rolls all of them back and the
+		// error propagates so the poll loop leaves the email unseen for retry
+		// (fail-closed). Safe because \Seen is marked only after a nil return.
+		if err := e.commitLeadIntake(ctx, lead, job); err != nil {
 			log.Printf("[email-poller] error creating lead for %s, will retry next poll: %v", fromEmail, err)
 			return err
 		}
@@ -547,92 +546,72 @@ func (e *EmailPoller) processEmail(ctx context.Context, fromName, fromEmail, bod
 		}
 	}
 
-	if isNewLead {
-		// Build the text the AI qualifier sees: the email body plus any
-		// extracted attachment content. We don't mutate lead.FirstMessage
-		// (that's the conversation record) — qualifyText is ephemeral.
-		qualifyText := body
-		if e.analyzer != nil {
-			imgLeadID := lead.ID
-			imgCtx := auditdomain.ContextWithCallMeta(ctx, auditdomain.CallMeta{
-				UserID:      lead.UserID,
-				LeadID:      &imgLeadID,
-				RequestType: auditdomain.RequestTypeImageAnalysis,
-			})
-			for _, att := range atts {
-				res := e.analyzer.Analyze(imgCtx, att)
-				if res.Skipped != "" {
-					e.logger.WarnContext(ctx, "inbox: attachment skipped",
-						"filename", att.Filename, "reason", res.Skipped, "err", res.Err)
-					continue
-				}
-				qualifyText += "\n\n[Вложение: " + att.Filename + "]\n" + res.Text
-			}
-		}
-
-		go func() {
-			qCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
-			defer cancel()
-			qLeadID := lead.ID
-			qCtx = auditdomain.ContextWithCallMeta(qCtx, auditdomain.CallMeta{
-				UserID:      lead.UserID,
-				LeadID:      &qLeadID,
-				RequestType: auditdomain.RequestTypeQualification,
-			})
-			result, err := e.aiClient.Qualify(qCtx, fromName, string(lead.Channel), qualifyText)
-			if err != nil {
-				log.Printf("[email-poller] qualification error for lead %s: %v", lead.ID, err)
-				return
-			}
-
-			q := &InboxQualification{
-				ID:                uuid.New(),
-				LeadID:            lead.ID,
-				IdentifiedNeed:    result.IdentifiedNeed,
-				EstimatedBudget:   result.EstimatedBudget,
-				Deadline:          result.Deadline,
-				Score:             result.Score,
-				ScoreReason:       result.ScoreReason,
-				RecommendedAction: result.RecommendedAction,
-				ProviderUsed:      e.aiClient.ProviderName(),
-				GeneratedAt:       time.Now().UTC(),
-			}
-			if err := e.repo.UpsertQualification(qCtx, q); err != nil {
-				log.Printf("[email-poller] error saving qualification for lead %s: %v", lead.ID, err)
-				return
-			}
-			if err := e.repo.UpdateLeadStatus(qCtx, lead.ID, StatusQualified); err != nil {
-				log.Printf("[email-poller] error updating lead status for %s: %v", lead.ID, err)
-				return
-			}
-			log.Printf("[email-poller] lead %s qualified (score=%d)", lead.ID, result.Score)
-			// lead.qualified is emitted best-effort post-commit, NOT in a
-			// transaction: this is a one-shot goroutine with no retry, so a
-			// fail-closed rollback would silently drop the qualification (#206).
-			if e.leadQualifiedEmitter != nil {
-				lead.Status = StatusQualified
-				if err := e.leadQualifiedEmitter.EmitLeadQualified(qCtx, lead); err != nil {
-					log.Printf("[email-poller] lead.qualified emit failed (best-effort): %v", err)
-				}
-			}
-		}()
-	}
 	return nil
 }
 
-// commitLeadIntake persists a new inbound lead and enqueues its lead.created
-// event. When a transaction manager and emitter are both wired (webhooks
-// enabled), the two run inside one WithTx so they commit or roll back together
-// — a failed enqueue undoes the lead and returns an error (fail-closed, #206).
-// Otherwise it falls back to a plain create with a best-effort post-commit emit,
-// preserving the zero-overhead path when webhooks are disabled.
-func (e *EmailPoller) commitLeadIntake(ctx context.Context, lead *InboxLead) error {
-	if e.tx != nil && e.leadCreatedEmitter != nil {
+// newQualificationJob builds the durable auto-qualification job for a new email
+// lead, capturing the qualifier input (the body plus any extracted attachment
+// text) at enqueue time. Returns nil when no enqueuer is wired or the input is
+// empty — qualification is simply skipped, never blocking intake.
+func (e *EmailPoller) newQualificationJob(ctx context.Context, lead *InboxLead, contactName, body string, atts []attachments.Attachment) *QualificationJob {
+	if e.qualJobs == nil {
+		return nil
+	}
+	qualifyText := body
+	if e.analyzer != nil {
+		imgLeadID := lead.ID
+		imgCtx := auditdomain.ContextWithCallMeta(ctx, auditdomain.CallMeta{
+			UserID:      lead.UserID,
+			LeadID:      &imgLeadID,
+			RequestType: auditdomain.RequestTypeImageAnalysis,
+		})
+		for _, att := range atts {
+			res := e.analyzer.Analyze(imgCtx, att)
+			if res.Skipped != "" {
+				e.logger.WarnContext(ctx, "inbox: attachment skipped",
+					"filename", att.Filename, "reason", res.Skipped, "err", res.Err)
+				continue
+			}
+			qualifyText += "\n\n[Вложение: " + att.Filename + "]\n" + res.Text
+		}
+	}
+	job, err := NewQualificationJob(lead.ID, lead.UserID, contactName, lead.Channel, qualifyText)
+	if err != nil {
+		e.logger.WarnContext(ctx, "inbox: skip qualification job", "lead", lead.ID, "err", err)
+		return nil
+	}
+	return job
+}
+
+// SetQualificationEnqueuer wires the durable qualification queue. When set, every
+// new lead enqueues a job (atomically with the lead) for the qualification worker
+// to score. When nil, qualification is skipped (e.g. tests).
+func (e *EmailPoller) SetQualificationEnqueuer(q QualificationJobEnqueuer) { e.qualJobs = q }
+
+// commitLeadIntake persists a new inbound lead and, atomically with it, enqueues
+// its lead.created event and the auto-qualification job. When a transaction
+// manager is wired (production), all three run inside one WithTx so they commit
+// or roll back together — a failed enqueue undoes the lead and returns an error
+// (fail-closed, #206), and the caller leaves the email unseen for retry.
+// Without a tx (tests), it falls back to a plain create with best-effort
+// post-commit side-effects. job may be nil (qualification disabled).
+func (e *EmailPoller) commitLeadIntake(ctx context.Context, lead *InboxLead, job *QualificationJob) error {
+	if e.tx != nil && (e.leadCreatedEmitter != nil || job != nil) {
 		return e.tx.WithTx(ctx, func(txCtx context.Context) error {
 			if err := e.repo.CreateLead(txCtx, lead); err != nil {
 				return err
 			}
-			return e.leadCreatedEmitter.EmitLeadCreated(txCtx, lead)
+			if e.leadCreatedEmitter != nil {
+				if err := e.leadCreatedEmitter.EmitLeadCreated(txCtx, lead); err != nil {
+					return err
+				}
+			}
+			if job != nil {
+				if err := e.qualJobs.EnqueueQualificationJob(txCtx, job); err != nil {
+					return err
+				}
+			}
+			return nil
 		})
 	}
 	if err := e.repo.CreateLead(ctx, lead); err != nil {
@@ -641,6 +620,11 @@ func (e *EmailPoller) commitLeadIntake(ctx context.Context, lead *InboxLead) err
 	if e.leadCreatedEmitter != nil {
 		if err := e.leadCreatedEmitter.EmitLeadCreated(ctx, lead); err != nil {
 			log.Printf("[email-poller] lead.created emit failed (best-effort): %v", err)
+		}
+	}
+	if job != nil {
+		if err := e.qualJobs.EnqueueQualificationJob(ctx, job); err != nil {
+			log.Printf("[email-poller] qualification enqueue failed (best-effort): %v", err)
 		}
 	}
 	return nil

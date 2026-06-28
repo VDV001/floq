@@ -40,7 +40,6 @@ type mockLeadRepo struct {
 	updatedFirstMessages  map[uuid.UUID]string
 	existingLeadByChatID  map[int64]*InboxLead // preset for GetLeadByTelegramChatID
 	unarchivedLeads       []uuid.UUID          // records UnarchiveLead calls
-	qualifyDone           chan struct{}
 }
 
 func newMockLeadRepo() *mockLeadRepo {
@@ -48,7 +47,6 @@ func newMockLeadRepo() *mockLeadRepo {
 		updatedStatuses:      make(map[uuid.UUID]LeadStatus),
 		updatedFirstMessages: make(map[uuid.UUID]string),
 		existingLeadByChatID: make(map[int64]*InboxLead),
-		qualifyDone:          make(chan struct{}, 1),
 	}
 }
 
@@ -109,36 +107,21 @@ func (m *mockLeadRepo) UpdateLeadStatus(_ context.Context, id uuid.UUID, status 
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.updatedStatuses[id] = status
-	select {
-	case m.qualifyDone <- struct{}{}:
-	default:
-	}
 	return nil
 }
 
 // --- Mock AIQualifier ---
 
+// mockAIQualifier satisfies the AIQualifier port the test helpers still accept.
+// The pollers no longer call the qualifier inline (#206 Part C moved scoring to
+// the durable worker), so Qualify is never invoked in these tests; the type
+// exists only so the helper signatures keep compiling.
 type mockAIQualifier struct {
 	result *QualificationResult
-
-	mu               sync.Mutex
-	lastFirstMessage string
 }
 
-func (m *mockAIQualifier) Qualify(_ context.Context, _, _, firstMessage string) (*QualificationResult, error) {
-	m.mu.Lock()
-	m.lastFirstMessage = firstMessage
-	m.mu.Unlock()
+func (m *mockAIQualifier) Qualify(_ context.Context, _, _, _ string) (*QualificationResult, error) {
 	return m.result, nil
-}
-
-// lastQualifyInput returns the firstMessage argument the mock last
-// observed. Exposed to tests that need to assert what context the
-// caller built (email body + extracted attachment text).
-func (m *mockAIQualifier) lastQualifyInput() string {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	return m.lastFirstMessage
 }
 
 func (m *mockAIQualifier) ProviderName() string {
@@ -161,7 +144,6 @@ func newTestBotWithProspects(repo LeadRepository, prospectRepo ProspectRepositor
 		bot:          fakeBotAPI,
 		repo:         repo,
 		prospectRepo: prospectRepo,
-		aiClient:     aiClient,
 		ownerID:      ownerID,
 		bookingLink:  bookingLink,
 		logger:       slog.Default(),
@@ -215,17 +197,6 @@ func makeTgMessageWithUsername(chatID int64, firstName, lastName, username, text
 	}
 }
 
-// waitQualifyDone waits for the async qualification goroutine to finish,
-// or fails the test after a timeout.
-func waitQualifyDone(t *testing.T, repo *mockLeadRepo) {
-	t.Helper()
-	select {
-	case <-repo.qualifyDone:
-	case <-time.After(5 * time.Second):
-		t.Fatal("timed out waiting for async qualification to complete")
-	}
-}
-
 // --- Tests ---
 
 func TestHandleMessage_NewLead(t *testing.T) {
@@ -242,9 +213,6 @@ func TestHandleMessage_NewLead(t *testing.T) {
 	msg := makeTgMessage(12345, "Ivan", "Petrov", "Hello, I need a CRM")
 	bot.handleMessage(context.Background(), msg)
 
-	// Wait for the async qualification goroutine to complete.
-	waitQualifyDone(t, repo)
-
 	repo.mu.Lock()
 	defer repo.mu.Unlock()
 
@@ -259,21 +227,13 @@ func TestHandleMessage_NewLead(t *testing.T) {
 	require.NotNil(t, lead.TelegramChatID)
 	assert.Equal(t, int64(12345), *lead.TelegramChatID)
 
-	// An inbound message should have been created.
+	// An inbound message should have been created. Qualification is no longer
+	// performed inline by the poller (#206 Part C — a durable worker scores the
+	// lead asynchronously); see qualification_worker_test.go.
 	require.Len(t, repo.messages, 1)
 	assert.Equal(t, lead.ID, repo.messages[0].LeadID)
 	assert.Equal(t, DirectionInbound, repo.messages[0].Direction)
 	assert.Equal(t, "Hello, I need a CRM", repo.messages[0].Body)
-
-	// Qualification should have run asynchronously.
-	require.Len(t, repo.qualifications, 1)
-	assert.Equal(t, lead.ID, repo.qualifications[0].LeadID)
-	assert.Equal(t, "CRM system", repo.qualifications[0].IdentifiedNeed)
-	assert.Equal(t, 7, repo.qualifications[0].Score)
-	assert.Equal(t, "mock", repo.qualifications[0].ProviderUsed)
-
-	// Lead status should have been updated to qualified.
-	assert.Equal(t, StatusQualified, repo.updatedStatuses[lead.ID])
 }
 
 // --- #199 transactional outbox emitter spies (shared with email_test.go) ---
@@ -325,28 +285,10 @@ func TestHandleMessage_NewLead_EmitsLeadCreated(t *testing.T) {
 	bot.SetLeadCreatedEmitter(emit)
 
 	bot.handleMessage(context.Background(), makeTgMessage(12345, "Ivan", "Petrov", "Hello"))
-	waitQualifyDone(t, repo)
 
 	// Best-effort post-commit (#206): emitted after CreateLead, not in a tx.
 	require.Equal(t, 1, emit.count(), "a new telegram lead must emit lead.created")
 	assert.Equal(t, ChannelTelegram, emit.leads[0].Channel)
-	assert.Equal(t, ownerID, emit.leads[0].UserID)
-}
-
-func TestHandleMessage_AutoQualify_EmitsLeadQualified(t *testing.T) {
-	repo := newMockLeadRepo()
-	aiClient := &mockAIQualifier{result: &QualificationResult{Score: 8}}
-	ownerID := uuid.New()
-	bot := newTestBot(repo, aiClient, ownerID, "https://cal.com/test")
-	emit := &spyLeadQualifiedEmitter{}
-	bot.SetLeadQualifiedEmitter(emit)
-
-	bot.handleMessage(context.Background(), makeTgMessage(12345, "Ivan", "Petrov", "Hello"))
-	waitQualifyDone(t, repo)
-
-	// Best-effort post-commit (#206): emitted after the qualification writes.
-	require.Eventually(t, func() bool { return emit.count() == 1 }, 2*time.Second, 10*time.Millisecond,
-		"auto-qualification must emit lead.qualified")
 	assert.Equal(t, ownerID, emit.leads[0].UserID)
 }
 
@@ -373,7 +315,6 @@ func TestHandleMessage_ExistingLead(t *testing.T) {
 	bot.handleMessage(context.Background(), msg)
 
 	// Wait for the async qualification goroutine to complete.
-	waitQualifyDone(t, repo)
 
 	repo.mu.Lock()
 	defer repo.mu.Unlock()
@@ -410,7 +351,6 @@ func TestHandleMessage_ArchivedLead_Resurfaces(t *testing.T) {
 
 	bot := newTestBot(repo, aiClient, ownerID, "https://cal.com/test")
 	bot.handleMessage(context.Background(), makeTgMessage(99999, "Ivan", "Petrov", "Hi again, ready to proceed"))
-	waitQualifyDone(t, repo)
 
 	repo.mu.Lock()
 	defer repo.mu.Unlock()
@@ -479,7 +419,6 @@ func TestHandleMessage_CallAgreement_EnqueuesForApproval(t *testing.T) {
 	bot.handleMessage(context.Background(), msg)
 
 	// Wait for the async qualification goroutine to complete.
-	waitQualifyDone(t, repo)
 
 	repo.mu.Lock()
 	defer repo.mu.Unlock()
@@ -530,7 +469,6 @@ func TestHandleMessage_CallAgreement_EmptyBookingLinkSuppresses(t *testing.T) {
 
 	msg := makeTgMessage(99999, "Bob", "", "Звучит интересно, давайте созвон проведём!")
 	bot.handleMessage(context.Background(), msg)
-	waitQualifyDone(t, repo)
 
 	assert.Empty(t, proposer.Calls(),
 		"proposer must NOT fire with empty bookingLink — would land a customer-visible message with a blank URL")
@@ -546,7 +484,6 @@ func TestHandleMessage_CallAgreement_NoProposerSuppressesBookingLink(t *testing.
 
 	msg := makeTgMessage(88888, "Bob", "", "давайте созвон")
 	bot.handleMessage(context.Background(), msg)
-	waitQualifyDone(t, repo)
 
 	repo.mu.Lock()
 	defer repo.mu.Unlock()
@@ -592,7 +529,6 @@ func TestHandleMessage_ProspectAutoConversion(t *testing.T) {
 	msg := makeTgMessageWithUsername(99999, "Test", "User", "testuser", "Привет, хочу узнать о продукте")
 	bot.handleMessage(context.Background(), msg)
 
-	waitQualifyDone(t, repo)
 
 	repo.mu.Lock()
 	defer repo.mu.Unlock()
@@ -626,7 +562,6 @@ func TestHandleMessage_ProspectAlreadyConverted(t *testing.T) {
 	msg := makeTgMessageWithUsername(88888, "Conv", "User", "converteduser", "Привет снова")
 	bot.handleMessage(context.Background(), msg)
 
-	waitQualifyDone(t, repo)
 
 	repo.mu.Lock()
 	defer repo.mu.Unlock()
@@ -654,7 +589,6 @@ func newErrorMockLeadRepo() *errorMockLeadRepo {
 			updatedStatuses:      make(map[uuid.UUID]LeadStatus),
 			updatedFirstMessages: make(map[uuid.UUID]string),
 			existingLeadByChatID: make(map[int64]*InboxLead),
-			qualifyDone:          make(chan struct{}, 1),
 		},
 	}
 }
@@ -737,39 +671,6 @@ func TestHandleMessage_CreateMessageError(t *testing.T) {
 	assert.Empty(t, repo.messages) // CreateMessage fails
 }
 
-// --- Mock AIQualifier that returns errors ---
-
-type errorAIQualifier struct{}
-
-func (m *errorAIQualifier) Qualify(_ context.Context, _, _, _ string) (*QualificationResult, error) {
-	return nil, errors.New("ai unavailable")
-}
-
-func (m *errorAIQualifier) ProviderName() string {
-	return "error-mock"
-}
-
-func TestHandleMessage_AIQualificationError(t *testing.T) {
-	repo := newMockLeadRepo()
-	aiClient := &errorAIQualifier{}
-	bot := newTestBot(repo, aiClient, uuid.New(), "")
-
-	msg := makeTgMessage(55555, "Test", "User", "Need help with project")
-	bot.handleMessage(context.Background(), msg)
-
-	// Give goroutine time to finish (it returns early on error, no qualifyDone signal).
-	time.Sleep(200 * time.Millisecond)
-
-	repo.mu.Lock()
-	defer repo.mu.Unlock()
-
-	require.Len(t, repo.leads, 1)
-	require.Len(t, repo.messages, 1)
-	// No qualification should be saved.
-	assert.Empty(t, repo.qualifications)
-	assert.Empty(t, repo.updatedStatuses)
-}
-
 // --- Mock ProspectRepo that errors on ConvertToLead ---
 
 type errorConvertProspectRepo struct {
@@ -800,7 +701,6 @@ func TestHandleMessage_ProspectConvertError(t *testing.T) {
 	msg := makeTgMessageWithUsername(66666, "Err", "User", "erruser", "Hello")
 	bot.handleMessage(context.Background(), msg)
 
-	waitQualifyDone(t, repo)
 
 	repo.mu.Lock()
 	defer repo.mu.Unlock()
@@ -818,7 +718,6 @@ func TestHandleMessage_OnlyFirstName(t *testing.T) {
 	msg := makeTgMessage(44444, "OnlyFirst", "", "Just a message")
 	bot.handleMessage(context.Background(), msg)
 
-	waitQualifyDone(t, repo)
 
 	repo.mu.Lock()
 	defer repo.mu.Unlock()
@@ -826,86 +725,9 @@ func TestHandleMessage_OnlyFirstName(t *testing.T) {
 	assert.Equal(t, "OnlyFirst", repo.leads[0].ContactName)
 }
 
-// --- Mock repo that fails on UpsertQualification ---
-
-type upsertErrorMockLeadRepo struct {
-	mockLeadRepo
-}
-
-func (m *upsertErrorMockLeadRepo) UpsertQualification(_ context.Context, _ *InboxQualification) error {
-	// Signal done so test doesn't hang.
-	select {
-	case m.qualifyDone <- struct{}{}:
-	default:
-	}
-	return errors.New("upsert failed")
-}
-
-func TestHandleMessage_UpsertQualificationError(t *testing.T) {
-	repo := &upsertErrorMockLeadRepo{
-		mockLeadRepo: mockLeadRepo{
-			updatedStatuses:      make(map[uuid.UUID]LeadStatus),
-			updatedFirstMessages: make(map[uuid.UUID]string),
-			existingLeadByChatID: make(map[int64]*InboxLead),
-			qualifyDone:          make(chan struct{}, 1),
-		},
-	}
-	aiClient := &mockAIQualifier{result: &QualificationResult{Score: 5}}
-	bot := newTestBot(repo, aiClient, uuid.New(), "")
-
-	msg := makeTgMessage(77770, "Test", "User", "Hello there")
-	bot.handleMessage(context.Background(), msg)
-
-	waitQualifyDone(t, &repo.mockLeadRepo)
-
-	repo.mu.Lock()
-	defer repo.mu.Unlock()
-	require.Len(t, repo.leads, 1)
-	// UpsertQualification fails, so UpdateLeadStatus should NOT have been called.
-	assert.Empty(t, repo.updatedStatuses)
-}
-
-// --- Mock repo that fails on UpdateLeadStatus ---
-
-type statusErrorMockLeadRepo struct {
-	mockLeadRepo
-}
-
-func (m *statusErrorMockLeadRepo) UpdateLeadStatus(_ context.Context, _ uuid.UUID, _ LeadStatus) error {
-	select {
-	case m.qualifyDone <- struct{}{}:
-	default:
-	}
-	return errors.New("status update failed")
-}
-
-func TestHandleMessage_UpdateLeadStatusError(t *testing.T) {
-	repo := &statusErrorMockLeadRepo{
-		mockLeadRepo: mockLeadRepo{
-			updatedStatuses:      make(map[uuid.UUID]LeadStatus),
-			updatedFirstMessages: make(map[uuid.UUID]string),
-			existingLeadByChatID: make(map[int64]*InboxLead),
-			qualifyDone:          make(chan struct{}, 1),
-		},
-	}
-	aiClient := &mockAIQualifier{result: &QualificationResult{Score: 5}}
-	bot := newTestBot(repo, aiClient, uuid.New(), "")
-
-	msg := makeTgMessage(77771, "Test", "User", "Hello there")
-	bot.handleMessage(context.Background(), msg)
-
-	waitQualifyDone(t, &repo.mockLeadRepo)
-
-	repo.mu.Lock()
-	defer repo.mu.Unlock()
-	require.Len(t, repo.leads, 1)
-	// Qualification is saved but status update fails — still no panic.
-	require.Len(t, repo.qualifications, 1)
-}
-
 func TestNewTelegramBot_InvalidToken(t *testing.T) {
 	// Empty token should fail.
-	_, err := NewTelegramBot("", nil, nil, nil, uuid.New(), "", nil)
+	_, err := NewTelegramBot("", nil, nil, uuid.New(), "", nil)
 	// telegram bot-api returns error for empty token.
 	assert.Error(t, err)
 }
@@ -957,7 +779,6 @@ func newTestBotWithErrorHTTP(repo LeadRepository, aiClient AIQualifier, ownerID 
 	return &TelegramBot{
 		bot:         fakeBotAPI,
 		repo:        repo,
-		aiClient:    aiClient,
 		ownerID:     ownerID,
 		bookingLink: bookingLink,
 		logger:      slog.Default(),
@@ -981,7 +802,6 @@ func TestHandleMessage_CallAgreement_BrokenBotTransport_DoesNotEscape(t *testing
 	msg := makeTgMessage(88880, "Anna", "", "Давайте созвон проведём!")
 	bot.handleMessage(context.Background(), msg)
 
-	waitQualifyDone(t, repo)
 
 	repo.mu.Lock()
 	defer repo.mu.Unlock()
@@ -1167,7 +987,6 @@ func TestHandleMessage_NewLead_TransactionalIntake_Success(t *testing.T) {
 	bot.SetTxManager(tx)
 
 	err := bot.handleMessage(context.Background(), makeTgMessage(33333, "Ivan", "Petrov", "Hello"))
-	waitQualifyDone(t, &repo.mockLeadRepo)
 
 	require.NoError(t, err)
 	assert.Equal(t, 1, tx.count(), "intake must run inside exactly one WithTx")
@@ -1235,4 +1054,37 @@ func TestReceiveLoop_HandlerError_BacksOffInsteadOfBusyLooping(t *testing.T) {
 		"must exit promptly when ctx is cancelled during the handler-error backoff")
 	assert.LessOrEqual(t, fetcher.count(), 2,
 		"handler-error re-poll must back off, not busy-loop")
+}
+
+// #206 Part C: a new telegram lead enqueues one qualification job; an existing
+// lead re-qualifies (best-effort) on each new message.
+func TestHandleMessage_NewLead_EnqueuesQualificationJob(t *testing.T) {
+	repo := newErrorMockLeadRepo()
+	ownerID := uuid.New()
+	bot := newTestBot(repo, nil, ownerID, "")
+	enq := &stubQualEnqueuer{}
+	bot.SetQualificationEnqueuer(enq)
+	bot.SetTxManager(&inlineTx{})
+
+	err := bot.handleMessage(context.Background(), makeTgMessage(123, "Ivan", "Petrov", "Hello there"))
+	require.NoError(t, err)
+
+	jobs := enq.captured()
+	require.Len(t, jobs, 1, "a new telegram lead enqueues one qualification job")
+	assert.Equal(t, ChannelTelegram, jobs[0].Channel)
+	assert.Equal(t, "Hello there", jobs[0].QualifyText)
+}
+
+func TestHandleMessage_ExistingLead_ReQualifies(t *testing.T) {
+	repo := newErrorMockLeadRepo()
+	ownerID := uuid.New()
+	existing := &InboxLead{ID: uuid.New(), UserID: ownerID, Channel: ChannelTelegram, ContactName: "Ivan", FirstMessage: "old", Status: StatusNew}
+	repo.existingLeadByChatID[555] = existing
+	bot := newTestBot(repo, nil, ownerID, "")
+	enq := &stubQualEnqueuer{}
+	bot.SetQualificationEnqueuer(enq)
+
+	err := bot.handleMessage(context.Background(), makeTgMessage(555, "Ivan", "", "a new message with fresh context"))
+	require.NoError(t, err)
+	require.Len(t, enq.captured(), 1, "an existing lead re-qualifies on a new message")
 }

@@ -4,7 +4,6 @@ import (
 	"context"
 	"sync"
 	"testing"
-	"time"
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
@@ -36,56 +35,26 @@ func (v *ctxCapturingVisionClient) captured() context.Context {
 	return v.lastCtx
 }
 
-func TestProcessEmail_AttachesQualificationCallMeta(t *testing.T) {
-	repo := newEmailMockLeadRepo()
-	prospectRepo := newEmailMockProspectRepo()
-	seqRepo := newMockSequenceRepo()
-	aiClient := newCtxCapturingAIQualifier()
-	ownerID := uuid.New()
-
-	poller := NewEmailPoller(nil, ownerID, "", "", "", "", repo, prospectRepo, seqRepo, aiClient, nil)
-
-	poller.processEmail(context.Background(), "Alice", "alice@example.com", "body", nil)
-
-	// Release the qualifier so it returns before t.Cleanup tears the
-	// test down — leaving a goroutine blocked produces flakes.
-	defer close(aiClient.release)
-
-	var qCtx context.Context
-	select {
-	case qCtx = <-aiClient.captured:
-	case <-time.After(2 * time.Second):
-		t.Fatal("Qualify was never invoked")
-	}
-
-	meta, ok := auditdomain.CallMetaFromContext(qCtx)
-	require.True(t, ok, "qualification goroutine must carry CallMeta in ctx")
-	assert.Equal(t, ownerID, meta.UserID)
-	require.NotNil(t, meta.LeadID, "qualification is lead-attributed")
-	require.Len(t, repo.mockLeadRepo.leads, 1)
-	assert.Equal(t, repo.mockLeadRepo.leads[0].ID, *meta.LeadID,
-		"lead_id in ctx must match the lead the qualifier was triggered for")
-	assert.Equal(t, auditdomain.RequestTypeQualification, meta.RequestType)
-}
-
 func TestProcessEmail_AttachmentAnalyzerReceivesImageAnalysisMeta(t *testing.T) {
 	repo := newEmailMockLeadRepo()
 	prospectRepo := newEmailMockProspectRepo()
 	seqRepo := newMockSequenceRepo()
-	aiClient := newCtxCapturingAIQualifier()
 	ownerID := uuid.New()
 
 	vc := &ctxCapturingVisionClient{resp: "OCR text"}
 	analyzer := attachments.New(vc)
 
-	poller := NewEmailPoller(nil, ownerID, "", "", "", "", repo, prospectRepo, seqRepo, aiClient, nil,
+	// The analyzer runs inside newQualificationJob, which only executes when a
+	// qualification enqueuer is wired (#206 Part C). Wire a stub enqueuer so the
+	// attachment-analysis call site is exercised and stamps its CallMeta.
+	poller := NewEmailPoller(nil, ownerID, "", "", "", "", repo, prospectRepo, seqRepo, nil,
 		WithAttachmentAnalyzer(analyzer))
+	poller.SetQualificationEnqueuer(&stubQualEnqueuer{})
 
 	atts := []attachments.Attachment{
 		{Filename: "shot.png", ContentType: "image/png", Data: []byte("png-bytes")},
 	}
 	poller.processEmail(context.Background(), "Alice", "alice@example.com", "body", atts)
-	defer close(aiClient.release)
 
 	// Attachment analyzer runs synchronously inside processEmail —
 	// the captured ctx is set by the time the call returns.

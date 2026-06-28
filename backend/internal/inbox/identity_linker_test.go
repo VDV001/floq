@@ -51,15 +51,13 @@ func TestProcessEmail_CallsIdentityLinker_WithNormalizedEmail(t *testing.T) {
 	repo := newEmailMockLeadRepo()
 	prospectRepo := newEmailMockProspectRepo()
 	seqRepo := newMockSequenceRepo()
-	aiClient := &mockAIQualifier{result: &QualificationResult{Score: 5}}
 	linker := &recordingIdentityLinker{}
 	ownerID := uuid.New()
 
-	poller := NewEmailPoller(nil, ownerID, "", "", "", "", repo, prospectRepo, seqRepo, aiClient, nil,
+	poller := NewEmailPoller(nil, ownerID, "", "", "", "", repo, prospectRepo, seqRepo, nil,
 		WithIdentityLinker(linker))
 
 	poller.processEmail(context.Background(), "Alice", "  ALICE@Example.COM  ", "Hi", nil)
-	waitQualifyDone(t, &repo.mockLeadRepo)
 
 	invs := linker.takeInvocations()
 	require.Len(t, invs, 1, "linker must be called exactly once for a new lead")
@@ -77,14 +75,12 @@ func TestProcessEmail_LinkerError_DoesNotBreakInboundFlow(t *testing.T) {
 	repo := newEmailMockLeadRepo()
 	prospectRepo := newEmailMockProspectRepo()
 	seqRepo := newMockSequenceRepo()
-	aiClient := &mockAIQualifier{result: &QualificationResult{Score: 5}}
 	linker := &recordingIdentityLinker{returnErr: errors.New("identity backend down")}
 
-	poller := NewEmailPoller(nil, uuid.New(), "", "", "", "", repo, prospectRepo, seqRepo, aiClient, nil,
+	poller := NewEmailPoller(nil, uuid.New(), "", "", "", "", repo, prospectRepo, seqRepo, nil,
 		WithIdentityLinker(linker))
 
 	poller.processEmail(context.Background(), "Alice", "alice@example.com", "Hi", nil)
-	waitQualifyDone(t, &repo.mockLeadRepo)
 
 	require.Len(t, repo.mockLeadRepo.leads, 1, "lead must be created even when linker fails")
 	require.Len(t, repo.mockLeadRepo.messages, 1, "message must still land")
@@ -94,12 +90,10 @@ func TestProcessEmail_NoLinker_NoOp(t *testing.T) {
 	repo := newEmailMockLeadRepo()
 	prospectRepo := newEmailMockProspectRepo()
 	seqRepo := newMockSequenceRepo()
-	aiClient := &mockAIQualifier{result: &QualificationResult{Score: 5}}
 
-	poller := NewEmailPoller(nil, uuid.New(), "", "", "", "", repo, prospectRepo, seqRepo, aiClient, nil)
+	poller := NewEmailPoller(nil, uuid.New(), "", "", "", "", repo, prospectRepo, seqRepo, nil)
 
 	poller.processEmail(context.Background(), "Alice", "alice@example.com", "Hi", nil)
-	waitQualifyDone(t, &repo.mockLeadRepo)
 
 	require.Len(t, repo.mockLeadRepo.leads, 1, "no linker wired = lead still created")
 }
@@ -108,7 +102,6 @@ func TestProcessEmail_ExistingLead_DoesNotCallLinker(t *testing.T) {
 	repo := newEmailMockLeadRepo()
 	prospectRepo := newEmailMockProspectRepo()
 	seqRepo := newMockSequenceRepo()
-	aiClient := &mockAIQualifier{result: &QualificationResult{Score: 5}}
 	linker := &recordingIdentityLinker{}
 	ownerID := uuid.New()
 
@@ -123,7 +116,7 @@ func TestProcessEmail_ExistingLead_DoesNotCallLinker(t *testing.T) {
 	}
 	repo.existingLeadByEmail["alice@example.com"] = existing
 
-	poller := NewEmailPoller(nil, ownerID, "", "", "", "", repo, prospectRepo, seqRepo, aiClient, nil,
+	poller := NewEmailPoller(nil, ownerID, "", "", "", "", repo, prospectRepo, seqRepo, nil,
 		WithIdentityLinker(linker))
 
 	poller.processEmail(context.Background(), "Alice", "alice@example.com", "Reply", nil)
@@ -141,7 +134,6 @@ func TestHandleMessage_CallsIdentityLinker_WithNormalizedUsername(t *testing.T) 
 
 	msg := makeTgMessageWithUsername(42, "Alice", "Bot", "ALICE_BOT", "Hi")
 	bot.handleMessage(context.Background(), msg)
-	waitQualifyDone(t, repo)
 
 	invs := linker.takeInvocations()
 	require.Len(t, invs, 1)
@@ -162,7 +154,6 @@ func TestHandleMessage_EmptyUsername_SkipsLinker(t *testing.T) {
 	// No UserName on the message — linker has nothing to resolve.
 	msg := makeTgMessage(43, "Alice", "Bot", "Hello")
 	bot.handleMessage(context.Background(), msg)
-	waitQualifyDone(t, repo)
 
 	assert.Empty(t, linker.takeInvocations(), "linker must be skipped when no identifier is available")
 }
@@ -176,7 +167,6 @@ func TestHandleMessage_LinkerError_DoesNotBreakInboundFlow(t *testing.T) {
 
 	msg := makeTgMessageWithUsername(44, "Alice", "Bot", "alice_bot", "Hi")
 	bot.handleMessage(context.Background(), msg)
-	waitQualifyDone(t, repo)
 
 	require.Len(t, repo.leads, 1, "lead must land even when linker fails")
 }
@@ -202,7 +192,6 @@ func TestHandleMessage_ExistingLead_DoesNotCallLinker(t *testing.T) {
 
 	msg := makeTgMessageWithUsername(chatID, "Alice", "Bot", "alice_bot", "Reply with more text than the existing first_message threshold of twenty chars")
 	bot.handleMessage(context.Background(), msg)
-	waitQualifyDone(t, repo)
 
 	assert.Empty(t, linker.takeInvocations(), "existing lead path must not re-trigger identity linking")
 }

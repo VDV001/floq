@@ -64,13 +64,13 @@ func TestTelegramBot_CommitLeadIntake_TransactionalOutbox(t *testing.T) {
 
 	// --- Commit path: lead + delivery commit together. ---
 	bCommit, committed := newBot(false)
-	require.NoError(t, bCommit.commitLeadIntake(ctx, committed))
+	require.NoError(t, bCommit.commitLeadIntake(ctx, committed, nil))
 	require.True(t, leadExists(committed.ID), "lead must persist on the commit path")
 	require.Equal(t, 1, countDeliveries(), "exactly one delivery must be enqueued in the same transaction")
 
 	// --- Rollback path: a failing emit aborts the lead AND the delivery. ---
 	bFail, rolled := newBot(true)
-	require.Error(t, bFail.commitLeadIntake(ctx, rolled), "a failed emit must abort the intake")
+	require.Error(t, bFail.commitLeadIntake(ctx, rolled, nil), "a failed emit must abort the intake")
 	assert.False(t, leadExists(rolled.ID), "a rolled-back intake must leave no lead row")
 	assert.Equal(t, 1, countDeliveries(),
 		"no delivery may survive the rolled-back transaction (still just the committed one)")
