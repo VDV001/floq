@@ -100,3 +100,21 @@ func TestDelivery_NextRetryBackoff(t *testing.T) {
 		t.Error("backoff must grow with attempts (exponential)")
 	}
 }
+
+// The terminal-status set is the single source the retention GC sweeps; pin it so
+// a new terminal status can't be added to the enum without joining the set (#212).
+func TestTerminalDeliveryStatuses_IsTheTerminalSet(t *testing.T) {
+	got := TerminalDeliveryStatuses()
+	want := map[DeliveryStatus]bool{DeliverySucceeded: true, DeliveryFailed: true}
+	if len(got) != len(want) {
+		t.Fatalf("terminal set size = %d, want %d", len(got), len(want))
+	}
+	for _, s := range got {
+		if !want[s] {
+			t.Errorf("unexpected terminal status %q in set", s)
+		}
+		if s == DeliveryPending {
+			t.Error("pending is never terminal")
+		}
+	}
+}
