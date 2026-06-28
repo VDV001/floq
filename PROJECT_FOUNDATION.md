@@ -1,5 +1,20 @@
 # Floq — PROJECT FOUNDATION v2.0
 
+> ⚠️ **ИСТОРИЧЕСКИЙ ДОКУМЕНТ — исходный замысел проекта (апрель 2026).**
+> Это первоначальный blueprint, с которого Floq был построен. Он **НЕ отражает
+> текущее состояние** кода: MVP-чеклисты, список модулей, модели данных, API,
+> миграции (001-004) и стек здесь зафиксированы на старте и с тех пор сильно
+> ушли вперёд. Сохранён как запись изначального видения и обоснования решений.
+>
+> **Актуальные источники правды:**
+> - Возможности и архитектура → [README.md](README.md)
+> - Что сделано / на горизонте → [ROADMAP.md](ROADMAP.md)
+> - Хронология релизов → [CHANGELOG.md](CHANGELOG.md)
+> - API-маршруты → `backend/cmd/server/main.go`
+> - Модули и доменная логика → `backend/internal/*`
+
+---
+
 > AI-powered full-cycle sales assistant for small B2B businesses.
 > Inbound: qualifies leads, drafts replies, tracks followups.
 > Outbound: finds prospects, generates cold messages, runs sequences.
