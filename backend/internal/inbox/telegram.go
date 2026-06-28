@@ -6,6 +6,7 @@ import (
 	"log"
 	"log/slog"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/daniil/floq/internal/normalize"
@@ -33,6 +34,8 @@ type TelegramBot struct {
 	bookingLink           string
 	leadCreatedEmitter LeadCreatedEmitter
 	tx                 TxManager
+	retries            *retryTracker
+	onQuarantine       func(channel string)
 	errBackoff           time.Duration
 }
 
@@ -88,7 +91,7 @@ func NewTelegramBot(token string, repo LeadRepository, prospectRepo ProspectRepo
 	if err != nil {
 		return nil, err
 	}
-	b := &TelegramBot{bot: bot, repo: repo, prospectRepo: prospectRepo, ownerID: ownerID, bookingLink: bookingLink, logger: slog.Default(), errBackoff: telegramErrBackoff}
+	b := &TelegramBot{bot: bot, repo: repo, prospectRepo: prospectRepo, ownerID: ownerID, bookingLink: bookingLink, logger: slog.Default(), retries: newRetryTracker(defaultIntakeMaxAttempts), onQuarantine: func(string) {}, errBackoff: telegramErrBackoff}
 	for _, opt := range opts {
 		opt(b)
 	}
@@ -122,6 +125,23 @@ func (t *TelegramBot) SetLeadCreatedEmitter(e LeadCreatedEmitter) { t.leadCreate
 // offset only after handleMessage returns nil, so a rollback re-delivers the
 // update on the next poll instead of losing the lead.
 func (t *TelegramBot) SetTxManager(tx TxManager) { t.tx = tx }
+
+// SetIntakeRetryCap overrides the number of consecutive failed intake attempts
+// (per source update_id) tolerated before a poison update is quarantined. A
+// non-positive cap disables quarantine (fail-closed forever — the pre-#208
+// behaviour). Wired from config at the composition root (#208).
+func (t *TelegramBot) SetIntakeRetryCap(maxAttempts int) {
+	t.retries = newRetryTracker(maxAttempts)
+}
+
+// SetQuarantineObserver wires the callback fired once when an update is
+// quarantined (retry cap reached), so the composition root can publish a metric
+// without this package importing the metrics package (#208).
+func (t *TelegramBot) SetQuarantineObserver(fn func(channel string)) {
+	if fn != nil {
+		t.onQuarantine = fn
+	}
+}
 
 // updateFetcher is the slice of the Telegram client the receive loop depends on
 // (satisfied by *tgbotapi.BotAPI). Depending on the port rather than the
@@ -180,16 +200,31 @@ func (t *TelegramBot) receiveLoop(ctx context.Context, fetcher updateFetcher, ha
 				continue
 			}
 			if err := handle(ctx, update.Message); err != nil {
+				key := strconv.Itoa(update.UpdateID)
+				attempts, exhausted := t.retries.fail(key)
+				if exhausted {
+					// Retry cap reached (#208): a deterministic failure would
+					// otherwise re-deliver this update forever. Quarantine —
+					// advance past it and alert loudly. The message stays in the
+					// Telegram chat history for manual recovery.
+					log.Printf("telegram inbox: intake quarantined for update %d after %d attempts, skipping: %v", update.UpdateID, attempts, err)
+					if t.onQuarantine != nil {
+						t.onQuarantine("telegram")
+					}
+					offset = update.UpdateID + 1
+					continue
+				}
 				// Transient: do NOT advance past this update. Back off (a stuck
 				// update would otherwise be re-delivered instantly, busy-looping
 				// the DB and Telegram API), then break so the next poll
 				// re-requests from this id and re-delivers it.
-				log.Printf("telegram inbox: intake failed for update %d, will retry: %v", update.UpdateID, err)
+				log.Printf("telegram inbox: intake failed for update %d (attempt %d), will retry: %v", update.UpdateID, attempts, err)
 				if !t.backoff(ctx) {
 					return
 				}
 				break
 			}
+			t.retries.succeed(strconv.Itoa(update.UpdateID))
 			offset = update.UpdateID + 1
 		}
 	}

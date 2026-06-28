@@ -31,6 +31,7 @@ type Metrics struct {
 	matviewRefresh prometheus.Histogram
 	registryEnrichments *prometheus.CounterVec
 	webhookDeliveries   *prometheus.CounterVec
+	intakeQuarantines   *prometheus.CounterVec
 
 	mu        sync.Mutex          // guards prevKinds
 	prevKinds map[string]struct{} // queue-depth kinds published last scan
@@ -88,6 +89,10 @@ func New() *Metrics {
 			Name: "webhook_deliveries_total",
 			Help: "Total outgoing webhook delivery attempts by event type and result: delivered (2xx) or failed (transport error / non-2xx). Each attempt is one HTTP request; a delivery retried N times counts N attempts.",
 		}, []string{"event_type", "result"}),
+		intakeQuarantines: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "inbox_intake_quarantined_total",
+			Help: "Total inbound intake sources quarantined by channel (email / telegram): a fail-closed poller (#206) exhausted its retry cap on a deterministically-failing source and consumed it to stop hot-looping (#208). Any non-zero rate warrants investigation — a quarantined source's lead was not ingested.",
+		}, []string{"channel"}),
 	}
 	reg.MustRegister(
 		m.httpRequests,
@@ -99,6 +104,7 @@ func New() *Metrics {
 		m.matviewRefresh,
 		m.registryEnrichments,
 		m.webhookDeliveries,
+		m.intakeQuarantines,
 		collectors.NewGoCollector(),
 		collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}),
 	)
@@ -167,6 +173,15 @@ func (m *Metrics) OnWebhookDelivery(eventType string, success bool) {
 		result = "delivered"
 	}
 	m.webhookDeliveries.WithLabelValues(eventType, result).Inc()
+}
+
+// OnIntakeQuarantine records that one inbound intake source was quarantined on
+// the given channel ("email" / "telegram") after exhausting its retry cap (#208).
+// Wired as the poller's quarantine observer so the inbox package never imports
+// this one. The channel label is a small bounded enum — no source or tenant
+// dimension, so /metrics stays public-safe and low cardinality.
+func (m *Metrics) OnIntakeQuarantine(channel string) {
+	m.intakeQuarantines.WithLabelValues(channel).Inc()
 }
 
 // Handler serves the registry in the Prometheus text exposition format.

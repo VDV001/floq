@@ -8,6 +8,7 @@ import (
 	"io"
 	"log"
 	"log/slog"
+	"strconv"
 	"strings"
 	"time"
 
@@ -37,6 +38,8 @@ type EmailPoller struct {
 	pendingProposer       PendingReplyProposer
 	leadCreatedEmitter LeadCreatedEmitter
 	tx                 TxManager
+	retries            *retryTracker
+	onQuarantine       func(channel string)
 	bookingLink          string
 	logger               *slog.Logger
 	ownerID               uuid.UUID
@@ -57,6 +60,8 @@ func NewEmailPoller(store ConfigStore, ownerID uuid.UUID, fallbackHost, fallback
 		ownerID:          ownerID,
 		dialer:           dialer,
 		logger:           slog.Default(),
+		retries:          newRetryTracker(defaultIntakeMaxAttempts),
+		onQuarantine:     func(string) {},
 		fallbackHost:     fallbackHost,
 		fallbackPort:     fallbackPort,
 		fallbackUser:     fallbackUser,
@@ -150,6 +155,47 @@ func (e *EmailPoller) SetLeadCreatedEmitter(em LeadCreatedEmitter) { e.leadCreat
 // after a successful intake, so a rollback leaves the source email unseen and the
 // next poll re-processes it.
 func (e *EmailPoller) SetTxManager(tx TxManager) { e.tx = tx }
+
+// SetIntakeRetryCap overrides the number of consecutive failed intake attempts
+// (per source email UID) tolerated before a poison email is quarantined. A
+// non-positive cap disables quarantine (fail-closed forever — the pre-#208
+// behaviour). Wired from config at the composition root (#208).
+func (e *EmailPoller) SetIntakeRetryCap(maxAttempts int) {
+	e.retries = newRetryTracker(maxAttempts)
+}
+
+// SetQuarantineObserver wires the callback fired once when an email is
+// quarantined (retry cap reached), so the composition root can publish a metric
+// without this package importing the metrics package (#208).
+func (e *EmailPoller) SetQuarantineObserver(fn func(channel string)) {
+	if fn != nil {
+		e.onQuarantine = fn
+	}
+}
+
+// reconcileIntake records a processEmail outcome and reports whether the source
+// email should be marked \Seen (consumed). A success consumes immediately and
+// resets the failure count. A transient error leaves the email unseen for the
+// next poll to retry (#206 fail-closed) — until the retry cap is reached, at
+// which point the email is quarantined: consumed so it stops hot-looping, and
+// reported via the quarantine observer for alerting. The email itself stays in
+// the mailbox (only the \Seen flag is set) for manual recovery (#208).
+func (e *EmailPoller) reconcileIntake(key, fromEmail string, procErr error) (markSeen bool) {
+	if procErr == nil {
+		e.retries.succeed(key)
+		return true
+	}
+	attempts, exhausted := e.retries.fail(key)
+	if !exhausted {
+		log.Printf("[email-poller] intake failed for %s (attempt %d), will retry next poll: %v", fromEmail, attempts, procErr)
+		return false
+	}
+	log.Printf("[email-poller] intake quarantined for %s after %d attempts, marking seen: %v", fromEmail, attempts, procErr)
+	if e.onQuarantine != nil {
+		e.onQuarantine("email")
+	}
+	return true
+}
 
 func (e *EmailPoller) Start(ctx context.Context) {
 	log.Println("email poller started (every 60s)")
@@ -292,14 +338,10 @@ func (e *EmailPoller) poll(ctx context.Context) {
 		}
 
 		if fromEmail != "" && bodyText != "" {
-			if err := e.processEmail(ctx, fromName, fromEmail, bodyText, atts); err != nil {
-				// Transient intake failure: leave the email unseen so the next
-				// poll re-processes it (#206 fail-closed). Marking it \Seen here
-				// would lose the lead with no retry.
-				log.Printf("[email-poller] intake failed for %s, will retry next poll: %v", fromEmail, err)
-				continue
+			key := strconv.FormatUint(uint64(buf.UID), 10)
+			if e.reconcileIntake(key, fromEmail, e.processEmail(ctx, fromName, fromEmail, bodyText, atts)) {
+				processedUIDs = append(processedUIDs, buf.UID)
 			}
-			processedUIDs = append(processedUIDs, buf.UID)
 		}
 	}
 
