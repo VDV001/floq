@@ -32,21 +32,31 @@ func (r *QualificationJobRepo) q(ctx context.Context) db.Querier {
 
 const qualificationJobColumns = `id, lead_id, user_id, contact_name, channel, qualify_text, status, attempts, last_error, next_retry_at`
 
-// PurgeTerminalJobsOlderThan deletes terminal (done/failed) jobs whose terminal
-// transition (updated_at) predates threshold, returning the row count. Pending
-// jobs are never touched — the status filter spares any in-flight or retrying
-// row regardless of age. Runs on the pool; GC needs no transaction (#212). The
-// terminal statuses are passed as a parameter built from the domain enum so the
-// query never drifts from JobDone/JobFailed.
+// PurgeTerminalJobsOlderThan deletes terminal jobs whose terminal transition
+// (updated_at) predates threshold, returning the row count. Pending jobs are
+// never touched — the status filter spares any in-flight or retrying row
+// regardless of age. Runs on the pool; GC needs no transaction (#212). The
+// terminal set comes from the domain (TerminalJobStatuses) so the query can never
+// drift from the enum.
 func (r *QualificationJobRepo) PurgeTerminalJobsOlderThan(ctx context.Context, threshold time.Time) (int, error) {
 	tag, err := r.q(ctx).Exec(ctx, `
 		DELETE FROM lead_qualification_jobs
 		WHERE status = ANY($1) AND updated_at < $2`,
-		[]string{string(JobDone), string(JobFailed)}, threshold)
+		jobStatusStrings(TerminalJobStatuses()), threshold)
 	if err != nil {
 		return 0, err
 	}
 	return int(tag.RowsAffected()), nil
+}
+
+// jobStatusStrings adapts domain JobStatus values to the []string pgx encodes as
+// a text[] for `status = ANY($1)`.
+func jobStatusStrings(ss []JobStatus) []string {
+	out := make([]string, len(ss))
+	for i, s := range ss {
+		out[i] = string(s)
+	}
+	return out
 }
 
 // EnqueueQualificationJob inserts a pending job. created_at/updated_at are

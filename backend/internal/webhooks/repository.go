@@ -114,17 +114,27 @@ func (r *Repository) SetEndpointActive(ctx context.Context, id uuid.UUID, active
 // whose terminal transition (updated_at) predates threshold, returning the row
 // count. Pending rows are never touched — the status filter spares any in-flight
 // or retrying row regardless of age. Runs on the pool; GC needs no transaction
-// (#212). Terminal statuses are passed as a parameter built from the domain enum
-// so the query never drifts from DeliverySucceeded/DeliveryFailed.
+// (#212). The terminal set comes from the domain (TerminalDeliveryStatuses) so
+// the query can never drift from the enum.
 func (r *Repository) PurgeTerminalDeliveriesOlderThan(ctx context.Context, threshold time.Time) (int, error) {
 	tag, err := r.conn(ctx).Exec(ctx, `
 		DELETE FROM webhook_deliveries
 		WHERE status = ANY($1) AND updated_at < $2`,
-		[]string{string(domain.DeliverySucceeded), string(domain.DeliveryFailed)}, threshold)
+		deliveryStatusStrings(domain.TerminalDeliveryStatuses()), threshold)
 	if err != nil {
 		return 0, err
 	}
 	return int(tag.RowsAffected()), nil
+}
+
+// deliveryStatusStrings adapts domain DeliveryStatus values to the []string pgx
+// encodes as a text[] for `status = ANY($1)`.
+func deliveryStatusStrings(ss []domain.DeliveryStatus) []string {
+	out := make([]string, len(ss))
+	for i, s := range ss {
+		out[i] = string(s)
+	}
+	return out
 }
 
 // EnqueueDelivery appends a pending delivery to the outbox.
