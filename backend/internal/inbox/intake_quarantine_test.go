@@ -64,6 +64,16 @@ func TestEmailReconcileIntake_SuccessConsumesAndResets(t *testing.T) {
 	require.Empty(t, quarantined, "success path must never quarantine")
 }
 
+// A poller built without a quarantine observer (nil onQuarantine) must not panic
+// when the retry cap is reached — the observer is optional, mirroring the
+// nil-safety of the tracker itself.
+func TestEmailReconcileIntake_NilObserverDoesNotPanic(t *testing.T) {
+	poller := &EmailPoller{retries: newRetryTracker(1)} // onQuarantine left nil
+	if !poller.reconcileIntake("uid-x", "z@example.com", errors.New("boom")) {
+		t.Fatalf("cap of 1 must consume on the first failure")
+	}
+}
+
 // --- #208: telegram intake retry cap / quarantine ---
 
 // poisonFetcher re-delivers the same update on every poll while the offset has
