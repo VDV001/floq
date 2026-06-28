@@ -63,6 +63,16 @@
   - OpenAI (GPT-4o) — альтернатива
   - Ollama (Llama, Mistral) — бесплатно, локально
 - **Динамический выбор** — провайдер и ключ читаются из БД, переключается через UI
+- **Cost-аудит** — каждый вызов провайдера логируется (провайдер, модель, стоимость) с retention-агрегацией
+
+### Платформа и интеграции
+
+- **Исходящие вебхуки** (#181) — события `lead.created` / `lead.qualified` / `lead.archived` / `pending_reply.approved` / `sequence.completed` на внешние эндпоинты (CRM, Zapier) с HMAC-подписью, 2-слойной SSRF-защитой, transactional outbox и ретраями
+- **Авто-обогащение компаний** (#182) — по email-домену: скрейпинг сайта + LLM-извлечение индустрии/размера + реестр ЮЛ (DaData: ИНН/ОГРН по названию)
+- **Аналитика воронки** — Postgres materialized views (изолированный пул), period-окна, путь масштабирования к ClickHouse
+- **Agent-security** — классификация входящих на prompt-injection (`InputFirewall`) + tool-call firewall на пути HITL-ответов
+- **Секреты at-rest** — AES-256-GCM, KEK из env с ротацией (primary + fallback)
+- **Prometheus-метрики** — HTTP, AI-стоимость, очереди, доставки вебхуков, обогащение (`GET /metrics`)
 
 ---
 
@@ -174,11 +184,19 @@ floq/
 │   │   ├── leads/                   # Лиды: domain → usecase → repository → handler
 │   │   ├── prospects/               # Проспекты: CRUD, CSV-импорт
 │   │   ├── sequences/               # Секвенции: шаги, запуск, очередь
-│   │   ├── inbox/                   # Telegram бот, Email IMAP poller
+│   │   ├── inbox/                   # Telegram бот, Email IMAP poller, durable-воркеры
 │   │   ├── outbound/                # Email-отправка через Resend
 │   │   ├── verify/                  # Верификация email и Telegram
 │   │   ├── parser/                  # 2GIS API, парсинг сайтов
+│   │   ├── enrichment/              # Авто-обогащение компаний (сайт + LLM + DaData)
+│   │   ├── webhooks/                # Исходящие вебхуки: outbox, delivery-воркер, SSRF/HMAC
+│   │   ├── analytics/               # Воронка: materialized views, period-окна
 │   │   ├── ai/                      # Provider interface + Claude/OpenAI/Ollama
+│   │   ├── audit/                   # Cost-аудит вызовов AI + retention
+│   │   ├── security/               # InputFirewall, tool-call firewall
+│   │   ├── secrets/                 # AES-256-GCM шифрование + ротация KEK
+│   │   ├── metrics/                 # Prometheus-коллекторы
+│   │   ├── retention/               # Общий GC-cron терминальных строк очередей
 │   │   ├── auth/                    # JWT: регистрация, логин, refresh
 │   │   ├── settings/                # Настройки пользователя из БД
 │   │   ├── reminders/               # Cron: напоминания о молчащих лидах
@@ -186,10 +204,10 @@ floq/
 │   │   ├── config/                  # Чтение .env
 │   │   ├── db/                      # TxManager, транзакции
 │   │   └── httputil/                # JSON-ответы, контекст запроса
-│   └── migrations/                  # 40 SQL-миграций (up + down)
+│   └── migrations/                  # 54 SQL-миграции (up + down)
 ├── frontend/
-│   ├── src/app/                     # 13+ страниц (App Router)
-│   ├── src/components/              # 30+ компонентов (shadcn/ui)
+│   ├── src/app/                     # страницы (App Router)
+│   ├── src/components/              # компоненты (shadcn/ui)
 │   └── src/lib/api.ts               # API-клиент
 ├── docker-compose.yml
 ├── .env.example
@@ -222,7 +240,7 @@ floq/
 | Settings | `GET /api/settings`, `PUT /api/settings` | JWT |
 | Tracking | `GET /api/track/open/:id` | Публичный (pixel) |
 
-Полный список в [PROJECT_FOUNDATION.md](PROJECT_FOUNDATION.md#8-api-routes).
+Источник правды по маршрутам — регистрация роутов в `backend/cmd/server/main.go`.
 
 ---
 
@@ -281,9 +299,9 @@ go test -race ./...
 ### Добавить миграцию
 
 ```bash
-# Создать файлы миграции (следующий свободный номер — 041)
-touch backend/migrations/041_описание.up.sql
-touch backend/migrations/041_описание.down.sql
+# Создать файлы миграции (следующий свободный номер — 055)
+touch backend/migrations/055_описание.up.sql
+touch backend/migrations/055_описание.down.sql
 ```
 
 Миграции применяются автоматически при старте сервера.
@@ -294,6 +312,15 @@ touch backend/migrations/041_описание.down.sql
 cd frontend
 npm run lint
 ```
+
+---
+
+## Документация
+
+- [CHANGELOG.md](CHANGELOG.md) — хронология релизов («что и когда»)
+- [ROADMAP.md](ROADMAP.md) — тематическая карта: сделано / на горизонте / обоснование
+- [CONTRIBUTING.md](CONTRIBUTING.md) — как контрибьютить
+- Полные заметки релизов с обоснованием — [GitHub Releases](https://github.com/VDV001/floq/releases)
 
 ---
 
