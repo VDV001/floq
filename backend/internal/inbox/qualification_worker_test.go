@@ -15,10 +15,12 @@ import (
 // --- fakes ---
 
 type fakeQualJobStore struct {
-	mu       sync.Mutex
-	due      []*QualificationJob
-	claimErr error
-	saved    []*QualificationJob
+	mu            sync.Mutex
+	due           []*QualificationJob
+	claimErr      error
+	saved         []*QualificationJob
+	failFirstSave bool // fail the first SaveQualificationJob (the in-tx MarkDone save)
+	saveCalls     int
 }
 
 func (f *fakeQualJobStore) EnqueueQualificationJob(context.Context, *QualificationJob) error {
@@ -32,6 +34,10 @@ func (f *fakeQualJobStore) ClaimDueQualificationJobs(context.Context, int, int) 
 func (f *fakeQualJobStore) SaveQualificationJob(_ context.Context, j *QualificationJob) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	f.saveCalls++
+	if f.failFirstSave && f.saveCalls == 1 {
+		return errors.New("save boom")
+	}
 	// Snapshot so later mutation of j does not rewrite history.
 	cp := *j
 	f.saved = append(f.saved, &cp)
@@ -240,4 +246,25 @@ func TestQualificationWorker_DeadLetters_AfterMaxAttempts(t *testing.T) {
 	require.NotNil(t, store.lastSaved())
 	assert.Equal(t, JobFailed, store.lastSaved().Status, "5th failure dead-letters the job")
 	assert.Nil(t, store.lastSaved().NextRetryAt)
+}
+
+// A failure inside the commit transaction AFTER MarkDone ran (e.g. the job-done
+// Save fails) must still count as exactly ONE attempt — the in-tx MarkDone++ and
+// the out-of-tx MarkFailed++ must not double-count and dead-letter the job early.
+func TestQualificationWorker_CommitFailure_CountsOneAttempt(t *testing.T) {
+	userID, leadID := uuid.New(), uuid.New()
+	job := newWorkerJob(t, userID, leadID)
+	store := &fakeQualJobStore{due: []*QualificationJob{job}, failFirstSave: true}
+	ai := &captureCtxQualifier{result: &QualificationResult{Score: 7}}
+	writer := newFakeQualWriter(&InboxLead{ID: leadID})
+
+	w := newTestWorker(store, ai, writer)
+	w.SetTxManager(&inlineTx{})
+
+	n, err := w.ProcessPending(context.Background())
+	require.NoError(t, err)
+	assert.Equal(t, 0, n, "a commit failure does not count as qualified")
+	require.NotNil(t, store.lastSaved())
+	assert.Equal(t, JobPending, store.lastSaved().Status, "still retryable")
+	assert.Equal(t, 1, store.lastSaved().Attempts, "exactly one failed attempt, not two")
 }

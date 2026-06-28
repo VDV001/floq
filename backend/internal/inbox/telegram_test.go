@@ -314,7 +314,6 @@ func TestHandleMessage_ExistingLead(t *testing.T) {
 	msg := makeTgMessage(99999, "Ivan", "Petrov", "Actually, I need a full ERP system for my company")
 	bot.handleMessage(context.Background(), msg)
 
-	// Wait for the async qualification goroutine to complete.
 
 	repo.mu.Lock()
 	defer repo.mu.Unlock()
@@ -418,7 +417,6 @@ func TestHandleMessage_CallAgreement_EnqueuesForApproval(t *testing.T) {
 	msg := makeTgMessage(77777, "Anna", "", "Звучит интересно, давайте созвон проведём!")
 	bot.handleMessage(context.Background(), msg)
 
-	// Wait for the async qualification goroutine to complete.
 
 	repo.mu.Lock()
 	defer repo.mu.Unlock()

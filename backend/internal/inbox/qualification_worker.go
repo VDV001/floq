@@ -82,11 +82,15 @@ func (w *QualificationWorker) ProcessPending(ctx context.Context) (int, error) {
 // never takes down the worker loop.
 func (w *QualificationWorker) processOne(ctx context.Context, j *QualificationJob) (ok bool) {
 	now := time.Now().UTC()
+	// Snapshot the attempt count at claim. commit() may run j.MarkDone (which
+	// increments Attempts) inside the transaction before failing; the error-path
+	// MarkFailed below would then double-count. Restoring to this snapshot makes
+	// every failed pass count as exactly one attempt.
+	attemptsAtClaim := j.Attempts
 	defer func() {
 		if r := recover(); r != nil {
 			w.logger.ErrorContext(ctx, "inbox: panic qualifying lead", "lead", j.LeadID, "panic", r)
-			j.MarkFailed(fmt.Sprintf("panic: %v", r), w.cfg.MaxAttempts, now)
-			w.save(ctx, j)
+			w.fail(ctx, j, attemptsAtClaim, fmt.Sprintf("panic: %v", r), now)
 			ok = false
 		}
 	}()
@@ -101,8 +105,7 @@ func (w *QualificationWorker) processOne(ctx context.Context, j *QualificationJo
 	result, err := w.ai.Qualify(qCtx, j.ContactName, string(j.Channel), j.QualifyText)
 	if err != nil {
 		w.logger.WarnContext(ctx, "inbox: qualification failed", "lead", j.LeadID, "err", err)
-		j.MarkFailed(err.Error(), w.cfg.MaxAttempts, now)
-		w.save(ctx, j)
+		w.fail(ctx, j, attemptsAtClaim, err.Error(), now)
 		return false
 	}
 
@@ -121,11 +124,20 @@ func (w *QualificationWorker) processOne(ctx context.Context, j *QualificationJo
 
 	if err := w.commit(ctx, j, q, now); err != nil {
 		w.logger.WarnContext(ctx, "inbox: qualification commit failed", "lead", j.LeadID, "err", err)
-		j.MarkFailed(err.Error(), w.cfg.MaxAttempts, now)
-		w.save(ctx, j)
+		w.fail(ctx, j, attemptsAtClaim, err.Error(), now)
 		return false
 	}
 	return true
+}
+
+// fail records a failed processing attempt: it restores the attempt count to its
+// claim-time value (commit() may have run MarkDone++ before failing) so the
+// MarkFailed++ counts the pass exactly once, then schedules the retry (or
+// dead-letters at the cap) and persists outside any rolled-back transaction.
+func (w *QualificationWorker) fail(ctx context.Context, j *QualificationJob, attemptsAtClaim int, reason string, now time.Time) {
+	j.Attempts = attemptsAtClaim
+	j.MarkFailed(reason, w.cfg.MaxAttempts, now)
+	w.save(ctx, j)
 }
 
 // commit persists the qualification, flips the lead to qualified, emits
