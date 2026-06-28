@@ -208,7 +208,9 @@ func (t *TelegramBot) receiveLoop(ctx context.Context, fetcher updateFetcher, ha
 					// advance past it and alert loudly. The message stays in the
 					// Telegram chat history for manual recovery.
 					log.Printf("telegram inbox: intake quarantined for update %d after %d attempts, skipping: %v", update.UpdateID, attempts, err)
-					t.onQuarantine("telegram")
+					if t.onQuarantine != nil {
+						t.onQuarantine("telegram")
+					}
 					offset = update.UpdateID + 1
 					continue
 				}

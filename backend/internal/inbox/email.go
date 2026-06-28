@@ -191,7 +191,9 @@ func (e *EmailPoller) reconcileIntake(key, fromEmail string, procErr error) (mar
 		return false
 	}
 	log.Printf("[email-poller] intake quarantined for %s after %d attempts, marking seen: %v", fromEmail, attempts, procErr)
-	e.onQuarantine("email")
+	if e.onQuarantine != nil {
+		e.onQuarantine("email")
+	}
 	return true
 }
 

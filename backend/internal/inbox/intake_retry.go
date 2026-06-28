@@ -3,10 +3,14 @@ package inbox
 import "sync"
 
 // defaultIntakeMaxAttempts is the retry cap used when a poller is constructed
-// without an explicit override. The email poller retries roughly once per minute
+// without an explicit override (direct-struct tests, and as a safe fallback if
+// wiring is ever forgotten). The email poller retries roughly once per minute
 // and the telegram poller once per back-off, so ten attempts quarantines a
 // poisoned source within minutes — long enough to ride out a genuine transient,
 // short enough that a deterministic failure stops hot-looping quickly (#208).
+//
+// The production cap comes from config (INBOX_INTAKE_MAX_ATTEMPTS, default 10)
+// via SetIntakeRetryCap; keep that env default in sync with this constant.
 const defaultIntakeMaxAttempts = 10
 
 // retryTracker counts consecutive intake failures per source key (an email UID
