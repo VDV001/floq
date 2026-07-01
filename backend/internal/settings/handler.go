@@ -38,6 +38,24 @@ func smtpErrorToUserMessage(err error) string {
 	}
 }
 
+// aiErrorToUserMessage maps a typed AI connection-test error into a
+// Russian user-facing message. Owning this here keeps UI copy next to
+// the handler; the composition-root tester returns only typed sentinels.
+// The default preserves the generic "connection error" wrapping for
+// cloud providers whose raw SDK error is already informative enough.
+func aiErrorToUserMessage(err error) string {
+	switch {
+	case errors.Is(err, ErrAIModelNotFound):
+		return "Модель не найдена в Ollama. Скачайте её командой «ollama pull <модель>» и проверьте, что имя указано верно."
+	case errors.Is(err, ErrAIUnreachable):
+		return "Не удалось подключиться к Ollama. Проверьте, что сервер запущен и адрес указан верно."
+	case errors.Is(err, ErrAIUnknownProvider):
+		return "Неизвестный провайдер ИИ"
+	default:
+		return fmt.Sprintf("Ошибка подключения: %v", err)
+	}
+}
+
 // resendErrorToUserMessage mirrors smtpErrorToUserMessage for Resend.
 func resendErrorToUserMessage(err error) string {
 	switch {
@@ -347,7 +365,7 @@ func (h *Handler) testAI() http.HandlerFunc {
 
 		providerName, err := h.aiTester(ctx, body.Provider, body.Model, body.APIKey)
 		if err != nil {
-			httputil.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "error": fmt.Sprintf("Ошибка подключения: %v", err)})
+			httputil.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "error": aiErrorToUserMessage(err)})
 			return
 		}
 
