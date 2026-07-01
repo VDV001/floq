@@ -73,6 +73,19 @@ func NewOpenAICompatibleProvider(apiKey, model, baseURL string, httpClient *http
 
 func (p *OpenAIProvider) Name() string { return "openai" }
 
+// Compile-time check: OpenAIProvider offers a cheap liveness probe so the
+// connection test avoids a (billed) generation.
+var _ ai.HealthChecker = (*OpenAIProvider)(nil)
+
+// CheckHealth verifies the API key and reachability via the free
+// GET /models endpoint — no generation, so the connection test neither
+// bills tokens nor trips a generation timeout. Retries are disabled so a
+// throttled or down back-end fails fast instead of stalling the test.
+func (p *OpenAIProvider) CheckHealth(_ context.Context) error {
+	// RED stub — real probe lands in the GREEN commit.
+	return nil
+}
+
 func (p *OpenAIProvider) Complete(ctx context.Context, req ai.CompletionRequest) (*ai.CompletionResult, error) {
 	var messages []openai.ChatCompletionMessageParamUnion
 
