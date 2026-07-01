@@ -47,6 +47,10 @@ func aiErrorToUserMessage(err error) string {
 	switch {
 	case errors.Is(err, ErrAIModelNotFound):
 		return "Модель не найдена в Ollama. Скачайте её командой «ollama pull <модель>» и проверьте, что имя указано верно."
+	case errors.Is(err, ErrAIAuth):
+		return "API-ключ отклонён. Проверьте, что ключ верный и активен."
+	case errors.Is(err, ErrAIRateLimit):
+		return "Слишком много запросов к провайдеру. Подождите и попробуйте ещё раз."
 	case errors.Is(err, ErrAIUnreachable):
 		return "Не удалось подключиться к Ollama. Проверьте, что сервер запущен и адрес указан верно."
 	case errors.Is(err, ErrAIUnknownProvider):
