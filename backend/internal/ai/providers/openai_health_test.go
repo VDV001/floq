@@ -23,6 +23,7 @@ func TestOpenAIProvider_CheckHealth_OK_NoError(t *testing.T) {
 	var lastPath string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		lastPath = r.URL.Path
+		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"object":"list","data":[]}`))
 	}))
 	defer srv.Close()
