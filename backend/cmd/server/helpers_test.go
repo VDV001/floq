@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -132,6 +133,53 @@ func TestBuildAITester_UnknownProvider_WrapsErrAIUnknownProvider(t *testing.T) {
 		"unknown-provider switch default must wrap settings.ErrAIUnknownProvider; got: %v", err)
 	assert.NotContains(t, err.Error(), "неизвестный провайдер",
 		"helpers.go must not embed Russian copy in the error — handler maps via errors.Is")
+}
+
+// TestBuildAITester_Ollama_* verify the Ollama connection test routes
+// through the fast HealthChecker probe (GET /api/tags) instead of a full
+// generation, and that the composition root maps the provider's typed
+// errors into the settings vocabulary so the handler can produce Russian
+// copy via errors.Is. An httptest server stands in for a local Ollama.
+
+func TestBuildAITester_Ollama_ModelPresent_NoError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "/api/tags", r.URL.Path,
+			"the Ollama connection test must probe /api/tags, not run a generation")
+		_, _ = w.Write([]byte(`{"models":[{"name":"gemma3:4b"}]}`))
+	}))
+	defer srv.Close()
+
+	tester := buildAITester(&config.Config{OllamaBaseURL: srv.URL}, srv.Client())
+	name, err := tester(context.Background(), "ollama", "gemma3:4b", "")
+	require.NoError(t, err)
+	assert.Equal(t, "ollama", name)
+}
+
+func TestBuildAITester_Ollama_ModelAbsent_WrapsErrAIModelNotFound(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"models":[{"name":"llama3:8b"}]}`))
+	}))
+	defer srv.Close()
+
+	tester := buildAITester(&config.Config{OllamaBaseURL: srv.URL}, srv.Client())
+	_, err := tester(context.Background(), "ollama", "gemma3:4b", "")
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, settings.ErrAIModelNotFound),
+		"an un-pulled model must map to settings.ErrAIModelNotFound; got: %v", err)
+	assert.NotContains(t, err.Error(), "Модель",
+		"helpers.go must not embed Russian copy — handler maps via errors.Is")
+}
+
+func TestBuildAITester_Ollama_Unreachable_WrapsErrAIUnreachable(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {}))
+	base := srv.URL
+	srv.Close() // address now refuses connections
+
+	tester := buildAITester(&config.Config{OllamaBaseURL: base}, http.DefaultClient)
+	_, err := tester(context.Background(), "ollama", "gemma3:4b", "")
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, settings.ErrAIUnreachable),
+		"an unreachable Ollama must map to settings.ErrAIUnreachable; got: %v", err)
 }
 
 func TestBuildSMTPTester_NoUIStringsLeak(t *testing.T) {

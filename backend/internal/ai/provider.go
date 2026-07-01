@@ -41,3 +41,14 @@ type Provider interface {
 	Complete(ctx context.Context, req CompletionRequest) (*CompletionResult, error)
 	Name() string
 }
+
+// HealthChecker is an optional capability a Provider may implement when a
+// full Complete() round-trip is a poor connection test. Local back-ends
+// (Ollama) load the model into memory on the first generation, so a
+// "test connection" that generates trips the cold-start timeout even
+// when the server is healthy — CheckHealth offers a cheap liveness probe
+// instead. Callers type-assert for it and fall back to Complete when a
+// provider does not implement it.
+type HealthChecker interface {
+	CheckHealth(ctx context.Context) error
+}

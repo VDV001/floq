@@ -510,6 +510,56 @@ func TestHandler_TestAI_WithTester_Error(t *testing.T) {
 	assert.False(t, resp["success"].(bool))
 }
 
+func TestHandler_TestAI_ModelNotFound_FriendlyMessage(t *testing.T) {
+	repo := newMockSettingsRepo()
+	uc := NewUseCase(repo, &mockTelegramValidator{})
+	r := chi.NewRouter()
+	tester := func(_ context.Context, _, _, _ string) (string, error) {
+		return "", fmt.Errorf("%w: gemma3:4b", ErrAIModelNotFound)
+	}
+	RegisterRoutes(r, uc, tester, nil, nil, nil)
+
+	userID := uuid.New()
+	body := `{"provider":"ollama","model":"gemma3:4b"}`
+	req := withUserCtx(httptest.NewRequest("POST", "/api/settings/test-ai", bytes.NewBufferString(body)), userID)
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+
+	var resp map[string]any
+	require.NoError(t, json.NewDecoder(rec.Body).Decode(&resp))
+	assert.False(t, resp["success"].(bool))
+	msg, _ := resp["error"].(string)
+	assert.Contains(t, msg, "ollama pull",
+		"a not-found model must yield an actionable RU hint, not a raw error dump; got: %q", msg)
+	assert.NotContains(t, msg, "ai model not found",
+		"the raw sentinel text must not leak to the user")
+}
+
+func TestHandler_TestAI_Unreachable_FriendlyMessage(t *testing.T) {
+	repo := newMockSettingsRepo()
+	uc := NewUseCase(repo, &mockTelegramValidator{})
+	r := chi.NewRouter()
+	tester := func(_ context.Context, _, _, _ string) (string, error) {
+		return "", fmt.Errorf("%w: connection refused", ErrAIUnreachable)
+	}
+	RegisterRoutes(r, uc, tester, nil, nil, nil)
+
+	userID := uuid.New()
+	body := `{"provider":"ollama","model":"gemma3:4b"}`
+	req := withUserCtx(httptest.NewRequest("POST", "/api/settings/test-ai", bytes.NewBufferString(body)), userID)
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+
+	var resp map[string]any
+	require.NoError(t, json.NewDecoder(rec.Body).Decode(&resp))
+	assert.False(t, resp["success"].(bool))
+	msg, _ := resp["error"].(string)
+	assert.Contains(t, msg, "Ollama",
+		"an unreachable back-end must name Ollama so the user knows what to start; got: %q", msg)
+	assert.NotContains(t, msg, "ai unreachable",
+		"the raw sentinel text must not leak to the user")
+}
+
 func TestHandler_TestAI_UseStored(t *testing.T) {
 	repo := newMockSettingsRepo()
 	r := setupSettingsRouter(repo, &mockTelegramValidator{})

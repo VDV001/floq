@@ -2,8 +2,10 @@ package providers
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 
 	"github.com/daniil/floq/internal/ai"
 	"github.com/openai/openai-go"
@@ -14,6 +16,12 @@ import (
 type OllamaProvider struct {
 	client openai.Client
 	model  string
+	// baseURL and httpClient are retained (in addition to the OpenAI
+	// client built from them) so CheckHealth can hit Ollama's native
+	// GET {baseURL}/api/tags endpoint, which lives outside the /v1
+	// OpenAI-compat surface.
+	baseURL    string
+	httpClient *http.Client
 }
 
 func NewOllamaProvider(baseURL, model string, httpClient *http.Client) *OllamaProvider {
@@ -25,7 +33,63 @@ func NewOllamaProvider(baseURL, model string, httpClient *http.Client) *OllamaPr
 		opts = append(opts, option.WithHTTPClient(httpClient))
 	}
 	client := openai.NewClient(opts...)
-	return &OllamaProvider{client: client, model: model}
+	return &OllamaProvider{client: client, model: model, baseURL: baseURL, httpClient: httpClient}
+}
+
+// ollamaTagsResponse mirrors the subset of GET /api/tags we consume.
+type ollamaTagsResponse struct {
+	Models []struct {
+		Name string `json:"name"`
+	} `json:"models"`
+}
+
+// CheckHealth verifies Ollama is reachable and the configured model is
+// available locally, without triggering a (slow, cold-start) generation.
+func (p *OllamaProvider) CheckHealth(ctx context.Context) error {
+	hc := p.httpClient
+	if hc == nil {
+		hc = http.DefaultClient
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, p.baseURL+"/api/tags", nil)
+	if err != nil {
+		return fmt.Errorf("%w: %v", ErrOllamaUnreachable, err)
+	}
+
+	resp, err := hc.Do(req)
+	if err != nil {
+		return fmt.Errorf("%w: %v", ErrOllamaUnreachable, err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("%w: status %d", ErrOllamaUnreachable, resp.StatusCode)
+	}
+
+	var tags ollamaTagsResponse
+	if err := json.NewDecoder(resp.Body).Decode(&tags); err != nil {
+		return fmt.Errorf("%w: %v", ErrOllamaUnreachable, err)
+	}
+
+	for _, m := range tags.Models {
+		if ollamaModelMatches(m.Name, p.model) {
+			return nil
+		}
+	}
+	return fmt.Errorf("%w: %s", ErrOllamaModelNotFound, p.model)
+}
+
+// ollamaModelMatches reports whether an installed tag satisfies the
+// configured model name. Ollama implicitly tags a bare name as ":latest",
+// so a configured "gemma3" matches an installed "gemma3:latest".
+func ollamaModelMatches(installed, want string) bool {
+	if installed == want {
+		return true
+	}
+	if !strings.Contains(want, ":") && installed == want+":latest" {
+		return true
+	}
+	return false
 }
 
 func (p *OllamaProvider) Name() string { return "ollama" }
