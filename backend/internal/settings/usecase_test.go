@@ -31,42 +31,41 @@ func TestMaskSecret_ExactlyFiveChars(t *testing.T) {
 	assert.Equal(t, "...2345", maskSecret("12345"))
 }
 
+// #222: the *Active DTO flags reflect a PASSED connection test
+// (*Verified), not merely "fields present". "Filled but unverified" must
+// read as NOT active — that was the false-«Готово» bug.
+
 func TestDomainToDTO_ComputedFields_IMAPActive(t *testing.T) {
 	tests := []struct {
 		name     string
 		ds       domain.Settings
 		expected bool
 	}{
-		{
-			name:     "all IMAP fields set",
-			ds:       domain.Settings{IMAPHost: "imap.gmail.com", IMAPUser: "user", IMAPPassword: "pass"},
-			expected: true,
-		},
-		{
-			name:     "missing host",
-			ds:       domain.Settings{IMAPHost: "", IMAPUser: "user", IMAPPassword: "pass"},
-			expected: false,
-		},
-		{
-			name:     "missing user",
-			ds:       domain.Settings{IMAPHost: "imap.gmail.com", IMAPUser: "", IMAPPassword: "pass"},
-			expected: false,
-		},
-		{
-			name:     "missing password",
-			ds:       domain.Settings{IMAPHost: "imap.gmail.com", IMAPUser: "user", IMAPPassword: ""},
-			expected: false,
-		},
-		{
-			name:     "all empty",
-			ds:       domain.Settings{},
-			expected: false,
-		},
+		{"verified", domain.Settings{IMAPVerified: true}, true},
+		{"filled but unverified", domain.Settings{IMAPHost: "imap.gmail.com", IMAPUser: "user", IMAPPassword: "pass"}, false},
+		{"verified even if fields look empty (test used stored creds)", domain.Settings{IMAPVerified: true, IMAPHost: ""}, true},
+		{"all empty", domain.Settings{}, false},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			dto := domainToDTO(&tc.ds)
-			assert.Equal(t, tc.expected, dto.IMAPActive)
+			assert.Equal(t, tc.expected, domainToDTO(&tc.ds).IMAPActive)
+		})
+	}
+}
+
+func TestDomainToDTO_ComputedFields_SMTPActive(t *testing.T) {
+	tests := []struct {
+		name     string
+		ds       domain.Settings
+		expected bool
+	}{
+		{"verified", domain.Settings{SMTPVerified: true}, true},
+		{"filled but unverified", domain.Settings{SMTPHost: "smtp.x", SMTPUser: "u", SMTPPassword: "p"}, false},
+		{"all empty", domain.Settings{}, false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.expected, domainToDTO(&tc.ds).SMTPActive)
 		})
 	}
 }
@@ -91,23 +90,18 @@ func TestDomainToDTO_ComputedFields_ResendActive(t *testing.T) {
 func TestDomainToDTO_ComputedFields_AIActive(t *testing.T) {
 	tests := []struct {
 		name     string
-		provider string
-		apiKey   string
+		ds       domain.Settings
 		expected bool
 	}{
-		{"ollama without key", "ollama", "", true},
-		{"ollama with key", "ollama", "some-key", true},
-		{"openai with key", "openai", "sk-abc", true},
-		{"openai without key", "openai", "", false},
-		{"anthropic with key", "anthropic", "sk-ant-abc", true},
-		{"anthropic without key", "anthropic", "", false},
-		{"no provider no key", "", "", false},
-		{"no provider with key", "", "sk-abc", false},
+		{"verified", domain.Settings{AIVerified: true}, true},
+		{"ollama unverified (the reported bug)", domain.Settings{AIProvider: "ollama"}, false},
+		{"cloud key present but unverified", domain.Settings{AIProvider: "openai", AIAPIKey: "sk-abc"}, false},
+		{"verified ollama (passed /api/tags ping)", domain.Settings{AIProvider: "ollama", AIVerified: true}, true},
+		{"nothing set", domain.Settings{}, false},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			dto := domainToDTO(&domain.Settings{AIProvider: tc.provider, AIAPIKey: tc.apiKey})
-			assert.Equal(t, tc.expected, dto.AIActive)
+			assert.Equal(t, tc.expected, domainToDTO(&tc.ds).AIActive)
 		})
 	}
 }
@@ -122,10 +116,12 @@ func TestDomainToDTO_FieldMapping(t *testing.T) {
 		IMAPPort:           "993",
 		IMAPUser:           "john@gmail.com",
 		IMAPPassword:       "secret",
+		IMAPVerified:       true,
 		ResendAPIKey:       "re_key",
 		AIProvider:         "openai",
 		AIModel:            "gpt-4o",
 		AIAPIKey:           "sk-test",
+		AIVerified:         true,
 		NotifyTelegram:     true,
 		NotifyEmailDigest:  false,
 		AutoQualify:        true,
