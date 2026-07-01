@@ -97,10 +97,11 @@ func buildAITester(cfg *config.Config, httpClient *http.Client) settings.AITeste
 			return "", fmt.Errorf("%w: %s", settings.ErrAIUnknownProvider, provider)
 		}
 
-		// Providers that implement HealthChecker (Ollama) offer a cheap
-		// liveness probe. Prefer it over a full generation, which for
-		// local back-ends loads the model into memory and trips the
-		// connection-test timeout on a cold start (#227).
+		// Every provider above implements HealthChecker, so the connection
+		// test uses a cheap liveness probe (Ollama: /api/tags; cloud:
+		// free /models) — no billed generation and no cold-start timeout
+		// (#227, #235). The Complete fallback below is the documented
+		// contract for any future provider added without a health check.
 		if hc, ok := p.(ai.HealthChecker); ok {
 			if err := hc.CheckHealth(ctx); err != nil {
 				return "", mapAIHealthError(err)
@@ -108,14 +109,12 @@ func buildAITester(cfg *config.Config, httpClient *http.Client) settings.AITeste
 			return p.Name(), nil
 		}
 
-		resp, err := p.Complete(ctx, ai.CompletionRequest{
+		if _, err := p.Complete(ctx, ai.CompletionRequest{
 			Messages:  []ai.Message{{Role: "user", Content: "Ответь одним словом: привет"}},
 			MaxTokens: 256,
-		})
-		if err != nil {
+		}); err != nil {
 			return "", err
 		}
-		_ = resp
 		return p.Name(), nil
 	}
 }
@@ -128,7 +127,11 @@ func mapAIHealthError(err error) error {
 	switch {
 	case errors.Is(err, providers.ErrOllamaModelNotFound):
 		return fmt.Errorf("%w: %v", settings.ErrAIModelNotFound, err)
-	case errors.Is(err, providers.ErrOllamaUnreachable):
+	case errors.Is(err, providers.ErrProviderAuth):
+		return fmt.Errorf("%w: %v", settings.ErrAIAuth, err)
+	case errors.Is(err, providers.ErrProviderRateLimit):
+		return fmt.Errorf("%w: %v", settings.ErrAIRateLimit, err)
+	case errors.Is(err, providers.ErrOllamaUnreachable), errors.Is(err, providers.ErrProviderUnreachable):
 		return fmt.Errorf("%w: %v", settings.ErrAIUnreachable, err)
 	default:
 		return err
