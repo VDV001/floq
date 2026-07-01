@@ -182,6 +182,50 @@ func TestBuildAITester_Ollama_Unreachable_WrapsErrAIUnreachable(t *testing.T) {
 		"an unreachable Ollama must map to settings.ErrAIUnreachable; got: %v", err)
 }
 
+// TestBuildAITester_Cloud_* verify that cloud providers route their
+// connection test through the free /models health probe (no billed
+// generation, #235 M3) and that the SDK's typed errors map into the
+// settings vocabulary so the handler renders friendly Russian copy.
+
+func TestBuildAITester_OpenAI_Auth401_WrapsErrAIAuth(t *testing.T) {
+	var paths []string
+	client := &http.Client{Transport: roundTripperFunc(func(r *http.Request) (*http.Response, error) {
+		paths = append(paths, r.URL.Path)
+		return &http.Response{
+			StatusCode: 401,
+			Body:       io.NopCloser(strings.NewReader(`{"error":{"message":"invalid key"}}`)),
+			Header:     http.Header{"Content-Type": []string{"application/json"}},
+		}, nil
+	})}
+	tester := buildAITester(&config.Config{OpenAIModel: "gpt-4o"}, client)
+	_, err := tester(context.Background(), "openai", "gpt-4o", "bad-key")
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, settings.ErrAIAuth),
+		"a 401 from the cloud health probe must map to settings.ErrAIAuth; got: %v", err)
+	// Prove the test probed /models and never ran a generation (#235 M3).
+	for _, p := range paths {
+		assert.NotContains(t, p, "chat/completions",
+			"the connection test must not run a generation; hit %q", p)
+	}
+}
+
+func TestBuildAITester_Claude_RateLimit429_WrapsErrAIRateLimit(t *testing.T) {
+	client := &http.Client{Transport: roundTripperFunc(func(_ *http.Request) (*http.Response, error) {
+		return &http.Response{
+			StatusCode: 429,
+			Body:       io.NopCloser(strings.NewReader(`{"type":"error","error":{"type":"rate_limit_error","message":"slow down"}}`)),
+			Header:     http.Header{"Content-Type": []string{"application/json"}},
+		}, nil
+	})}
+	tester := buildAITester(&config.Config{}, client)
+	_, err := tester(context.Background(), "claude", "claude-sonnet-4-6", "some-key")
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, settings.ErrAIRateLimit),
+		"a 429 from the cloud health probe must map to settings.ErrAIRateLimit; got: %v", err)
+	assert.NotContains(t, err.Error(), "Слишком",
+		"helpers.go must not embed Russian copy — handler maps via errors.Is")
+}
+
 func TestBuildSMTPTester_NoUIStringsLeak(t *testing.T) {
 	// Composition-root helpers must NOT carry user-facing copy.
 	// settings/handler.go owns the Russian translation via errors.Is.
