@@ -2,6 +2,7 @@ package providers
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 
@@ -54,8 +55,14 @@ var _ ai.HealthChecker = (*ClaudeProvider)(nil)
 // GET /v1/models endpoint — no generation, so the connection test neither
 // bills tokens nor trips a generation timeout. Retries are disabled so a
 // throttled or down back-end fails fast instead of stalling the test.
-func (p *ClaudeProvider) CheckHealth(_ context.Context) error {
-	// RED stub — real probe lands in the GREEN commit.
+func (p *ClaudeProvider) CheckHealth(ctx context.Context) error {
+	if _, err := p.client.Models.List(ctx, anthropic.ModelListParams{}, option.WithMaxRetries(0)); err != nil {
+		var apiErr *anthropic.Error
+		if errors.As(err, &apiErr) {
+			return fmt.Errorf("%w: %v", classifyProviderStatus(apiErr.StatusCode), err)
+		}
+		return fmt.Errorf("%w: %v", ErrProviderUnreachable, err)
+	}
 	return nil
 }
 
