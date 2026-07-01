@@ -644,6 +644,67 @@ func TestLaunch_MultipleProspects_MixedStatuses(t *testing.T) {
 	assert.False(t, hasInvalid)
 }
 
+// TestLaunch_ReportsQueuedAndSkippedCounts pins the #221 fix: Launch must tell
+// the caller how many prospects were queued vs silently skipped as ineligible,
+// so the UI can surface "0 created, here's why" instead of a false success.
+func TestLaunch_ReportsQueuedAndSkippedCounts(t *testing.T) {
+	seqID := uuid.New()
+	pidOK := uuid.New()
+	pidConverted := uuid.New()
+	pidInvalid := uuid.New()
+
+	repo := &mockRepo{
+		steps: []domain.SequenceStep{
+			{ID: uuid.New(), SequenceID: seqID, StepOrder: 1, DelayDays: 0, Channel: domain.StepChannelEmail},
+		},
+	}
+
+	pr := newMockProspectReader()
+	pr.prospects[pidOK] = &domain.ProspectView{
+		ID: pidOK, Name: "Good", Status: "new", VerifyStatus: "valid", IsEligibleForSequence: true,
+	}
+	pr.prospects[pidConverted] = &domain.ProspectView{
+		ID: pidConverted, Name: "Conv", Status: "converted", VerifyStatus: "valid", IsEligibleForSequence: false,
+	}
+	pr.prospects[pidInvalid] = &domain.ProspectView{
+		ID: pidInvalid, Name: "Bad", Status: "new", VerifyStatus: "invalid", IsEligibleForSequence: false,
+	}
+
+	uc := NewUseCase(repo, &mockAI{coldBody: "Hello"}, pr, &mockLeadCreator{})
+
+	res, err := uc.Launch(context.Background(), uuid.Nil, seqID, []uuid.UUID{pidOK, pidConverted, pidInvalid})
+	require.NoError(t, err)
+	assert.Equal(t, 1, res.Queued, "one eligible prospect queued")
+	assert.Equal(t, 2, res.Skipped, "two ineligible prospects skipped")
+}
+
+// TestLaunch_AllIneligible_ReportsZeroQueued is the exact #221 scenario: the
+// only prospect has an email that was never verified (not_checked), so nothing
+// is queued. Launch must report Queued=0, Skipped=1 (not a silent success).
+func TestLaunch_AllIneligible_ReportsZeroQueued(t *testing.T) {
+	seqID := uuid.New()
+	pid := uuid.New()
+
+	repo := &mockRepo{
+		steps: []domain.SequenceStep{
+			{ID: uuid.New(), SequenceID: seqID, StepOrder: 1, DelayDays: 0, Channel: domain.StepChannelEmail},
+		},
+	}
+
+	pr := newMockProspectReader()
+	pr.prospects[pid] = &domain.ProspectView{
+		ID: pid, Name: "Ivan", Status: "new", Email: "mmvs", VerifyStatus: "not_checked", IsEligibleForSequence: false,
+	}
+
+	uc := NewUseCase(repo, &mockAI{coldBody: "hi"}, pr, &mockLeadCreator{})
+
+	res, err := uc.Launch(context.Background(), uuid.Nil, seqID, []uuid.UUID{pid})
+	require.NoError(t, err)
+	assert.Equal(t, 0, res.Queued)
+	assert.Equal(t, 1, res.Skipped)
+	assert.Empty(t, repo.messages)
+}
+
 func TestLaunch_CumulativeDelay(t *testing.T) {
 	seqID := uuid.New()
 	pid := uuid.New()
