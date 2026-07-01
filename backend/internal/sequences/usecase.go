@@ -338,6 +338,10 @@ func (uc *UseCase) launchInner(ctx context.Context, userID uuid.UUID, sequenceID
 		}
 
 		if !prospect.IsEligibleForSequence {
+			// Eligibility (terminal status, invalid/unverified email) is a silent
+			// skip, not an error — but count it so the caller can tell the user
+			// why nothing was queued instead of reporting a false success (#221).
+			result.Skipped++
 			continue
 		}
 
@@ -425,6 +429,7 @@ func (uc *UseCase) launchInner(ctx context.Context, userID uuid.UUID, sequenceID
 		if err := uc.prospects.MarkInSequence(ctx, pid); err != nil {
 			return result, fmt.Errorf("launch: update prospect status: %w", err)
 		}
+		result.Queued++
 	}
 
 	return result, nil
