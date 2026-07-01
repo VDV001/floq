@@ -17,3 +17,9 @@ var ErrAIUnreachable = errors.New("ai unreachable")
 // ErrAIModelNotFound — the AI back-end is reachable but the configured
 // model is not available (e.g. an Ollama model that has not been pulled).
 var ErrAIModelNotFound = errors.New("ai model not found")
+
+// ErrAIAuth — the AI back-end rejected the API key (401/403).
+var ErrAIAuth = errors.New("ai auth rejected")
+
+// ErrAIRateLimit — the AI back-end throttled the connection test (429).
+var ErrAIRateLimit = errors.New("ai rate limited")

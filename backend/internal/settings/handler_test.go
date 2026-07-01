@@ -560,6 +560,79 @@ func TestHandler_TestAI_Unreachable_FriendlyMessage(t *testing.T) {
 		"the raw sentinel text must not leak to the user")
 }
 
+func TestHandler_TestAI_CloudUnreachable_NotOllamaSpecific(t *testing.T) {
+	repo := newMockSettingsRepo()
+	uc := NewUseCase(repo, &mockTelegramValidator{})
+	r := chi.NewRouter()
+	tester := func(_ context.Context, _, _, _ string) (string, error) {
+		return "", fmt.Errorf("%w: connection refused", ErrAIUnreachable)
+	}
+	RegisterRoutes(r, uc, tester, nil, nil, nil)
+
+	userID := uuid.New()
+	body := `{"provider":"openai","model":"gpt-4o"}`
+	req := withUserCtx(httptest.NewRequest("POST", "/api/settings/test-ai", bytes.NewBufferString(body)), userID)
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+
+	var resp map[string]any
+	require.NoError(t, json.NewDecoder(rec.Body).Decode(&resp))
+	assert.False(t, resp["success"].(bool))
+	msg, _ := resp["error"].(string)
+	assert.NotContains(t, msg, "Ollama",
+		"an unreachable CLOUD provider must not tell the user to start Ollama; got: %q", msg)
+	assert.Contains(t, msg, "подключиться",
+		"the message must still explain a connection failure; got: %q", msg)
+}
+
+func TestHandler_TestAI_Auth_FriendlyMessage(t *testing.T) {
+	repo := newMockSettingsRepo()
+	uc := NewUseCase(repo, &mockTelegramValidator{})
+	r := chi.NewRouter()
+	tester := func(_ context.Context, _, _, _ string) (string, error) {
+		return "", fmt.Errorf("%w: 401", ErrAIAuth)
+	}
+	RegisterRoutes(r, uc, tester, nil, nil, nil)
+
+	userID := uuid.New()
+	body := `{"provider":"openai","model":"gpt-4o"}`
+	req := withUserCtx(httptest.NewRequest("POST", "/api/settings/test-ai", bytes.NewBufferString(body)), userID)
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+
+	var resp map[string]any
+	require.NoError(t, json.NewDecoder(rec.Body).Decode(&resp))
+	assert.False(t, resp["success"].(bool))
+	msg, _ := resp["error"].(string)
+	assert.Contains(t, msg, "ключ",
+		"a rejected key must yield an actionable RU hint about the API key; got: %q", msg)
+	assert.NotContains(t, msg, "ai auth", "raw sentinel text must not leak to the user")
+}
+
+func TestHandler_TestAI_RateLimit_FriendlyMessage(t *testing.T) {
+	repo := newMockSettingsRepo()
+	uc := NewUseCase(repo, &mockTelegramValidator{})
+	r := chi.NewRouter()
+	tester := func(_ context.Context, _, _, _ string) (string, error) {
+		return "", fmt.Errorf("%w: 429", ErrAIRateLimit)
+	}
+	RegisterRoutes(r, uc, tester, nil, nil, nil)
+
+	userID := uuid.New()
+	body := `{"provider":"openai","model":"gpt-4o"}`
+	req := withUserCtx(httptest.NewRequest("POST", "/api/settings/test-ai", bytes.NewBufferString(body)), userID)
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+
+	var resp map[string]any
+	require.NoError(t, json.NewDecoder(rec.Body).Decode(&resp))
+	assert.False(t, resp["success"].(bool))
+	msg, _ := resp["error"].(string)
+	assert.Contains(t, msg, "запросов",
+		"a 429 must yield a RU hint about too many requests; got: %q", msg)
+	assert.NotContains(t, msg, "ai rate", "raw sentinel text must not leak to the user")
+}
+
 func TestHandler_TestAI_UseStored(t *testing.T) {
 	repo := newMockSettingsRepo()
 	r := setupSettingsRouter(repo, &mockTelegramValidator{})

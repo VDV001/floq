@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 
@@ -72,6 +73,25 @@ func NewOpenAICompatibleProvider(apiKey, model, baseURL string, httpClient *http
 }
 
 func (p *OpenAIProvider) Name() string { return "openai" }
+
+// Compile-time check: OpenAIProvider offers a cheap liveness probe so the
+// connection test avoids a (billed) generation.
+var _ ai.HealthChecker = (*OpenAIProvider)(nil)
+
+// CheckHealth verifies the API key and reachability via the free
+// GET /models endpoint — no generation, so the connection test neither
+// bills tokens nor trips a generation timeout. Retries are disabled so a
+// throttled or down back-end fails fast instead of stalling the test.
+func (p *OpenAIProvider) CheckHealth(ctx context.Context) error {
+	if _, err := p.client.Models.List(ctx, option.WithMaxRetries(0)); err != nil {
+		var apiErr *openai.Error
+		if errors.As(err, &apiErr) {
+			return fmt.Errorf("%w: %v", classifyProviderStatus(apiErr.StatusCode), err)
+		}
+		return fmt.Errorf("%w: %v", ErrProviderUnreachable, err)
+	}
+	return nil
+}
 
 func (p *OpenAIProvider) Complete(ctx context.Context, req ai.CompletionRequest) (*ai.CompletionResult, error) {
 	var messages []openai.ChatCompletionMessageParamUnion

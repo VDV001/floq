@@ -41,14 +41,23 @@ func smtpErrorToUserMessage(err error) string {
 // aiErrorToUserMessage maps a typed AI connection-test error into a
 // Russian user-facing message. Owning this here keeps UI copy next to
 // the handler; the composition-root tester returns only typed sentinels.
-// The default preserves the generic "connection error" wrapping for
-// cloud providers whose raw SDK error is already informative enough.
-func aiErrorToUserMessage(err error) string {
+// provider tailors the unreachable copy — a local Ollama gets a "start
+// the server" hint, cloud providers get a network-agnostic message. The
+// default preserves the generic "connection error" wrapping for errors
+// whose raw text is already informative enough.
+func aiErrorToUserMessage(err error, provider string) string {
 	switch {
 	case errors.Is(err, ErrAIModelNotFound):
 		return "Модель не найдена в Ollama. Скачайте её командой «ollama pull <модель>» и проверьте, что имя указано верно."
+	case errors.Is(err, ErrAIAuth):
+		return "API-ключ отклонён. Проверьте, что ключ верный и активен."
+	case errors.Is(err, ErrAIRateLimit):
+		return "Слишком много запросов к провайдеру. Подождите и попробуйте ещё раз."
 	case errors.Is(err, ErrAIUnreachable):
-		return "Не удалось подключиться к Ollama. Проверьте, что сервер запущен и адрес указан верно."
+		if provider == "ollama" {
+			return "Не удалось подключиться к Ollama. Проверьте, что сервер запущен и адрес указан верно."
+		}
+		return "Не удалось подключиться к провайдеру ИИ. Проверьте сеть и доступность сервиса."
 	case errors.Is(err, ErrAIUnknownProvider):
 		return "Неизвестный провайдер ИИ"
 	default:
@@ -365,7 +374,7 @@ func (h *Handler) testAI() http.HandlerFunc {
 
 		providerName, err := h.aiTester(ctx, body.Provider, body.Model, body.APIKey)
 		if err != nil {
-			httputil.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "error": aiErrorToUserMessage(err)})
+			httputil.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "error": aiErrorToUserMessage(err, body.Provider)})
 			return
 		}
 

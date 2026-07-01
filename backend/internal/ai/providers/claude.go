@@ -2,6 +2,7 @@ package providers
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 
@@ -45,6 +46,25 @@ func NewClaudeProvider(apiKey, overrideModel string, httpClient *http.Client) *C
 }
 
 func (p *ClaudeProvider) Name() string { return "claude" }
+
+// Compile-time check: ClaudeProvider offers a cheap liveness probe so the
+// connection test avoids a (billed) generation.
+var _ ai.HealthChecker = (*ClaudeProvider)(nil)
+
+// CheckHealth verifies the API key and reachability via the free
+// GET /v1/models endpoint — no generation, so the connection test neither
+// bills tokens nor trips a generation timeout. Retries are disabled so a
+// throttled or down back-end fails fast instead of stalling the test.
+func (p *ClaudeProvider) CheckHealth(ctx context.Context) error {
+	if _, err := p.client.Models.List(ctx, anthropic.ModelListParams{}, option.WithMaxRetries(0)); err != nil {
+		var apiErr *anthropic.Error
+		if errors.As(err, &apiErr) {
+			return fmt.Errorf("%w: %v", classifyProviderStatus(apiErr.StatusCode), err)
+		}
+		return fmt.Errorf("%w: %v", ErrProviderUnreachable, err)
+	}
+	return nil
+}
 
 // modelForMode resolves the concrete model name. User-set overrideModel
 // always wins (per the principle that user configuration beats defaults).
