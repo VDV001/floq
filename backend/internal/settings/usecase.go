@@ -62,6 +62,24 @@ func (uc *UseCase) GetSettings(ctx context.Context, userID uuid.UUID) (*domain.S
 	return uc.repo.GetSettings(ctx, userID)
 }
 
+// setVerified applies the #222 rule for one channel's *_verified column:
+// an explicit verifiedKey in the request wins (the client sends it true
+// after a passing connection test); otherwise, if any of the channel's
+// credential keys changed, the flag is cleared so a stale «Готово» cannot
+// survive a credential edit. Absent both, the column is left untouched.
+func setVerified(raw map[string]json.RawMessage, fields map[string]any, verifiedVal bool, verifiedKey string, credKeys ...string) {
+	if _, ok := raw[verifiedKey]; ok {
+		fields[verifiedKey] = verifiedVal
+		return
+	}
+	for _, k := range credKeys {
+		if _, ok := raw[k]; ok {
+			fields[verifiedKey] = false
+			return
+		}
+	}
+}
+
 func (uc *UseCase) UpdateSettings(ctx context.Context, userID uuid.UUID, raw map[string]json.RawMessage, input SettingsInput) (*domain.Settings, error) {
 	// If telegram_bot_token is being set, validate it.
 	if _, ok := raw["telegram_bot_token"]; ok && input.TelegramBotToken != "" {
@@ -122,6 +140,14 @@ func (uc *UseCase) UpdateSettings(ctx context.Context, userID uuid.UUID, raw map
 	if _, ok := raw["ai_style_check_enabled"]; ok {
 		fields["ai_style_check_enabled"] = input.AIStyleCheckEnabled
 	}
+
+	// Honest onboarding «Готово» (#222): a channel's *_verified flag mirrors
+	// a passed connection test. The client sends {channel}_verified:true
+	// right after a test succeeds; any change to the channel's credentials
+	// without an accompanying verified field invalidates it (must re-test).
+	setVerified(raw, fields, input.AIVerified, "ai_verified", "ai_provider", "ai_model", "ai_api_key")
+	setVerified(raw, fields, input.SMTPVerified, "smtp_verified", "smtp_host", "smtp_port", "smtp_user", "smtp_password")
+	setVerified(raw, fields, input.IMAPVerified, "imap_verified", "imap_host", "imap_port", "imap_user", "imap_password")
 	if _, ok := raw["notify_telegram"]; ok {
 		fields["notify_telegram"] = input.NotifyTelegram
 	}
