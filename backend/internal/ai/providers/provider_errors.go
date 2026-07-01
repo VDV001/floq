@@ -1,6 +1,9 @@
 package providers
 
-import "errors"
+import (
+	"errors"
+	"net/http"
+)
 
 // Shared health-probe sentinels for API-backed providers (OpenAI, Groq,
 // Claude). CheckHealth classifies the probe's HTTP status into one of
@@ -21,7 +24,13 @@ var (
 // classifyProviderStatus maps an HTTP status from a provider auth probe
 // to a shared sentinel: 401/403 → auth, 429 → rate limit, everything
 // else → unreachable.
-func classifyProviderStatus(_ int) error {
-	// RED stub — real mapping lands in the GREEN commit.
-	return ErrProviderUnreachable
+func classifyProviderStatus(status int) error {
+	switch status {
+	case http.StatusUnauthorized, http.StatusForbidden:
+		return ErrProviderAuth
+	case http.StatusTooManyRequests:
+		return ErrProviderRateLimit
+	default:
+		return ErrProviderUnreachable
+	}
 }
