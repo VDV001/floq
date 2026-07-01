@@ -188,4 +188,32 @@ describe("ProspectSelector", () => {
     await userEvent.click(screen.getByText(/Запустить для всех новых \(4\)/));
     expect(c.onLaunchAllNew).toHaveBeenCalledWith(true);
   });
+
+  it("flags a prospect whose email is not verified so the user sees why it won't send (#221)", () => {
+    render(
+      <ProspectSelector
+        prospects={[prospect({ id: "ivan", name: "Ivan", email: "mmvs", verify_status: "not_checked" })]}
+        selectedProspects={new Set()}
+        selectedSeqId="seq1"
+        launching={false}
+        newProspectsCount={0}
+        {...cbs()}
+      />,
+    );
+    expect(screen.getByText(/email не проверен/i)).toBeInTheDocument();
+  });
+
+  it("does not flag a verified prospect", () => {
+    render(
+      <ProspectSelector
+        prospects={[prospect({ id: "ok", name: "Alice", verify_status: "valid" })]}
+        selectedProspects={new Set()}
+        selectedSeqId="seq1"
+        launching={false}
+        newProspectsCount={0}
+        {...cbs()}
+      />,
+    );
+    expect(screen.queryByText(/email не проверен/i)).not.toBeInTheDocument();
+  });
 });
