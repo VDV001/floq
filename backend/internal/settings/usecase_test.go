@@ -1,11 +1,51 @@
 package settings
 
 import (
+	"context"
 	"testing"
 
 	"github.com/daniil/floq/internal/settings/domain"
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
+
+// TestUpdateSettings_VerifiedFlags pins the honest-«Готово» wiring (#222):
+// a channel's *_verified flag is set from an explicit client field (sent
+// right after a passing connection test) and is cleared whenever the
+// channel's credentials change without a fresh verification.
+func TestUpdateSettings_VerifiedFlags(t *testing.T) {
+	cases := []struct {
+		name      string
+		body      string
+		field     string
+		wantSet   bool // field present in the update at all
+		wantValue bool
+	}{
+		{"ai_verified true persists", `{"ai_provider":"openai","ai_model":"gpt-4o","ai_api_key":"sk","ai_verified":true}`, "ai_verified", true, true},
+		{"ai creds change without verify clears", `{"ai_api_key":"sk-new"}`, "ai_verified", true, false},
+		{"ai model change clears", `{"ai_model":"gpt-4o-mini"}`, "ai_verified", true, false},
+		{"smtp verified true persists", `{"smtp_host":"h","smtp_user":"u","smtp_password":"p","smtp_verified":true}`, "smtp_verified", true, true},
+		{"smtp creds change clears", `{"smtp_password":"new"}`, "smtp_verified", true, false},
+		{"imap verified true persists", `{"imap_host":"h","imap_user":"u","imap_verified":true}`, "imap_verified", true, true},
+		{"imap creds change clears", `{"imap_host":"other"}`, "imap_verified", true, false},
+		{"unrelated update leaves ai_verified untouched", `{"notify_telegram":true}`, "ai_verified", false, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			repo := newMockSettingsRepo()
+			uc := NewUseCase(repo, &mockTelegramValidator{})
+			raw, input := parseSettingsBody([]byte(tc.body))
+			_, err := uc.UpdateSettings(context.Background(), uuid.New(), raw, input)
+			require.NoError(t, err)
+			v, ok := repo.updated[tc.field]
+			assert.Equal(t, tc.wantSet, ok, "field %q presence in update", tc.field)
+			if tc.wantSet {
+				assert.Equal(t, tc.wantValue, v, "field %q value", tc.field)
+			}
+		})
+	}
+}
 
 func TestMaskSecret_Empty(t *testing.T) {
 	assert.Equal(t, "", maskSecret(""))
