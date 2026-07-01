@@ -111,7 +111,7 @@ export function useTelegramAccount() {
   return { phone, setPhone, code, setCode, step, connectedPhone, loading, error, setError, sendCode, verify, disconnect, reset };
 }
 
-export function useImapSettings(settings: UserSettings | null) {
+export function useImapSettings(settings: UserSettings | null, setSettings: (s: UserSettings) => void) {
   const [host, setHost] = useState("");
   const [port, setPort] = useState("993");
   const [user, setUser] = useState("");
@@ -135,6 +135,13 @@ export function useImapSettings(settings: UserSettings | null) {
       if (!h || !u) { setTestResult({ success: false, error: "Заполните хост и пользователя IMAP" }); return; }
       const res = await api.testIMAP(h, p, u, pw || "", !pw);
       setTestResult(res); setVerified(res.success);
+      if (res.success) {
+        // #222: persist the just-verified config so onboarding «Готово» is
+        // honest — mirrors the AI/SMTP flow (IMAP previously saved nothing).
+        const update: Partial<UserSettings> = { imap_host: h, imap_port: p, imap_user: u, imap_verified: true };
+        if (pw) update.imap_password = pw;
+        const updated = await api.updateSettings(update); setSettings(updated); setPassword("");
+      }
     } catch { setTestResult({ success: false, error: "Ошибка запроса" }); setVerified(false); }
     finally { setTesting(false); }
   };
@@ -191,7 +198,8 @@ export function useSmtpSettings(settings: UserSettings | null, setSettings: (s: 
       const res = await api.testSMTP(h, p, u, pw);
       setTestResult(res); setVerified(res.success);
       if (res.success && (u || pw)) {
-        const update: Partial<UserSettings> = { smtp_host: h, smtp_port: p, smtp_user: u };
+        // #222: record the passing test so onboarding «Готово» is honest.
+        const update: Partial<UserSettings> = { smtp_host: h, smtp_port: p, smtp_user: u, smtp_verified: true };
         if (pw) update.smtp_password = pw;
         const updated = await api.updateSettings(update); setSettings(updated); setPassword("");
       }
@@ -226,7 +234,8 @@ export function useAiSettings(settings: UserSettings | null, setSettings: (s: Us
       const res = await api.testAI(provider, model, k, !k);
       setTestResult(res); setVerified(res.success);
       if (res.success) {
-        const update: Partial<typeof settings & object> = { ai_provider: provider, ai_model: model };
+        // #222: record the passing test so onboarding «Готово» is honest.
+        const update: Partial<UserSettings> = { ai_provider: provider, ai_model: model, ai_verified: true };
         if (k) update.ai_api_key = k;
         const updated = await api.updateSettings(update); setSettings(updated);
         if (k) setApiKey("");
