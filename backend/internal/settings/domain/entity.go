@@ -15,6 +15,10 @@ type Settings struct {
 	IMAPPort     string
 	IMAPUser     string
 	IMAPPassword string
+	// IMAPVerified is true once a connection test passed for the current
+	// IMAP credentials; cleared when they change. Drives the honest
+	// "Готово" onboarding signal (#222), not "fields present".
+	IMAPVerified bool
 
 	// Resend
 	ResendAPIKey string
@@ -24,12 +28,18 @@ type Settings struct {
 	SMTPPort     string
 	SMTPUser     string
 	SMTPPassword string
+	// SMTPVerified — see IMAPVerified; true once an SMTP connection test
+	// passed for the current credentials (#222).
+	SMTPVerified bool
 
 	// AI
 	AIProvider          string
 	AIModel             string
 	AIAPIKey            string
 	AIStyleCheckEnabled bool
+	// AIVerified — see IMAPVerified; true once an AI connection test
+	// passed for the current provider/model/key (#222).
+	AIVerified bool
 
 	// Notifications
 	NotifyTelegram    bool

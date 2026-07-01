@@ -17,15 +17,18 @@ type SettingsInput struct {
 	IMAPPort          string `json:"imap_port"`
 	IMAPUser          string `json:"imap_user"`
 	IMAPPassword      string `json:"imap_password"`
+	IMAPVerified      bool   `json:"imap_verified"`
 	ResendAPIKey      string `json:"resend_api_key"`
 	SMTPHost          string `json:"smtp_host"`
 	SMTPPort          string `json:"smtp_port"`
 	SMTPUser          string `json:"smtp_user"`
 	SMTPPassword      string `json:"smtp_password"`
+	SMTPVerified      bool   `json:"smtp_verified"`
 	AIProvider          string `json:"ai_provider"`
 	AIModel             string `json:"ai_model"`
 	AIAPIKey            string `json:"ai_api_key"`
 	AIStyleCheckEnabled bool   `json:"ai_style_check_enabled"`
+	AIVerified          bool   `json:"ai_verified"`
 	NotifyTelegram    bool   `json:"notify_telegram"`
 	NotifyEmailDigest bool   `json:"notify_email_digest"`
 	AutoQualify       bool   `json:"auto_qualify"`
