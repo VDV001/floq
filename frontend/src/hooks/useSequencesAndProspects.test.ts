@@ -255,6 +255,10 @@ describe("useProspects", () => {
       expect(screen.queryByText("Письма подготовлены")).not.toBeInTheDocument();
       expect(screen.getByText(/Ничего не отправлено/i)).toBeInTheDocument();
       expect(screen.getByText(/1/)).toBeInTheDocument(); // skipped count surfaced
+      // Skipped may be a terminal status (converted/opted_out/…), not only an
+      // email issue — the aggregate message must not falsely blame email (#221).
+      expect(screen.getByText(/неэлигибельны/i)).toBeInTheDocument();
+      expect(screen.queryByText(/не прошли проверку email/i)).not.toBeInTheDocument();
     });
 
     it("notifies the real failure cause and stops the spinner on error", async () => {
