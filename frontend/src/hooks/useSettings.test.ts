@@ -307,7 +307,7 @@ describe("useImapSettings", () => {
   it("syncs fields from settings on mount", async () => {
     const settings = makeSettings({ imap_host: "mail.test.com", imap_port: "143", imap_user: "me@test.com" });
 
-    const { result } = renderHook(() => useImapSettings(settings));
+    const { result } = renderHook(() => useImapSettings(settings, vi.fn()));
 
     await waitFor(() => {
       expect(result.current.host).toBe("mail.test.com");
@@ -317,7 +317,7 @@ describe("useImapSettings", () => {
   });
 
   it("test requires host and user", async () => {
-    const { result } = renderHook(() => useImapSettings(null));
+    const { result } = renderHook(() => useImapSettings(null, vi.fn()));
 
     await act(async () => { await result.current.test(); });
 
@@ -326,16 +326,24 @@ describe("useImapSettings", () => {
     expect(mockedApi.testIMAP).not.toHaveBeenCalled();
   });
 
-  it("test calls API and sets verified on success", async () => {
+  it("test persists creds + imap_verified:true on success", async () => {
     const settings = makeSettings();
+    const setSettings = vi.fn();
+    const updated = makeSettings();
     mockedApi.testIMAP.mockResolvedValue({ success: true, message: "OK" });
+    mockedApi.updateSettings.mockResolvedValue(updated);
 
-    const { result } = renderHook(() => useImapSettings(settings));
+    const { result } = renderHook(() => useImapSettings(settings, setSettings));
     await waitFor(() => expect(result.current.host).toBe("imap.example.com"));
 
     await act(async () => { await result.current.test(); });
 
     expect(mockedApi.testIMAP).toHaveBeenCalled();
+    // #222: onboarding «Готово» for IMAP must reflect a passed test, so a
+    // success persists imap_verified:true (previously IMAP saved nothing).
+    expect(mockedApi.updateSettings).toHaveBeenCalledWith(
+      expect.objectContaining({ imap_verified: true }),
+    );
     expect(result.current.testResult?.success).toBe(true);
     expect(result.current.active).toBe(true);
   });
@@ -344,7 +352,7 @@ describe("useImapSettings", () => {
     const settings = makeSettings();
     mockedApi.testIMAP.mockRejectedValue(new Error("fail"));
 
-    const { result } = renderHook(() => useImapSettings(settings));
+    const { result } = renderHook(() => useImapSettings(settings, vi.fn()));
     await waitFor(() => expect(result.current.host).toBe("imap.example.com"));
 
     await act(async () => { await result.current.test(); });
@@ -355,7 +363,7 @@ describe("useImapSettings", () => {
 
   it("active falls back to settings.imap_active when not tested", () => {
     const settings = makeSettings({ imap_active: true });
-    const { result } = renderHook(() => useImapSettings(settings));
+    const { result } = renderHook(() => useImapSettings(settings, vi.fn()));
     expect(result.current.active).toBe(true);
   });
 });
@@ -440,7 +448,10 @@ describe("useSmtpSettings", () => {
     await act(async () => { await result.current.test(); });
 
     expect(mockedApi.testSMTP).toHaveBeenCalled();
-    expect(mockedApi.updateSettings).toHaveBeenCalled();
+    // #222: a passing test persists smtp_verified:true.
+    expect(mockedApi.updateSettings).toHaveBeenCalledWith(
+      expect.objectContaining({ smtp_verified: true }),
+    );
     expect(setSettings).toHaveBeenCalledWith(updated);
   });
 
@@ -489,10 +500,13 @@ describe("useAiSettings", () => {
     await act(async () => { await result.current.test(); });
 
     expect(mockedApi.testAI).toHaveBeenCalledWith("openai", "gpt-4o", "sk-123", false);
+    // #222: a passing test persists ai_verified:true so onboarding «Готово»
+    // reflects a real connection, not just a filled key.
     expect(mockedApi.updateSettings).toHaveBeenCalledWith({
       ai_provider: "openai",
       ai_model: "gpt-4o",
       ai_api_key: "sk-123",
+      ai_verified: true,
     });
     expect(setSettings).toHaveBeenCalledWith(updated);
     expect(result.current.apiKey).toBe("");

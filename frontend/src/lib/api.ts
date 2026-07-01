@@ -979,4 +979,10 @@ export interface UserSettings {
   auto_verify_import: boolean;
   ai_style_check_enabled?: boolean;
   aggregated_inbox_view: boolean;
+  // Verification flags (#222): sent as `true` right after a passing
+  // connection test so the backend records the channel as truly «Готово».
+  // Absent on the read DTO (the server exposes only the computed *_active).
+  ai_verified?: boolean;
+  smtp_verified?: boolean;
+  imap_verified?: boolean;
 }
