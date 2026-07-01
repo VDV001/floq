@@ -335,7 +335,7 @@ export const api = {
       body: JSON.stringify({ name, company, context, channel, hint }),
     }),
   launchSequence: (seqId: string, prospectIds: string[], sendNow = true) =>
-    apiFetch(`/api/sequences/${seqId}/launch`, { method: "POST", body: JSON.stringify({ prospect_ids: prospectIds, send_now: sendNow }) }),
+    apiFetch<LaunchResult>(`/api/sequences/${seqId}/launch`, { method: "POST", body: JSON.stringify({ prospect_ids: prospectIds, send_now: sendNow }) }),
   toggleSequence: (seqId: string, isActive: boolean) =>
     apiFetch(`/api/sequences/${seqId}/toggle`, { method: "PATCH", body: JSON.stringify({ is_active: isActive }) }),
   setRequireApproval: (seqId: string, requireApproval: boolean) =>
@@ -672,6 +672,16 @@ export interface Prospect {
   converted_lead_id: string | null;
   created_at: string;
   updated_at: string;
+}
+
+// LaunchResult mirrors the backend launch response (#221): queued is how many
+// prospects got messages, skipped is how many were dropped as ineligible
+// (unverified/invalid email or terminal status). Lets the UI report the truth
+// instead of guessing from the selected count.
+export interface LaunchResult {
+  status: string;
+  queued: number;
+  skipped: number;
 }
 
 export interface CreateProspectBody {

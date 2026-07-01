@@ -33,15 +33,34 @@ export function useProspects() {
     async (seqId: string, prospectIds: string[], sendNow: boolean) => {
       setLaunching(true);
       try {
-        await api.launchSequence(seqId, prospectIds, sendNow);
+        const res = await api.launchSequence(seqId, prospectIds, sendNow);
         setSelectedProspects(new Set());
-        notify({
-          type: "success",
-          title: "Письма подготовлены",
-          message: `Создано писем для ${prospectIds.length} проспектов.`,
-          remedy: "Проверьте и одобрите их к отправке в разделе «Исходящие».",
-          action: { label: "Открыть Исходящие", href: "/outbound" },
-        });
+        const queued = res?.queued ?? 0;
+        const skipped = res?.skipped ?? 0;
+        if (queued === 0) {
+          // Nothing went out — never report a false success. Tell the user why
+          // (skipped prospects) so they can fix it (usually email verification).
+          notify({
+            type: "error",
+            title: "Ничего не отправлено",
+            message:
+              skipped > 0
+                ? `Ни одного письма не создано. Пропущено проспектов: ${skipped} — неэлигибельны (статус или непроверенный email).`
+                : "Ни одного письма не создано.",
+            remedy: "Проверьте статусы проспектов и верификацию email, затем запустите снова.",
+          });
+        } else {
+          notify({
+            type: "success",
+            title: "Письма подготовлены",
+            message:
+              skipped > 0
+                ? `Создано писем для ${queued} проспектов. Пропущено ${skipped} — неэлигибельны (статус или непроверенный email).`
+                : `Создано писем для ${queued} проспектов.`,
+            remedy: "Проверьте и одобрите их к отправке в разделе «Исходящие».",
+            action: { label: "Открыть Исходящие", href: "/outbound" },
+          });
+        }
         api.getProspects().then(setProspects).catch(() => {});
       } catch (err) {
         notifyError(err, "Не удалось запустить отправку");

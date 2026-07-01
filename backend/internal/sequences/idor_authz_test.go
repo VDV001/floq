@@ -96,7 +96,7 @@ func TestLaunch_ForeignSequence_NotOwned(t *testing.T) {
 	pr.prospects[pid] = &domain.ProspectView{ID: pid, UserID: caller, Status: "new", VerifyStatus: "valid", IsEligibleForSequence: true}
 	uc := NewUseCase(repo, &mockAI{coldBody: "hi"}, pr, &mockLeadCreator{})
 
-	err := uc.Launch(context.Background(), caller, seqID, []uuid.UUID{pid}, true)
+	_, err := uc.Launch(context.Background(), caller, seqID, []uuid.UUID{pid}, true)
 	require.ErrorIs(t, err, domain.ErrSequenceNotOwned)
 	assert.Empty(t, repo.messages, "no message queued for a foreign sequence")
 }

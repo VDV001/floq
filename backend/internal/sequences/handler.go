@@ -369,11 +369,16 @@ func launchSequence(uc *UseCase) http.HandlerFunc {
 			return
 		}
 
-		if err := uc.Launch(r.Context(), userID, id, body.ProspectIDs, body.SendNow); err != nil {
+		result, err := uc.Launch(r.Context(), userID, id, body.ProspectIDs, body.SendNow)
+		if err != nil {
 			writeGenerationError(w, err, msgLaunchFailed)
 			return
 		}
-		httputil.WriteJSON(w, http.StatusOK, map[string]string{"status": "launched"})
+		httputil.WriteJSON(w, http.StatusOK, map[string]any{
+			"status":  "launched",
+			"queued":  result.Queued,
+			"skipped": result.Skipped,
+		})
 	}
 }
 

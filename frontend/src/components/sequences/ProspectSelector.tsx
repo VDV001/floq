@@ -1,6 +1,7 @@
 import { useState } from "react";
-import { Users, Send, Clock, ChevronDown } from "lucide-react";
+import { Users, Send, Clock, ChevronDown, AlertTriangle } from "lucide-react";
 import type { Prospect } from "@/lib/api";
+import { launchBlockReason } from "@/lib/prospectEligibility";
 
 interface ProspectSelectorProps {
   prospects: Prospect[];
@@ -58,6 +59,7 @@ export function ProspectSelector({
         ) : (
           prospects.map((p) => {
             const status = STATUS_STYLES[p.status] ?? { className: "bg-gray-100 text-gray-600", label: p.status };
+            const blockReason = launchBlockReason(p);
             return (
               <label
                 key={p.id}
@@ -72,6 +74,12 @@ export function ProspectSelector({
                 <div className="min-w-0 flex-1">
                   <p className="truncate text-sm font-medium text-[#0d1c2e]">{p.name}</p>
                   <p className="truncate text-[11px] text-[#434655]">{p.company || p.email}</p>
+                  {blockReason && (
+                    <p className="mt-0.5 flex items-center gap-1 text-[10px] font-semibold text-red-600">
+                      <AlertTriangle className="size-3 shrink-0" />
+                      {blockReason} — не будет отправлено
+                    </p>
+                  )}
                 </div>
                 <span className={`shrink-0 rounded-full px-2 py-0.5 text-[9px] font-bold uppercase ${status.className}`}>
                   {status.label}

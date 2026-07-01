@@ -212,10 +212,10 @@ describe("useProspects", () => {
   });
 
   describe("launchSequence", () => {
-    it("calls API, clears selection, sets result message on success", async () => {
+    it("calls API, clears selection, reports the real queued count on success", async () => {
       const data = [makeProspect({ id: "p-1" }), makeProspect({ id: "p-2" })];
       mockedApi.getProspects.mockResolvedValue(data);
-      mockedApi.launchSequence.mockResolvedValue(undefined);
+      mockedApi.launchSequence.mockResolvedValue({ status: "launched", queued: 2, skipped: 0 });
 
       const { result } = renderHook(() => useProspects(), { wrapper: NotificationProvider });
 
@@ -234,8 +234,31 @@ describe("useProspects", () => {
       expect(mockedApi.launchSequence).toHaveBeenCalledWith("seq-1", ["p-1", "p-2"], true);
       expect(result.current.selectedProspects.size).toBe(0);
       expect(result.current.launching).toBe(false);
-      // Success is surfaced through the global notification, not inline state.
+      // Success is surfaced through the global notification, using the real
+      // backend count (queued), not the selected-prospect count.
       expect(screen.getByText("Письма подготовлены")).toBeInTheDocument();
+      expect(screen.getByText(/Создано писем для 2/)).toBeInTheDocument();
+    });
+
+    it("warns (not success) when nothing was queued because prospects were skipped (#221)", async () => {
+      mockedApi.getProspects.mockResolvedValue([makeProspect({ id: "p-1" })]);
+      mockedApi.launchSequence.mockResolvedValue({ status: "launched", queued: 0, skipped: 1 });
+
+      const { result } = renderHook(() => useProspects(), { wrapper: NotificationProvider });
+      await waitFor(() => expect(result.current.prospects).toHaveLength(1));
+
+      await act(async () => {
+        await result.current.launchSequence("seq-1", ["p-1"], true);
+      });
+
+      // No false success — the user is told nothing went out and why.
+      expect(screen.queryByText("Письма подготовлены")).not.toBeInTheDocument();
+      expect(screen.getByText(/Ничего не отправлено/i)).toBeInTheDocument();
+      expect(screen.getByText(/1/)).toBeInTheDocument(); // skipped count surfaced
+      // Skipped may be a terminal status (converted/opted_out/…), not only an
+      // email issue — the aggregate message must not falsely blame email (#221).
+      expect(screen.getByText(/неэлигибельны/i)).toBeInTheDocument();
+      expect(screen.queryByText(/не прошли проверку email/i)).not.toBeInTheDocument();
     });
 
     it("notifies the real failure cause and stops the spinner on error", async () => {
@@ -256,7 +279,7 @@ describe("useProspects", () => {
 
     it("reloads prospects after successful launch", async () => {
       mockedApi.getProspects.mockResolvedValue([makeProspect({ id: "p-1", status: "new" })]);
-      mockedApi.launchSequence.mockResolvedValue(undefined);
+      mockedApi.launchSequence.mockResolvedValue({ status: "launched", queued: 1, skipped: 0 });
 
       const { result } = renderHook(() => useProspects(), { wrapper: NotificationProvider });
 

@@ -29,7 +29,7 @@ func TestLaunch_ForeignProspect_Rejected(t *testing.T) {
 	}
 	uc := NewUseCase(repo, &mockAI{telegramBody: "hi"}, pr, &mockLeadCreator{})
 
-	err := uc.Launch(context.Background(), caller, seqID, []uuid.UUID{pid}, true)
+	_, err := uc.Launch(context.Background(), caller, seqID, []uuid.UUID{pid}, true)
 
 	require.Error(t, err, "launching on another user's prospect must be rejected")
 	assert.Empty(t, repo.messages, "no message is queued for a foreign prospect")
@@ -69,7 +69,7 @@ func TestLaunch_ForeignInBatch_RollsBackOwnWrites(t *testing.T) {
 	uc := NewUseCase(repo, &mockAI{coldBody: "hi"}, pr, &mockLeadCreator{}, WithTxManager(&rollbackTxManager{repo: repo}))
 
 	// pidMine processed first (queues a message), then pidForeign is rejected.
-	err := uc.Launch(context.Background(), caller, seqID, []uuid.UUID{pidMine, pidForeign})
+	_, err := uc.Launch(context.Background(), caller, seqID, []uuid.UUID{pidMine, pidForeign})
 	require.ErrorIs(t, err, domain.ErrProspectNotOwned)
 	assert.Empty(t, repo.messages, "own-prospect writes are rolled back when a foreign prospect aborts the batch")
 }
@@ -90,6 +90,7 @@ func TestLaunch_OwnProspect_Allowed(t *testing.T) {
 	}
 	uc := NewUseCase(repo, &mockAI{telegramBody: "hi"}, pr, &mockLeadCreator{})
 
-	require.NoError(t, uc.Launch(context.Background(), caller, seqID, []uuid.UUID{pid}, true))
+	_, errLaunch := uc.Launch(context.Background(), caller, seqID, []uuid.UUID{pid}, true)
+	require.NoError(t, errLaunch)
 	assert.Len(t, repo.messages, 1)
 }
