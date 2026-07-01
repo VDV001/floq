@@ -201,15 +201,30 @@ func (uc *UseCase) CreateStep(ctx context.Context, userID uuid.UUID, step *domai
 	return uc.repo.CreateStep(ctx, step)
 }
 
+// LaunchResult reports the outcome of a launch so the caller can tell the user
+// what actually happened. Queued is the number of prospects for whom messages
+// were created; Skipped is the number silently dropped because they were not
+// eligible (terminal status, invalid email, or unverified email). A launch that
+// reports Queued=0, Skipped>0 is the "nothing happened, and here's why" case the
+// UI must surface instead of a false success (see #221).
+type LaunchResult struct {
+	Queued  int `json:"queued"`
+	Skipped int `json:"skipped"`
+}
+
 // Launch queues a sequence's messages for the given prospects. userID is the
 // authenticated caller — the authoritative owner. Every prospect must belong
 // to them (enforced in launchInner); this is the authorization boundary, so it
 // lives here in the usecase, never in the handler.
-func (uc *UseCase) Launch(ctx context.Context, userID uuid.UUID, sequenceID uuid.UUID, prospectIDs []uuid.UUID, sendNow ...bool) error {
+func (uc *UseCase) Launch(ctx context.Context, userID uuid.UUID, sequenceID uuid.UUID, prospectIDs []uuid.UUID, sendNow ...bool) (LaunchResult, error) {
 	if uc.tx != nil {
-		return uc.tx.WithTx(ctx, func(txCtx context.Context) error {
-			return uc.launchInner(txCtx, userID, sequenceID, prospectIDs, sendNow...)
+		var result LaunchResult
+		err := uc.tx.WithTx(ctx, func(txCtx context.Context) error {
+			var innerErr error
+			result, innerErr = uc.launchInner(txCtx, userID, sequenceID, prospectIDs, sendNow...)
+			return innerErr
 		})
+		return result, err
 	}
 	return uc.launchInner(ctx, userID, sequenceID, prospectIDs, sendNow...)
 }
@@ -225,7 +240,8 @@ func hasEmailStep(steps []domain.SequenceStep) bool {
 	return false
 }
 
-func (uc *UseCase) launchInner(ctx context.Context, userID uuid.UUID, sequenceID uuid.UUID, prospectIDs []uuid.UUID, sendNow ...bool) error {
+func (uc *UseCase) launchInner(ctx context.Context, userID uuid.UUID, sequenceID uuid.UUID, prospectIDs []uuid.UUID, sendNow ...bool) (LaunchResult, error) {
+	var result LaunchResult
 	// The caller may only launch a sequence they own — launching a foreign
 	// sequence would generate messages from (and thereby leak) its steps.
 	// Checked before reading steps so a foreign sequence's content is never
@@ -233,7 +249,7 @@ func (uc *UseCase) launchInner(ctx context.Context, userID uuid.UUID, sequenceID
 	// and is a no-op when userID is nil (unit tests).
 	seq, err := uc.authorizeSequence(ctx, userID, sequenceID)
 	if err != nil {
-		return fmt.Errorf("launch: %w", err)
+		return result, fmt.Errorf("launch: %w", err)
 	}
 	// The per-sequence approval gate (see domain.InitialOutboundStatus) forces
 	// every launched message through human review, overriding autopilot. seq is
@@ -243,10 +259,10 @@ func (uc *UseCase) launchInner(ctx context.Context, userID uuid.UUID, sequenceID
 
 	steps, err := uc.repo.ListSteps(ctx, sequenceID)
 	if err != nil {
-		return fmt.Errorf("launch: list steps: %w", err)
+		return result, fmt.Errorf("launch: list steps: %w", err)
 	}
 	if len(steps) == 0 {
-		return fmt.Errorf("launch: sequence has no steps")
+		return result, fmt.Errorf("launch: sequence has no steps")
 	}
 
 	now := time.Now().UTC()
@@ -275,7 +291,7 @@ func (uc *UseCase) launchInner(ctx context.Context, userID uuid.UUID, sequenceID
 	// no checker is wired or the sequence has no email steps.
 	if uc.emailChecker != nil && ownerID != uuid.Nil && hasEmailStep(steps) {
 		if err := uc.emailChecker.IsEmailConfigured(ctx, ownerID); err != nil {
-			return err
+			return result, err
 		}
 	}
 
@@ -288,7 +304,7 @@ func (uc *UseCase) launchInner(ctx context.Context, userID uuid.UUID, sequenceID
 	if uc.autopilot != nil && ownerID != uuid.Nil {
 		s, err := uc.autopilot.ResolveAutopilot(ctx, ownerID)
 		if err != nil {
-			return fmt.Errorf("launch: resolve autopilot mode: %w", err)
+			return result, fmt.Errorf("launch: resolve autopilot mode: %w", err)
 		}
 		autopilot = s
 	}
@@ -302,13 +318,13 @@ func (uc *UseCase) launchInner(ctx context.Context, userID uuid.UUID, sequenceID
 	for _, pid := range prospectIDs {
 		prospect, err := uc.prospects.GetProspect(ctx, pid)
 		if err != nil {
-			return fmt.Errorf("launch: get prospect %s: %w", pid, err)
+			return result, fmt.Errorf("launch: get prospect %s: %w", pid, err)
 		}
 		// A missing prospect and a foreign prospect return the SAME error (→ 404,
 		// "not found") so a caller can't distinguish "doesn't exist" from "exists
 		// but isn't yours" — no cross-tenant enumeration.
 		if prospect == nil {
-			return fmt.Errorf("launch: prospect %s: %w", pid, domain.ErrProspectNotOwned)
+			return result, fmt.Errorf("launch: prospect %s: %w", pid, domain.ErrProspectNotOwned)
 		}
 
 		// Authorization: every prospect must belong to the authenticated caller.
@@ -318,7 +334,7 @@ func (uc *UseCase) launchInner(ctx context.Context, userID uuid.UUID, sequenceID
 		// equal to userID means one owner. userID is nil only in unit tests that
 		// don't exercise authz; the handler always supplies a real one.
 		if userID != uuid.Nil && prospect.UserID != userID {
-			return fmt.Errorf("launch: prospect %s: %w", pid, domain.ErrProspectNotOwned)
+			return result, fmt.Errorf("launch: prospect %s: %w", pid, domain.ErrProspectNotOwned)
 		}
 
 		if !prospect.IsEligibleForSequence {
@@ -376,7 +392,7 @@ func (uc *UseCase) launchInner(ctx context.Context, userID uuid.UUID, sequenceID
 					body, genErr = uc.aiGenerator.GenerateColdMessage(auditdomain.ContextWithCallMeta(ctx, meta), prospect.Name, prospect.Title, prospect.Company, prospect.Context, step.PromptHint, prevCtx, prospect.Source, feedbackExamples)
 				}
 				if genErr != nil {
-					return fmt.Errorf("launch: generate message for prospect %s step %d: %w", pid, step.StepOrder, genErr)
+					return result, fmt.Errorf("launch: generate message for prospect %s step %d: %w", pid, step.StepOrder, genErr)
 				}
 			}
 
@@ -396,22 +412,22 @@ func (uc *UseCase) launchInner(ctx context.Context, userID uuid.UUID, sequenceID
 				// legal transition (see outboundTransitions); the entity guards
 				// the state machine so this can't silently corrupt status.
 				if err := msg.TransitionTo(domain.OutboundStatusApproved); err != nil {
-					return fmt.Errorf("launch: auto-approve message for prospect %s step %d: %w", pid, step.StepOrder, err)
+					return result, fmt.Errorf("launch: auto-approve message for prospect %s step %d: %w", pid, step.StepOrder, err)
 				}
 			}
 			if err := uc.repo.CreateOutboundMessage(ctx, msg); err != nil {
-				return fmt.Errorf("launch: create outbound message: %w", err)
+				return result, fmt.Errorf("launch: create outbound message: %w", err)
 			}
 
 			previousBody = body
 		}
 
 		if err := uc.prospects.MarkInSequence(ctx, pid); err != nil {
-			return fmt.Errorf("launch: update prospect status: %w", err)
+			return result, fmt.Errorf("launch: update prospect status: %w", err)
 		}
 	}
 
-	return nil
+	return result, nil
 }
 
 // ApproveMessage loads the message, asks the domain entity to transition to

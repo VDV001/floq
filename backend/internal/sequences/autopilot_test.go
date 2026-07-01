@@ -62,7 +62,7 @@ func TestLaunch_Autopilot(t *testing.T) {
 			uc := NewUseCase(repo, &mockAI{telegramBody: "hi"}, pr, &mockLeadCreator{},
 				WithAutopilotChecker(checker))
 
-			err := uc.Launch(context.Background(), uuid.Nil, seqID, []uuid.UUID{pid}, true)
+			_, err := uc.Launch(context.Background(), uuid.Nil, seqID, []uuid.UUID{pid}, true)
 
 			if tt.wantErr {
 				require.Error(t, err)
@@ -96,7 +96,8 @@ func TestLaunch_Autopilot_AppliesSendDelay(t *testing.T) {
 		WithAutopilotChecker(&mockAutopilotChecker{enabled: true, delay: 5 * time.Minute}))
 
 	before := time.Now().UTC()
-	require.NoError(t, uc.Launch(context.Background(), uuid.Nil, seqID, []uuid.UUID{pid}, true))
+	_, errLaunch := uc.Launch(context.Background(), uuid.Nil, seqID, []uuid.UUID{pid}, true)
+	require.NoError(t, errLaunch)
 	after := time.Now().UTC()
 
 	require.Len(t, repo.messages, 1)
@@ -123,7 +124,8 @@ func TestLaunch_Autopilot_ApprovesWholeBatch(t *testing.T) {
 	uc := NewUseCase(repo, &mockAI{telegramBody: "hi"}, pr, &mockLeadCreator{},
 		WithAutopilotChecker(&mockAutopilotChecker{enabled: true}))
 
-	require.NoError(t, uc.Launch(context.Background(), uuid.Nil, seqID, []uuid.UUID{pid1, pid2}, true))
+	_, errLaunch := uc.Launch(context.Background(), uuid.Nil, seqID, []uuid.UUID{pid1, pid2}, true)
+	require.NoError(t, errLaunch)
 
 	require.Len(t, repo.messages, 4) // 2 prospects × 2 steps
 	for _, m := range repo.messages {
@@ -166,7 +168,8 @@ func TestLaunch_RequireApproval_OverridesAutopilot(t *testing.T) {
 			uc := NewUseCase(repo, &mockAI{telegramBody: "hi"}, pr, &mockLeadCreator{},
 				WithAutopilotChecker(&mockAutopilotChecker{enabled: tt.autopilot}))
 
-			require.NoError(t, uc.Launch(context.Background(), owner, seqID, []uuid.UUID{pid}, true))
+			_, errLaunch := uc.Launch(context.Background(), owner, seqID, []uuid.UUID{pid}, true)
+			require.NoError(t, errLaunch)
 			require.Len(t, repo.messages, 1)
 			assert.Equal(t, tt.want, repo.messages[0].Status)
 		})
@@ -198,7 +201,7 @@ func TestLaunch_BatchWithForeignProspect_RejectedWhole(t *testing.T) {
 	uc := NewUseCase(repo, &mockAI{telegramBody: "hi"}, pr, &mockLeadCreator{},
 		WithAutopilotChecker(&mockAutopilotChecker{enabled: true}))
 
-	err := uc.Launch(context.Background(), caller, seqID, []uuid.UUID{pidMine, pidForeign}, true)
+	_, err := uc.Launch(context.Background(), caller, seqID, []uuid.UUID{pidMine, pidForeign}, true)
 	require.ErrorIs(t, err, domain.ErrProspectNotOwned)
 	// No message is queued for the foreign prospect.
 	for _, m := range repo.messages {
@@ -221,7 +224,8 @@ func TestLaunch_NoAutopilotChecker_StaysDraft(t *testing.T) {
 	}
 	uc := NewUseCase(repo, &mockAI{telegramBody: "hi"}, pr, &mockLeadCreator{})
 
-	require.NoError(t, uc.Launch(context.Background(), uuid.Nil, seqID, []uuid.UUID{pid}, true))
+	_, errLaunch := uc.Launch(context.Background(), uuid.Nil, seqID, []uuid.UUID{pid}, true)
+	require.NoError(t, errLaunch)
 	require.Len(t, repo.messages, 1)
 	assert.Equal(t, domain.OutboundStatusDraft, repo.messages[0].Status)
 }
