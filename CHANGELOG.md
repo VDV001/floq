@@ -6,6 +6,9 @@
 
 Формат основан на [Keep a Changelog](https://keepachangelog.com/); версии — SemVer-подобные.
 
+## [0.78.0] — 2026-07-01
+Ollama: тест подключения через быстрый health-check (/api/tags) вместо полной генерации — больше нет ложного «context deadline exceeded» на холодном старте модели; понятные сообщения о недоступности сервера и не скачанной модели (#227)
+
 ## [0.77.0] — 2026-07-01
 Honest launch outcome — Launch reports queued/skipped so the UI stops showing a false success when nothing is queued; ineligible prospects are flagged with the reason (#221)
 
