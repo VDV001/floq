@@ -1,15 +1,18 @@
 #!/usr/bin/env bash
-# bin/release.sh X.Y.Z [--dry-run]
+# bin/release.sh <bump|publish> X.Y.Z [options]
 #
-# Bumps version in all sync points and publishes a release. Sync points:
+# Two-phase release that NEVER pushes straight to main:
+#   1) bump X.Y.Z     — branch + bump all sync points + CHANGELOG, open a PR.
+#   2) publish X.Y.Z  — after that PR is merged: tag + push tag + GitHub release.
+#
+# Sync points bumped/verified together:
 #   - /VERSION
 #   - /README.md shields.io badge
 #   - /frontend/package.json   "version"
 #   - /frontend/package-lock.json (root + packages[""].version, 2 occurrences)
 #
-# The script refuses to run unless all four are already in sync at the
-# version currently in /VERSION — this catches partial-sync drift before
-# layering more on top.
+# Both phases refuse unless all four are in sync at the expected version — this
+# catches partial-sync drift. Run `bin/release.sh` with no args for full help.
 #
 # Pure functions are sourced by bin/release_test.sh; orchestration runs
 # when invoked as a program (gated by RELEASE_SH_NO_MAIN env var).
@@ -65,13 +68,32 @@ bump_version_files() {
 
 usage() {
   cat >&2 <<EOF
-Usage: $(basename "$0") X.Y.Z [--dry-run]
+Usage: $(basename "$0") <command> X.Y.Z [options]
 
-  Bumps version across all sync points, commits, tags v<X.Y.Z>, pushes,
-  opens \$EDITOR for release notes (seeded from git log since last tag),
-  then creates a GitHub release.
+Two-phase release that never pushes straight to main.
 
-  --dry-run   Print the planned actions without modifying anything.
+Commands:
+  bump X.Y.Z [-m "changelog line"]
+      Prepare the release on a branch and open a PR — NO push to main.
+      Creates branch chore/bump-vX.Y.Z, bumps all 4 sync points
+      (VERSION, README badge, frontend package.json + package-lock),
+      adds a CHANGELOG entry, commits, pushes the branch, opens a PR.
+      Review + squash-merge that PR, then run 'publish'.
+
+  publish X.Y.Z [--generate-notes]
+      After the bump PR is merged and you are on an up-to-date main:
+      tag vX.Y.Z, push the TAG (not main), create the GitHub release.
+      Refuses unless VERSION is already X.Y.Z (i.e. the bump PR is merged).
+      --generate-notes  Let GitHub auto-generate notes (no \$EDITOR step).
+
+Options:
+  --dry-run   Print planned actions without changing anything.
+
+Typical flow:
+  $(basename "$0") bump 0.77.0 -m "honest launch outcome (#221)"
+  #  ... review + squash-merge the PR on GitHub ...
+  git checkout main && git fetch origin && git reset --hard origin/main
+  $(basename "$0") publish 0.77.0
 EOF
 }
 
@@ -139,17 +161,51 @@ require_jq() {
   fi
 }
 
-main() {
+require_branch_absent() {
+  local root="$1" branch="$2"
+  if git -C "$root" show-ref --verify --quiet "refs/heads/$branch"; then
+    echo "ERROR: branch '$branch' already exists locally — delete it or finish that release first." >&2
+    exit 14
+  fi
+  if git -C "$root" ls-remote --exit-code --heads origin "$branch" >/dev/null 2>&1; then
+    echo "ERROR: branch '$branch' already exists on origin — a bump PR is likely already open." >&2
+    exit 14
+  fi
+}
+
+# insert_changelog_entry <repo_root> <version> <note>
+# Inserts "## [version] — <today>\n<note>\n" directly above the newest existing
+# "## [" entry, keeping the file newest-first. Idempotency is the caller's job
+# (the branch-absent + VERSION checks already prevent a double run).
+insert_changelog_entry() {
+  local root="$1" version="$2" note="$3"
+  local file="$root/CHANGELOG.md"
+  local today; today="$(date +%Y-%m-%d)"
+  local tmp; tmp="$(mktemp)"
+  awk -v ver="$version" -v d="$today" -v note="$note" '
+    !done && /^## \[/ {
+      print "## [" ver "] — " d
+      print note
+      print ""
+      done=1
+    }
+    { print }
+    END { if (!done) { print "## [" ver "] — " d; print note } }
+  ' "$file" > "$tmp"
+  mv "$tmp" "$file"
+}
+
+# ---------- command: bump (PR-based, never pushes to main) ----------
+
+cmd_bump() {
   set -e
   local new_version="${1:-}"
-  if [[ -z "$new_version" ]]; then
-    usage
-    exit 2
-  fi
+  [[ -n "$new_version" ]] || { usage; exit 2; }
   shift
-  local dry_run="false"
+  local note="" dry_run="false"
   while [[ $# -gt 0 ]]; do
     case "$1" in
+      -m|--message) note="${2:-}"; shift ;;
       --dry-run) dry_run="true" ;;
       *) echo "unknown flag: $1" >&2; usage; exit 2 ;;
     esac
@@ -158,75 +214,147 @@ main() {
 
   if ! validate_semver "$new_version"; then
     echo "ERROR: invalid semver '$new_version' (want X.Y.Z, no v prefix, no suffix)." >&2
-    usage
-    exit 2
+    usage; exit 2
   fi
 
   require_jq
   require_gh_authenticated
 
-  local root
-  root="$(git rev-parse --show-toplevel)"
+  local root; root="$(git rev-parse --show-toplevel)"
+  local branch="chore/bump-v$new_version"
+
+  require_clean_tree "$root"
+  require_branch "$root" "main"
+  require_in_sync_with_origin "$root" "main"
+  require_tag_absent "$root" "v$new_version"
+  require_branch_absent "$root" "$branch"
+
+  local current_version; current_version="$(<"$root/VERSION")"
+  if [[ "$current_version" == "$new_version" ]]; then
+    echo "ERROR: VERSION already at $new_version — nothing to bump." >&2
+    exit 1
+  fi
+  if ! verify_version_sync "$root" "$current_version"; then
+    echo "ERROR: version files out of sync with VERSION=$current_version." >&2
+    echo "  Expected VERSION, README badge, frontend/package.json + package-lock all at $current_version." >&2
+    exit 3
+  fi
+
+  if [[ -z "$note" ]]; then
+    note="_TODO: one-line release summary (edit CHANGELOG before merging)_"
+    echo "WARNING: no -m note given — inserting a TODO placeholder in CHANGELOG." >&2
+  fi
+
+  echo "current version: $current_version"
+  echo "new version:     $new_version"
+  echo "branch:          $branch"
+
+  if [[ "$dry_run" == "true" ]]; then
+    echo "[dry-run] would create branch $branch off main."
+    echo "[dry-run] would bump VERSION/README/package.json/package-lock to $new_version."
+    echo "[dry-run] would prepend CHANGELOG entry: ## [$new_version] — $(date +%Y-%m-%d) / $note"
+    echo "[dry-run] would commit, push $branch, open a PR (base main). No push to main."
+    exit 0
+  fi
+
+  git -C "$root" checkout -b "$branch"
+  bump_version_files "$root" "$current_version" "$new_version"
+  if ! verify_version_sync "$root" "$new_version"; then
+    echo "ERROR: post-bump sync verification failed; reverting and aborting." >&2
+    git -C "$root" checkout -- VERSION README.md frontend/package.json frontend/package-lock.json
+    git -C "$root" checkout main
+    git -C "$root" branch -D "$branch"
+    exit 4
+  fi
+  insert_changelog_entry "$root" "$new_version" "$note"
+
+  git -C "$root" add VERSION README.md frontend/package.json frontend/package-lock.json CHANGELOG.md
+  git -C "$root" commit -m "chore: bump to v$new_version"
+  git -C "$root" push -u origin "$branch"
+
+  gh pr create --base main --head "$branch" \
+    --title "chore: release v$new_version" \
+    --body "Version bump $current_version → $new_version (all 4 sync points) + CHANGELOG.
+
+Changelog line: $note
+
+After squash-merge, publish the release:
+  git checkout main && git fetch origin && git reset --hard origin/main
+  bin/release.sh publish $new_version"
+
+  echo
+  echo "Bump PR opened for v$new_version. Review + squash-merge it, then run:"
+  echo "  git checkout main && git fetch origin && git reset --hard origin/main"
+  echo "  $(basename "$0") publish $new_version"
+}
+
+# ---------- command: publish (tag + release, never pushes to main) ----------
+
+cmd_publish() {
+  set -e
+  local new_version="${1:-}"
+  [[ -n "$new_version" ]] || { usage; exit 2; }
+  shift
+  local dry_run="false" gen_notes="false"
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --generate-notes) gen_notes="true" ;;
+      --dry-run) dry_run="true" ;;
+      *) echo "unknown flag: $1" >&2; usage; exit 2 ;;
+    esac
+    shift
+  done
+
+  if ! validate_semver "$new_version"; then
+    echo "ERROR: invalid semver '$new_version' (want X.Y.Z, no v prefix, no suffix)." >&2
+    usage; exit 2
+  fi
+
+  require_jq
+  require_gh_authenticated
+
+  local root; root="$(git rev-parse --show-toplevel)"
 
   require_clean_tree "$root"
   require_branch "$root" "main"
   require_in_sync_with_origin "$root" "main"
   require_tag_absent "$root" "v$new_version"
 
-  local current_version
-  current_version="$(<"$root/VERSION")"
-
-  if [[ "$current_version" == "$new_version" ]]; then
-    echo "ERROR: VERSION already at $new_version — nothing to do." >&2
+  local current_version; current_version="$(<"$root/VERSION")"
+  if [[ "$current_version" != "$new_version" ]]; then
+    echo "ERROR: VERSION is $current_version, not $new_version." >&2
+    echo "       Merge the bump PR first:  $(basename "$0") bump $new_version" >&2
     exit 1
   fi
-
-  if ! verify_version_sync "$root" "$current_version"; then
-    echo "ERROR: version files out of sync with VERSION=$current_version." >&2
-    echo "  Expected all of VERSION, README badge, frontend/package.json (.version)," >&2
-    echo "  frontend/package-lock.json (.version + .packages[\"\"].version) to be at $current_version." >&2
+  if ! verify_version_sync "$root" "$new_version"; then
+    echo "ERROR: version files out of sync with VERSION=$new_version — the bump merge is incomplete." >&2
     exit 3
   fi
 
-  echo "current version: $current_version"
-  echo "new version:     $new_version"
+  echo "publishing v$new_version from $(git -C "$root" rev-parse --short HEAD)"
 
   if [[ "$dry_run" == "true" ]]; then
-    echo "[dry-run] would update VERSION, README badge, frontend/package.json, frontend/package-lock.json."
-    echo "[dry-run] would commit \"chore: bump to v$new_version\", tag v$new_version, push to origin."
-    echo "[dry-run] would open \$EDITOR for release notes, then 'gh release create'."
+    echo "[dry-run] would tag v$new_version on main HEAD and push the TAG (not main)."
+    echo "[dry-run] would create the GitHub release (notes: $([[ "$gen_notes" == "true" ]] && echo auto || echo \$EDITOR-seeded))."
     exit 0
   fi
 
-  bump_version_files "$root" "$current_version" "$new_version"
-
-  if ! verify_version_sync "$root" "$new_version"; then
-    echo "ERROR: post-bump sync verification failed; reverting." >&2
-    git -C "$root" checkout -- VERSION README.md frontend/package.json frontend/package-lock.json
-    exit 4
-  fi
-
-  git -C "$root" add VERSION README.md frontend/package.json frontend/package-lock.json
-  git -C "$root" commit -m "chore: bump to v$new_version"
   git -C "$root" tag -a "v$new_version" -m "v$new_version"
-
-  # Once we start pushing to origin, partial failure leaves state on remote.
-  # Each error message names exactly what's stuck so a human can finish by hand.
-  # (Re-running release.sh after a partial push will refuse: VERSION already at
-  # new_version. Recovery is always: finish manually with the printed commands.)
-  if ! git -C "$root" push origin main; then
-    echo "ERROR: failed to push main. Bump commit is local-only." >&2
-    echo "       Recover:" >&2
-    echo "         git push origin main && \\" >&2
-    echo "         git push origin v$new_version && \\" >&2
-    echo "         gh release create v$new_version --title v$new_version --generate-notes" >&2
-    exit 11
-  fi
   if ! git -C "$root" push origin "v$new_version"; then
-    echo "ERROR: failed to push tag v$new_version. main is pushed but tag is local-only." >&2
+    echo "ERROR: failed to push tag v$new_version (main is untouched)." >&2
     echo "       Recover: git push origin v$new_version" >&2
-    echo "       Then run: gh release create v$new_version --title v$new_version --generate-notes" >&2
+    echo "       Then:    gh release create v$new_version --title v$new_version --generate-notes" >&2
     exit 12
+  fi
+
+  if [[ "$gen_notes" == "true" ]]; then
+    if ! gh release create "v$new_version" --title "v$new_version" --generate-notes; then
+      echo "ERROR: gh release create failed. Tag is published; finish with:" >&2
+      echo "       gh release create v$new_version --title v$new_version --generate-notes" >&2
+      exit 13
+    fi
+    echo "Released v$new_version."
+    return 0
   fi
 
   local notes_file
@@ -236,8 +364,8 @@ main() {
   notes_file="$(mktemp -t release-notes-XXXXXX)"
   mv -- "$notes_file" "${notes_file}.md"
   notes_file="${notes_file}.md"
-  # Single-eval the path into the trap body so cleanup survives main()'s
-  # local going out of scope when the function returns (issue #70).
+  # Single-eval the path into the trap body so cleanup survives the function's
+  # local going out of scope when it returns (issue #70).
   trap "rm -f -- '$notes_file'" EXIT
   local last_tag
   last_tag="$(git -C "$root" describe --tags --abbrev=0 "v${new_version}^" 2>/dev/null || true)"
@@ -266,6 +394,16 @@ main() {
   fi
 
   echo "Released v$new_version."
+}
+
+main() {
+  local cmd="${1:-}"
+  case "$cmd" in
+    bump)    shift; cmd_bump "$@" ;;
+    publish) shift; cmd_publish "$@" ;;
+    -h|--help|"") usage; exit 2 ;;
+    *) echo "unknown command: $cmd" >&2; usage; exit 2 ;;
+  esac
 }
 
 # When sourced for testing, do not run main. Pure functions are defined above.
