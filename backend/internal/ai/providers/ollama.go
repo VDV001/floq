@@ -14,6 +14,12 @@ import (
 type OllamaProvider struct {
 	client openai.Client
 	model  string
+	// baseURL and httpClient are retained (in addition to the OpenAI
+	// client built from them) so CheckHealth can hit Ollama's native
+	// GET {baseURL}/api/tags endpoint, which lives outside the /v1
+	// OpenAI-compat surface.
+	baseURL    string
+	httpClient *http.Client
 }
 
 func NewOllamaProvider(baseURL, model string, httpClient *http.Client) *OllamaProvider {
@@ -25,7 +31,27 @@ func NewOllamaProvider(baseURL, model string, httpClient *http.Client) *OllamaPr
 		opts = append(opts, option.WithHTTPClient(httpClient))
 	}
 	client := openai.NewClient(opts...)
-	return &OllamaProvider{client: client, model: model}
+	return &OllamaProvider{client: client, model: model, baseURL: baseURL, httpClient: httpClient}
+}
+
+// ollamaTagsResponse mirrors the subset of GET /api/tags we consume.
+type ollamaTagsResponse struct {
+	Models []struct {
+		Name string `json:"name"`
+	} `json:"models"`
+}
+
+// CheckHealth verifies Ollama is reachable and the configured model is
+// available locally, without triggering a (slow, cold-start) generation.
+func (p *OllamaProvider) CheckHealth(_ context.Context) error {
+	// RED stub — replaced with the real probe in the GREEN commit.
+	return nil
+}
+
+// ollamaModelMatches reports whether an installed tag satisfies the
+// configured model name. Ollama implicitly tags a bare name as ":latest".
+func ollamaModelMatches(_, _ string) bool {
+	return false
 }
 
 func (p *OllamaProvider) Name() string { return "ollama" }
