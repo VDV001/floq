@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"crypto/tls"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"log"
 	"net"
@@ -96,6 +97,17 @@ func buildAITester(cfg *config.Config, httpClient *http.Client) settings.AITeste
 			return "", fmt.Errorf("%w: %s", settings.ErrAIUnknownProvider, provider)
 		}
 
+		// Providers that implement HealthChecker (Ollama) offer a cheap
+		// liveness probe. Prefer it over a full generation, which for
+		// local back-ends loads the model into memory and trips the
+		// connection-test timeout on a cold start (#227).
+		if hc, ok := p.(ai.HealthChecker); ok {
+			if err := hc.CheckHealth(ctx); err != nil {
+				return "", mapAIHealthError(err)
+			}
+			return p.Name(), nil
+		}
+
 		resp, err := p.Complete(ctx, ai.CompletionRequest{
 			Messages:  []ai.Message{{Role: "user", Content: "Ответь одним словом: привет"}},
 			MaxTokens: 256,
@@ -105,6 +117,21 @@ func buildAITester(cfg *config.Config, httpClient *http.Client) settings.AITeste
 		}
 		_ = resp
 		return p.Name(), nil
+	}
+}
+
+// mapAIHealthError translates a provider-vocabulary health-check error
+// into the settings-handler vocabulary, so the handler can render Russian
+// copy via errors.Is without importing the providers package. Unknown
+// errors pass through unwrapped.
+func mapAIHealthError(err error) error {
+	switch {
+	case errors.Is(err, providers.ErrOllamaModelNotFound):
+		return fmt.Errorf("%w: %v", settings.ErrAIModelNotFound, err)
+	case errors.Is(err, providers.ErrOllamaUnreachable):
+		return fmt.Errorf("%w: %v", settings.ErrAIUnreachable, err)
+	default:
+		return err
 	}
 }
 
