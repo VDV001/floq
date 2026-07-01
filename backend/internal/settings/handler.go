@@ -183,8 +183,10 @@ func maskSecret(s string) string {
 
 // domainToDTO converts a domain.Settings to the JSON DTO.
 func domainToDTO(ds *domain.Settings) Settings {
-	aiActive := ds.AIProvider == "ollama" || (ds.AIProvider != "" && ds.AIAPIKey != "")
-
+	// A channel reads as "active" (onboarding «Готово») only after a
+	// connection test passed for its current credentials — see #222.
+	// "Fields present" is deliberately NOT enough: it made Ollama show
+	// done with no reachability check and accepted unvalidated cloud keys.
 	return Settings{
 		FullName: ds.FullName,
 		Email:    ds.Email,
@@ -201,14 +203,14 @@ func domainToDTO(ds *domain.Settings) Settings {
 		SMTPPort:            ds.SMTPPort,
 		SMTPUser:            ds.SMTPUser,
 		SMTPPassword:        maskSecret(ds.SMTPPassword),
-		SMTPActive:          ds.SMTPHost != "" && ds.SMTPUser != "" && ds.SMTPPassword != "",
+		SMTPActive:          ds.SMTPVerified,
 		AIProvider:          ds.AIProvider,
 		AIModel:             ds.AIModel,
 		AIAPIKey:            maskSecret(ds.AIAPIKey),
 		AIStyleCheckEnabled: ds.AIStyleCheckEnabled,
-		IMAPActive:          ds.IMAPHost != "" && ds.IMAPUser != "" && ds.IMAPPassword != "",
+		IMAPActive:          ds.IMAPVerified,
 		ResendActive:        ds.ResendAPIKey != "",
-		AIActive:            aiActive,
+		AIActive:            ds.AIVerified,
 		NotifyTelegram:      ds.NotifyTelegram,
 		NotifyEmailDigest:   ds.NotifyEmailDigest,
 		AutoQualify:         ds.AutoQualify,

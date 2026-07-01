@@ -993,26 +993,9 @@ func TestHandler_UpdateSettings_ReadBodyError(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, rec.Code)
 }
 
-// --- domainToDTO computed: SMTPActive ---
-
-func TestDomainToDTO_SMTPActive(t *testing.T) {
-	tests := []struct {
-		name     string
-		ds       domain.Settings
-		expected bool
-	}{
-		{"all set", domain.Settings{SMTPHost: "smtp.gmail.com", SMTPUser: "u", SMTPPassword: "p"}, true},
-		{"missing host", domain.Settings{SMTPUser: "u", SMTPPassword: "p"}, false},
-		{"missing user", domain.Settings{SMTPHost: "h", SMTPPassword: "p"}, false},
-		{"missing password", domain.Settings{SMTPHost: "h", SMTPUser: "u"}, false},
-	}
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			dto := domainToDTO(&tc.ds)
-			assert.Equal(t, tc.expected, dto.SMTPActive)
-		})
-	}
-}
+// SMTPActive honesty (#222) is covered by
+// TestDomainToDTO_ComputedFields_SMTPActive in usecase_test.go — it now
+// keys off SMTPVerified, not "fields present".
 
 func TestHandler_TestSMTP_ConnectionRefused(t *testing.T) {
 	repo := newMockSettingsRepo()

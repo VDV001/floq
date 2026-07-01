@@ -1,11 +1,51 @@
 package settings
 
 import (
+	"context"
 	"testing"
 
 	"github.com/daniil/floq/internal/settings/domain"
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
+
+// TestUpdateSettings_VerifiedFlags pins the honest-«Готово» wiring (#222):
+// a channel's *_verified flag is set from an explicit client field (sent
+// right after a passing connection test) and is cleared whenever the
+// channel's credentials change without a fresh verification.
+func TestUpdateSettings_VerifiedFlags(t *testing.T) {
+	cases := []struct {
+		name      string
+		body      string
+		field     string
+		wantSet   bool // field present in the update at all
+		wantValue bool
+	}{
+		{"ai_verified true persists", `{"ai_provider":"openai","ai_model":"gpt-4o","ai_api_key":"sk","ai_verified":true}`, "ai_verified", true, true},
+		{"ai creds change without verify clears", `{"ai_api_key":"sk-new"}`, "ai_verified", true, false},
+		{"ai model change clears", `{"ai_model":"gpt-4o-mini"}`, "ai_verified", true, false},
+		{"smtp verified true persists", `{"smtp_host":"h","smtp_user":"u","smtp_password":"p","smtp_verified":true}`, "smtp_verified", true, true},
+		{"smtp creds change clears", `{"smtp_password":"new"}`, "smtp_verified", true, false},
+		{"imap verified true persists", `{"imap_host":"h","imap_user":"u","imap_verified":true}`, "imap_verified", true, true},
+		{"imap creds change clears", `{"imap_host":"other"}`, "imap_verified", true, false},
+		{"unrelated update leaves ai_verified untouched", `{"notify_telegram":true}`, "ai_verified", false, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			repo := newMockSettingsRepo()
+			uc := NewUseCase(repo, &mockTelegramValidator{})
+			raw, input := parseSettingsBody([]byte(tc.body))
+			_, err := uc.UpdateSettings(context.Background(), uuid.New(), raw, input)
+			require.NoError(t, err)
+			v, ok := repo.updated[tc.field]
+			assert.Equal(t, tc.wantSet, ok, "field %q presence in update", tc.field)
+			if tc.wantSet {
+				assert.Equal(t, tc.wantValue, v, "field %q value", tc.field)
+			}
+		})
+	}
+}
 
 func TestMaskSecret_Empty(t *testing.T) {
 	assert.Equal(t, "", maskSecret(""))
@@ -31,42 +71,41 @@ func TestMaskSecret_ExactlyFiveChars(t *testing.T) {
 	assert.Equal(t, "...2345", maskSecret("12345"))
 }
 
+// #222: the *Active DTO flags reflect a PASSED connection test
+// (*Verified), not merely "fields present". "Filled but unverified" must
+// read as NOT active — that was the false-«Готово» bug.
+
 func TestDomainToDTO_ComputedFields_IMAPActive(t *testing.T) {
 	tests := []struct {
 		name     string
 		ds       domain.Settings
 		expected bool
 	}{
-		{
-			name:     "all IMAP fields set",
-			ds:       domain.Settings{IMAPHost: "imap.gmail.com", IMAPUser: "user", IMAPPassword: "pass"},
-			expected: true,
-		},
-		{
-			name:     "missing host",
-			ds:       domain.Settings{IMAPHost: "", IMAPUser: "user", IMAPPassword: "pass"},
-			expected: false,
-		},
-		{
-			name:     "missing user",
-			ds:       domain.Settings{IMAPHost: "imap.gmail.com", IMAPUser: "", IMAPPassword: "pass"},
-			expected: false,
-		},
-		{
-			name:     "missing password",
-			ds:       domain.Settings{IMAPHost: "imap.gmail.com", IMAPUser: "user", IMAPPassword: ""},
-			expected: false,
-		},
-		{
-			name:     "all empty",
-			ds:       domain.Settings{},
-			expected: false,
-		},
+		{"verified", domain.Settings{IMAPVerified: true}, true},
+		{"filled but unverified", domain.Settings{IMAPHost: "imap.gmail.com", IMAPUser: "user", IMAPPassword: "pass"}, false},
+		{"verified even if fields look empty (test used stored creds)", domain.Settings{IMAPVerified: true, IMAPHost: ""}, true},
+		{"all empty", domain.Settings{}, false},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			dto := domainToDTO(&tc.ds)
-			assert.Equal(t, tc.expected, dto.IMAPActive)
+			assert.Equal(t, tc.expected, domainToDTO(&tc.ds).IMAPActive)
+		})
+	}
+}
+
+func TestDomainToDTO_ComputedFields_SMTPActive(t *testing.T) {
+	tests := []struct {
+		name     string
+		ds       domain.Settings
+		expected bool
+	}{
+		{"verified", domain.Settings{SMTPVerified: true}, true},
+		{"filled but unverified", domain.Settings{SMTPHost: "smtp.x", SMTPUser: "u", SMTPPassword: "p"}, false},
+		{"all empty", domain.Settings{}, false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.expected, domainToDTO(&tc.ds).SMTPActive)
 		})
 	}
 }
@@ -91,23 +130,18 @@ func TestDomainToDTO_ComputedFields_ResendActive(t *testing.T) {
 func TestDomainToDTO_ComputedFields_AIActive(t *testing.T) {
 	tests := []struct {
 		name     string
-		provider string
-		apiKey   string
+		ds       domain.Settings
 		expected bool
 	}{
-		{"ollama without key", "ollama", "", true},
-		{"ollama with key", "ollama", "some-key", true},
-		{"openai with key", "openai", "sk-abc", true},
-		{"openai without key", "openai", "", false},
-		{"anthropic with key", "anthropic", "sk-ant-abc", true},
-		{"anthropic without key", "anthropic", "", false},
-		{"no provider no key", "", "", false},
-		{"no provider with key", "", "sk-abc", false},
+		{"verified", domain.Settings{AIVerified: true}, true},
+		{"ollama unverified (the reported bug)", domain.Settings{AIProvider: "ollama"}, false},
+		{"cloud key present but unverified", domain.Settings{AIProvider: "openai", AIAPIKey: "sk-abc"}, false},
+		{"verified ollama (passed /api/tags ping)", domain.Settings{AIProvider: "ollama", AIVerified: true}, true},
+		{"nothing set", domain.Settings{}, false},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			dto := domainToDTO(&domain.Settings{AIProvider: tc.provider, AIAPIKey: tc.apiKey})
-			assert.Equal(t, tc.expected, dto.AIActive)
+			assert.Equal(t, tc.expected, domainToDTO(&tc.ds).AIActive)
 		})
 	}
 }
@@ -122,10 +156,12 @@ func TestDomainToDTO_FieldMapping(t *testing.T) {
 		IMAPPort:           "993",
 		IMAPUser:           "john@gmail.com",
 		IMAPPassword:       "secret",
+		IMAPVerified:       true,
 		ResendAPIKey:       "re_key",
 		AIProvider:         "openai",
 		AIModel:            "gpt-4o",
 		AIAPIKey:           "sk-test",
+		AIVerified:         true,
 		NotifyTelegram:     true,
 		NotifyEmailDigest:  false,
 		AutoQualify:        true,

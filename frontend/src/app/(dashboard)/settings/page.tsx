@@ -23,7 +23,7 @@ export default function SettingsPage() {
   const core = useSettingsCore();
   const tgBot = useTelegramBot(core.settings, core.setSettings);
   const tgAcc = useTelegramAccount();
-  const imap = useImapSettings(core.settings);
+  const imap = useImapSettings(core.settings, core.setSettings);
   const resend = useResendSettings(core.settings, core.setSettings);
   const smtp = useSmtpSettings(core.settings, core.setSettings);
   const ai = useAiSettings(core.settings, core.setSettings);
