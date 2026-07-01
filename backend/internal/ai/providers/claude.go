@@ -46,6 +46,19 @@ func NewClaudeProvider(apiKey, overrideModel string, httpClient *http.Client) *C
 
 func (p *ClaudeProvider) Name() string { return "claude" }
 
+// Compile-time check: ClaudeProvider offers a cheap liveness probe so the
+// connection test avoids a (billed) generation.
+var _ ai.HealthChecker = (*ClaudeProvider)(nil)
+
+// CheckHealth verifies the API key and reachability via the free
+// GET /v1/models endpoint — no generation, so the connection test neither
+// bills tokens nor trips a generation timeout. Retries are disabled so a
+// throttled or down back-end fails fast instead of stalling the test.
+func (p *ClaudeProvider) CheckHealth(_ context.Context) error {
+	// RED stub — real probe lands in the GREEN commit.
+	return nil
+}
+
 // modelForMode resolves the concrete model name. User-set overrideModel
 // always wins (per the principle that user configuration beats defaults).
 // Falls back to the Execute-mode default for unknown modes — defensive
