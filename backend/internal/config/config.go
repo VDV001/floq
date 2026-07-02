@@ -46,6 +46,10 @@ type Config struct {
 	OllamaModel      string
 	GroqAPIKey       string
 	GroqModel        string
+	GeminiAPIKey     string
+	GeminiModel      string
+	OpenRouterAPIKey string
+	OpenRouterModel  string
 	TelegramBotToken string
 	ResendAPIKey     string
 	SMTPFrom         string
@@ -202,6 +206,10 @@ func Load() *Config {
 		OllamaModel:                       getEnv("OLLAMA_MODEL", "llama3"),
 		GroqAPIKey:                        os.Getenv("GROQ_API_KEY"),
 		GroqModel:                         getEnv("GROQ_MODEL", "openai/gpt-oss-120b"),
+		GeminiAPIKey:                      os.Getenv("GEMINI_API_KEY"),
+		GeminiModel:                       getEnv("GEMINI_MODEL", "gemini-2.0-flash"),
+		OpenRouterAPIKey:                  os.Getenv("OPENROUTER_API_KEY"),
+		OpenRouterModel:                   getEnv("OPENROUTER_MODEL", "openai/gpt-4o-mini"),
 		TelegramBotToken:                  os.Getenv("TELEGRAM_BOT_TOKEN"),
 		ResendAPIKey:                      os.Getenv("RESEND_API_KEY"),
 		SMTPFrom:                          os.Getenv("SMTP_FROM"),
