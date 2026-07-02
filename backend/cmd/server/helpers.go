@@ -88,6 +88,22 @@ func buildAITester(cfg *config.Config, httpClient *http.Client) settings.AITeste
 				model = cfg.GroqModel
 			}
 			p = providers.NewOpenAICompatibleProvider(apiKey, model, "groq", "https://api.groq.com/openai/v1", httpClient)
+		case "gemini":
+			if apiKey == "" {
+				apiKey = cfg.GeminiAPIKey
+			}
+			if model == "" {
+				model = cfg.GeminiModel
+			}
+			p = providers.NewOpenAICompatibleProvider(apiKey, model, "gemini", "https://generativelanguage.googleapis.com/v1beta/openai", httpClient)
+		case "openrouter":
+			if apiKey == "" {
+				apiKey = cfg.OpenRouterAPIKey
+			}
+			if model == "" {
+				model = cfg.OpenRouterModel
+			}
+			p = providers.NewOpenAICompatibleProvider(apiKey, model, "openrouter", "https://openrouter.ai/api/v1", httpClient)
 		case "ollama":
 			if model == "" {
 				model = cfg.OllamaModel
