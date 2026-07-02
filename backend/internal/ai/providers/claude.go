@@ -71,9 +71,16 @@ var _ ai.ModelLister = (*ClaudeProvider)(nil)
 
 // ListModels returns Anthropic's available models via GET /v1/models,
 // using the human-readable DisplayName as Meta. Retries disabled.
-func (p *ClaudeProvider) ListModels(_ context.Context) ([]ai.ModelInfo, error) {
-	// RED stub — real listing lands in the GREEN commit.
-	return nil, nil
+func (p *ClaudeProvider) ListModels(ctx context.Context) ([]ai.ModelInfo, error) {
+	page, err := p.client.Models.List(ctx, anthropic.ModelListParams{}, option.WithMaxRetries(0))
+	if err != nil {
+		return nil, fmt.Errorf("list models: %w", err)
+	}
+	models := make([]ai.ModelInfo, 0, len(page.Data))
+	for _, m := range page.Data {
+		models = append(models, ai.ModelInfo{ID: m.ID, Meta: m.DisplayName})
+	}
+	return models, nil
 }
 
 // modelForMode resolves the concrete model name. User-set overrideModel
