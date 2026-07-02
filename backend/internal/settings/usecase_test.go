@@ -29,6 +29,8 @@ func TestUpdateSettings_VerifiedFlags(t *testing.T) {
 		{"smtp creds change clears", `{"smtp_password":"new"}`, "smtp_verified", true, false},
 		{"imap verified true persists", `{"imap_host":"h","imap_user":"u","imap_verified":true}`, "imap_verified", true, true},
 		{"imap creds change clears", `{"imap_host":"other"}`, "imap_verified", true, false},
+		{"resend verified true persists", `{"resend_api_key":"re_x","resend_verified":true}`, "resend_verified", true, true},
+		{"resend key change clears", `{"resend_api_key":"re_new"}`, "resend_verified", true, false},
 		{"unrelated update leaves ai_verified untouched", `{"notify_telegram":true}`, "ai_verified", false, false},
 	}
 	for _, tc := range cases {
