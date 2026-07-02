@@ -151,8 +151,23 @@ func buildAITester(cfg *config.Config, httpClient *http.Client) settings.AITeste
 // them into an empty list (UI falls back to manual entry).
 func buildAIModelLister(cfg *config.Config, httpClient *http.Client) settings.AIModelLister {
 	return func(ctx context.Context, provider, model, apiKey string) ([]settings.AIModel, error) {
-		// RED stub — real listing lands in the GREEN commit.
-		return nil, nil
+		p, err := buildAIProvider(cfg, httpClient, provider, model, apiKey)
+		if err != nil {
+			return nil, err
+		}
+		lister, ok := p.(ai.ModelLister)
+		if !ok {
+			return nil, fmt.Errorf("provider %q cannot list models", provider)
+		}
+		models, err := lister.ListModels(ctx)
+		if err != nil {
+			return nil, err
+		}
+		out := make([]settings.AIModel, 0, len(models))
+		for _, m := range models {
+			out = append(out, settings.AIModel{ID: m.ID, Meta: m.Meta})
+		}
+		return out, nil
 	}
 }
 

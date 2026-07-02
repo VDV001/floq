@@ -258,6 +258,29 @@ func TestBuildAITester_OpenRouter_OK_ReportsName(t *testing.T) {
 	assert.Equal(t, "openrouter", name, "the OpenRouter provider must report its own name")
 }
 
+func TestBuildAIModelLister_OpenAI_MapsModels(t *testing.T) {
+	client := &http.Client{Transport: roundTripperFunc(func(_ *http.Request) (*http.Response, error) {
+		return &http.Response{
+			StatusCode: 200,
+			Body:       io.NopCloser(strings.NewReader(`{"object":"list","data":[{"id":"gpt-4o","object":"model","created":1,"owned_by":"openai"}]}`)),
+			Header:     http.Header{"Content-Type": []string{"application/json"}},
+		}, nil
+	})}
+	lister := buildAIModelLister(&config.Config{}, client)
+	models, err := lister(context.Background(), "openai", "gpt-4o", "sk-key")
+	require.NoError(t, err)
+	require.Len(t, models, 1)
+	assert.Equal(t, "gpt-4o", models[0].ID)
+}
+
+func TestBuildAIModelLister_UnknownProvider_Errors(t *testing.T) {
+	lister := buildAIModelLister(&config.Config{}, nil)
+	_, err := lister(context.Background(), "definitely-not-real", "", "")
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, settings.ErrAIUnknownProvider),
+		"unknown provider must wrap settings.ErrAIUnknownProvider; got: %v", err)
+}
+
 func TestBuildSMTPTester_NoUIStringsLeak(t *testing.T) {
 	// Composition-root helpers must NOT carry user-facing copy.
 	// settings/handler.go owns the Russian translation via errors.Is.
