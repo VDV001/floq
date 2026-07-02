@@ -39,13 +39,17 @@ func NewOllamaProvider(baseURL, model string, httpClient *http.Client) *OllamaPr
 // ollamaTagsResponse mirrors the subset of GET /api/tags we consume.
 type ollamaTagsResponse struct {
 	Models []struct {
-		Name string `json:"name"`
+		Name    string `json:"name"`
+		Details struct {
+			ParameterSize string `json:"parameter_size"`
+		} `json:"details"`
 	} `json:"models"`
 }
 
-// CheckHealth verifies Ollama is reachable and the configured model is
-// available locally, without triggering a (slow, cold-start) generation.
-func (p *OllamaProvider) CheckHealth(ctx context.Context) error {
+// fetchTags performs GET {baseURL}/api/tags and decodes the model list.
+// Shared by CheckHealth and ListModels; any transport/status/decode
+// failure is wrapped in ErrOllamaUnreachable.
+func (p *OllamaProvider) fetchTags(ctx context.Context) (*ollamaTagsResponse, error) {
 	hc := p.httpClient
 	if hc == nil {
 		hc = http.DefaultClient
@@ -53,24 +57,33 @@ func (p *OllamaProvider) CheckHealth(ctx context.Context) error {
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, p.baseURL+"/api/tags", nil)
 	if err != nil {
-		return fmt.Errorf("%w: %v", ErrOllamaUnreachable, err)
+		return nil, fmt.Errorf("%w: %v", ErrOllamaUnreachable, err)
 	}
 
 	resp, err := hc.Do(req)
 	if err != nil {
-		return fmt.Errorf("%w: %v", ErrOllamaUnreachable, err)
+		return nil, fmt.Errorf("%w: %v", ErrOllamaUnreachable, err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("%w: status %d", ErrOllamaUnreachable, resp.StatusCode)
+		return nil, fmt.Errorf("%w: status %d", ErrOllamaUnreachable, resp.StatusCode)
 	}
 
 	var tags ollamaTagsResponse
 	if err := json.NewDecoder(resp.Body).Decode(&tags); err != nil {
-		return fmt.Errorf("%w: %v", ErrOllamaUnreachable, err)
+		return nil, fmt.Errorf("%w: %v", ErrOllamaUnreachable, err)
 	}
+	return &tags, nil
+}
 
+// CheckHealth verifies Ollama is reachable and the configured model is
+// available locally, without triggering a (slow, cold-start) generation.
+func (p *OllamaProvider) CheckHealth(ctx context.Context) error {
+	tags, err := p.fetchTags(ctx)
+	if err != nil {
+		return err
+	}
 	for _, m := range tags.Models {
 		if ollamaModelMatches(m.Name, p.model) {
 			return nil
