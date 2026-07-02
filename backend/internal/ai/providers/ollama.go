@@ -97,9 +97,16 @@ var _ ai.ModelLister = (*OllamaProvider)(nil)
 
 // ListModels returns the locally-pulled models from GET /api/tags, with
 // the parameter size (e.g. "4B") as Meta where Ollama reports it.
-func (p *OllamaProvider) ListModels(_ context.Context) ([]ai.ModelInfo, error) {
-	// RED stub — real listing lands in the GREEN commit.
-	return nil, nil
+func (p *OllamaProvider) ListModels(ctx context.Context) ([]ai.ModelInfo, error) {
+	tags, err := p.fetchTags(ctx)
+	if err != nil {
+		return nil, err
+	}
+	models := make([]ai.ModelInfo, 0, len(tags.Models))
+	for _, m := range tags.Models {
+		models = append(models, ai.ModelInfo{ID: m.Name, Meta: m.Details.ParameterSize})
+	}
+	return models, nil
 }
 
 // ollamaModelMatches reports whether an installed tag satisfies the
