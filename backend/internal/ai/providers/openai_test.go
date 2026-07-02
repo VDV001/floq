@@ -28,7 +28,7 @@ func TestOpenAIProvider_AnalyzeImage_Success(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	p := NewOpenAICompatibleProvider("test-key", "gpt-4o-mini", srv.URL+"/", nil)
+	p := NewOpenAICompatibleProvider("test-key", "gpt-4o-mini", "openai", srv.URL+"/", nil)
 
 	got, err := p.AnalyzeImage(context.Background(), []byte("png-bytes"), "image/png", "Transcribe this")
 	require.NoError(t, err)
@@ -72,7 +72,7 @@ func TestOpenAIProvider_AnalyzeImage_ProviderError(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	p := NewOpenAICompatibleProvider("test-key", "gpt-4o-mini", srv.URL+"/", nil)
+	p := NewOpenAICompatibleProvider("test-key", "gpt-4o-mini", "openai", srv.URL+"/", nil)
 	_, err := p.AnalyzeImage(context.Background(), []byte("png"), "image/png", "p")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "analyze image")

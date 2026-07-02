@@ -172,7 +172,7 @@ func (d *DynamicProvider) resolve(ctx context.Context) (ai.Provider, error) {
 		}
 		p = NewOpenAIProvider(apiKey, model, opts...)
 	case "groq":
-		p = NewOpenAICompatibleProvider(apiKey, model, "https://api.groq.com/openai/v1", d.httpClient)
+		p = NewOpenAICompatibleProvider(apiKey, model, "groq", "https://api.groq.com/openai/v1", d.httpClient)
 	case "ollama":
 		p = NewOllamaProvider(d.fallbackCfg.OllamaBaseURL, model, d.httpClient)
 	default:
