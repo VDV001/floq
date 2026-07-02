@@ -25,6 +25,10 @@ type OpenAIProvider struct {
 	// regardless of the request's ModelMode (set via user settings
 	// AIModel). Empty string means "use the per-mode default map".
 	overrideModel string
+	// name is the provider's reported identity. Plain OpenAI is "openai";
+	// OpenAI-compatible back-ends (Groq, Together, …) set their own so the
+	// connection test and audit log name the real provider (#238).
+	name string
 }
 
 // openaiModelByMode maps workload intent to the OpenAI model best suited
@@ -44,6 +48,7 @@ func NewOpenAIProvider(apiKey, overrideModel string, opts ...option.RequestOptio
 	return &OpenAIProvider{
 		client:        openai.NewClient(clientOpts...),
 		overrideModel: overrideModel,
+		name:          "openai",
 	}
 }
 
@@ -64,12 +69,16 @@ func (p *OpenAIProvider) modelForMode(mode ai.ModelMode) string {
 // Works with Groq, Together, Fireworks, etc. The model parameter is used
 // as overrideModel — Groq/Together users typically pin a specific model,
 // not Floq's per-mode defaults (which target the official OpenAI catalog).
-func NewOpenAICompatibleProvider(apiKey, model, baseURL string, httpClient *http.Client) *OpenAIProvider {
+// name is the provider's reported identity (e.g. "groq"), so the
+// connection test names the real back-end rather than "openai" (#238).
+func NewOpenAICompatibleProvider(apiKey, model, name, baseURL string, httpClient *http.Client) *OpenAIProvider {
 	opts := []option.RequestOption{option.WithBaseURL(baseURL)}
 	if httpClient != nil {
 		opts = append(opts, option.WithHTTPClient(httpClient))
 	}
-	return NewOpenAIProvider(apiKey, model, opts...)
+	p := NewOpenAIProvider(apiKey, model, opts...)
+	p.name = name
+	return p
 }
 
 func (p *OpenAIProvider) Name() string { return "openai" }

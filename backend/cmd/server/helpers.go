@@ -87,7 +87,7 @@ func buildAITester(cfg *config.Config, httpClient *http.Client) settings.AITeste
 			if model == "" {
 				model = cfg.GroqModel
 			}
-			p = providers.NewOpenAICompatibleProvider(apiKey, model, "https://api.groq.com/openai/v1", httpClient)
+			p = providers.NewOpenAICompatibleProvider(apiKey, model, "groq", "https://api.groq.com/openai/v1", httpClient)
 		case "ollama":
 			if model == "" {
 				model = cfg.OllamaModel
