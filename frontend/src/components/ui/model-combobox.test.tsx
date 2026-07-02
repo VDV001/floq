@@ -63,6 +63,35 @@ describe("ModelCombobox (#229)", () => {
     expect(onChange).toHaveBeenCalledWith("my-custom-model");
   });
 
+  it("commits typed custom model on outside click when it matches no option (#229 I2)", () => {
+    const onChange = vi.fn();
+    render(
+      <div>
+        <ModelCombobox value="" onChange={onChange} options={opts} />
+        <button>outside</button>
+      </div>
+    );
+    fireEvent.click(screen.getByText("Выберите модель"));
+    fireEvent.change(screen.getByPlaceholderText(/Поиск модели/), { target: { value: "my-custom-model" } });
+    fireEvent.mouseDown(screen.getByText("outside"));
+    expect(onChange).toHaveBeenCalledWith("my-custom-model");
+  });
+
+  it("does NOT commit a filter string on outside click (#229 I2)", () => {
+    const onChange = vi.fn();
+    render(
+      <div>
+        <ModelCombobox value="" onChange={onChange} options={opts} />
+        <button>outside</button>
+      </div>
+    );
+    fireEvent.click(screen.getByText("Выберите модель"));
+    // "gpt" narrows to existing options → it is a filter, not a custom value.
+    fireEvent.change(screen.getByPlaceholderText(/Поиск модели/), { target: { value: "gpt" } });
+    fireEvent.mouseDown(screen.getByText("outside"));
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
   it("shows meta next to a model when present", () => {
     setup();
     fireEvent.click(screen.getByRole("button"));

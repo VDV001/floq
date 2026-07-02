@@ -488,12 +488,19 @@ describe("useAiSettings", () => {
   });
 
   it("refetches models when the provider changes", async () => {
-    mockedApi.listAIModels.mockResolvedValue([]);
-    const { result } = renderHook(() => useAiSettings(makeSettings({ ai_provider: "openai" }), vi.fn()));
-    await waitFor(() => expect(mockedApi.listAIModels).toHaveBeenCalledWith("openai"));
+    // Assert on observable state (models), not the mock call count, so the
+    // test is deterministic under load (#229 review C1).
+    mockedApi.listAIModels.mockImplementation((p: string) =>
+      Promise.resolve(p === "groq" ? [{ id: "groq-model" }] : [{ id: "openai-model" }])
+    );
+    // Stable settings object — a fresh object each render would retrigger the
+    // settings-sync effect and reset the provider we set below.
+    const settings = makeSettings({ ai_provider: "openai" });
+    const { result } = renderHook(() => useAiSettings(settings, vi.fn()));
+    await waitFor(() => expect(result.current.models[0]?.id).toBe("openai-model"));
 
     act(() => { result.current.setProvider("groq"); });
-    await waitFor(() => expect(mockedApi.listAIModels).toHaveBeenCalledWith("groq"));
+    await waitFor(() => expect(result.current.models[0]?.id).toBe("groq-model"));
   });
 
   it("syncs provider and model from settings", async () => {

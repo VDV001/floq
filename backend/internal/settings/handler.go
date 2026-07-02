@@ -407,8 +407,11 @@ func (h *Handler) testAI() http.HandlerFunc {
 // listAIModels returns the models available for a provider, so the
 // settings form can offer a searchable picker (#229). Provider comes from
 // the ?provider= query (falling back to the stored provider); credentials
-// are always the stored ones. On any lister error it returns an empty
-// list — the UI falls back to manual model entry rather than blocking.
+// are always the STORED ones — deliberately not the in-form key, which
+// would have to travel in a GET query and leak into logs. Consequence: on
+// first-run, the picker is empty until the key is saved once; the combobox
+// still allows manual entry. On any lister error it returns an empty list
+// so the UI never blocks.
 func (h *Handler) listAIModels() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		userID, ok := httputil.UserIDFromContext(r.Context())

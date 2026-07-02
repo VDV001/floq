@@ -22,14 +22,6 @@ export function ModelCombobox({ value, onChange, options, loading, placeholder }
   const [highlight, setHighlight] = useState(0);
   const ref = useRef<HTMLDivElement>(null);
 
-  useEffect(() => {
-    const handler = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
-    };
-    document.addEventListener("mousedown", handler);
-    return () => document.removeEventListener("mousedown", handler);
-  }, []);
-
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
     if (!q) return options;
@@ -37,6 +29,29 @@ export function ModelCombobox({ value, onChange, options, loading, placeholder }
       (o) => o.id.toLowerCase().includes(q) || (o.meta ?? "").toLowerCase().includes(q)
     );
   }, [options, search]);
+
+  // Closing the panel: if the user typed text that matches NO option, treat
+  // it as a custom model and commit it (the free-text fallback) so a typed
+  // custom name is not lost on blur. Text that narrows to existing options
+  // is a filter, not a value, so it is discarded. See #229 review I2.
+  const close = () => {
+    const t = search.trim();
+    if (t && filtered.length === 0 && t !== value) onChange(t);
+    setOpen(false);
+    setSearch("");
+    setHighlight(0);
+  };
+
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) close();
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+    // Re-subscribe when the commit decision inputs change so the handler
+    // closes over the current search/value/options (not a stale filter).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [search, value, options]);
 
   // A free-text row appears when the search text is a non-empty custom value
   // that isn't already an exact option — the manual-entry fallback.
@@ -60,7 +75,7 @@ export function ModelCombobox({ value, onChange, options, loading, placeholder }
   const onKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === "ArrowDown") {
       e.preventDefault();
-      setHighlight((h) => Math.min(h + 1, rowCount - 1));
+      setHighlight((h) => Math.max(0, Math.min(h + 1, rowCount - 1)));
     } else if (e.key === "ArrowUp") {
       e.preventDefault();
       setHighlight((h) => Math.max(h - 1, 0));
@@ -68,7 +83,10 @@ export function ModelCombobox({ value, onChange, options, loading, placeholder }
       e.preventDefault();
       selectRow(highlight);
     } else if (e.key === "Escape") {
+      // Escape cancels without committing the filter text.
       setOpen(false);
+      setSearch("");
+      setHighlight(0);
     }
   };
 
