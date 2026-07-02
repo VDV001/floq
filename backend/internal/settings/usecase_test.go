@@ -111,18 +111,20 @@ func TestDomainToDTO_ComputedFields_SMTPActive(t *testing.T) {
 }
 
 func TestDomainToDTO_ComputedFields_ResendActive(t *testing.T) {
+	// #241: like the other channels (#222), ResendActive must reflect a
+	// PASSED connection test (ResendVerified), not merely a key present.
 	tests := []struct {
 		name     string
-		key      string
+		ds       domain.Settings
 		expected bool
 	}{
-		{"with key", "re_abc123", true},
-		{"empty key", "", false},
+		{"verified", domain.Settings{ResendVerified: true}, true},
+		{"key present but unverified", domain.Settings{ResendAPIKey: "re_abc123"}, false},
+		{"nothing set", domain.Settings{}, false},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			dto := domainToDTO(&domain.Settings{ResendAPIKey: tc.key})
-			assert.Equal(t, tc.expected, dto.ResendActive)
+			assert.Equal(t, tc.expected, domainToDTO(&tc.ds).ResendActive)
 		})
 	}
 }
@@ -158,6 +160,7 @@ func TestDomainToDTO_FieldMapping(t *testing.T) {
 		IMAPPassword:       "secret",
 		IMAPVerified:       true,
 		ResendAPIKey:       "re_key",
+		ResendVerified:     true,
 		AIProvider:         "openai",
 		AIModel:            "gpt-4o",
 		AIAPIKey:           "sk-test",
