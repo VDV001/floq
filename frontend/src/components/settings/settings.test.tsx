@@ -331,7 +331,9 @@ describe("AiProviderSection", () => {
       />
     );
     expect(screen.getByText("ИИ Провайдер")).toBeInTheDocument();
-    expect(screen.getByDisplayValue("gemma3:4b")).toBeInTheDocument();
+    // Model field is now a searchable combobox (#229) — the value shows on
+    // its trigger button rather than an <input value>.
+    expect(screen.getByText("gemma3:4b")).toBeInTheDocument();
   });
 
   it("calls onTest on button click", async () => {
@@ -390,7 +392,7 @@ describe("AiProviderSection", () => {
         setTestResult={vi.fn()} hasKey={false} providerDefaults={defaults} onTest={vi.fn()}
       />
     );
-    const eyeButton = screen.getAllByRole("button")[0];
+    const eyeButton = screen.getByRole("button", { name: "Показать ключ" });
     await userEvent.click(eyeButton);
     expect(setShowApiKey).toHaveBeenCalledWith(true);
   });

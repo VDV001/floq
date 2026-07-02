@@ -53,6 +53,7 @@ vi.mock("@/lib/api", () => ({
     getSettings: vi.fn(),
     updateSettings: vi.fn(),
     testAI: vi.fn(),
+    listAIModels: vi.fn(() => Promise.resolve([])),
     testIMAP: vi.fn(),
     testSMTP: vi.fn(),
     testResend: vi.fn(),

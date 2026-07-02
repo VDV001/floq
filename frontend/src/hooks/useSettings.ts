@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { api, type UserSettings } from "@/lib/api";
+import { api, type UserSettings, type AIModelOption } from "@/lib/api";
 
 export type TestResult = { success: boolean; message?: string; error?: string } | null;
 
@@ -229,12 +229,27 @@ export function useAiSettings(settings: UserSettings | null, setSettings: (s: Us
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState<TestResult>(null);
   const [verified, setVerified] = useState<boolean | null>(null);
+  const [models, setModels] = useState<AIModelOption[]>([]);
+  const [modelsLoading, setModelsLoading] = useState(false);
 
   useEffect(() => {
     if (!settings) return;
     setProvider(settings.ai_provider || "ollama");
     setModel(settings.ai_model || PROVIDER_DEFAULTS[settings.ai_provider] || "gemma3:4b");
   }, [settings]);
+
+  // Auto-populate the model picker for the selected provider (#229). Uses
+  // stored credentials on the backend; returns [] on error (the combobox
+  // still allows manual entry), so this never blocks the form.
+  useEffect(() => {
+    if (!provider) return;
+    let cancelled = false;
+    setModelsLoading(true);
+    api.listAIModels(provider)
+      .then((m) => { if (!cancelled) setModels(m); })
+      .finally(() => { if (!cancelled) setModelsLoading(false); });
+    return () => { cancelled = true; };
+  }, [provider]);
 
   const test = async () => {
     setTesting(true); setTestResult(null);
@@ -255,5 +270,5 @@ export function useAiSettings(settings: UserSettings | null, setSettings: (s: Us
 
   const active = verified ?? !!settings?.ai_active;
 
-  return { provider, setProvider, model, setModel, apiKey, setApiKey, showKey, setShowKey, testing, testResult, setTestResult, test, active, maskedKey: settings?.ai_api_key || "", hasKey: !!settings?.ai_api_key };
+  return { provider, setProvider, model, setModel, apiKey, setApiKey, showKey, setShowKey, testing, testResult, setTestResult, test, active, models, modelsLoading, maskedKey: settings?.ai_api_key || "", hasKey: !!settings?.ai_api_key };
 }
