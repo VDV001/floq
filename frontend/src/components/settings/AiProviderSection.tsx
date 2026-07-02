@@ -33,7 +33,7 @@ export function AiProviderSection({
         <div className="flex items-center gap-3">
           <Sparkles className="size-5 text-[#3e3fcc]" />
           <h3 className="text-xl font-bold text-[#0d1c2e]">ИИ Провайдер</h3>
-          <HintIcon text="AI-модель для генерации текстов: квалификация лидов, черновики ответов, холодные письма. Ollama — бесплатно и локально. Claude/OpenAI/Groq — через облако с API-ключом." />
+          <HintIcon text="AI-модель для генерации текстов: квалификация лидов, черновики ответов, холодные письма. Ollama — бесплатно и локально. Claude/OpenAI/Groq/Google (Gemini)/OpenRouter — через облако с API-ключом." />
         </div>
         <ConnectionBadge active={active} />
       </div>
@@ -52,6 +52,8 @@ export function AiProviderSection({
               <option value="claude">Claude (Anthropic)</option>
               <option value="openai">OpenAI (GPT)</option>
               <option value="groq">Groq (быстрая)</option>
+              <option value="gemini">Google (Gemini)</option>
+              <option value="openrouter">OpenRouter</option>
             </select>
             <ChevronDown className="pointer-events-none absolute right-3 top-3.5 size-4 text-[#434655]" />
           </div>
