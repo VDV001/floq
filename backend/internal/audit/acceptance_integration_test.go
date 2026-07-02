@@ -164,7 +164,7 @@ func TestAcceptance_ImageAnalysisThroughProductionProviderChain(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	innerProvider := providers.NewOpenAICompatibleProvider("test-key", "gpt-4o-mini", srv.URL+"/", nil)
+	innerProvider := providers.NewOpenAICompatibleProvider("test-key", "gpt-4o-mini", "openai", srv.URL+"/", nil)
 
 	repo := audit.NewRepository(pool)
 	recorder := audit.NewAsyncRecorder(repo,
