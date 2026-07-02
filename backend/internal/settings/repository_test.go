@@ -92,17 +92,17 @@ func TestRepository_GetSettings_HappyPath(t *testing.T) {
 				}}
 			},
 			// user_settings — projection after 047 (no plaintext secret cols)
-			// + #222 *_verified columns (21/22/23): telegram_bot_active(0),
-			// ai_provider(7), ai_model(8); the telegram_bot_token ciphertext
-			// now lands at index 24/25 (+3 from the pre-#222 21/22).
+			// + verified columns ai/smtp/imap(21/22/23) #222 and resend(24)
+			// #241: telegram_bot_active(0), ai_provider(7), ai_model(8); the
+			// telegram_bot_token ciphertext now lands at index 25/26.
 			func() pgx.Row {
 				return &fakeRow{scanFn: func(dest ...any) error {
 					if p, ok := dest[0].(*bool); ok { *p = true }            // telegram_bot_active
 					if p, ok := dest[7].(*string); ok { *p = "openai" }      // ai_provider
 					if p, ok := dest[8].(*string); ok { *p = "gpt-4o" }      // ai_model
-					if len(dest) > 25 {
-						if p, ok := dest[24].(*[]byte); ok { *p = []byte("enc:bot-token-123") }
-						if p, ok := dest[25].(*[]byte); ok { *p = []byte("nonce") }
+					if len(dest) > 26 {
+						if p, ok := dest[25].(*[]byte); ok { *p = []byte("enc:bot-token-123") }
+						if p, ok := dest[26].(*[]byte); ok { *p = []byte("nonce") }
 					}
 					return nil
 				}}
@@ -339,12 +339,12 @@ func TestRepository_GetSettings_DecryptsEncColumns(t *testing.T) {
 			},
 			func() pgx.Row {
 				return &fakeRow{scanFn: func(dest ...any) error {
-					// Encrypted imap_password at indices 26/27: the three
-					// *_verified columns (#222) were inserted before the enc
-					// projection, shifting it +3 from the old 23/24.
-					if len(dest) > 27 {
-						if p, ok := dest[26].(*[]byte); ok { *p = []byte("enc:fresh-pw") }
-						if p, ok := dest[27].(*[]byte); ok { *p = []byte("nonce") }
+					// Encrypted imap_password at indices 27/28: the four
+					// *_verified columns (ai/smtp/imap #222 + resend #241) sit
+					// before the enc projection, shifting it +4 from old 23/24.
+					if len(dest) > 28 {
+						if p, ok := dest[27].(*[]byte); ok { *p = []byte("enc:fresh-pw") }
+						if p, ok := dest[28].(*[]byte); ok { *p = []byte("nonce") }
 					}
 					return nil
 				}}

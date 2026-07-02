@@ -19,6 +19,7 @@ type SettingsInput struct {
 	IMAPPassword      string `json:"imap_password"`
 	IMAPVerified      bool   `json:"imap_verified"`
 	ResendAPIKey      string `json:"resend_api_key"`
+	ResendVerified    bool   `json:"resend_verified"`
 	SMTPHost          string `json:"smtp_host"`
 	SMTPPort          string `json:"smtp_port"`
 	SMTPUser          string `json:"smtp_user"`
