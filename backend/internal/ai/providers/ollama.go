@@ -92,6 +92,16 @@ func (p *OllamaProvider) CheckHealth(ctx context.Context) error {
 	return fmt.Errorf("%w: %s", ErrOllamaModelNotFound, p.model)
 }
 
+// Compile-time check: OllamaProvider can enumerate its models (#229).
+var _ ai.ModelLister = (*OllamaProvider)(nil)
+
+// ListModels returns the locally-pulled models from GET /api/tags, with
+// the parameter size (e.g. "4B") as Meta where Ollama reports it.
+func (p *OllamaProvider) ListModels(_ context.Context) ([]ai.ModelInfo, error) {
+	// RED stub — real listing lands in the GREEN commit.
+	return nil, nil
+}
+
 // ollamaModelMatches reports whether an installed tag satisfies the
 // configured model name. Ollama implicitly tags a bare name as ":latest",
 // so a configured "gemma3" matches an installed "gemma3:latest".
