@@ -36,6 +36,14 @@ describe("AiProviderSection", () => {
     expect(props.setAiModel).toHaveBeenCalledWith("claude-opus-4-8");
   });
 
+  it("offers Gemini and OpenRouter as provider options (#228)", () => {
+    setup();
+    const select = screen.getByDisplayValue("Ollama (локальная)") as HTMLSelectElement;
+    const values = Array.from(select.options).map((o) => o.value);
+    expect(values).toContain("gemini");
+    expect(values).toContain("openrouter");
+  });
+
   it("changes provider without touching the model when no default is registered", () => {
     const props = setup({ providerDefaults: {} });
     fireEvent.change(screen.getByDisplayValue("Ollama (локальная)"), { target: { value: "groq" } });
