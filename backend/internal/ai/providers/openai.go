@@ -81,7 +81,7 @@ func NewOpenAICompatibleProvider(apiKey, model, name, baseURL string, httpClient
 	return p
 }
 
-func (p *OpenAIProvider) Name() string { return "openai" }
+func (p *OpenAIProvider) Name() string { return p.name }
 
 // Compile-time check: OpenAIProvider offers a cheap liveness probe so the
 // connection test avoids a (billed) generation.
