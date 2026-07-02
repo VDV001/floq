@@ -59,58 +59,68 @@ func buildUsageCounter(repo *leads.Repository) settings.UsageCounter {
 	}
 }
 
+// buildAIProvider constructs the concrete ai.Provider for a provider name,
+// filling any empty apiKey/model from .env config. Shared by the connection
+// tester and the model lister so the provider matrix lives in one place.
+// Unknown provider → settings.ErrAIUnknownProvider.
+func buildAIProvider(cfg *config.Config, httpClient *http.Client, provider, model, apiKey string) (ai.Provider, error) {
+	switch provider {
+	case "claude":
+		if apiKey == "" {
+			apiKey = cfg.AnthropicAPIKey
+		}
+		return providers.NewClaudeProvider(apiKey, model, httpClient), nil
+	case "openai":
+		if apiKey == "" {
+			apiKey = cfg.OpenAIAPIKey
+		}
+		if model == "" {
+			model = cfg.OpenAIModel
+		}
+		var opts []openaiopt.RequestOption
+		if httpClient != nil {
+			opts = append(opts, openaiopt.WithHTTPClient(httpClient))
+		}
+		return providers.NewOpenAIProvider(apiKey, model, opts...), nil
+	case "groq":
+		if apiKey == "" {
+			apiKey = cfg.GroqAPIKey
+		}
+		if model == "" {
+			model = cfg.GroqModel
+		}
+		return providers.NewOpenAICompatibleProvider(apiKey, model, "groq", "https://api.groq.com/openai/v1", httpClient), nil
+	case "gemini":
+		if apiKey == "" {
+			apiKey = cfg.GeminiAPIKey
+		}
+		if model == "" {
+			model = cfg.GeminiModel
+		}
+		return providers.NewOpenAICompatibleProvider(apiKey, model, "gemini", "https://generativelanguage.googleapis.com/v1beta/openai", httpClient), nil
+	case "openrouter":
+		if apiKey == "" {
+			apiKey = cfg.OpenRouterAPIKey
+		}
+		if model == "" {
+			model = cfg.OpenRouterModel
+		}
+		return providers.NewOpenAICompatibleProvider(apiKey, model, "openrouter", "https://openrouter.ai/api/v1", httpClient), nil
+	case "ollama":
+		if model == "" {
+			model = cfg.OllamaModel
+		}
+		return providers.NewOllamaProvider(cfg.OllamaBaseURL, model, httpClient), nil
+	default:
+		return nil, fmt.Errorf("%w: %s", settings.ErrAIUnknownProvider, provider)
+	}
+}
+
 func buildAITester(cfg *config.Config, httpClient *http.Client) settings.AITester {
 	return func(ctx context.Context, provider, model, apiKey string) (string, error) {
-		var p ai.Provider
-		switch provider {
-		case "claude":
-			if apiKey == "" {
-				apiKey = cfg.AnthropicAPIKey
-			}
-			p = providers.NewClaudeProvider(apiKey, model, httpClient)
-		case "openai":
-			if apiKey == "" {
-				apiKey = cfg.OpenAIAPIKey
-			}
-			if model == "" {
-				model = cfg.OpenAIModel
-			}
-			var opts []openaiopt.RequestOption
-			if httpClient != nil {
-				opts = append(opts, openaiopt.WithHTTPClient(httpClient))
-			}
-			p = providers.NewOpenAIProvider(apiKey, model, opts...)
-		case "groq":
-			if apiKey == "" {
-				apiKey = cfg.GroqAPIKey
-			}
-			if model == "" {
-				model = cfg.GroqModel
-			}
-			p = providers.NewOpenAICompatibleProvider(apiKey, model, "groq", "https://api.groq.com/openai/v1", httpClient)
-		case "gemini":
-			if apiKey == "" {
-				apiKey = cfg.GeminiAPIKey
-			}
-			if model == "" {
-				model = cfg.GeminiModel
-			}
-			p = providers.NewOpenAICompatibleProvider(apiKey, model, "gemini", "https://generativelanguage.googleapis.com/v1beta/openai", httpClient)
-		case "openrouter":
-			if apiKey == "" {
-				apiKey = cfg.OpenRouterAPIKey
-			}
-			if model == "" {
-				model = cfg.OpenRouterModel
-			}
-			p = providers.NewOpenAICompatibleProvider(apiKey, model, "openrouter", "https://openrouter.ai/api/v1", httpClient)
-		case "ollama":
-			if model == "" {
-				model = cfg.OllamaModel
-			}
-			p = providers.NewOllamaProvider(cfg.OllamaBaseURL, model, httpClient)
-		default:
-			return "", fmt.Errorf("%w: %s", settings.ErrAIUnknownProvider, provider)
+		p, err := buildAIProvider(cfg, httpClient, provider, model, apiKey)
+		if err != nil {
+			return "", err
 		}
 
 		// Every provider above implements HealthChecker, so the connection
