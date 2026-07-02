@@ -411,8 +411,39 @@ func (h *Handler) testAI() http.HandlerFunc {
 // list — the UI falls back to manual model entry rather than blocking.
 func (h *Handler) listAIModels() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		// RED stub — real listing lands in the GREEN commit.
-		httputil.WriteJSON(w, http.StatusOK, map[string]any{"models": []AIModel{}})
+		userID, ok := httputil.UserIDFromContext(r.Context())
+		if !ok {
+			httputil.WriteError(w, http.StatusUnauthorized, "unauthorized")
+			return
+		}
+
+		empty := map[string]any{"models": []AIModel{}}
+		if h.aiModelLister == nil {
+			httputil.WriteJSON(w, http.StatusOK, empty)
+			return
+		}
+
+		provider := r.URL.Query().Get("provider")
+		var model, apiKey string
+		if stored, err := h.uc.GetStoredAISettings(r.Context(), userID); err == nil {
+			if provider == "" {
+				provider = stored.Provider
+			}
+			model = stored.Model
+			apiKey = stored.APIKey
+		}
+		if provider == "" {
+			httputil.WriteJSON(w, http.StatusOK, empty)
+			return
+		}
+
+		models, err := h.aiModelLister(r.Context(), provider, model, apiKey)
+		if err != nil || models == nil {
+			// Never block the form: fall back to manual model entry.
+			httputil.WriteJSON(w, http.StatusOK, empty)
+			return
+		}
+		httputil.WriteJSON(w, http.StatusOK, map[string]any{"models": models})
 	}
 }
 
