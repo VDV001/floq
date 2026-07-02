@@ -148,20 +148,36 @@ type ResendTester func(ctx context.Context, apiKey string) error
 // Injected from main.go to avoid circular imports with leads package.
 type UsageCounter func(ctx context.Context, userID uuid.UUID) (monthLeads, totalLeads int, err error)
 
-type Handler struct {
-	uc           *UseCase
-	aiTester     AITester
-	smtpTester   SMTPTester
-	resendTester ResendTester
-	usageCounter UsageCounter
+// AIModel is one selectable model returned by the models endpoint (#229).
+// Meta is an optional short descriptor (e.g. "4B" for Ollama, a display
+// name for Claude); empty for providers whose list gives only an id.
+type AIModel struct {
+	ID   string `json:"id"`
+	Meta string `json:"meta,omitempty"`
 }
 
-func RegisterRoutes(r chi.Router, uc *UseCase, aiTester AITester, smtpTester SMTPTester, resendTester ResendTester, usageCounter UsageCounter) {
-	h := &Handler{uc: uc, aiTester: aiTester, smtpTester: smtpTester, resendTester: resendTester, usageCounter: usageCounter}
+// AIModelLister enumerates the models available for a provider using the
+// stored credentials. Injected from main.go to avoid import cycles with
+// ai/providers. Returns an error the handler translates into an empty
+// list (the UI falls back to manual model entry).
+type AIModelLister func(ctx context.Context, provider, model, apiKey string) ([]AIModel, error)
+
+type Handler struct {
+	uc            *UseCase
+	aiTester      AITester
+	aiModelLister AIModelLister
+	smtpTester    SMTPTester
+	resendTester  ResendTester
+	usageCounter  UsageCounter
+}
+
+func RegisterRoutes(r chi.Router, uc *UseCase, aiTester AITester, aiModelLister AIModelLister, smtpTester SMTPTester, resendTester ResendTester, usageCounter UsageCounter) {
+	h := &Handler{uc: uc, aiTester: aiTester, aiModelLister: aiModelLister, smtpTester: smtpTester, resendTester: resendTester, usageCounter: usageCounter}
 	r.Get("/api/settings", h.getSettings())
 	r.Put("/api/settings", h.updateSettings())
 	r.Post("/api/settings/test-imap", h.testIMAP())
 	r.Post("/api/settings/test-ai", h.testAI())
+	r.Get("/api/settings/ai/models", h.listAIModels())
 	r.Post("/api/settings/test-resend", h.testResend())
 	r.Post("/api/settings/test-smtp", h.testSMTP())
 	r.Get("/api/usage", h.getUsage())
@@ -385,6 +401,18 @@ func (h *Handler) testAI() http.HandlerFunc {
 			"message":  fmt.Sprintf("Подключение к %s успешно!", providerName),
 			"provider": providerName,
 		})
+	}
+}
+
+// listAIModels returns the models available for a provider, so the
+// settings form can offer a searchable picker (#229). Provider comes from
+// the ?provider= query (falling back to the stored provider); credentials
+// are always the stored ones. On any lister error it returns an empty
+// list — the UI falls back to manual model entry rather than blocking.
+func (h *Handler) listAIModels() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		// RED stub — real listing lands in the GREEN commit.
+		httputil.WriteJSON(w, http.StatusOK, map[string]any{"models": []AIModel{}})
 	}
 }
 

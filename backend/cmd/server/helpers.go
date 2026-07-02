@@ -135,6 +135,17 @@ func buildAITester(cfg *config.Config, httpClient *http.Client) settings.AITeste
 	}
 }
 
+// buildAIModelLister returns a settings.AIModelLister that enumerates a
+// provider's models via the same provider constructors as buildAITester,
+// using the ModelLister capability. Errors bubble up; the handler turns
+// them into an empty list (UI falls back to manual entry).
+func buildAIModelLister(cfg *config.Config, httpClient *http.Client) settings.AIModelLister {
+	return func(ctx context.Context, provider, model, apiKey string) ([]settings.AIModel, error) {
+		// RED stub — real listing lands in the GREEN commit.
+		return nil, nil
+	}
+}
+
 // mapAIHealthError translates a provider-vocabulary health-check error
 // into the settings-handler vocabulary, so the handler can render Russian
 // copy via errors.Is without importing the providers package. Unknown

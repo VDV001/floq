@@ -71,7 +71,7 @@ func (v *mockTelegramValidator) Validate(_ string) error {
 func setupSettingsRouter(repo *mockSettingsRepo, validator *mockTelegramValidator) chi.Router {
 	uc := NewUseCase(repo, validator)
 	r := chi.NewRouter()
-	RegisterRoutes(r, uc, nil, nil, nil, nil)
+	RegisterRoutes(r, uc, nil, nil, nil, nil, nil)
 	return r
 }
 
@@ -472,7 +472,7 @@ func TestHandler_TestAI_WithTester_Success(t *testing.T) {
 	tester := func(_ context.Context, provider, model, apiKey string) (string, error) {
 		return "OpenAI", nil
 	}
-	RegisterRoutes(r, uc, tester, nil, nil, nil)
+	RegisterRoutes(r, uc, tester, nil, nil, nil, nil)
 
 	userID := uuid.New()
 	body := `{"provider":"openai","model":"gpt-4o","api_key":"sk-test"}`
@@ -495,7 +495,7 @@ func TestHandler_TestAI_WithTester_Error(t *testing.T) {
 	tester := func(_ context.Context, provider, model, apiKey string) (string, error) {
 		return "", fmt.Errorf("connection refused")
 	}
-	RegisterRoutes(r, uc, tester, nil, nil, nil)
+	RegisterRoutes(r, uc, tester, nil, nil, nil, nil)
 
 	userID := uuid.New()
 	body := `{"provider":"openai","api_key":"sk-test"}`
@@ -517,7 +517,7 @@ func TestHandler_TestAI_ModelNotFound_FriendlyMessage(t *testing.T) {
 	tester := func(_ context.Context, _, _, _ string) (string, error) {
 		return "", fmt.Errorf("%w: gemma3:4b", ErrAIModelNotFound)
 	}
-	RegisterRoutes(r, uc, tester, nil, nil, nil)
+	RegisterRoutes(r, uc, tester, nil, nil, nil, nil)
 
 	userID := uuid.New()
 	body := `{"provider":"ollama","model":"gemma3:4b"}`
@@ -542,7 +542,7 @@ func TestHandler_TestAI_Unreachable_FriendlyMessage(t *testing.T) {
 	tester := func(_ context.Context, _, _, _ string) (string, error) {
 		return "", fmt.Errorf("%w: connection refused", ErrAIUnreachable)
 	}
-	RegisterRoutes(r, uc, tester, nil, nil, nil)
+	RegisterRoutes(r, uc, tester, nil, nil, nil, nil)
 
 	userID := uuid.New()
 	body := `{"provider":"ollama","model":"gemma3:4b"}`
@@ -567,7 +567,7 @@ func TestHandler_TestAI_CloudUnreachable_NotOllamaSpecific(t *testing.T) {
 	tester := func(_ context.Context, _, _, _ string) (string, error) {
 		return "", fmt.Errorf("%w: connection refused", ErrAIUnreachable)
 	}
-	RegisterRoutes(r, uc, tester, nil, nil, nil)
+	RegisterRoutes(r, uc, tester, nil, nil, nil, nil)
 
 	userID := uuid.New()
 	body := `{"provider":"openai","model":"gpt-4o"}`
@@ -592,7 +592,7 @@ func TestHandler_TestAI_Auth_FriendlyMessage(t *testing.T) {
 	tester := func(_ context.Context, _, _, _ string) (string, error) {
 		return "", fmt.Errorf("%w: 401", ErrAIAuth)
 	}
-	RegisterRoutes(r, uc, tester, nil, nil, nil)
+	RegisterRoutes(r, uc, tester, nil, nil, nil, nil)
 
 	userID := uuid.New()
 	body := `{"provider":"openai","model":"gpt-4o"}`
@@ -616,7 +616,7 @@ func TestHandler_TestAI_RateLimit_FriendlyMessage(t *testing.T) {
 	tester := func(_ context.Context, _, _, _ string) (string, error) {
 		return "", fmt.Errorf("%w: 429", ErrAIRateLimit)
 	}
-	RegisterRoutes(r, uc, tester, nil, nil, nil)
+	RegisterRoutes(r, uc, tester, nil, nil, nil, nil)
 
 	userID := uuid.New()
 	body := `{"provider":"openai","model":"gpt-4o"}`
@@ -631,6 +631,70 @@ func TestHandler_TestAI_RateLimit_FriendlyMessage(t *testing.T) {
 	assert.Contains(t, msg, "запросов",
 		"a 429 must yield a RU hint about too many requests; got: %q", msg)
 	assert.NotContains(t, msg, "ai rate", "raw sentinel text must not leak to the user")
+}
+
+func TestHandler_ListAIModels_ReturnsModels(t *testing.T) {
+	repo := newMockSettingsRepo()
+	uc := NewUseCase(repo, &mockTelegramValidator{})
+	r := chi.NewRouter()
+	var gotProvider, gotKey string
+	lister := func(_ context.Context, provider, _, apiKey string) ([]AIModel, error) {
+		gotProvider, gotKey = provider, apiKey
+		return []AIModel{{ID: "gpt-4o"}, {ID: "gpt-4o-mini", Meta: ""}}, nil
+	}
+	RegisterRoutes(r, uc, nil, lister, nil, nil, nil)
+
+	userID := uuid.New()
+	req := withUserCtx(httptest.NewRequest("GET", "/api/settings/ai/models?provider=openai", nil), userID)
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusOK, rec.Code)
+	var resp struct {
+		Models []AIModel `json:"models"`
+	}
+	require.NoError(t, json.NewDecoder(rec.Body).Decode(&resp))
+	require.Len(t, resp.Models, 2)
+	assert.Equal(t, "gpt-4o", resp.Models[0].ID)
+	assert.Equal(t, "openai", gotProvider, "provider from query is passed to the lister")
+	assert.Equal(t, "sk-test-key-12345", gotKey, "stored API key is used")
+}
+
+func TestHandler_ListAIModels_ListerError_EmptyList(t *testing.T) {
+	repo := newMockSettingsRepo()
+	uc := NewUseCase(repo, &mockTelegramValidator{})
+	r := chi.NewRouter()
+	lister := func(_ context.Context, _, _, _ string) ([]AIModel, error) {
+		return nil, fmt.Errorf("provider unreachable")
+	}
+	RegisterRoutes(r, uc, nil, lister, nil, nil, nil)
+
+	userID := uuid.New()
+	req := withUserCtx(httptest.NewRequest("GET", "/api/settings/ai/models?provider=openai", nil), userID)
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+
+	// Never block the UI: a lister error yields 200 + empty list so the
+	// form falls back to manual model entry (#229).
+	assert.Equal(t, http.StatusOK, rec.Code)
+	var resp struct {
+		Models []AIModel `json:"models"`
+	}
+	require.NoError(t, json.NewDecoder(rec.Body).Decode(&resp))
+	assert.Empty(t, resp.Models)
+}
+
+func TestHandler_ListAIModels_Unauthorized(t *testing.T) {
+	repo := newMockSettingsRepo()
+	uc := NewUseCase(repo, &mockTelegramValidator{})
+	r := chi.NewRouter()
+	RegisterRoutes(r, uc, nil, func(_ context.Context, _, _, _ string) ([]AIModel, error) { return nil, nil }, nil, nil, nil)
+
+	req := httptest.NewRequest("GET", "/api/settings/ai/models?provider=openai", nil)
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusUnauthorized, rec.Code)
 }
 
 func TestHandler_TestAI_UseStored(t *testing.T) {
@@ -752,7 +816,7 @@ func TestHandler_GetUsage_WithCounter(t *testing.T) {
 	counter := func(_ context.Context, _ uuid.UUID) (int, int, error) {
 		return 42, 100, nil
 	}
-	RegisterRoutes(r, uc, nil, nil, nil, counter)
+	RegisterRoutes(r, uc, nil, nil, nil, nil, counter)
 
 	userID := uuid.New()
 	req := withUserCtx(httptest.NewRequest("GET", "/api/usage", nil), userID)
@@ -774,7 +838,7 @@ func TestHandler_GetUsage_CounterError(t *testing.T) {
 	counter := func(_ context.Context, _ uuid.UUID) (int, int, error) {
 		return 0, 0, fmt.Errorf("db error")
 	}
-	RegisterRoutes(r, uc, nil, nil, nil, counter)
+	RegisterRoutes(r, uc, nil, nil, nil, nil, counter)
 
 	userID := uuid.New()
 	req := withUserCtx(httptest.NewRequest("GET", "/api/usage", nil), userID)
@@ -959,7 +1023,7 @@ func TestHandler_UpdateSettings_RepoUpdateError(t *testing.T) {
 	}
 	uc := NewUseCase(repo, &mockTelegramValidator{})
 	r := chi.NewRouter()
-	RegisterRoutes(r, uc, nil, nil, nil, nil)
+	RegisterRoutes(r, uc, nil, nil, nil, nil, nil)
 
 	userID := uuid.New()
 	body := `{"ai_provider":"openai"}`
