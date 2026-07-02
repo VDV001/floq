@@ -66,6 +66,16 @@ func (p *ClaudeProvider) CheckHealth(ctx context.Context) error {
 	return nil
 }
 
+// Compile-time check: ClaudeProvider can enumerate its models (#229).
+var _ ai.ModelLister = (*ClaudeProvider)(nil)
+
+// ListModels returns Anthropic's available models via GET /v1/models,
+// using the human-readable DisplayName as Meta. Retries disabled.
+func (p *ClaudeProvider) ListModels(_ context.Context) ([]ai.ModelInfo, error) {
+	// RED stub — real listing lands in the GREEN commit.
+	return nil, nil
+}
+
 // modelForMode resolves the concrete model name. User-set overrideModel
 // always wins (per the principle that user configuration beats defaults).
 // Falls back to the Execute-mode default for unknown modes — defensive
