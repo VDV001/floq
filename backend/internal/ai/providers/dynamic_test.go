@@ -18,6 +18,10 @@ func TestValidateProviderConfig(t *testing.T) {
 		{"openai with key is ok", "openai", "sk-123", nil},
 		{"claude without key is not configured", "claude", "", ai.ErrNotConfigured},
 		{"groq without key is not configured", "groq", "", ai.ErrNotConfigured},
+		{"gemini without key is not configured", "gemini", "", ai.ErrNotConfigured},
+		{"gemini with key is ok", "gemini", "AIza-123", nil},
+		{"openrouter without key is not configured", "openrouter", "", ai.ErrNotConfigured},
+		{"openrouter with key is ok", "openrouter", "sk-or-123", nil},
 		{"ollama needs no key", "ollama", "", nil},
 		{"unknown provider is not flagged here", "weird", "", nil},
 	}
