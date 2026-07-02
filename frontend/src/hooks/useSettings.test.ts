@@ -385,13 +385,16 @@ describe("useResendSettings", () => {
     await act(async () => { await result.current.test(); });
 
     expect(mockedApi.testResend).toHaveBeenCalledWith("re_1234567890", false);
-    expect(mockedApi.updateSettings).toHaveBeenCalledWith({ resend_api_key: "re_1234567890" });
+    // #241: a passing test persists resend_verified:true so onboarding
+    // «Готово» reflects a real connection, not just a filled key.
+    expect(mockedApi.updateSettings).toHaveBeenCalledWith({ resend_api_key: "re_1234567890", resend_verified: true });
     expect(setSettings).toHaveBeenCalledWith(updated);
     expect(result.current.key).toBe("");
   });
 
   it("test uses stored key when key starts with '...'", async () => {
     mockedApi.testResend.mockResolvedValue({ success: true });
+    mockedApi.updateSettings.mockResolvedValue(makeSettings());
 
     const { result } = renderHook(() => useResendSettings(makeSettings(), vi.fn()));
 
@@ -400,6 +403,8 @@ describe("useResendSettings", () => {
     await act(async () => { await result.current.test(); });
 
     expect(mockedApi.testResend).toHaveBeenCalledWith("", true);
+    // #241: even with a stored key, a passing test must persist verified.
+    expect(mockedApi.updateSettings).toHaveBeenCalledWith({ resend_verified: true });
   });
 
   it("active derives from verified or settings", () => {

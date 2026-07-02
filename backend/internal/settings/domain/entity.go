@@ -22,6 +22,9 @@ type Settings struct {
 
 	// Resend
 	ResendAPIKey string
+	// ResendVerified — see IMAPVerified; true once a Resend connection
+	// test passed for the current key (#241).
+	ResendVerified bool
 
 	// SMTP (outbound email)
 	SMTPHost     string

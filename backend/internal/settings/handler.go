@@ -209,7 +209,7 @@ func domainToDTO(ds *domain.Settings) Settings {
 		AIAPIKey:            maskSecret(ds.AIAPIKey),
 		AIStyleCheckEnabled: ds.AIStyleCheckEnabled,
 		IMAPActive:          ds.IMAPVerified,
-		ResendActive:        ds.ResendAPIKey != "",
+		ResendActive:        ds.ResendVerified,
 		AIActive:            ds.AIVerified,
 		NotifyTelegram:      ds.NotifyTelegram,
 		NotifyEmailDigest:   ds.NotifyEmailDigest,

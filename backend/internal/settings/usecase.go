@@ -19,6 +19,7 @@ type SettingsInput struct {
 	IMAPPassword      string `json:"imap_password"`
 	IMAPVerified      bool   `json:"imap_verified"`
 	ResendAPIKey      string `json:"resend_api_key"`
+	ResendVerified    bool   `json:"resend_verified"`
 	SMTPHost          string `json:"smtp_host"`
 	SMTPPort          string `json:"smtp_port"`
 	SMTPUser          string `json:"smtp_user"`
@@ -148,6 +149,7 @@ func (uc *UseCase) UpdateSettings(ctx context.Context, userID uuid.UUID, raw map
 	setVerified(raw, fields, input.AIVerified, "ai_verified", "ai_provider", "ai_model", "ai_api_key")
 	setVerified(raw, fields, input.SMTPVerified, "smtp_verified", "smtp_host", "smtp_port", "smtp_user", "smtp_password")
 	setVerified(raw, fields, input.IMAPVerified, "imap_verified", "imap_host", "imap_port", "imap_user", "imap_password")
+	setVerified(raw, fields, input.ResendVerified, "resend_verified", "resend_api_key")
 	if _, ok := raw["notify_telegram"]; ok {
 		fields["notify_telegram"] = input.NotifyTelegram
 	}
