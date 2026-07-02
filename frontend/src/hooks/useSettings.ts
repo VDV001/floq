@@ -8,6 +8,8 @@ export const PROVIDER_DEFAULTS: Record<string, string> = {
   claude: "claude-sonnet-4-20250514",
   openai: "gpt-4o",
   groq: "openai/gpt-oss-120b",
+  gemini: "gemini-2.0-flash",
+  openrouter: "openai/gpt-4o-mini",
 };
 
 export function useSettingsCore() {

@@ -84,7 +84,7 @@ func (d *DynamicProvider) AnalyzeImage(ctx context.Context, imageData []byte, mi
 // (resolve rejects them separately as "unknown AI provider").
 func providerNeedsAPIKey(provider string) bool {
 	switch provider {
-	case "claude", "openai", "groq":
+	case "claude", "openai", "groq", "gemini", "openrouter":
 		return true
 	default:
 		return false
@@ -139,6 +139,20 @@ func (d *DynamicProvider) resolve(ctx context.Context) (ai.Provider, error) {
 		if model == "" {
 			model = d.fallbackCfg.GroqModel
 		}
+	case "gemini":
+		if apiKey == "" {
+			apiKey = d.fallbackCfg.GeminiAPIKey
+		}
+		if model == "" {
+			model = d.fallbackCfg.GeminiModel
+		}
+	case "openrouter":
+		if apiKey == "" {
+			apiKey = d.fallbackCfg.OpenRouterAPIKey
+		}
+		if model == "" {
+			model = d.fallbackCfg.OpenRouterModel
+		}
 	case "ollama":
 		if model == "" {
 			model = d.fallbackCfg.OllamaModel
@@ -173,6 +187,10 @@ func (d *DynamicProvider) resolve(ctx context.Context) (ai.Provider, error) {
 		p = NewOpenAIProvider(apiKey, model, opts...)
 	case "groq":
 		p = NewOpenAICompatibleProvider(apiKey, model, "groq", "https://api.groq.com/openai/v1", d.httpClient)
+	case "gemini":
+		p = NewOpenAICompatibleProvider(apiKey, model, "gemini", "https://generativelanguage.googleapis.com/v1beta/openai", d.httpClient)
+	case "openrouter":
+		p = NewOpenAICompatibleProvider(apiKey, model, "openrouter", "https://openrouter.ai/api/v1", d.httpClient)
 	case "ollama":
 		p = NewOllamaProvider(d.fallbackCfg.OllamaBaseURL, model, d.httpClient)
 	default:

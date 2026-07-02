@@ -226,6 +226,38 @@ func TestBuildAITester_Claude_RateLimit429_WrapsErrAIRateLimit(t *testing.T) {
 		"helpers.go must not embed Russian copy — handler maps via errors.Is")
 }
 
+// TestBuildAITester_Gemini/OpenRouter verify the two OpenAI-compatible
+// providers (#228) are constructed, route their connection test through
+// the free /models health probe, and report their own name (not "openai").
+
+func TestBuildAITester_Gemini_OK_ReportsName(t *testing.T) {
+	client := &http.Client{Transport: roundTripperFunc(func(_ *http.Request) (*http.Response, error) {
+		return &http.Response{
+			StatusCode: 200,
+			Body:       io.NopCloser(strings.NewReader(`{"object":"list","data":[]}`)),
+			Header:     http.Header{"Content-Type": []string{"application/json"}},
+		}, nil
+	})}
+	tester := buildAITester(&config.Config{}, client)
+	name, err := tester(context.Background(), "gemini", "gemini-2.0-flash", "AIza-key")
+	require.NoError(t, err)
+	assert.Equal(t, "gemini", name, "the Gemini provider must report its own name, not «openai»")
+}
+
+func TestBuildAITester_OpenRouter_OK_ReportsName(t *testing.T) {
+	client := &http.Client{Transport: roundTripperFunc(func(_ *http.Request) (*http.Response, error) {
+		return &http.Response{
+			StatusCode: 200,
+			Body:       io.NopCloser(strings.NewReader(`{"object":"list","data":[]}`)),
+			Header:     http.Header{"Content-Type": []string{"application/json"}},
+		}, nil
+	})}
+	tester := buildAITester(&config.Config{}, client)
+	name, err := tester(context.Background(), "openrouter", "openai/gpt-4o-mini", "sk-or-key")
+	require.NoError(t, err)
+	assert.Equal(t, "openrouter", name, "the OpenRouter provider must report its own name")
+}
+
 func TestBuildSMTPTester_NoUIStringsLeak(t *testing.T) {
 	// Composition-root helpers must NOT carry user-facing copy.
 	// settings/handler.go owns the Russian translation via errors.Is.
