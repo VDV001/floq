@@ -163,7 +163,14 @@ export function useResendSettings(settings: UserSettings | null, setSettings: (s
       const k = key && !key.startsWith("...") ? key : "";
       const res = await api.testResend(k, !k);
       setTestResult(res); setVerified(res.success);
-      if (res.success && k) { const updated = await api.updateSettings({ resend_api_key: k }); setSettings(updated); setKey(""); }
+      if (res.success) {
+        // #241: persist the passing test so onboarding «Готово» is honest,
+        // whether the key is new or stored (mirrors AI/SMTP/IMAP).
+        const update: Partial<UserSettings> = { resend_verified: true };
+        if (k) update.resend_api_key = k;
+        const updated = await api.updateSettings(update); setSettings(updated);
+        if (k) setKey("");
+      }
     } catch { setTestResult({ success: false, error: "Ошибка запроса" }); setVerified(false); }
     finally { setTesting(false); }
   };

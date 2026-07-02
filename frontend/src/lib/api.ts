@@ -985,4 +985,5 @@ export interface UserSettings {
   ai_verified?: boolean;
   smtp_verified?: boolean;
   imap_verified?: boolean;
+  resend_verified?: boolean;
 }
