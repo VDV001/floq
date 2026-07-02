@@ -48,8 +48,8 @@ describe("ModelCombobox (#229)", () => {
     const { onChange } = setup();
     fireEvent.click(screen.getByRole("button"));
     const search = screen.getByPlaceholderText(/Поиск/);
-    fireEvent.keyDown(search, { key: "ArrowDown" }); // highlight first
-    fireEvent.keyDown(search, { key: "ArrowDown" }); // highlight second
+    // Row 0 is highlighted on open; one ArrowDown moves to the second row.
+    fireEvent.keyDown(search, { key: "ArrowDown" });
     fireEvent.keyDown(search, { key: "Enter" });
     expect(onChange).toHaveBeenCalledWith("gpt-4o-mini");
   });
