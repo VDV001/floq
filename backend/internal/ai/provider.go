@@ -52,3 +52,21 @@ type Provider interface {
 type HealthChecker interface {
 	CheckHealth(ctx context.Context) error
 }
+
+// ModelInfo is one selectable model as surfaced to the settings UI.
+// Meta is an optional short descriptor (e.g. Ollama's parameter size
+// "4B") shown next to the id; it is empty for providers whose list
+// endpoint returns only an identifier (the OpenAI-compatible /models).
+type ModelInfo struct {
+	ID   string
+	Meta string
+}
+
+// ModelLister is an optional capability a Provider may implement to
+// enumerate the models available for the configured credentials, so the
+// settings form can offer a searchable picker instead of free-text entry
+// (#229). Callers type-assert for it and fall back to manual entry when a
+// provider does not implement it or the call fails.
+type ModelLister interface {
+	ListModels(ctx context.Context) ([]ModelInfo, error)
+}

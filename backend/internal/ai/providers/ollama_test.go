@@ -76,6 +76,33 @@ func TestOllamaProvider_CheckHealth_Unreachable_WrapsErrUnreachable(t *testing.T
 		"a transport failure must wrap ErrOllamaUnreachable; got: %v", err)
 }
 
+func TestOllamaProvider_ListModels_ReturnsNamesWithMeta(t *testing.T) {
+	srv, lastPath := tagsServer(t, http.StatusOK, `{"models":[
+		{"name":"gemma3:4b","details":{"parameter_size":"4B"}},
+		{"name":"llama3:8b","details":{"parameter_size":"8B"}}
+	]}`)
+	p := NewOllamaProvider(srv.URL, "gemma3:4b", srv.Client())
+
+	models, err := p.ListModels(context.Background())
+	require.NoError(t, err)
+	assert.Equal(t, "/api/tags", *lastPath)
+	require.Len(t, models, 2)
+	assert.Equal(t, "gemma3:4b", models[0].ID)
+	assert.Equal(t, "4B", models[0].Meta, "parameter size surfaced as Meta")
+	assert.Equal(t, "llama3:8b", models[1].ID)
+}
+
+func TestOllamaProvider_ListModels_Unreachable_Errors(t *testing.T) {
+	srv, _ := tagsServer(t, http.StatusOK, `{}`)
+	base := srv.URL
+	srv.Close()
+	p := NewOllamaProvider(base, "gemma3:4b", http.DefaultClient)
+
+	_, err := p.ListModels(context.Background())
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, ErrOllamaUnreachable), "transport failure must wrap ErrOllamaUnreachable; got %v", err)
+}
+
 func TestOllamaModelMatches(t *testing.T) {
 	cases := []struct {
 		name      string

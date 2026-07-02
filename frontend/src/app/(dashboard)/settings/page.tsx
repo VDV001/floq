@@ -108,7 +108,7 @@ export default function SettingsPage() {
                 <SmtpSection smtpHost={smtp.host} setSmtpHost={smtp.setHost} smtpPort={smtp.port} setSmtpPort={smtp.setPort} smtpUser={smtp.user} setSmtpUser={smtp.setUser} smtpPassword={smtp.password} setSmtpPassword={smtp.setPassword} maskedPassword={smtp.maskedPassword} active={smtp.active} testing={smtp.testing} testResult={smtp.testResult} setTestResult={smtp.setTestResult} onTest={smtp.test} />
               </div>
             </section>
-            <AiProviderSection aiProvider={ai.provider} setAiProvider={ai.setProvider} aiModel={ai.model} setAiModel={ai.setModel} aiApiKey={ai.apiKey} setAiApiKey={ai.setApiKey} maskedKey={ai.maskedKey} showApiKey={ai.showKey} setShowApiKey={ai.setShowKey} active={ai.active} testing={ai.testing} testResult={ai.testResult} setTestResult={ai.setTestResult} hasKey={ai.hasKey} providerDefaults={PROVIDER_DEFAULTS} onTest={ai.test} />
+            <AiProviderSection aiProvider={ai.provider} setAiProvider={ai.setProvider} aiModel={ai.model} setAiModel={ai.setModel} aiApiKey={ai.apiKey} setAiApiKey={ai.setApiKey} maskedKey={ai.maskedKey} showApiKey={ai.showKey} setShowApiKey={ai.setShowKey} active={ai.active} testing={ai.testing} testResult={ai.testResult} setTestResult={ai.setTestResult} hasKey={ai.hasKey} providerDefaults={PROVIDER_DEFAULTS} models={ai.models} modelsLoading={ai.modelsLoading} onTest={ai.test} />
             {onec.loadError && (
               <div role="alert" className="rounded-xl bg-red-50 px-6 py-4 text-sm font-medium text-red-600 ring-1 ring-red-200">
                 Не удалось загрузить настройки 1С: {onec.loadError}

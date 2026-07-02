@@ -51,9 +51,14 @@ describe("AiProviderSection", () => {
     expect(props.setAiModel).not.toHaveBeenCalled();
   });
 
-  it("propagates model edits", () => {
+  it("propagates model edits via the combobox free-text fallback (#229)", () => {
     const props = setup();
-    fireEvent.change(screen.getByDisplayValue("gemma3:4b"), { target: { value: "llama3" } });
+    // Model field is now a searchable combobox; the current value shows on
+    // its trigger. Open it, type a custom model, commit with Enter.
+    fireEvent.click(screen.getByText("gemma3:4b"));
+    const search = screen.getByPlaceholderText(/Поиск модели/);
+    fireEvent.change(search, { target: { value: "llama3" } });
+    fireEvent.keyDown(search, { key: "Enter" });
     expect(props.setAiModel).toHaveBeenCalledWith("llama3");
   });
 

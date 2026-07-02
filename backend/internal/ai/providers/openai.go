@@ -102,6 +102,25 @@ func (p *OpenAIProvider) CheckHealth(ctx context.Context) error {
 	return nil
 }
 
+// Compile-time check: OpenAIProvider can enumerate its models (#229).
+var _ ai.ModelLister = (*OpenAIProvider)(nil)
+
+// ListModels returns the models available for the configured key via the
+// OpenAI-compatible GET /models endpoint. Meta is left empty — that
+// endpoint reports only an id (no size/price). Retries disabled so a
+// down back-end fails fast rather than stalling the settings form.
+func (p *OpenAIProvider) ListModels(ctx context.Context) ([]ai.ModelInfo, error) {
+	page, err := p.client.Models.List(ctx, option.WithMaxRetries(0))
+	if err != nil {
+		return nil, fmt.Errorf("list models: %w", err)
+	}
+	models := make([]ai.ModelInfo, 0, len(page.Data))
+	for _, m := range page.Data {
+		models = append(models, ai.ModelInfo{ID: m.ID})
+	}
+	return models, nil
+}
+
 func (p *OpenAIProvider) Complete(ctx context.Context, req ai.CompletionRequest) (*ai.CompletionResult, error) {
 	var messages []openai.ChatCompletionMessageParamUnion
 

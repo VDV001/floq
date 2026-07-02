@@ -13,6 +13,7 @@ vi.mock("@/lib/api", () => ({
     testResend: vi.fn(),
     testSMTP: vi.fn(),
     testAI: vi.fn(),
+    listAIModels: vi.fn(() => Promise.resolve([])),
   },
 }));
 
@@ -477,6 +478,31 @@ describe("useSmtpSettings", () => {
 // ─── useAiSettings ───────────────────────────────────────────
 
 describe("useAiSettings", () => {
+  it("loads the model list for the selected provider (#229)", async () => {
+    mockedApi.listAIModels.mockResolvedValue([{ id: "gpt-4o" }, { id: "gpt-4o-mini" }]);
+    const { result } = renderHook(() => useAiSettings(makeSettings({ ai_provider: "openai" }), vi.fn()));
+
+    await waitFor(() => expect(result.current.models.length).toBe(2));
+    expect(mockedApi.listAIModels).toHaveBeenCalledWith("openai");
+    expect(result.current.models[0].id).toBe("gpt-4o");
+  });
+
+  it("refetches models when the provider changes", async () => {
+    // Assert on observable state (models), not the mock call count, so the
+    // test is deterministic under load (#229 review C1).
+    mockedApi.listAIModels.mockImplementation((p: string) =>
+      Promise.resolve(p === "groq" ? [{ id: "groq-model" }] : [{ id: "openai-model" }])
+    );
+    // Stable settings object — a fresh object each render would retrigger the
+    // settings-sync effect and reset the provider we set below.
+    const settings = makeSettings({ ai_provider: "openai" });
+    const { result } = renderHook(() => useAiSettings(settings, vi.fn()));
+    await waitFor(() => expect(result.current.models[0]?.id).toBe("openai-model"));
+
+    act(() => { result.current.setProvider("groq"); });
+    await waitFor(() => expect(result.current.models[0]?.id).toBe("groq-model"));
+  });
+
   it("syncs provider and model from settings", async () => {
     const settings = makeSettings({ ai_provider: "claude", ai_model: "claude-sonnet-4-20250514" });
 

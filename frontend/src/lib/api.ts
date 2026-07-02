@@ -395,6 +395,13 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ provider, model, api_key: apiKey, use_stored: useStored || false }),
     }),
+  // listAIModels returns the models available for a provider (#229), using
+  // the stored credentials. Returns [] on any backend error so the UI
+  // falls back to manual model entry.
+  listAIModels: (provider: string) =>
+    apiFetch<{ models: AIModelOption[] }>(`/api/settings/ai/models?provider=${encodeURIComponent(provider)}`)
+      .then((r) => r.models ?? [])
+      .catch(() => [] as AIModelOption[]),
   testSMTP: (host: string, port: string, user: string, password: string) =>
     apiFetch<{ success: boolean; message?: string; error?: string }>("/api/settings/test-smtp", {
       method: "POST",
@@ -986,4 +993,12 @@ export interface UserSettings {
   smtp_verified?: boolean;
   imap_verified?: boolean;
   resend_verified?: boolean;
+}
+
+// AIModelOption is one selectable model for the settings model picker (#229).
+// meta is an optional short descriptor (e.g. "4B" for Ollama, a display
+// name for Claude); absent for providers whose list returns only an id.
+export interface AIModelOption {
+  id: string;
+  meta?: string;
 }

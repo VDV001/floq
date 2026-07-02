@@ -2,6 +2,8 @@ import { Sparkles, Eye, ChevronDown, Info, Loader2, Wifi } from "lucide-react";
 import { ConnectionBadge } from "./ConnectionBadge";
 import { HintIcon } from "./HintIcon";
 import { StatusBanner } from "./StatusBanner";
+import { ModelCombobox } from "@/components/ui/model-combobox";
+import type { AIModelOption } from "@/lib/api";
 
 type TestResult = { success: boolean; message?: string; error?: string } | null;
 
@@ -17,13 +19,15 @@ interface AiProviderSectionProps {
   setTestResult: (v: TestResult) => void;
   hasKey: boolean;
   providerDefaults: Record<string, string>;
+  models?: AIModelOption[];
+  modelsLoading?: boolean;
   onTest: () => void;
 }
 
 export function AiProviderSection({
   aiProvider, setAiProvider, aiModel, setAiModel, aiApiKey, setAiApiKey,
   maskedKey, showApiKey, setShowApiKey, active, testing, testResult, setTestResult,
-  hasKey, providerDefaults, onTest,
+  hasKey, providerDefaults, models = [], modelsLoading = false, onTest,
 }: AiProviderSectionProps) {
   return (
     <section className="relative rounded-xl bg-white p-8 shadow-sm ring-1 ring-[#c3c6d7]/10">
@@ -60,8 +64,7 @@ export function AiProviderSection({
         </div>
         <div>
           <label className="mb-2 block text-xs font-bold uppercase tracking-wide text-[#434655]">Название модели</label>
-          <input type="text" placeholder="gemma3:4b" value={aiModel} onChange={(e) => setAiModel(e.target.value)}
-            className="w-full rounded-lg border-none bg-[#eff4ff] px-4 py-3 text-sm outline-none transition-all focus:ring-2 focus:ring-[#3e3fcc]/20" />
+          <ModelCombobox value={aiModel} onChange={setAiModel} options={models} loading={modelsLoading} placeholder="gemma3:4b" />
         </div>
       </div>
 
@@ -72,6 +75,7 @@ export function AiProviderSection({
             onChange={(e) => setAiApiKey(e.target.value)}
             className="flex-1 rounded-lg border-none bg-white/50 px-4 py-3 font-mono text-sm outline-none transition-all focus:ring-2 focus:ring-[#3e3fcc]/20" />
           <button onClick={() => setShowApiKey(!showApiKey)}
+            aria-label={showApiKey ? "Скрыть ключ" : "Показать ключ"}
             className="flex size-12 items-center justify-center rounded-lg bg-white/50 text-[#3e3fcc] transition-colors hover:bg-white">
             <Eye className="size-5" />
           </button>
